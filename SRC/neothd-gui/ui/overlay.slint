@@ -17,13 +17,34 @@
 // entirely on the Rust side via the `slint::winit_030::WinitWindowAccessor`
 // + `winit::window::WindowLevel::AlwaysOnTop` after `overlay.show()`.
 //
-// Drag: A TouchArea covering the title strip sets `root.title-drag-delta` so
-// Rust can offset the window position on drag events. Because Slint's
-// winit accessor does not expose pointer-move events directly, drag is
-// approximated by the operator using OS native window move (they can grab
-// any frameless area and drag it with the OS compositor if the platform
-// supports it). The title-strip TouchArea is reserved for future pointer-
-// delta wiring — for now it just provides a distinct grab area.
+// Drag: pointer-down on the title strip (full mode) or the orb zone
+// (compact mode) fires `drag-started()`; Rust calls winit's `drag_window()`
+// which hands the move to the OS compositor (native smooth drag on
+// Windows/macOS/most WMs). The final position is persisted to
+// ~/.neoth/.overlay-pos on restore/hide and re-applied on the next
+// minimize-to-companion.
+//
+// Compact mode: when `compact` is true the overlay collapses to a 64px pill
+// showing only the Buddy orb + one-line input + mic glyph + chevron toggle.
+// The scrollback and status sections have height 0 and are clipped.
+// `compact-toggled(bool)` fires on every chevron press so Rust can call
+// winit set_inner_size:
+//   compact=true,  bubble-text=""    → 64 px
+//   compact=true,  bubble-text!=""   → 148 px  (84 bubble-wrap + 64 strip)
+//   compact=false                    → 520 px
+// Rust should also watch the `bubble-text` property directly and resize when
+// it transitions between empty and non-empty while compact=true.
+//
+// Speech bubble: `bubble-text` drives a glass card that fades+rises above
+// the compact pill. Clicking it fires `bubble-dismissed()`; Rust then clears
+// the property and shrinks the window back to 64 px.
+//
+// Escape: while typing in the compact pill, Escape fires `collapse-requested()`
+// so Rust can hide or switch to full mode. The full-mode NeothLineEdit does
+// not intercept Escape (cannot be modified); the operator uses the ✕ button.
+//
+// Unread badge: `unread-count > 0` renders an amber chip on the Buddy orb
+// in both compact and full-mode title-bar views.
 
 import { Theme } from "theme.slint";
 import { Buddy } from "buddy.slint";
@@ -38,12 +59,10 @@ export component MiniOverlay inherits Window {
     preferred-height: 520px;
     min-width: 280px;
     min-height: 200px;
-    // Background: dark canvas at 0.9 alpha. The alpha here tints the
-    // composited window surface; actual per-pixel transparency depends on
-    // the platform (see file header note).
+    // Background: dark canvas at 0.9 alpha.
     background: Theme.bg-void.with-alpha(0.92);
 
-    // ── Public properties ────────────────────────────────────────────
+    // ── Existing public properties ───────────────────────────────────
     /// Buddy mood string — same vocabulary as buddy.slint / GuiActivity.
     in property <string> buddy-mood: "idle";
     /// Short daemon state: "live" | "connecting" | "error" | "off".
@@ -55,42 +74,349 @@ export component MiniOverlay inherits Window {
     /// One-line status text below the composer (mood caption / daemon note).
     in property <string> status-text: "ready";
 
-    // ── Callbacks ────────────────────────────────────────────────────
+    // ── Compact mode ─────────────────────────────────────────────────
+    /// When true the overlay renders as a 64 px pill.
+    /// Rust must resize the winit window via set_inner_size on compact-toggled.
+    in-out property <bool> compact: false;
+    /// Unread message count — amber badge chip on the Buddy orb when > 0.
+    in property <int> unread-count: 0;
+    /// Buddy speech snippet. Non-empty while compact=true → glass bubble
+    /// floats above the pill (84 px extra height; Rust resizes window).
+    /// Rust clears this string after bubble-dismissed() fires.
+    in property <string> bubble-text: "";
+
+    // ── Existing callbacks ───────────────────────────────────────────
     /// Operator clicked "⤢" restore — show main window, hide overlay.
     callback restore-clicked();
     /// Operator clicked "✕" hide — same as restore (never leave windowless).
     callback hide-clicked();
     /// Operator sent a message from the overlay composer.
     callback send-clicked(string);
+    /// Pointer-down on the title strip — Rust starts an OS-native
+    /// compositor drag via winit drag_window().
+    callback drag-started();
 
-    // ── Root rectangle — applies the border + inner layout ───────────
+    // ── New callbacks ────────────────────────────────────────────────
+    /// Fires on chevron press with the new compact state.
+    /// Rust: set_inner_size(width, compact ? (bubble!="" ? 148 : 64) : 520).
+    callback compact-toggled(bool);
+    /// Escape pressed in compact input — Rust hides or switches to full mode.
+    callback collapse-requested();
+    /// Operator clicked the speech bubble — Rust clears bubble-text and
+    /// calls set_inner_size back to 64 px.
+    callback bubble-dismissed();
+    /// Operator pressed the mic glyph button — Rust starts STT capture.
+    callback mic-clicked();
+
+    // ── Bubble animation driver ───────────────────────────────────────
+    // 0.0 = invisible/lowered, 1.0 = fully visible at rest position.
+    // Drives opacity and y-rise of the glass bubble card.
+    property <float> bubble-vis: root.compact && root.bubble-text != "" ? 1.0 : 0.0;
+    animate bubble-vis {
+        duration: Theme.duration-entrance;
+        easing: cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    // ── Autofocus compact input when compact mode activates ───────────
+    changed compact => {
+        if (root.compact) {
+            compact-input.focus();
+        }
+    }
+
+    // ── Root rectangle — border + inner layout ───────────────────────
     Rectangle {
-        // single root child auto-fills the Window; binding size to the parent
-        // Window (which sizes from content) closes a layoutinfo-v loop (Slint 1.16).
-
         border-radius: Theme.radius-card;
         border-width: 1px;
         border-color: Theme.border-default;
-        background: transparent; // actual bg is on the Window above
+        background: transparent;
 
         VerticalLayout {
             padding: 0px; spacing: 0px;
 
-            // ── Title / drag strip ───────────────────────────────────
-            // grab-area + brand label + orb + restore + close buttons.
+            // ── Section 1: Speech bubble (compact + non-empty bubble-text) ─
+            //
+            // The bubble-wrap expands from 0 to 84 px when a snippet arrives.
+            // Its content (glass card + triangle tail) fade+rise via bubble-vis.
+            bubble-wrap := Rectangle {
+                height: root.compact && root.bubble-text != "" ? 84px : 0px;
+                clip: true;
+                background: transparent;
+                animate height {
+                    duration: Theme.duration-entrance;
+                    easing: cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                // Glass card — rises 8 px into position as bubble-vis → 1
+                bubble-card := Rectangle {
+                    x: 8px;
+                    y: (1.0 - root.bubble-vis) * 8px;
+                    width: parent.width - 16px;
+                    height: 60px;
+                    border-radius: Theme.radius-lg;
+                    background: Theme.surface-glass;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    opacity: root.bubble-vis;
+
+                    Text {
+                        x: Theme.space-3;
+                        y: 0px;
+                        width: parent.width - Theme.space-3 * 2;
+                        height: parent.height;
+                        text: root.bubble-text;
+                        color: Theme.text-primary;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        vertical-alignment: center;
+                        wrap: word-wrap;
+                        overflow: elide;
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: root.bubble-text;
+                    }
+
+                    TouchArea {
+                        clicked => { root.bubble-dismissed(); }
+                    }
+                }
+
+                // Triangle tail — points down toward the orb (orb center ≈ x 32 px)
+                Path {
+                    x: 24px;
+                    y: bubble-card.y + bubble-card.height;
+                    width: 16px;
+                    height: 8px;
+                    viewbox-x: 0; viewbox-y: 0;
+                    viewbox-width: 16; viewbox-height: 8;
+                    commands: "M 0 0 L 16 0 L 8 8 Z";
+                    fill: Theme.surface-glass;
+                    stroke: Theme.border-subtle;
+                    stroke-width: 1px;
+                    opacity: root.bubble-vis;
+                }
+            }
+
+            // ── Section 2: Compact pill (visible only when compact=true) ──
+            //
+            // Layout: [orb+badge] [input-pill] [mic] [chevron-expand]
+            // Left 64 px is the drag handle zone (pointer-down → drag-started).
+            compact-strip := Rectangle {
+                height: root.compact ? 64px : 0px;
+                clip: true;
+                background: Theme.bg-sunken;
+                border-radius: Theme.radius-card;
+                animate height {
+                    duration: Theme.duration-entrance;
+                    easing: cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
+                // Drag handle — behind the orb, pointer-down triggers OS drag
+                TouchArea {
+                    x: 0px; y: 0px;
+                    width: 64px;
+                    height: parent.height;
+                    mouse-cursor: grab;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down
+                                && ev.button == PointerEventButton.left) {
+                            root.drag-started();
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    padding: 10px; spacing: 8px; alignment: center;
+
+                    // Orb cell — 44 px Buddy with amber unread badge
+                    orb-cell := Rectangle {
+                        width: 44px; height: 44px;
+                        background: transparent;
+
+                        Buddy {
+                            mood: root.buddy-mood;
+                            orb-size: 44px;
+                            show-face: false;
+                        }
+
+                        // Amber badge — top-right corner of orb-cell
+                        if root.unread-count > 0: Rectangle {
+                            x: 28px; y: -2px;
+                            width: 16px; height: 16px;
+                            border-radius: 8px;
+                            background: Theme.amber-500;
+                            border-width: 1.5px;
+                            border-color: Theme.bg-void;
+
+                            Text {
+                                text: root.unread-count >= 9 ? "9+"
+                                    : root.unread-count == 8 ? "8"
+                                    : root.unread-count == 7 ? "7"
+                                    : root.unread-count == 6 ? "6"
+                                    : root.unread-count == 5 ? "5"
+                                    : root.unread-count == 4 ? "4"
+                                    : root.unread-count == 3 ? "3"
+                                    : root.unread-count == 2 ? "2"
+                                    : "1";
+                                color: Theme.ink-950;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                font-weight: Theme.weight-bold;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                accessible-role: AccessibleRole.text;
+                                accessible-label: "unread messages";
+                            }
+                        }
+                    }
+
+                    // One-line input pill — mirrors NeothLineEdit visuals
+                    compact-pill := Rectangle {
+                        horizontal-stretch: 1;
+                        height: 40px;
+                        background: Theme.bg-base;
+                        border-radius: Theme.radius-button;
+                        border-width: 1px;
+                        border-color: compact-input.has-focus
+                            ? Theme.accent
+                            : compact-pill-ta.has-hover
+                                ? Theme.accent.with-alpha(0.6)
+                                : Theme.border-subtle;
+                        animate border-color {
+                            duration: Theme.duration-micro;
+                            easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+                        }
+
+                        HorizontalLayout {
+                            padding-left: Theme.space-base;
+                            padding-right: Theme.space-base;
+
+                            Rectangle {
+                                // Placeholder — visible when text empty and not focused
+                                if root.overlay-input == "" && !compact-input.has-focus: Text {
+                                    x: 0px;
+                                    width: parent.width;
+                                    text: "message NEOTH…";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-body;
+                                    color: Theme.text-dim;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: left;
+                                }
+
+                                // Raw TextInput so we can call focus() from changed compact
+                                compact-input := TextInput {
+                                    x: 0px;
+                                    width: parent.width;
+                                    text <=> root.overlay-input;
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-body;
+                                    color: Theme.text-primary;
+                                    selection-background-color: Theme.accent.with-alpha(0.4);
+                                    selection-foreground-color: Theme.text-primary;
+                                    single-line: true;
+                                    vertical-alignment: center;
+                                    horizontal-alignment: left;
+                                    enabled: root.compact;
+                                    accessible-role: AccessibleRole.text;
+                                    accessible-label: "message NEOTH";
+                                    accessible-placeholder-text: "message NEOTH…";
+
+                                    // Enter → send
+                                    accepted => {
+                                        if (self.text != "") {
+                                            root.send-clicked(self.text);
+                                            root.overlay-input = "";
+                                        }
+                                    }
+
+                                    // Escape → collapse
+                                    key-pressed(event) => {
+                                        if (event.text == "\u{1B}") {
+                                            root.collapse-requested();
+                                            return accept;
+                                        }
+                                        return reject;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Click anywhere on pill → focus input
+                        compact-pill-ta := TouchArea {
+                            clicked => { compact-input.focus(); }
+                        }
+                    }
+
+                    // Mic glyph button — "◉" record indicator
+                    mic-btn := Rectangle {
+                        width: 32px; height: 32px;
+                        border-radius: Theme.radius-sm;
+                        background: mic-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background {
+                            duration: Theme.duration-micro;
+                            easing: ease-out;
+                        }
+                        Text {
+                            text: "◉";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-size-caption;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        mic-ta := TouchArea {
+                            clicked => { root.mic-clicked(); }
+                        }
+                    }
+
+                    // Chevron toggle — compact → full (▾ = expand downward)
+                    chevron-expand := Rectangle {
+                        width: 32px; height: 32px;
+                        border-radius: Theme.radius-sm;
+                        background: chevron-ta.has-hover ? Theme.surface-2 : transparent;
+                        animate background {
+                            duration: Theme.duration-micro;
+                            easing: ease-out;
+                        }
+                        Text {
+                            text: "▾";
+                            color: Theme.accent;
+                            font-size: Theme.font-size-caption;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                        chevron-ta := TouchArea {
+                            clicked => {
+                                root.compact = false;
+                                root.compact-toggled(false);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Section 3: Title / drag strip (full mode only) ───────────
+            // grab-area + brand label + orb + compact-toggle + restore + close.
             title-bar := Rectangle {
-                height: 44px;
+                height: root.compact ? 0px : 44px;
+                clip: true;
                 border-radius: Theme.radius-card;
                 background: Theme.bg-sunken;
+                animate height {
+                    duration: Theme.duration-entrance;
+                    easing: cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
                 // bottom hairline
                 Rectangle {
                     y: parent.height - 1px; height: 1px;
                     background: Theme.border-subtle;
                 }
+
                 HorizontalLayout {
                     padding-left: 12px; padding-right: 10px;
                     alignment: space-between;
-                    // Left: wordmark + orb
+
+                    // Left: wordmark + orb (with unread badge)
                     HorizontalLayout {
                         alignment: start; spacing: 8px;
                         Text {
@@ -102,21 +428,83 @@ export component MiniOverlay inherits Window {
                             letter-spacing: Theme.letter-spacing-extra-wide;
                             vertical-alignment: center;
                         }
-                        // Buddy orb — 28px, self-animating
-                        Buddy {
-                            mood: root.buddy-mood;
-                            orb-size: 28px;
-                            show-face: false;
+                        // Buddy orb — 28 px — with amber unread badge overlay
+                        orb-title := Rectangle {
+                            width: 28px; height: 28px;
                             y: (title-bar.height - self.height) / 2;
+                            background: transparent;
+
+                            Buddy {
+                                mood: root.buddy-mood;
+                                orb-size: 28px;
+                                show-face: false;
+                            }
+
+                            if root.unread-count > 0: Rectangle {
+                                x: 16px; y: -3px;
+                                width: 16px; height: 16px;
+                                border-radius: 8px;
+                                background: Theme.amber-500;
+                                border-width: 1px;
+                                border-color: Theme.bg-sunken;
+
+                                Text {
+                                    text: root.unread-count >= 9 ? "9+"
+                                        : root.unread-count == 8 ? "8"
+                                        : root.unread-count == 7 ? "7"
+                                        : root.unread-count == 6 ? "6"
+                                        : root.unread-count == 5 ? "5"
+                                        : root.unread-count == 4 ? "4"
+                                        : root.unread-count == 3 ? "3"
+                                        : root.unread-count == 2 ? "2"
+                                        : "1";
+                                    color: Theme.ink-950;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    font-weight: Theme.weight-bold;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    accessible-role: AccessibleRole.text;
+                                    accessible-label: "unread messages";
+                                }
+                            }
                         }
                     }
-                    // Right: status Led + restore + close
+
+                    // Right: status Led + compact-toggle + restore + close
                     HorizontalLayout {
                         alignment: end; spacing: 6px;
+
                         Led {
                             state: root.daemon-state;
                             y: (title-bar.height - self.height) / 2;
                         }
+
+                        // Compact-mode toggle — collapses to 64 px pill (▸ = collapse)
+                        compact-tb-btn := Rectangle {
+                            width: 28px; height: 28px;
+                            border-radius: Theme.radius-sm;
+                            background: compact-tb-ta.has-hover ? Theme.surface-2 : transparent;
+                            y: (title-bar.height - self.height) / 2;
+                            animate background {
+                                duration: Theme.duration-micro;
+                                easing: ease-out;
+                            }
+                            Text {
+                                text: "▸";
+                                color: Theme.text-dim;
+                                font-size: Theme.font-size-caption;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            compact-tb-ta := TouchArea {
+                                clicked => {
+                                    root.compact = true;
+                                    root.compact-toggled(true);
+                                }
+                            }
+                        }
+
                         // Restore button — returns to main window
                         restore-btn := Rectangle {
                             width: 28px; height: 28px;
@@ -138,6 +526,7 @@ export component MiniOverlay inherits Window {
                                 clicked => { root.restore-clicked(); }
                             }
                         }
+
                         // Close/hide button — same action as restore
                         close-btn := Rectangle {
                             width: 28px; height: 28px;
@@ -161,27 +550,35 @@ export component MiniOverlay inherits Window {
                         }
                     }
                 }
-                // Drag TouchArea covering the title bar (for future pointer-delta wiring)
+
+                // Drag TouchArea covering the title bar — pointer-down hands
+                // the move to the OS compositor (Rust: winit drag_window()).
                 TouchArea {
                     width: title-bar.width - 80px;  // leave the buttons accessible
                     height: title-bar.height;
                     x: 0; y: 0;
-                    // No action — just marks the drag zone for the operator
+                    mouse-cursor: grab;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down
+                                && ev.button == PointerEventButton.left) {
+                            root.drag-started();
+                        }
+                    }
                 }
             }
 
-            // ── Scrollback — recent message snippets ─────────────────
-            // Shows up to the last 6 snippets pushed by Rust. Simple
-            // non-scrolling list; the operator uses the main window for
-            // full history. Grows from top; newest at bottom.
-            scrollback := Rectangle {
-                vertical-stretch: 1;
-                background: Theme.bg-void;
+            // ── Section 4: Scrollback — recent message snippets ───────────
+            // Collapses to 0 in compact mode by not rendering the VerticalLayout
+            // (vertical-stretch:0 + no content = preferred-height 0).
+            scrollback-wrap := Rectangle {
+                vertical-stretch: root.compact ? 0 : 1;
+                min-height: 0px;
                 clip: true;
+                background: root.compact ? transparent : Theme.bg-void;
 
-                VerticalLayout {
+                if !root.compact: VerticalLayout {
                     padding: 10px; spacing: 4px;
-                    alignment: end; // newest lines stay anchored to the bottom
+                    alignment: end;
 
                     if root.recent-lines.length == 0: Text {
                         text: "— companion ready —";
@@ -195,12 +592,11 @@ export component MiniOverlay inherits Window {
                     for line[i] in root.recent-lines: Text {
                         text: line;
                         color: i == root.recent-lines.length - 1
-                            ? Theme.text-primary    // most recent = full brightness
+                            ? Theme.text-primary
                             : Theme.text-muted;
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         wrap: word-wrap;
-                        // Newest (last) line slightly larger for visual emphasis
                         font-weight: i == root.recent-lines.length - 1
                             ? Theme.weight-medium
                             : Theme.weight-regular;
@@ -208,10 +604,16 @@ export component MiniOverlay inherits Window {
                 }
             }
 
-            // ── Status line — mood caption + daemon indicator ─────────
+            // ── Section 5: Status line — mood caption + daemon indicator ──
             status-bar := Rectangle {
-                height: 24px;
+                height: root.compact ? 0px : 24px;
+                clip: true;
                 background: Theme.bg-sunken;
+                animate height {
+                    duration: Theme.duration-entrance;
+                    easing: cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
                 // top hairline
                 Rectangle {
                     y: 0; height: 1px;
@@ -238,11 +640,17 @@ export component MiniOverlay inherits Window {
                 }
             }
 
-            // ── Composer — one-line input + send button ───────────────
+            // ── Section 6: Composer — one-line input + send button ────────
             composer := Rectangle {
-                height: 52px;
+                height: root.compact ? 0px : 52px;
+                clip: true;
                 background: Theme.bg-sunken;
                 border-radius: Theme.radius-card;
+                animate height {
+                    duration: Theme.duration-entrance;
+                    easing: cubic-bezier(0.16, 1, 0.3, 1);
+                }
+
                 // top hairline
                 Rectangle {
                     y: 0; height: 1px;
@@ -254,7 +662,7 @@ export component MiniOverlay inherits Window {
                         horizontal-stretch: 1;
                         text <=> root.overlay-input;
                         placeholder-text: "message NEOTH…";
-                        enabled: true;
+                        enabled: !root.compact;
                         accepted(t) => {
                             if t != "" {
                                 root.send-clicked(t);
@@ -266,7 +674,7 @@ export component MiniOverlay inherits Window {
                         label: "→";
                         primary: true;
                         size: "sm";
-                        enabled: root.overlay-input != "";
+                        enabled: root.overlay-input != "" && !root.compact;
                         clicked => {
                             if root.overlay-input != "" {
                                 root.send-clicked(root.overlay-input);

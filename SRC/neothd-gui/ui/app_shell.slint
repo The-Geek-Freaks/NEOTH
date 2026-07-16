@@ -134,9 +134,14 @@ export component Sidebar inherits Rectangle {
     in property <bool> theme-dark: true;
     in property <string> operator-name: "operator";
     in property <int> channels-count: 0;
+    // Version line under the wordmark — Rust binds CARGO_PKG_VERSION so
+    // the sidebar never lies about the running build.
+    in property <string> version-line: "v1.0 · sovereign";
     callback nav(string);
     callback set-complexity(int);
     callback toggle-theme();
+    // E4 — version line opens the About / What's-new overlay.
+    callback version-clicked();
 
     width: Theme.sidebar-w;   // B23: driven by tweaks.toml sidebar_width_px or 248px built-in
     background: Theme.bg-sunken;
@@ -158,12 +163,23 @@ export component Sidebar inherits Rectangle {
                     font-family: Theme.font-wordmark; font-size: 23px; font-weight: Theme.weight-bold;
                     letter-spacing: 1px;
                 }
-                Text {
-                    // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
-                    // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
-                    text: "v1.0 · sovereign"; color: Theme.text-tertiary;
-                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
-                    letter-spacing: Theme.letter-spacing-mono-caps;
+                Rectangle {
+                    height: ver-txt.height;
+                    ver-txt := Text {
+                        x: 0;
+                        // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
+                        // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
+                        text: root.version-line;
+                        color: ver-ta.has-hover ? Theme.text-secondary : Theme.text-tertiary;
+                        font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-mono-caps;
+                        animate color { duration: Theme.duration-fast; easing: ease-out; }
+                    }
+                    // E4 — click opens About / What's new.
+                    ver-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.version-clicked(); }
+                    }
                 }
             }
         }
@@ -193,8 +209,10 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
                 NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
                 // Wave 4a — WORK additions (≥1 gate matches Automation).
-                NavBtn { label: "n8n"; glyph: "⧉"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
-                NavBtn { label: "Calendar"; glyph: "▦"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
+                // Glyph dedup: n8n had Plugins' ⧉, Calendar had Resources' ▦ —
+                // every nav glyph is unique so icons stay meaning-bearing.
+                NavBtn { label: "n8n"; glyph: "⇶"; visible: root.complexity >= 1; active: root.active-tab == "n8n"; clicked => { root.nav("n8n"); } }
+                NavBtn { label: "Calendar"; glyph: "◷"; visible: root.complexity >= 1; active: root.active-tab == "calendar"; clicked => { root.nav("calendar"); } }
                 NavBtn { label: "Evolve"; glyph: "✦"; visible: root.complexity >= 1; active: root.active-tab == "evolve"; clicked => { root.nav("evolve"); } }
                 // FEAT-05 — Self-Dev Proposal Review (same gate as Evolve: complexity ≥ 1).
                 NavBtn { label: "Self-Dev"; glyph: "⊞"; visible: root.complexity >= 1; active: root.active-tab == "selfdev"; clicked => { root.nav("selfdev"); } }
@@ -209,6 +227,7 @@ export component Sidebar inherits Rectangle {
                 // Label shows when complexity ≥ 1 (Memory/Hemispheres gate).
                 NavGroup { label: "SYSTEM"; }
                 NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
+                NavBtn { label: "Graph"; glyph: "❋"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memgraph"; clicked => { root.nav("memgraph"); } }
                 NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
                 NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
@@ -222,6 +241,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Wiki"; glyph: "⌗"; visible: root.complexity >= 1; active: root.active-tab == "wiki"; clicked => { root.nav("wiki"); } }
                 NavBtn { label: "Companion"; glyph: "⊕"; active: root.active-tab == "companion"; clicked => { root.nav("companion"); } }
                 NavBtn { label: "Mesh"; glyph: "◇"; visible: root.complexity >= 2; active: root.active-tab == "mesh"; clicked => { root.nav("mesh"); } }
+                NavBtn { label: "WAL"; glyph: "≣"; visible: root.complexity >= 2; active: root.active-tab == "wal"; clicked => { root.nav("wal"); } }
                 NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
                 NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
             }

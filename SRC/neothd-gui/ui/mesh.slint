@@ -1,95 +1,321 @@
-// NEOTH — Mesh / Cluster failover panel (Design Wave 4).
+// NEOTH — Mesh / Cluster fleet dashboard (Design Wave 4 → 5).
 //
-// Displays: NODE card (this node id, listen port, mDNS Led),
-//           PEERS card (peer rows: id + last-seen + Led; empty state),
-//           REDUNDANCY card (honest partial-replication warning — amber, not green).
+// WIRING — new since Wave 4 (Rust must bind these):
+//   MeshPeerRow additions: cpu-pct float, ram-pct float, vram-pct float,
+//     role string, version string, staleness-secs int
+//   MeshView new in-properties:
+//     gossip-events [string]  — recent gossip log lines, newest-first
+//     expanded-peer string    — peer-id with inline detail open; "" = none
+//   MeshView new callbacks:
+//     peer-sync-clicked(string)  — Rust: enqueue WAL sync for peer id
+//     peer-expanded(string)      — Rust: toggle expanded-peer (set "" to collapse)
 //
-// Daemon: `neoth cluster status --output json`  (read-only).
-// Refresh button triggers the callback; Rust re-shells the command and pushes props.
+// All Wave 4 properties / callbacks preserved (mesh-node-id, mesh-listen-port,
+// mesh-mdns-enabled, mesh-trusted-ssids, mesh-peers, mesh-peer-count,
+// mesh-gossip-note, mesh-foreign-rows, mesh-foreign-total, mesh-foreign-bytes,
+// mesh-foreign-peers, mesh-refreshed-at, mesh-refresh-clicked).
 //
-// Slint 1.8 rules observed:
-//   - `if` instead of `visible` for layout removal.
-//   - @children never inside `if`.
-//   - ScrollView needs min-height on the inner VerticalLayout.
-//   - Led state: "live" | "connecting" | "error" | "off" only.
-//   - No inline hex — Theme tokens only.
+// Slint 1.16 rules: `if` not `visible`; no @children in `if`; ScrollView inner
+// VerticalLayout needs min-height; Led: "live"|"connecting"|"error"|"off";
+// no inline hex; radius never 0px.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, SegBar } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Exported structs (Rust must re-export from main.slint) ────────────────────
 
-/// One peer entry from cluster status peers[].
+/// One peer entry from cluster status peers[] — extended with gossip resource data.
 export struct MeshPeerRow {
-    id: string,          // peer node id (mono display, truncated)
-    last-seen: string,   // human-readable relative time e.g. "3 s ago"
-    reachable: bool,     // true → Led "live", false → Led "error"
+    id: string,             // peer node id (mono display, truncated)
+    last-seen: string,      // human-readable relative time e.g. "3 s ago"
+    reachable: bool,        // false → pink rail + Led "error"
+    cpu-pct: float,         // CPU usage 0..1 from gossip heartbeat
+    ram-pct: float,         // RAM usage 0..1 from gossip heartbeat
+    vram-pct: float,        // VRAM usage 0..1; 0.0 = no GPU or unreported
+    role: string,           // peer role label e.g. "worker" | "coord" | "relay"
+    version: string,        // daemon semver e.g. "1.2.0"
+    staleness-secs: int,    // seconds since last heartbeat; > 30 → amber rail
 }
 
-// DES-13 — one origin-peer's replicated-backup summary, aggregated from
-// `neoth cluster events --output json` (idx_foreign_events). This is the
-// failover redundancy that ALREADY exists: events this node holds on behalf
-// of a peer, recoverable if that peer's disk dies.
+/// DES-13 — per-origin-peer replicated-backup summary (idx_foreign_events).
 export struct MeshForeignRow {
     peer: string,     // origin peer pubkey (mono, truncated)
-    count: string,    // pre-formatted event count, e.g. "128"
-    bytes: string,    // pre-formatted total payload bytes, e.g. "4.2 KB"
-    latest: string,   // pre-formatted latest received time, e.g. "12:03"
+    count: string,    // pre-formatted event count e.g. "128"
+    bytes: string,    // pre-formatted total payload bytes e.g. "4.2 KB"
+    latest: string,   // pre-formatted latest received time e.g. "12:03"
 }
 
-// ── Internal micro-components ─────────────────────────────────────────────────
+// ── PeerCard — fleet peer: health rail + resource meters + quick actions ──────
 
-// PeerRow — one discovered peer: Led + id (mono, elide) + last-seen badge.
-component PeerRow inherits Rectangle {
+component PeerCard inherits Rectangle {
     in property <string> peer-id;
     in property <string> last-seen;
     in property <bool>   reachable;
+    in property <float>  cpu-pct;
+    in property <float>  ram-pct;
+    in property <float>  vram-pct;
+    in property <string> role;
+    in property <string> version;
+    in property <int>    staleness-secs;
+    in property <bool>   expanded;
 
-    height: 44px;
+    callback sync-clicked();
+    callback expand-clicked();
+
+    // Rail color: pink = unreachable, amber = stale (> 30 s), green = fresh
+    property <color> rail-color: !root.reachable ? Theme.consent
+                                : root.staleness-secs > 30 ? Theme.warning
+                                : Theme.memory;
+
+    // Led state: error | connecting (amber) | live
+    property <string> led-state: !root.reachable ? "error"
+                                : root.staleness-secs > 30 ? "connecting"
+                                : "live";
+
     border-radius: Theme.radius-md;
     background: Theme.surface-1;
     border-width: 1px;
     border-color: Theme.border-subtle;
 
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
-        alignment: start;
-        spacing: 10px;
+        spacing: 0px;
+        padding: 0px;
 
-        // reachability LED — centered vertically via y offset on the Rectangle
-        Led {
-            state: root.reachable ? "live" : "error";
-            dot-size: 6px;
-        }
-
-        // peer id — mono, elides if long
-        Text {
-            text: root.peer-id;
-            color: root.reachable ? Theme.audit : Theme.text-tertiary;
-            font-family: Theme.font-mono;
-            font-size: Theme.font-size-xs;
-            vertical-alignment: center;
-            overflow: elide;
-            horizontal-stretch: 1;
-        }
-
-        // last-seen badge
+        // Colored health rail (3 px left strip: green=fresh, amber=stale, pink=unreachable)
         Rectangle {
-            height: 22px;
-            width: 88px;
-            border-radius: Theme.radius-sm;
-            background: Theme.surface-2;
-            border-width: 1px;
-            border-color: Theme.border-subtle;
-            Text {
-                text: root.last-seen;
-                color: Theme.text-disabled;
-                font-family: Theme.font-mono;
-                font-size: 9px;
-                horizontal-alignment: center;
-                vertical-alignment: center;
+            width: 3px;
+            background: root.rail-color;
+            border-radius: 2px;
+            animate background { duration: Theme.duration-slow; easing: ease-out; }
+        }
+
+        VerticalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            padding-top: 10px;
+            padding-bottom: 10px;
+            spacing: 8px;
+            horizontal-stretch: 1;
+
+            // LED · peer-id · role chip · version · last-seen badge
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                height: 22px;
+
+                Led {
+                    state: root.led-state;
+                    dot-size: 6px;
+                }
+
+                Text {
+                    text: root.peer-id;
+                    color: root.reachable ? Theme.audit : Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+
+                // Role chip
+                Rectangle {
+                    height: 18px;
+                    width: 60px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.surface-2;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    accessible-role: text;
+                    accessible-label: "role: " + root.role;
+                    Text {
+                        text: root.role;
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: 9px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        overflow: elide;
+                    }
+                }
+
+                // Version (mono 2xs, right-aligned)
+                Text {
+                    text: root.version;
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: 9px;
+                    vertical-alignment: center;
+                    width: 40px;
+                    horizontal-alignment: right;
+                }
+
+                // Last-seen badge
+                Rectangle {
+                    height: 18px;
+                    width: 80px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.surface-2;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    Text {
+                        text: root.last-seen;
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: 9px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            // SegBar resource meters — CPU (cyan) · RAM (green) · VRAM (pink)
+            HorizontalLayout {
+                spacing: 14px;
+                height: 26px;
+                alignment: start;
+
+                // CPU meter
+                VerticalLayout {
+                    spacing: 3px;
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "CPU";
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: 9px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        height: 11px;
+                    }
+                    SegBar {
+                        segments: 10;
+                        fraction: root.cpu-pct;
+                        fill: Theme.audit;
+                    }
+                }
+
+                // RAM meter
+                VerticalLayout {
+                    spacing: 3px;
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "RAM";
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: 9px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        height: 11px;
+                    }
+                    SegBar {
+                        segments: 10;
+                        fraction: root.ram-pct;
+                        fill: Theme.memory;
+                    }
+                }
+
+                // VRAM meter
+                VerticalLayout {
+                    spacing: 3px;
+                    horizontal-stretch: 1;
+                    alignment: start;
+                    Text {
+                        text: "VRAM";
+                        color: Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: 9px;
+                        letter-spacing: Theme.letter-spacing-wide;
+                        height: 11px;
+                    }
+                    SegBar {
+                        segments: 10;
+                        fraction: root.vram-pct;
+                        fill: Theme.consent;
+                    }
+                }
+            }
+
+            // Quick actions — Request Sync · Details toggle
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: start;
+                height: 28px;
+
+                NeothButton {
+                    label: "Request Sync";
+                    size: "sm";
+                    primary: false;
+                    clicked => { root.sync-clicked(); }
+                }
+
+                // Details toggle (ghost secondary button)
+                Rectangle {
+                    height: 28px;
+                    width: 84px;
+                    border-radius: Theme.radius-button;
+                    background: transparent;
+                    border-width: 1px;
+                    border-color: det-ta.has-hover ? Theme.border-strong : Theme.border-subtle;
+                    accessible-role: button;
+                    accessible-label: root.expanded ? "Hide peer details" : "Show peer details";
+                    animate border-color { duration: Theme.duration-fast; easing: ease-out; }
+
+                    Text {
+                        text: root.expanded ? "Hide Details" : "Details ›";
+                        color: det-ta.has-hover ? Theme.text-secondary : Theme.text-disabled;
+                        font-family: Theme.font-mono;
+                        font-size: 10px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        animate color { duration: Theme.duration-fast; easing: ease-out; }
+                    }
+
+                    det-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.expand-clicked(); }
+                    }
+                }
+            }
+
+            // Inline detail block (rendered only when expanded)
+            if root.expanded: Rectangle {
+                border-radius: Theme.radius-sm;
+                background: Theme.bg-void;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                VerticalLayout {
+                    padding: 10px;
+                    spacing: 3px;
+                    alignment: start;
+
+                    Text {
+                        text: "ID    " + root.peer-id;
+                        color: Theme.audit;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "CPU " + round(root.cpu-pct * 100) + "%"
+                            + "   RAM " + round(root.ram-pct * 100) + "%"
+                            + "   VRAM " + round(root.vram-pct * 100) + "%";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                    }
+                    Text {
+                        text: "ROLE " + root.role
+                            + "   VER " + root.version
+                            + "   STALE " + root.staleness-secs + "s";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                    }
+                }
             }
         }
     }
@@ -98,37 +324,33 @@ component PeerRow inherits Rectangle {
 // ── MeshView ──────────────────────────────────────────────────────────────────
 
 export component MeshView inherits Rectangle {
-    // ── NODE card properties ──────────────────────────────────────────────────
-    /// This node's unique id (from cluster.yaml node_id or `neoth cluster status`).
+    // ── NODE ─────────────────────────────────────────────────────────────────
     in property <string> mesh-node-id: "";
-    /// TCP listen port for cluster gossip.
     in property <string> mesh-listen-port: "";
-    /// Whether mDNS peer discovery is enabled.
     in property <bool>   mesh-mdns-enabled: false;
-    /// Comma-separated trusted SSID list (empty = any).
     in property <string> mesh-trusted-ssids: "";
 
-    // ── PEERS card properties ─────────────────────────────────────────────────
-    /// Discovered peers from `neoth cluster status .peers[]`.
+    // ── PEERS ────────────────────────────────────────────────────────────────
     in property <[MeshPeerRow]> mesh-peers: [];
 
-    // ── REDUNDANCY card properties ────────────────────────────────────────────
-    /// Number of reachable peers (drives the redundancy note).
+    // ── REDUNDANCY ───────────────────────────────────────────────────────────
     in property <int>    mesh-peer-count: 0;
-    /// Free-form gossip convergence note from daemon (e.g. "vector clocks synced").
     in property <string> mesh-gossip-note: "";
-    /// DES-13 — backup-at-rest: per-peer replicated-event summary.
     in property <[MeshForeignRow]> mesh-foreign-rows: [];
-    /// Total replicated events this node holds as failover backup.
     in property <int>    mesh-foreign-total: 0;
-    /// Pre-formatted total backup payload size (e.g. "4.2 KB").
     in property <string> mesh-foreign-bytes: "";
-    /// Distinct origin peers this node is backing up.
     in property <int>    mesh-foreign-peers: 0;
 
-    // ── Shared ────────────────────────────────────────────────────────────────
+    // ── Gossip stream + expansion (Wave 5) ───────────────────────────────────
+    in property <[string]> gossip-events: [];  // newest-first log lines
+    in property <string>   expanded-peer: "";  // peer-id with detail open; "" = none
+
     in property <string> mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
+
+    // ── Per-peer quick action callbacks (Wave 5) ─────────────────────────────
+    callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
+    callback peer-expanded(string /*peer-id*/);       // toggle inline detail
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -156,7 +378,7 @@ export component MeshView inherits Rectangle {
                         letter-spacing: Theme.letter-spacing-tight;
                     }
                     Text {
-                        text: "node identity · peers · failover status";
+                        text: "node identity · fleet peers · failover status";
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;
@@ -164,10 +386,8 @@ export component MeshView inherits Rectangle {
                     }
                 }
 
-                // spacer
                 Rectangle { horizontal-stretch: 1; }
 
-                // Refresh button
                 NeothButton {
                     label: "Refresh";
                     size: "sm";
@@ -176,7 +396,7 @@ export component MeshView inherits Rectangle {
                 }
             }
 
-            // hairline separator
+            // Hairline separator
             Rectangle {
                 height: 1px;
                 background: Theme.border-subtle;
@@ -189,7 +409,7 @@ export component MeshView inherits Rectangle {
                     padding: 0px;
                     spacing: 14px;
                     alignment: start;
-                    min-height: 800px;
+                    min-height: 900px;
 
                     // ── NODE CARD ────────────────────────────────────────────
                     Card {
@@ -198,7 +418,6 @@ export component MeshView inherits Rectangle {
                             spacing: 10px;
                             alignment: start;
 
-                            // Kicker + mDNS LED
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
@@ -219,7 +438,7 @@ export component MeshView inherits Rectangle {
                                 }
                             }
 
-                            // Node id — full-width mono row, larger font
+                            // Node id full-width mono row
                             Rectangle {
                                 height: 44px;
                                 border-radius: Theme.radius-md;
@@ -274,14 +493,14 @@ export component MeshView inherits Rectangle {
                         }
                     }
 
-                    // ── PEERS CARD ───────────────────────────────────────────
+                    // ── PEERS CARD (fleet dashboard) ─────────────────────────
                     Card {
                         VerticalLayout {
                             padding: 16px;
                             spacing: 10px;
                             alignment: start;
 
-                            // Kicker + peer count badge
+                            // Kicker + count chip
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
@@ -306,37 +525,56 @@ export component MeshView inherits Rectangle {
                                 }
                             }
 
-                            // Peer rows
-                            for peer in root.mesh-peers: PeerRow {
+                            // Fleet peer cards
+                            for peer in root.mesh-peers: PeerCard {
                                 peer-id: peer.id;
                                 last-seen: peer.last-seen;
                                 reachable: peer.reachable;
+                                cpu-pct: peer.cpu-pct;
+                                ram-pct: peer.ram-pct;
+                                vram-pct: peer.vram-pct;
+                                role: peer.role;
+                                version: peer.version;
+                                staleness-secs: peer.staleness-secs;
+                                expanded: root.expanded-peer == peer.id;
+                                sync-clicked => { root.peer-sync-clicked(peer.id); }
+                                expand-clicked => { root.peer-expanded(peer.id); }
                             }
 
-                            // Empty state
+                            // Empty state — no peers discovered
                             if root.mesh-peers.length == 0: Rectangle {
-                                height: 60px;
                                 border-radius: Theme.radius-md;
                                 background: Theme.surface-1;
                                 border-width: 1px;
                                 border-color: Theme.border-subtle;
+
                                 VerticalLayout {
+                                    padding: 24px;
+                                    spacing: 8px;
                                     alignment: center;
-                                    spacing: 4px;
+
                                     Text {
-                                        text: "no peers discovered";
+                                        text: "CLUSTER OFF";
                                         color: Theme.text-tertiary;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-xs;
                                         horizontal-alignment: center;
+                                        letter-spacing: Theme.letter-spacing-wide;
                                     }
                                     Text {
-                                        text: "NEOTH runs standalone";
+                                        text: "No peers discovered. NEOTH runs standalone.";
                                         color: Theme.text-disabled;
                                         font-family: Theme.font-mono;
                                         font-size: 9px;
                                         horizontal-alignment: center;
-                                        letter-spacing: Theme.letter-spacing-wide;
+                                    }
+                                    Text {
+                                        text: "→ Enable mDNS in Settings › Cluster, or add peers manually via `neoth cluster add <addr>`.";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 9px;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
                                     }
                                 }
                             }
@@ -373,31 +611,91 @@ export component MeshView inherits Rectangle {
                         }
                     }
 
-                    // ── REDUNDANCY CARD — HONEST partial-replication warning ──
+                    // ── GOSSIP EVENT STREAM ──────────────────────────────────
                     Card {
                         VerticalLayout {
                             padding: 16px;
                             spacing: 10px;
                             alignment: start;
 
-                            // Kicker + amber warning LED
+                            // Kicker + event count chip
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "GOSSIP"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Rectangle {
+                                    height: 18px;
+                                    width: 36px;
+                                    border-radius: Theme.radius-pill;
+                                    background: Theme.warning-tint;
+                                    border-width: 1px;
+                                    border-color: Theme.warning;
+                                    Text {
+                                        text: "\{root.gossip-events.length}";
+                                        color: Theme.warning;
+                                        font-family: Theme.font-mono;
+                                        font-size: 9px;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            // Log card — mono bg-void, newest first
+                            Rectangle {
+                                border-radius: Theme.radius-md;
+                                background: Theme.bg-void;
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 3px;
+                                    alignment: start;
+
+                                    // Empty gossip state
+                                    if root.gossip-events.length == 0: Text {
+                                        text: "no gossip events yet";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        horizontal-alignment: center;
+                                        height: 32px;
+                                        vertical-alignment: center;
+                                    }
+
+                                    // Event lines (newest-first from Rust)
+                                    for evt in root.gossip-events: Text {
+                                        text: evt;
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── REDUNDANCY CARD ──────────────────────────────────────
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: start;
                                 height: 18px;
                                 Kicker { label: "REDUNDANCY"; }
                                 Rectangle { horizontal-stretch: 1; }
-                                Led {
-                                    // amber = warning; Led has no amber state — "connecting"
-                                    // is visually amber/yellow in the existing Led impl.
-                                    state: "connecting";
-                                    dot-size: 7px;
-                                }
+                                Led { state: "connecting"; dot-size: 7px; }
                             }
 
-                            // DES-13 — backup-at-rest LIVE panel (green). Shows the
-                            // redundancy that already exists: replicated peer events
-                            // this node persists (idx_foreign_events).
+                            // DES-13 backup-at-rest
                             Rectangle {
                                 border-radius: Theme.radius-md;
                                 background: Theme.accent-green.with-alpha(0.08);
@@ -437,7 +735,6 @@ export component MeshView inherits Rectangle {
                                         wrap: word-wrap;
                                     }
 
-                                    // Per-peer backup rows.
                                     for f in root.mesh-foreign-rows: HorizontalLayout {
                                         spacing: 10px;
                                         alignment: start;
@@ -478,9 +775,7 @@ export component MeshView inherits Rectangle {
                                 }
                             }
 
-                            // Warning banner — amber-tinted background. Honest about
-                            // what is STILL partial: automatic restore-into-recall +
-                            // full-history convergence.
+                            // Amber warning — honest about partial restore
                             Rectangle {
                                 border-radius: Theme.radius-md;
                                 background: Theme.warning-tint;
@@ -492,7 +787,6 @@ export component MeshView inherits Rectangle {
                                     spacing: 8px;
                                     alignment: start;
 
-                                    // Title line
                                     HorizontalLayout {
                                         spacing: 8px;
                                         alignment: start;
@@ -513,7 +807,6 @@ export component MeshView inherits Rectangle {
                                         }
                                     }
 
-                                    // Body — honest description
                                     Text {
                                         text: "Replicated events are stored (above), but automatic merge back into a recovered node's recall/memory is not yet complete. Treat the mesh as durable backup, not one-click restore.";
                                         color: Theme.text-secondary;
@@ -522,7 +815,6 @@ export component MeshView inherits Rectangle {
                                         wrap: word-wrap;
                                     }
 
-                                    // Hard warning line
                                     Text {
                                         text: "Do not rely on the mesh as your only backup.";
                                         color: Theme.warning;
@@ -532,7 +824,6 @@ export component MeshView inherits Rectangle {
                                         wrap: word-wrap;
                                     }
 
-                                    // Link note to Backup tab
                                     HorizontalLayout {
                                         spacing: 6px;
                                         alignment: start;
@@ -555,7 +846,7 @@ export component MeshView inherits Rectangle {
                                 }
                             }
 
-                            // Peer count context line
+                            // Reachable peer count
                             Rectangle {
                                 height: 36px;
                                 border-radius: Theme.radius-md;

@@ -21,7 +21,7 @@ use tracing::{info, warn};
 use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
 use crate::coding::types::{
-    Hemisphere, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus, TestSummary,
+    Hemisphere, KanbanComment, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus, TestSummary,
 };
 use crate::coding::worker::{Worker, WorkerOutcome};
 use crate::security::redact::sanitize_tool_output;
@@ -381,10 +381,25 @@ pub async fn dispatch_session_with_apply(
         // can't overshoot max_tasks; untaken tasks stay Backlog and the
         // next iteration's top-of-loop check then trips the cap.
         let remaining = budget.max_tasks.saturating_sub(outcome.tasks_attempted);
-        let batch: Vec<KanbanTask> = batch.into_iter().take(remaining).collect();
+        let mut batch: Vec<KanbanTask> = batch.into_iter().take(remaining).collect();
         if batch.is_empty() {
             outcome.budget_exhausted = true;
             break;
+        }
+
+        // Task comments → worker prompt. Notes ride the IN-MEMORY task
+        // description (rendered verbatim by build_task_prompt) so the
+        // conn-free Worker trait stays untouched; the stored row is never
+        // rewritten. A failed comment read degrades to a plain dispatch.
+        for task in &mut batch {
+            match store::list_comments_for_task(conn, task.task_id) {
+                Ok(comments) => append_task_notes(task, &comments),
+                Err(e) => warn!(
+                    task_id = task.task_id.raw(),
+                    error = %e,
+                    "list_comments_for_task failed; dispatching without notes"
+                ),
+            }
         }
 
         // Transition every batch task Backlog → InProgress + emit the
@@ -1045,6 +1060,51 @@ fn emit_patch_apply_failed_wal(
 /// (0 = picked up, 100 = review-ready). `message` is a free-form
 /// one-liner the kanban watch surface renders ("dispatching" /
 /// "review_ready" / "tests_running"). Bilingual messages welcome.
+/// Caps for the injected notes block so a comment-heavy task cannot
+/// blow a small-context worker's window. Newest comments win under the
+/// caps; the surviving set renders oldest-first.
+const NOTES_MAX_COMMENTS: usize = 20;
+const NOTES_MAX_BYTES: usize = 4096;
+
+/// Append the task's comment thread to the in-memory description as a
+/// "Task notes" block that `build_task_prompt` renders verbatim. The
+/// stored row is untouched — enrichment lives only for one dispatch.
+fn append_task_notes(task: &mut KanbanTask, comments: &[KanbanComment]) {
+    if comments.is_empty() {
+        return;
+    }
+    let mut picked: Vec<&KanbanComment> = Vec::new();
+    let mut used = 0usize;
+    for c in comments.iter().rev().take(NOTES_MAX_COMMENTS) {
+        let line_len = c.author.len() + c.body.len() + 8;
+        if used + line_len > NOTES_MAX_BYTES {
+            break;
+        }
+        used += line_len;
+        picked.push(c);
+    }
+    if picked.is_empty() {
+        return;
+    }
+    picked.reverse();
+    let mut block = String::with_capacity(used + 64);
+    block.push_str("Task notes (operator + workers, oldest first — follow these):");
+    for c in picked {
+        block.push_str("\n- [");
+        block.push_str(&c.author);
+        block.push_str("] ");
+        // Single-line body keeps the prompt's TASK block shape intact.
+        block.push_str(&c.body.replace('\n', " "));
+    }
+    match task.description.as_mut() {
+        Some(d) => {
+            d.push_str("\n\n");
+            d.push_str(&block);
+        }
+        None => task.description = Some(block),
+    }
+}
+
 fn emit_kanban_task_progress_wal(
     writer: Option<&crate::wal::writer::WalWriterHandle>,
     task: &KanbanTask,
@@ -1705,6 +1765,143 @@ mod tests {
             },
             summary: "ok".into(),
         }
+    }
+
+    fn notes_task(description: Option<&str>) -> KanbanTask {
+        KanbanTask {
+            task_id: KanbanTaskId(1),
+            session_id: KanbanSessionId(1),
+            status: TaskStatus::Backlog,
+            title: "t".into(),
+            description: description.map(str::to_string),
+            task_type: "ui".into(),
+            hemisphere: Hemisphere::Left,
+            worker: None,
+            parent_task_id: None,
+            created_ns: 0,
+            started_ns: None,
+            eta_ns: None,
+            completed_ns: None,
+            patch_path: None,
+            test_summary: None,
+        }
+    }
+
+    fn note(author: &str, body: &str) -> KanbanComment {
+        KanbanComment {
+            comment_id: 0,
+            task_id: KanbanTaskId(1),
+            author: author.into(),
+            body: body.into(),
+            created_ns: 0,
+        }
+    }
+
+    #[test]
+    fn append_task_notes_rides_description_with_author_tags() {
+        // The worker prompt renders description verbatim, so the notes
+        // block must land there, oldest-first, author-tagged, and with
+        // multi-line bodies flattened to one line.
+        let mut t = notes_task(Some("base description"));
+        append_task_notes(
+            &mut t,
+            &[note("operator", "use the\nexisting helper"), note("left", "ack")],
+        );
+        let d = t.description.unwrap();
+        assert!(d.starts_with("base description\n\n"));
+        assert!(d.contains("Task notes"));
+        assert!(d.contains("- [operator] use the existing helper"));
+        assert!(d.contains("- [left] ack"));
+        assert!(
+            d.find("[operator]").unwrap() < d.find("[left]").unwrap(),
+            "oldest comment must render first"
+        );
+    }
+
+    #[test]
+    fn append_task_notes_handles_missing_description_and_empty_thread() {
+        let mut none_desc = notes_task(None);
+        append_task_notes(&mut none_desc, &[note("operator", "note")]);
+        assert!(none_desc.description.unwrap().contains("- [operator] note"));
+
+        let mut untouched = notes_task(Some("keep"));
+        append_task_notes(&mut untouched, &[]);
+        assert_eq!(untouched.description.as_deref(), Some("keep"));
+    }
+
+    #[test]
+    fn append_task_notes_caps_keep_newest_comments() {
+        // Over-cap threads must keep the NEWEST comments (they carry the
+        // operator's latest steering) and stay under the byte ceiling.
+        let comments: Vec<KanbanComment> = (0..NOTES_MAX_COMMENTS + 5)
+            .map(|i| note("operator", &format!("note-{i}")))
+            .collect();
+        let mut t = notes_task(None);
+        append_task_notes(&mut t, &comments);
+        let d = t.description.unwrap();
+        assert!(!d.contains("note-0"), "oldest overflow comment must drop");
+        assert!(d.contains(&format!("note-{}", NOTES_MAX_COMMENTS + 4)));
+        assert!(d.len() <= NOTES_MAX_BYTES + 128);
+
+        // Byte cap: one giant comment younger than many small ones —
+        // the giant one fits first (newest), the rest drop.
+        let big = "x".repeat(NOTES_MAX_BYTES);
+        let mut thread: Vec<KanbanComment> = (0..5)
+            .map(|i| note("operator", &format!("small-{i}")))
+            .collect();
+        thread.push(note("operator", &big));
+        let mut t2 = notes_task(None);
+        append_task_notes(&mut t2, &thread);
+        assert!(t2.description.is_none() || !t2.description.as_ref().unwrap().contains("small-0"));
+    }
+
+    /// Captures the description the dispatcher hands the worker so the
+    /// comment-injection contract is pinned end-to-end (store → batch
+    /// enrichment → execute).
+    struct RecordingWorker {
+        seen: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+        outcome: WorkerOutcome,
+    }
+
+    #[async_trait]
+    impl Worker for RecordingWorker {
+        async fn execute(&self, task: &KanbanTask) -> Result<WorkerOutcome> {
+            *self.seen.lock().unwrap() = task.description.clone();
+            Ok(self.outcome.clone())
+        }
+        fn name(&self) -> &'static str {
+            "recording-worker"
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_injects_task_comments_into_worker_view() {
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id =
+            store::insert_task(&conn, session_id, 10, "t", Some("desc"), "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+        store::insert_comment(&conn, task_id, 11, "operator", "prefer the small fix").unwrap();
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(RecordingWorker {
+                seen: seen.clone(),
+                outcome: green_outcome(),
+            }),
+        );
+        dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
+
+        let got = seen.lock().unwrap().clone().expect("worker ran");
+        assert!(got.starts_with("desc"), "original description preserved");
+        assert!(
+            got.contains("- [operator] prefer the small fix"),
+            "comment must reach the worker prompt view: {got}"
+        );
     }
 
     #[tokio::test]

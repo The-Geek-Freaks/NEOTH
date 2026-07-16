@@ -523,6 +523,7 @@ mod win_private {
 /// complexity level.
 mod buddy_activity;
 mod gui_action;
+mod gui_stream;
 mod panel_logic;
 mod wizard_logic;
 
@@ -612,6 +613,35 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
         // Keep the timer alive — leak it into a thread-local so it survives
         // the enclosing closure. Slint timers must be alive to fire.
         std::mem::forget(expiry);
+    });
+}
+
+// Run the hardware/daemon probe on a worker thread and land the result
+// (summary + footer-Led state) on the event loop. Called at startup and
+// from the offline banner's Retry button.
+fn spawn_daemon_probe(weak: slint::Weak<MainWindow>) {
+    std::thread::spawn(move || {
+        let hw_summary = probe_hardware_via_subprocess();
+        // GOLD-ADAPT-GUI-04 — footer Led state derived from the probe
+        // outcome: every failure arm of the probe starts with
+        // "Hardware probe" (missing binary / bad exit / spawn error).
+        let led = if hw_summary.starts_with("Hardware probe") {
+            "error"
+        } else {
+            "live"
+        };
+        let hw_for_toast = hw_summary.clone();
+        // Wave-1 call site B: toast on daemon error so the operator gets a
+        // top-right signal even if they are looking at the chat surface.
+        if led == "error" {
+            push_toast(&weak, "warn", "Daemon unreachable", &hw_for_toast);
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_hardware_summary(hw_summary.into());
+                w.set_daemon_state(led.into());
+            }
+        });
     });
 }
 
@@ -906,6 +936,65 @@ fn main() -> Result<()> {
         }
     });
 
+    // Toast click-to-dismiss — prune the clicked id immediately instead of
+    // waiting out the 6 s drain (same prune path as the expiry timer).
+    let weak_toast_dismiss = window.as_weak();
+    window.on_toast_dismissed(move |id| {
+        use slint::Model;
+        let Some(w) = weak_toast_dismiss.upgrade() else {
+            return;
+        };
+        let remaining: Vec<(i32, String, String, String)> = w
+            .get_toasts()
+            .iter()
+            .map(|t| {
+                (
+                    t.id,
+                    t.kind.to_string(),
+                    t.title.to_string(),
+                    t.body.to_string(),
+                )
+            })
+            .collect();
+        let pruned = panel_logic::prune_toast(remaining, id);
+        let model: slint::VecModel<ToastData> = slint::VecModel::from(
+            pruned
+                .iter()
+                .map(|(i, k, ti, b)| ToastData {
+                    id: *i,
+                    kind: k.as_str().into(),
+                    title: ti.as_str().into(),
+                    body: b.as_str().into(),
+                })
+                .collect::<Vec<_>>(),
+        );
+        w.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model)));
+    });
+
+    // Command palette (Ctrl+K) — Rust owns filtering over the static
+    // catalog; Slint owns open/close/selection and routes activation
+    // through the sidebar nav path.
+    let weak_palette = window.as_weak();
+    window.on_palette_query_edited(move |q| {
+        let Some(w) = weak_palette.upgrade() else {
+            return;
+        };
+        let items: Vec<PaletteItem> = panel_logic::filter_palette(&q)
+            .into_iter()
+            .map(|(label, glyph, tab, hint)| PaletteItem {
+                label: label.into(),
+                glyph: glyph.into(),
+                tab: tab.into(),
+                hint: hint.into(),
+            })
+            .collect();
+        w.set_palette_results(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+            items,
+        ))));
+    });
+    // Seed the full catalog so the palette is populated on first open.
+    window.invoke_palette_query_edited("".into());
+
     // ODY-11 — density restore: read ~/.neoth/.gui-density and apply before
     // the first paint, mirroring the .gui-theme block above.
     {
@@ -1045,33 +1134,38 @@ fn main() -> Result<()> {
     // H-3 fix — hardware probe runs in a worker thread so a hanging
     // `neothd hardware` subprocess can never block the window from
     // appearing. The placeholder string shows until the real probe
-    // result lands via `invoke_from_event_loop`.
+    // result lands via `invoke_from_event_loop`. Shared with the
+    // offline-banner Retry button via spawn_daemon_probe.
     window.set_hardware_summary("Probing hardware…".into());
     window.set_daemon_state("connecting".into());
-    let weak_hw = window.as_weak();
-    std::thread::spawn(move || {
-        let hw_summary = probe_hardware_via_subprocess();
-        // GOLD-ADAPT-GUI-04 — footer Led state derived from the probe
-        // outcome: every failure arm of the probe starts with
-        // "Hardware probe" (missing binary / bad exit / spawn error).
-        let led = if hw_summary.starts_with("Hardware probe") {
-            "error"
-        } else {
-            "live"
-        };
-        let weak = weak_hw.clone();
-        let hw_for_toast = hw_summary.clone();
-        // Wave-1 call site B: toast on daemon error so the operator gets a
-        // top-right signal even if they are looking at the chat surface.
-        if led == "error" {
-            push_toast(&weak, "warn", "Daemon unreachable", &hw_for_toast);
+    spawn_daemon_probe(window.as_weak());
+
+    // Sidebar version line — bind the real build version so the shell
+    // never lies about what is running.
+    window.set_app_version_line(concat!("v", env!("CARGO_PKG_VERSION"), " · sovereign").into());
+
+    // E4 — What's-new: the repo CHANGELOG rides the binary at build time;
+    // show the newest ~6k chars (releases are newest-first at the top).
+    {
+        const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
+        let head: String = CHANGELOG.chars().take(6000).collect();
+        window.set_about_changelog(head.into());
+    }
+
+    // Daemon→GUI activity bus — the Buddy reacts live to WAL events
+    // (dreaming, council, self-improve, cron, loops, channel ingress).
+    // Fail-silent: without a daemon binary the follower just retries.
+    gui_stream::spawn_wal_follower(window.as_weak());
+
+    // Daemon-offline banner retry — reset to "connecting" (hides the
+    // banner) and re-run the same probe the startup path uses.
+    let weak_daemon_retry = window.as_weak();
+    window.on_daemon_retry_clicked(move || {
+        if let Some(w) = weak_daemon_retry.upgrade() {
+            w.set_hardware_summary("Probing hardware…".into());
+            w.set_daemon_state("connecting".into());
         }
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_hardware_summary(hw_summary.into());
-                w.set_daemon_state(led.into());
-            }
-        });
+        spawn_daemon_probe(weak_daemon_retry.clone());
     });
 
     // GOLD-ADAPT-OH-01 — prior-AI detection for the welcome migrate
@@ -1406,6 +1500,13 @@ fn main() -> Result<()> {
                 "proactive.idle_only",
                 false,
             ));
+            // DES-09 G37 — quiet hours preload: a [start, end] sequence
+            // enables the editor; absent/null leaves it disabled.
+            if let Some((qs, qe)) = read_quiet_hours_in_freedom(fp) {
+                window.set_cfg_quiet_hours_enabled(true);
+                window.set_cfg_quiet_hours_start(qs.to_string().into());
+                window.set_cfg_quiet_hours_end(qe.to_string().into());
+            }
             // Welle C — memory
             window.set_cfg_memory_name_sessions(read_nested_bool_in_freedom(
                 fp,
@@ -1664,6 +1765,97 @@ fn main() -> Result<()> {
     let chat_budget_for_send = chat_auto_nudge_budget.clone();
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
     let chat_attach_for_send = chat_attachments.clone();
+
+    // Wave 8 — always-visible Stop: kill the in-flight chat subprocess
+    // immediately (same kill path as the stall watchdog's Stop). The
+    // completion closure finalizes the partial text as usual.
+    {
+        let child_slot = chat_child.clone();
+        let weak_stop_now = window.as_weak();
+        window.on_chat_stop_stream(move || {
+            if let Ok(mut slot) = child_slot.lock()
+                && let Some(child) = slot.as_mut()
+            {
+                let _ = child.kill();
+            }
+            if let Some(w) = weak_stop_now.upgrade() {
+                w.set_status_line("stream stopped by operator".into());
+            }
+        });
+    }
+
+    // Wave 8 — code-block copy: the panel's Copy chip lifts just the
+    // extracted fenced code, not the whole bubble.
+    {
+        use slint::Model;
+        let weak_cc = window.as_weak();
+        window.on_chat_code_copy(move |idx| {
+            let Some(w) = weak_cc.upgrade() else { return };
+            let Some(msg) = w.get_chat_messages().row_data(idx as usize) else {
+                return;
+            };
+            if msg.code_block.is_empty() {
+                return;
+            }
+            if let Err(e) =
+                arboard::Clipboard::new().and_then(|mut c| c.set_text(msg.code_block.to_string()))
+            {
+                tracing::warn!(error = %e, "code block clipboard copy failed");
+            }
+        });
+    }
+
+    // Wave 5 — message hover actions: Copy / Retry / Delete on bubbles.
+    {
+        use slint::Model;
+        let weak_copy = window.as_weak();
+        window.on_chat_message_copy(move |idx| {
+            let Some(w) = weak_copy.upgrade() else { return };
+            let Some(msg) = w.get_chat_messages().row_data(idx as usize) else {
+                return;
+            };
+            match arboard::Clipboard::new().and_then(|mut c| c.set_text(msg.text.to_string())) {
+                Ok(()) => {}
+                Err(e) => tracing::warn!(error = %e, "clipboard copy failed"),
+            }
+        });
+
+        // Retry: resend the nearest operator message at-or-before the
+        // clicked bubble through the normal send path.
+        let weak_retry = window.as_weak();
+        window.on_chat_message_retry(move |idx| {
+            let Some(w) = weak_retry.upgrade() else { return };
+            let msgs = w.get_chat_messages();
+            let mut i = idx as usize;
+            loop {
+                let Some(m) = msgs.row_data(i) else { break };
+                if m.role == "operator" {
+                    let text = m.text.clone();
+                    w.invoke_chat_send_clicked(text);
+                    break;
+                }
+                if i == 0 {
+                    break;
+                }
+                i -= 1;
+            }
+        });
+
+        // Delete: drop the bubble from the visible model (view-level only —
+        // the WAL keeps the audit truth; this is declutter, not history edit).
+        let weak_delete = window.as_weak();
+        window.on_chat_message_delete(move |idx| {
+            let Some(w) = weak_delete.upgrade() else { return };
+            let msgs = w.get_chat_messages();
+            let kept: Vec<ChatMessage> = (0..msgs.row_count())
+                .filter(|i| *i != idx as usize)
+                .filter_map(|i| msgs.row_data(i))
+                .collect();
+            w.set_chat_messages(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+                kept,
+            ))));
+        });
+    }
 
     // GOLD-ADAPT-ODY-12/14 — deep-link chip routing. `nav` chips ARE the
     // UI-control events (panel navigation); `kanban` chips navigate to the
@@ -1945,6 +2137,10 @@ fn main() -> Result<()> {
                                 .map(|(i, seg)| {
                                     let m = if i == last { metrics.clone() } else { None };
                                     let (chip, detail) = m.unwrap_or_default();
+                                    // H19-lite — fenced code lands in the
+                                    // bubble's code panel with a Copy chip.
+                                    let (code, lang) =
+                                        panel_logic::extract_code_blocks(&seg);
                                     ChatMessage {
                                         role: "assistant".into(),
                                         text: seg.into(),
@@ -1957,6 +2153,8 @@ fn main() -> Result<()> {
                                         } else {
                                             "".into()
                                         },
+                                        code_block: code.into(),
+                                        code_lang: lang.into(),
                                     }
                                 })
                                 .collect()
@@ -3039,9 +3237,32 @@ fn main() -> Result<()> {
         buddy(&w0, GuiActivity::AgentDeploy);
         let weak = weak_agents.clone();
         std::thread::spawn(move || {
-            let output = run_neothd_probe(&["agents", "list"]);
+            // Wave 5 — JSON first for the structured card grid; the raw text
+            // dump stays as the fallback body when parsing yields nothing.
+            let json_out = run_neothd_probe(&["agents", "list", "--output", "json"]);
+            let cards = panel_logic::parse_agents_list(&json_out);
+            let output = if cards.is_empty() {
+                run_neothd_probe(&["agents", "list"])
+            } else {
+                String::new()
+            };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
+                    let rows: Vec<AgentRow> = cards
+                        .into_iter()
+                        .map(|c| AgentRow {
+                            name: c.name.into(),
+                            hemisphere: c.hemisphere.into(),
+                            provider: c.provider.into(),
+                            model: c.model.into(),
+                            state: c.state.into(),
+                            current_task: c.current_task.into(),
+                            tasks_done: c.tasks_done,
+                        })
+                        .collect();
+                    w.set_agents_model(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(rows),
+                    )));
                     w.set_agents_output(output.into());
                     w.set_agents_running(false);
                 }
@@ -3233,7 +3454,8 @@ fn main() -> Result<()> {
         w0.set_ov_refreshed_at("loading…".into());
         let weak = weak_ov.clone();
         std::thread::spawn(move || {
-            refresh_overview(weak);
+            refresh_overview(weak.clone());
+            refresh_overview_cost(weak);
         });
     });
 
@@ -3242,7 +3464,8 @@ fn main() -> Result<()> {
     {
         let weak_ov_init = window.as_weak();
         std::thread::spawn(move || {
-            refresh_overview(weak_ov_init);
+            refresh_overview(weak_ov_init.clone());
+            refresh_overview_cost(weak_ov_init);
         });
     }
 
@@ -4293,6 +4516,530 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── Wave 8 — C2 permissions matrix + A4 kanban context menu ───────────────
+    {
+        fn perm_refresh(weak: slint::Weak<MainWindow>) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["permissions", "show", "--output", "json"]);
+                let (rows, level) = panel_logic::parse_permissions_show(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    let model: Vec<PermRow> = rows
+                        .into_iter()
+                        .map(|r| PermRow {
+                            action: r.action.into(),
+                            decision: r.decision.into(),
+                            overridden: r.overridden,
+                        })
+                        .collect();
+                    w.set_cfg_perm_rows(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(model),
+                    )));
+                    w.set_cfg_perm_level(level.as_str().into());
+                });
+            });
+        }
+        perm_refresh(window.as_weak());
+
+        let weak_ps = window.as_weak();
+        window.on_cfg_perm_set(move |action, decision| {
+            let weak = weak_ps.clone();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "permissions",
+                    "set",
+                    action.as_str(),
+                    decision.as_str(),
+                ]);
+                let summary: String = out.trim().chars().take(120).collect();
+                push_toast(&weak, "success", "Permission set", &summary);
+                perm_refresh(weak.clone());
+            });
+        });
+
+        let weak_pc = window.as_weak();
+        window.on_cfg_perm_clear(move |action| {
+            let weak = weak_pc.clone();
+            std::thread::spawn(move || {
+                let _ = run_neothd_probe(&["permissions", "clear", action.as_str()]);
+                push_toast(&weak, "info", "Permission override cleared", action.as_str());
+                perm_refresh(weak.clone());
+            });
+        });
+
+        // A4 — context-menu actions. Task ids arrive pre-formatted ("#42").
+        let weak_mv = window.as_weak();
+        window.on_kanban_move_task(move |task_id, status| {
+            let id = task_id.trim_start_matches('#').to_string();
+            let weak = weak_mv.clone();
+            std::thread::spawn(move || {
+                let out =
+                    run_neothd_probe(&["kanban", "move", id.as_str(), status.as_str()]);
+                let summary: String = out.trim().chars().take(120).collect();
+                let ok_body = if summary.is_empty() {
+                    format!("task {id} → {status}")
+                } else {
+                    summary
+                };
+                push_toast(&weak, "success", "Kanban", &ok_body);
+                let _ = slint::invoke_from_event_loop({
+                    let weak2 = weak.clone();
+                    move || {
+                        if let Some(w) = weak2.upgrade() {
+                            w.invoke_kanban_refresh_clicked();
+                        }
+                    }
+                });
+            });
+        });
+
+        window.on_kanban_copy_task_id(move |task_id| {
+            if let Err(e) = arboard::Clipboard::new()
+                .and_then(|mut c| c.set_text(task_id.trim_start_matches('#').to_string()))
+            {
+                tracing::warn!(error = %e, "task id clipboard copy failed");
+            }
+        });
+    }
+
+    // ── H2 — Memory graph callbacks ───────────────────────────────────────────
+    {
+        let mg_nodes: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+        fn memgraph_refresh(
+            weak: slint::Weak<MainWindow>,
+            store: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>>,
+        ) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&["memory", "--graph", "--output", "json"]);
+                let (nodes, edges, comms) = panel_logic::layout_memory_graph(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    let stats = format!(
+                        "{} memories · {} links · {} communities",
+                        nodes.len(),
+                        edges.len(),
+                        comms
+                    );
+                    let node_model: Vec<GraphNode> = nodes
+                        .iter()
+                        .map(|nd| GraphNode {
+                            id: nd.id as i32,
+                            label: nd.label.as_str().into(),
+                            tier: nd.tier.as_str().into(),
+                            degree: nd.degree,
+                            community: nd.community,
+                            x: nd.x,
+                            y: nd.y,
+                            r: nd.r,
+                        })
+                        .collect();
+                    let edge_model: Vec<GraphEdge> = edges
+                        .iter()
+                        .map(|e| GraphEdge {
+                            x1: e.x1,
+                            y1: e.y1,
+                            x2: e.x2,
+                            y2: e.y2,
+                            w: e.w,
+                        })
+                        .collect();
+                    *store.lock().unwrap() = nodes;
+                    w.set_memgraph_nodes(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(node_model),
+                    )));
+                    w.set_memgraph_edges(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(edge_model),
+                    )));
+                    w.set_memgraph_stats(stats.as_str().into());
+                    w.set_memgraph_running(false);
+                });
+            });
+        }
+
+        memgraph_refresh(window.as_weak(), mg_nodes.clone());
+
+        let (weak_mg, store_mg) = (window.as_weak(), mg_nodes.clone());
+        window.on_memgraph_refresh_clicked(move || {
+            if let Some(w) = weak_mg.upgrade() {
+                w.set_memgraph_running(true);
+            }
+            memgraph_refresh(weak_mg.clone(), store_mg.clone());
+        });
+
+        let (weak_sel, store_sel) = (window.as_weak(), mg_nodes.clone());
+        window.on_memgraph_node_selected(move |id| {
+            if let Some(w) = weak_sel.upgrade() {
+                let detail = store_sel
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|nd| nd.id as i32 == id)
+                    .map(|nd| {
+                        format!(
+                            "{}\n\ntier {} · {} links · community {}\nevent id {}",
+                            nd.label, nd.tier, nd.degree, nd.community, nd.id
+                        )
+                    })
+                    .unwrap_or_default();
+                w.set_memgraph_detail(detail.as_str().into());
+            }
+        });
+    }
+
+    // ── Wave 5 — WAL Inspector callbacks ──────────────────────────────────────
+    {
+        use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+
+        // Cache of the last probe (unfiltered) + current view filters.
+        let wal_cache: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::WalRowData>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let wal_text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let wal_band = std::sync::Arc::new(AtomicI32::new(0));
+        let wal_limit = std::sync::Arc::new(AtomicI32::new(200));
+        let wal_follow = std::sync::Arc::new(AtomicBool::new(false));
+
+        // Seed the band combo options.
+        let band_opts: Vec<slint::SharedString> = panel_logic::WAL_BAND_OPTIONS
+            .iter()
+            .map(|(label, _)| (*label).into())
+            .collect();
+        window.set_wal_opcode_options(slint::ModelRc::new(std::rc::Rc::new(
+            slint::VecModel::from(band_opts),
+        )));
+
+        // Timeline scrubber state: bucket time ranges + selected bucket.
+        let wal_ranges: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let wal_bucket_sel = std::sync::Arc::new(AtomicI32::new(-1));
+
+        // Apply cache → filtered rows → Slint model. `range` narrows to a
+        // timeline bucket's time slice when one is selected.
+        fn wal_apply(
+            w: &MainWindow,
+            cache: &[panel_logic::WalRowData],
+            text: &str,
+            band: usize,
+            range: Option<(u64, u64)>,
+        ) {
+            let mut filtered = panel_logic::filter_wal_rows(cache, text, band);
+            if let Some((lo, hi)) = range {
+                filtered.retain(|r| r.ts_ns >= lo && r.ts_ns < hi);
+            }
+            let rows: Vec<WalEventRow> = filtered
+                .iter()
+                .map(|r| WalEventRow {
+                    seq: r.seq,
+                    ts: r.ts.as_str().into(),
+                    opcode: r.opcode.as_str().into(),
+                    kind: r.kind.as_str().into(),
+                    summary: r.summary.as_str().into(),
+                    tint: r.tint.as_str().into(),
+                })
+                .collect();
+            w.set_wal_events(slint::ModelRc::new(std::rc::Rc::new(slint::VecModel::from(
+                rows,
+            ))));
+        }
+
+        // One probe pass — runs on a worker thread, lands on the loop.
+        // Rebuilds the timeline buckets and resets the bucket selection.
+        #[allow(clippy::too_many_arguments)]
+        fn wal_refresh(
+            weak: slint::Weak<MainWindow>,
+            cache: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::WalRowData>>>,
+            text: std::sync::Arc<std::sync::Mutex<String>>,
+            band: std::sync::Arc<AtomicI32>,
+            ranges: std::sync::Arc<std::sync::Mutex<Vec<(u64, u64)>>>,
+            bucket_sel: std::sync::Arc<AtomicI32>,
+            limit: i32,
+        ) {
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "wal",
+                    "show",
+                    "--limit",
+                    &limit.to_string(),
+                    "--output",
+                    "json",
+                ]);
+                let (rows, matched) = panel_logic::parse_wal_show(&out);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    w.set_wal_total_count(matched);
+                    w.set_wal_has_older(matched > rows.len() as i32);
+                    // Timeline: 48 equal slices over the fetched window.
+                    let (buckets, brs) = panel_logic::bucket_wal_rows(&rows, 48);
+                    let maxn = buckets
+                        .iter()
+                        .map(|b| b.memory_n + b.audit_n + b.consent_n + b.warning_n + b.plain_n)
+                        .max()
+                        .unwrap_or(0);
+                    *ranges.lock().unwrap() = brs;
+                    bucket_sel.store(-1, Ordering::Relaxed);
+                    w.set_wal_selected_bucket(-1);
+                    w.set_wal_timeline_max(maxn);
+                    let bmodel: Vec<WalBucket> = buckets
+                        .iter()
+                        .map(|b| WalBucket {
+                            label: b.label.as_str().into(),
+                            memory_n: b.memory_n,
+                            audit_n: b.audit_n,
+                            consent_n: b.consent_n,
+                            warning_n: b.warning_n,
+                            plain_n: b.plain_n,
+                        })
+                        .collect();
+                    w.set_wal_buckets(slint::ModelRc::new(std::rc::Rc::new(
+                        slint::VecModel::from(bmodel),
+                    )));
+                    let t = text.lock().unwrap().clone();
+                    let b = band.load(Ordering::Relaxed) as usize;
+                    *cache.lock().unwrap() = rows;
+                    wal_apply(&w, &cache.lock().unwrap(), &t, b, None);
+                });
+            });
+        }
+
+        // Initial load + refresh triggers.
+        wal_refresh(
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+            200,
+        );
+
+        // Bucket click — narrow the row list to that time slice (click the
+        // same bucket again to clear via Slint's <=> binding going -1).
+        let (weak_tl, cache_tl, text_tl, band_tl, ranges_tl, sel_tl) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+        );
+        window.on_wal_bucket_selected(move |idx| {
+            sel_tl.store(idx, Ordering::Relaxed);
+            if let Some(w) = weak_tl.upgrade() {
+                let range = if idx >= 0 {
+                    ranges_tl.lock().unwrap().get(idx as usize).copied()
+                } else {
+                    None
+                };
+                wal_apply(
+                    &w,
+                    &cache_tl.lock().unwrap(),
+                    &text_tl.lock().unwrap(),
+                    band_tl.load(Ordering::Relaxed) as usize,
+                    range,
+                );
+            }
+        });
+
+        // Shared helper: the currently selected bucket's time range.
+        fn wal_current_range(
+            ranges: &std::sync::Mutex<Vec<(u64, u64)>>,
+            sel: &AtomicI32,
+        ) -> Option<(u64, u64)> {
+            let idx = sel.load(Ordering::Relaxed);
+            if idx < 0 {
+                return None;
+            }
+            ranges.lock().unwrap().get(idx as usize).copied()
+        }
+
+        let (weak_f, cache_f, band_f, ranges_f, sel_f) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+        );
+        let text_f = wal_text.clone();
+        window.on_wal_filter_edited(move |s| {
+            *text_f.lock().unwrap() = s.to_string();
+            if let Some(w) = weak_f.upgrade() {
+                wal_apply(
+                    &w,
+                    &cache_f.lock().unwrap(),
+                    &s,
+                    band_f.load(Ordering::Relaxed) as usize,
+                    wal_current_range(&ranges_f, &sel_f),
+                );
+            }
+        });
+
+        let (weak_b, cache_b, text_b, band_b, ranges_b, sel_b) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+        );
+        window.on_wal_opcode_filter_changed(move |idx| {
+            band_b.store(idx, Ordering::Relaxed);
+            if let Some(w) = weak_b.upgrade() {
+                wal_apply(
+                    &w,
+                    &cache_b.lock().unwrap(),
+                    &text_b.lock().unwrap(),
+                    idx as usize,
+                    wal_current_range(&ranges_b, &sel_b),
+                );
+            }
+        });
+
+        let (weak_o, cache_o, text_o, band_o, ranges_o, sel_o, limit_o) = (
+            window.as_weak(),
+            wal_cache.clone(),
+            wal_text.clone(),
+            wal_band.clone(),
+            wal_ranges.clone(),
+            wal_bucket_sel.clone(),
+            wal_limit.clone(),
+        );
+        window.on_wal_load_older_clicked(move || {
+            let new_limit = (limit_o.load(Ordering::Relaxed) * 2).min(2000);
+            limit_o.store(new_limit, Ordering::Relaxed);
+            wal_refresh(
+                weak_o.clone(),
+                cache_o.clone(),
+                text_o.clone(),
+                band_o.clone(),
+                ranges_o.clone(),
+                sel_o.clone(),
+                new_limit,
+            );
+        });
+
+        // Follow mode — background poll every 3 s while enabled.
+        {
+            let follow = wal_follow.clone();
+            window.on_wal_follow_toggled(move |on| {
+                follow.store(on, Ordering::Relaxed);
+            });
+            let (weak_p, cache_p, text_p, band_p, ranges_p, sel_p, limit_p, follow_p) = (
+                window.as_weak(),
+                wal_cache.clone(),
+                wal_text.clone(),
+                wal_band.clone(),
+                wal_ranges.clone(),
+                wal_bucket_sel.clone(),
+                wal_limit.clone(),
+                wal_follow.clone(),
+            );
+            std::thread::spawn(move || {
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    if follow_p.load(Ordering::Relaxed) {
+                        wal_refresh(
+                            weak_p.clone(),
+                            cache_p.clone(),
+                            text_p.clone(),
+                            band_p.clone(),
+                            ranges_p.clone(),
+                            sel_p.clone(),
+                            limit_p.load(Ordering::Relaxed),
+                        );
+                    }
+                }
+            });
+        }
+
+        // Row select → detail pane shows that frame's pretty JSON.
+        let (weak_s, cache_s) = (window.as_weak(), wal_cache.clone());
+        window.on_wal_row_selected(move |seq| {
+            if let Some(w) = weak_s.upgrade() {
+                let detail = cache_s
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r.seq == seq)
+                    .map(|r| r.detail_json.clone())
+                    .unwrap_or_default();
+                w.set_wal_detail_json(detail.as_str().into());
+            }
+        });
+
+        // Copy detail JSON to the clipboard.
+        let weak_c = window.as_weak();
+        window.on_wal_copy_detail_clicked(move || {
+            if let Some(w) = weak_c.upgrade() {
+                let text = w.get_wal_detail_json().to_string();
+                if !text.is_empty()
+                    && let Err(e) =
+                        arboard::Clipboard::new().and_then(|mut c| c.set_text(text))
+                {
+                    tracing::warn!(error = %e, "WAL detail clipboard copy failed");
+                }
+            }
+        });
+
+        // Verify — header/frame validity stats over the newest segment.
+        let weak_v = window.as_weak();
+        window.on_wal_verify_clicked(move || {
+            let Some(w0) = weak_v.upgrade() else { return };
+            w0.set_wal_verify_running(true);
+            let weak = weak_v.clone();
+            std::thread::spawn(move || {
+                let newest = std::fs::read_dir(default_neoth_home().join("wal"))
+                    .ok()
+                    .and_then(|rd| {
+                        let mut segs: Vec<PathBuf> = rd
+                            .flatten()
+                            .map(|e| e.path())
+                            .filter(|p| {
+                                p.extension().and_then(|s| s.to_str()) == Some("wal")
+                            })
+                            .collect();
+                        segs.sort();
+                        segs.pop()
+                    });
+                let verdict = match newest {
+                    None => "no WAL segments found".to_string(),
+                    Some(seg) => {
+                        let out = run_neothd_probe(&[
+                            "wal",
+                            "stats",
+                            &seg.display().to_string(),
+                            "--output",
+                            "json",
+                        ]);
+                        match serde_json::from_str::<serde_json::Value>(&out) {
+                            Ok(v) => {
+                                let ok = v
+                                    .get("header_ok")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or(false);
+                                if ok {
+                                    "ok".to_string()
+                                } else {
+                                    "FAIL: segment header invalid".to_string()
+                                }
+                            }
+                            Err(_) => format!(
+                                "FAIL: {}",
+                                out.trim().chars().take(80).collect::<String>()
+                            ),
+                        }
+                    }
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_wal_verify_result(verdict.as_str().into());
+                        w.set_wal_verify_running(false);
+                    }
+                });
+            });
+        });
+    }
+
     // ── Wave 4b — Mesh & Cluster panel callbacks ──────────────────────────────
     {
         let weak_mesh = window.as_weak();
@@ -4307,6 +5054,31 @@ fn main() -> Result<()> {
         let weak_mesh_init = window.as_weak();
         std::thread::spawn(move || {
             refresh_mesh(weak_mesh_init);
+        });
+
+        // Wave 5 — per-peer sync-state query: vector-clock delta for one
+        // authenticated peer, surfaced as a toast (read-only probe).
+        let weak_mesh_sync = window.as_weak();
+        window.on_mesh_peer_sync_clicked(move |peer_id| {
+            let weak = weak_mesh_sync.clone();
+            let peer = peer_id.to_string();
+            std::thread::spawn(move || {
+                let out = run_neothd_probe(&[
+                    "cluster",
+                    "sync-state",
+                    "--peer",
+                    peer.as_str(),
+                    "--output",
+                    "json",
+                ]);
+                let summary: String = out.trim().chars().take(160).collect();
+                let body = if summary.is_empty() {
+                    "no sync state reported".to_string()
+                } else {
+                    summary
+                };
+                push_toast(&weak, "info", "Peer sync state", &body);
+            });
         });
     }
 
@@ -6372,6 +7144,52 @@ fn main() -> Result<()> {
             "Proactive idle-only"
         );
 
+        // DES-09 G37 — proactive.quiet_hours_utc: [start, end] hours (UTC)
+        // or null when the operator disables the window. Wrap-around is a
+        // daemon-side feature ([22, 7] silences 22:00–06:59) so any 0–23
+        // pair is valid here.
+        {
+            let nd = neoth_dir.clone();
+            let weak = window.as_weak();
+            window.on_cfg_quiet_hours_changed(move |enabled, start, end| {
+                let value = if !enabled {
+                    serde_yaml::Value::Null
+                } else {
+                    match (start.trim().parse::<u8>(), end.trim().parse::<u8>()) {
+                        (Ok(s), Ok(e)) if s <= 23 && e <= 23 => {
+                            serde_yaml::Value::Sequence(vec![
+                                serde_yaml::Value::from(u64::from(s)),
+                                serde_yaml::Value::from(u64::from(e)),
+                            ])
+                        }
+                        _ => {
+                            push_toast(&weak, "warn", "Quiet hours", "hours must be 0–23");
+                            return;
+                        }
+                    }
+                };
+                let nd2 = nd.clone();
+                let weak2 = weak.clone();
+                let state = if enabled { "enabled" } else { "disabled" };
+                std::thread::spawn(move || {
+                    let fp = nd2.join("freedom.yaml");
+                    let rd = nd2.join(".reload-requested");
+                    let result =
+                        set_nested_in_freedom(&fp, "proactive.quiet_hours_utc", value).and_then(
+                            |_| std::fs::write(&rd, b"reload\n").map_err(|e| anyhow::anyhow!(e)),
+                        );
+                    slint::invoke_from_event_loop(move || match result {
+                        Ok(_) => push_toast(&weak2, "success", "Quiet hours", state),
+                        Err(ref e) => {
+                            let msg = e.to_string();
+                            push_toast(&weak2, "warn", "Quiet hours write failed", &msg);
+                        }
+                    })
+                    .ok();
+                });
+            });
+        }
+
         // Welle C — Memory
         wire_nested_bool!(
             on_cfg_memory_name_sessions_changed,
@@ -6978,20 +7796,32 @@ fn main() -> Result<()> {
             };
             win.hide().unwrap_or(());
             ov.show().unwrap_or(());
-            // Set always-on-top and position bottom-right after show() so the
-            // winit event loop is active and the accessor can succeed.
+            // Set always-on-top and position after show() so the winit event
+            // loop is active and the accessor can succeed. A position saved
+            // from a previous drag wins over the bottom-right default; it is
+            // clamped into the current monitor so a monitor change can never
+            // strand the overlay off-screen.
+            let saved = std::fs::read_to_string(default_neoth_home().join(".overlay-pos"))
+                .ok()
+                .and_then(|s| panel_logic::parse_overlay_pos(&s));
             ov.window().with_winit_window(|w| {
                 w.set_window_level(WindowLevel::AlwaysOnTop);
-                // Position: primary-monitor bottom-right, 20px inset.
                 if let Some(mon) = w.current_monitor() {
                     let s = mon.size();
                     // 400 × 560 is the overlay's approximate pixel footprint at
                     // default 96 DPI; at higher scale factors it may clip —
                     // the operator can drag it from there.
-                    w.set_outer_position(PhysicalPosition::new(
-                        (s.width as i32).saturating_sub(400),
-                        (s.height as i32).saturating_sub(560),
-                    ));
+                    let (x, y) = match saved {
+                        Some((sx, sy)) => (
+                            sx.clamp(0, (s.width as i32).saturating_sub(120)),
+                            sy.clamp(0, (s.height as i32).saturating_sub(120)),
+                        ),
+                        None => (
+                            (s.width as i32).saturating_sub(400),
+                            (s.height as i32).saturating_sub(560),
+                        ),
+                    };
+                    w.set_outer_position(PhysicalPosition::new(x, y));
                 }
             });
             // Seed the overlay with the current buddy state so it is not blank.
@@ -7014,6 +7844,84 @@ fn main() -> Result<()> {
             }
         });
 
+        // Persist the overlay's dragged position so the next minimize
+        // reopens it where the operator left it. Best-effort — a failed
+        // write just means the default position next time.
+        fn save_overlay_pos(ov: &MiniOverlay) {
+            use slint::winit_030::WinitWindowAccessor;
+            ov.window().with_winit_window(|w| {
+                if let Ok(pos) = w.outer_position() {
+                    let _ = std::fs::write(
+                        default_neoth_home().join(".overlay-pos"),
+                        format!("{},{}", pos.x, pos.y),
+                    );
+                }
+            });
+        }
+
+        // overlay drag — pointer-down on the title strip hands the move to
+        // the OS compositor. drag_window() runs the whole native move loop.
+        let overlay_weak_for_drag = overlay.as_weak();
+        overlay.on_drag_started(move || {
+            if let Some(ov) = overlay_weak_for_drag.upgrade() {
+                ov.window().with_winit_window(|w| {
+                    let _ = w.drag_window();
+                });
+            }
+        });
+
+        // Compact-mode window sizing contract (see overlay.slint header):
+        // 64 px pill / 148 px with speech bubble / 520 px full.
+        fn resize_overlay(ov: &MiniOverlay) {
+            use slint::winit_030::WinitWindowAccessor;
+            let h: f64 = if ov.get_compact() {
+                if ov.get_bubble_text().is_empty() {
+                    64.0
+                } else {
+                    148.0
+                }
+            } else {
+                520.0
+            };
+            ov.window().with_winit_window(|w| {
+                let _ = w.request_inner_size(slint::winit_030::winit::dpi::LogicalSize::new(
+                    380.0, h,
+                ));
+            });
+        }
+
+        let overlay_weak_for_compact = overlay.as_weak();
+        overlay.on_compact_toggled(move |_on| {
+            if let Some(ov) = overlay_weak_for_compact.upgrade() {
+                resize_overlay(&ov);
+            }
+        });
+
+        let overlay_weak_for_bubble = overlay.as_weak();
+        overlay.on_bubble_dismissed(move || {
+            if let Some(ov) = overlay_weak_for_bubble.upgrade() {
+                ov.set_bubble_text("".into());
+                resize_overlay(&ov);
+            }
+        });
+
+        let overlay_weak_for_collapse = overlay.as_weak();
+        overlay.on_collapse_requested(move || {
+            if let Some(ov) = overlay_weak_for_collapse.upgrade() {
+                ov.set_compact(false);
+                resize_overlay(&ov);
+            }
+        });
+
+        // Mic capture lands with the STT wiring — say so instead of
+        // silently ignoring the click.
+        let overlay_weak_for_mic = overlay.as_weak();
+        overlay.on_mic_clicked(move || {
+            if let Some(ov) = overlay_weak_for_mic.upgrade() {
+                ov.set_status_text("voice input lands with the STT wiring".into());
+            }
+        });
+
         // overlay restore-clicked → hide overlay, show main window.
         let overlay_weak_for_restore = overlay.as_weak();
         let window_weak_for_restore = window.as_weak();
@@ -7024,6 +7932,7 @@ fn main() -> Result<()> {
             let Some(win) = window_weak_for_restore.upgrade() else {
                 return;
             };
+            save_overlay_pos(&ov);
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -7038,6 +7947,7 @@ fn main() -> Result<()> {
             let Some(win) = window_weak_for_hide.upgrade() else {
                 return;
             };
+            save_overlay_pos(&ov);
             ov.hide().unwrap_or(());
             win.show().unwrap_or(());
         });
@@ -7121,6 +8031,7 @@ fn main() -> Result<()> {
                     ov.set_buddy_mood(mood.into());
                     ov.set_status_text(caption.into());
                     // Append the reply snippet to recent-lines, cap at 6.
+                    let bubble_snip = snippet.clone();
                     let mut lines: Vec<slint::SharedString> =
                         ov.get_recent_lines().iter().collect();
                     lines.push(snippet.into());
@@ -7129,6 +8040,12 @@ fn main() -> Result<()> {
                         lines.drain(..drain_count);
                     }
                     ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+                    // Compact pill: the reply surfaces as a speech bubble
+                    // above the orb; the window grows to fit it.
+                    if ov.get_compact() {
+                        ov.set_bubble_text(bubble_snip.as_str().into());
+                        resize_overlay(&ov);
+                    }
                 });
             });
         });
@@ -8614,6 +9531,17 @@ fn make_coalescing_writer(
 
 /// DES-09 helper — read a nested boolean from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
+/// DES-09 G37 — read `proactive.quiet_hours_utc` ([u8;2] or null/absent).
+fn read_quiet_hours_in_freedom(path: &Path) -> Option<(u8, u8)> {
+    let body = std::fs::read_to_string(path).ok()?;
+    let root = serde_yaml::from_str::<serde_yaml::Value>(&body).ok()?;
+    let seq = root.get("proactive")?.get("quiet_hours_utc")?.as_sequence()?;
+    match seq.as_slice() {
+        [s, e] => Some((s.as_u64()? as u8, e.as_u64()? as u8)),
+        _ => None,
+    }
+}
+
 fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> bool {
     let Ok(body) = std::fs::read_to_string(path) else {
         return default;
@@ -12252,6 +13180,11 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     let foreign_out =
         run_neothd_probe(&["cluster", "events", "--output", "json", "--limit", "500"]);
     let backup = panel_logic::parse_foreign_backup(&foreign_out);
+    // Wave 5 — fleet dashboard: per-peer resource meters from the swarm
+    // snapshot table + the raw gossip stream as mono log lines.
+    let swarm_out = run_neothd_probe(&["cluster", "swarm", "--output", "json"]);
+    let swarm_nodes = panel_logic::parse_swarm_nodes(&swarm_out);
+    let gossip_lines = panel_logic::format_gossip_lines(&foreign_out, 60);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -12261,12 +13194,30 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         let peer_rows: Vec<MeshPeerRow> = snap
             .peers
             .into_iter()
-            .map(|p| MeshPeerRow {
-                id: p.id.into(),
-                last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
-                reachable: p.reachable,
+            .map(|p| {
+                // Join gossip resource snapshots onto the peer list by node
+                // id prefix (status ids may be truncated for display).
+                let res = swarm_nodes
+                    .iter()
+                    .find(|n| n.node_id == p.id || n.node_id.starts_with(&p.id));
+                MeshPeerRow {
+                    id: p.id.into(),
+                    last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
+                    reachable: p.reachable,
+                    cpu_pct: res.map(|n| n.cpu_frac).unwrap_or(0.0),
+                    ram_pct: res.map(|n| n.ram_frac).unwrap_or(0.0),
+                    vram_pct: res.map(|n| n.vram_frac).unwrap_or(0.0),
+                    role: "".into(),    // roles land with the gossip payload extension
+                    version: "".into(), // ditto — neoth_version is not gossiped yet
+                    staleness_secs: res.map(|n| n.age_secs).unwrap_or(0),
+                }
             })
             .collect();
+        let gossip_model: Vec<slint::SharedString> =
+            gossip_lines.iter().map(|l| l.as_str().into()).collect();
+        w.set_mesh_gossip_events(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            gossip_model,
+        ))));
         w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             peer_rows,
         ))));
@@ -12340,6 +13291,63 @@ fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
 // parses via panel_logic pure-fns, then mutates the MainWindow in one
 // invoke_from_event_loop call.  Must be called from a worker thread — never
 // from the Slint event loop.
+/// Wave 8 — C7/H5: feed the COST & USAGE card. Top sessions from the
+/// WAL token ledger + a 7-day usage sparkline (one rollup probe per
+/// day; overview refresh is manual/startup so seven quick subprocesses
+/// are fine). Rides the same triggers as refresh_overview.
+fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
+    use slint::VecModel;
+    let sessions_out = run_neothd_probe(&["cost", "top-sessions", "--output", "json"]);
+    let sessions = panel_logic::parse_cost_sessions(&sessions_out);
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut days: Vec<f64> = Vec::with_capacity(7);
+    let mut week_cost = 0.0_f64;
+    for i in (0..7).rev() {
+        let until = now - i * 86_400;
+        let since = until - 86_400;
+        let out = run_neothd_probe(&[
+            "usage",
+            "--since-unix",
+            &since.to_string(),
+            "--until-unix",
+            &until.to_string(),
+            "--format",
+            "json",
+        ]);
+        let (cost, tokens) = panel_logic::parse_usage_rollup(&out).unwrap_or((0.0, 0));
+        week_cost += cost;
+        // Sparkline follows spend when priced, tokens otherwise.
+        days.push(if cost > 0.0 { cost } else { tokens as f64 / 1000.0 });
+    }
+    let max_day = days.iter().cloned().fold(0.0_f64, f64::max).max(1e-9);
+    let bars: Vec<f32> = days.iter().map(|d| (d / max_day) as f32).collect();
+    let label = if week_cost > 0.0 {
+        format!("usd {week_cost:.2} this week")
+    } else {
+        "no priced spend this week".to_string()
+    };
+
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        let rows: Vec<CostSessionRow> = sessions
+            .into_iter()
+            .map(|s| CostSessionRow {
+                session: s.session.into(),
+                provider: s.provider.into(),
+                tokens: s.tokens.into(),
+                cost: s.cost.into(),
+            })
+            .collect();
+        w.set_ov_cost_sessions(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(rows))));
+        w.set_ov_usage_days(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(bars))));
+        w.set_ov_usage_days_label(label.as_str().into());
+    });
+}
+
 fn refresh_overview(weak: slint::Weak<MainWindow>) {
     let bin = match which_neothd() {
         Some(b) => b,

@@ -1,0 +1,787 @@
+// NEOTH — WAL Inspector panel (audit-chain browser).
+//
+// Cyan (Theme.audit) is the accent throughout: this is a proof/evidence
+// surface, not a live-data surface (green) or a consent surface (pink).
+//
+// Design language mirrors ProbeView / DoctorView from tabs.slint:
+//   - pill buttons (border-radius: Theme.radius-pill) for actions
+//   - bg-void mono card for raw output
+//   - Kicker eyebrows for card sections
+//   - EntranceFade entry animation
+//   - No inline hex — Theme tokens only
+//   - No @children inside if blocks
+//   - ScrollView wraps the two-column body (dreaming.slint pattern)
+//
+// Slint 1.16 gotcha guard:
+//   - EntranceFade wraps VerticalLayout, not ScrollView directly (avoids
+//     the layoutinfo loop that fires when EntranceFade height depends on
+//     a ScrollView whose viewport height depends on parent height).
+//   - @children is never placed inside an `if` block.
+//   - ScrollView in the body gets its min-height from the inner content,
+//     not from the parent — same safe pattern as mesh.slint.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WIRING  (copy into main.slint / main.rs — orchestrator handles the wiring)
+//
+// ── main.slint — imports ────────────────────────────────────────────────────
+//   import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
+//
+// ── main.slint — AppWindow properties to add ────────────────────────────────
+//   in-out property <[WalEventRow]> wal-events: [];
+//   in-out property <int>           wal-selected-seq: -1;
+//   in property <string>            wal-detail-json: "";
+//   in property <bool>              wal-verify-running: false;
+//   in property <string>            wal-verify-result: "";
+//   in property <int>               wal-total-count: 0;
+//   in property <bool>              wal-has-older: false;
+//   in property <[string]>          wal-opcode-options: [];
+//
+// ── main.slint — callbacks to add to AppWindow ──────────────────────────────
+//   callback wal-verify-clicked();
+//   callback wal-filter-edited(string);
+//   callback wal-opcode-filter-changed(int);
+//   callback wal-follow-toggled(bool);
+//   callback wal-row-selected(int);
+//   callback wal-load-older-clicked();
+//   callback wal-copy-detail-clicked();
+//
+// ── main.slint — tab-switch block (active-tab == "wal") ─────────────────────
+//   if root.active-tab == "wal": WalInspectorView {
+//       events <=> root.wal-events;
+//       selected-seq <=> root.wal-selected-seq;
+//       detail-json: root.wal-detail-json;
+//       verify-running: root.wal-verify-running;
+//       verify-result: root.wal-verify-result;
+//       total-count: root.wal-total-count;
+//       has-older: root.wal-has-older;
+//       opcode-filter-options: root.wal-opcode-options;
+//       verify-clicked            => { root.wal-verify-clicked(); }
+//       filter-edited(s)          => { root.wal-filter-edited(s); }
+//       opcode-filter-changed(i)  => { root.wal-opcode-filter-changed(i); }
+//       follow-toggled(b)         => { root.wal-follow-toggled(b); }
+//       row-selected(seq)         => { root.wal-row-selected(seq); }
+//       load-older-clicked        => { root.wal-load-older-clicked(); }
+//       copy-detail-clicked       => { root.wal-copy-detail-clicked(); }
+//   }
+//
+// ── app_shell.slint — add NavBtn with nav key "wal" ─────────────────────────
+//   NavBtn { label: "WAL"; glyph: "◈"; key: "wal"; }
+//
+// ── main.rs / panel_logic.rs — callback handlers ────────────────────────────
+//
+//   wal_verify_clicked:
+//       app.set_wal_verify_running(true);
+//       spawn `neothd wal verify --output json`;
+//       on ok  → app.set_wal_verify_result("ok".into());
+//       on err → app.set_wal_verify_result(format!("FAIL: {msg}"));
+//       app.set_wal_verify_running(false);
+//
+//   wal_filter_edited(s):
+//       spawn `neothd wal list --filter {s} --output json`;
+//       on result → parse Vec<WalEventRow>, push to app.set_wal_events([...]);
+//                   app.set_wal_total_count(json.total);
+//                   app.set_wal_has_older(json.has_older);
+//
+//   wal_opcode_filter_changed(i):
+//       opcode = app.get_wal_opcode_options()[i];
+//       if opcode == "all" → spawn without --opcode;
+//       else               → spawn `neothd wal list --opcode {opcode} --output json`;
+//       update wal_events, wal_total_count, wal_has_older.
+//
+//   wal_follow_toggled(b):
+//       if b  → start 500 ms interval:
+//                   spawn `neothd wal list --since {last_seq} --output json`
+//                   prepend new rows to wal_events; update total_count
+//       if !b → cancel interval
+//
+//   wal_row_selected(seq):
+//       app.set_wal_selected_seq(seq);
+//       spawn `neothd wal show {seq} --output json`;
+//       on result → app.set_wal_detail_json(raw_json_string);
+//
+//   wal_load_older_clicked:
+//       oldest = min(app.get_wal_events().iter().map(|r| r.seq));
+//       spawn `neothd wal list --before {oldest} --output json`;
+//       append rows to wal_events; update has_older.
+//
+//   wal_copy_detail_clicked:
+//       write app.get_wal_detail_json() to system clipboard.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { Theme } from "theme.slint";
+import { Card, Led, EntranceFade, NeothButton, NeothLineEdit, NeothComboBox, Kicker } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+/// One WAL event row.
+/// `tint` drives the left-rail colour + kind-chip tint:
+///   "memory"  → green  (memory / recall writes)
+///   "audit"   → cyan   (chain-verify / proof ops)
+///   "consent" → pink   (permission / boundary events)
+///   "warning" → amber  (quota breach / anomaly)
+///   "plain"   → muted  (everything else)
+export struct WalEventRow {
+    seq: int,
+    ts: string,
+    opcode: string,
+    kind: string,
+    summary: string,
+    tint: string,
+}
+
+// ── WalEventItem — one row in the event list ──────────────────────────────────
+component WalEventItem inherits Rectangle {
+    in property <WalEventRow> data;
+    in property <bool>        selected;
+    callback clicked(int);
+
+    // map tint string → semantic colour
+    property <color> rail: root.data.tint == "memory"  ? Theme.memory
+                         : root.data.tint == "consent" ? Theme.consent
+                         : root.data.tint == "warning" ? Theme.warning
+                         : root.data.tint == "audit"   ? Theme.audit
+                         :                              Theme.border-strong;
+
+    height: 50px;
+    border-radius: Theme.radius-md;
+    background: root.selected   ? Theme.surface-3
+              : row-ta.has-hover ? Theme.surface-2
+              :                    Theme.surface-1;
+    border-width: 1px;
+    border-color: root.selected ? Theme.audit : Theme.border-subtle;
+    clip: true;
+
+    animate background   { duration: Theme.duration-fast; easing: ease-out; }
+    animate border-color { duration: Theme.duration-fast; easing: ease-out; }
+
+    accessible-role: list-item;
+    accessible-label: "WAL event \{root.data.seq} at \{root.data.ts} kind \{root.data.kind}: \{root.data.summary}";
+    accessible-action-default => { root.clicked(root.data.seq); }
+
+    // coloured left rail — 3 px, inset 8 px top/bottom
+    Rectangle {
+        x: 0;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        border-radius: 2px;
+        background: root.rail;
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 12px;
+        spacing: 10px;
+        alignment: start;
+
+        // seq — mono, narrow
+        Text {
+            text: "\{root.data.seq}";
+            color: root.selected ? Theme.audit : Theme.text-disabled;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+            width: 52px;
+        }
+
+        // timestamp
+        Text {
+            text: root.data.ts;
+            color: Theme.text-tertiary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            vertical-alignment: center;
+            width: 90px;
+        }
+
+        // kind chip — tint-coloured pill
+        Rectangle {
+            width: 80px;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            background: root.rail.with-alpha(0.14);
+            border-width: 1px;
+            border-color: root.rail.with-alpha(0.48);
+            Text {
+                text: root.data.kind;
+                color: root.rail;
+                font-family: Theme.font-mono;
+                font-size: 9px;
+                letter-spacing: Theme.letter-spacing-tight;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        // summary — elided, fills remaining width
+        Text {
+            text: root.data.summary;
+            color: root.selected ? Theme.text-primary : Theme.text-secondary;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-sm;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        // active-selection rail (right edge, CommandPalette grammar)
+        Rectangle {
+            width: 2px;
+            height: root.selected ? parent.height - 14px : 0px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 2px;
+            background: Theme.audit;
+            animate height { duration: Theme.duration-fast; easing: ease-out; }
+        }
+    }
+
+    row-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(root.data.seq); }
+    }
+}
+
+// ── WalInspectorView ──────────────────────────────────────────────────────────
+export component WalInspectorView inherits Rectangle {
+
+    // ── event list ───────────────────────────────────────────────────────────
+    in property <[WalEventRow]> events: [];
+    in-out property <int>       selected-seq: -1;
+
+    // ── detail pane ──────────────────────────────────────────────────────────
+    in property <string>        detail-json: "";
+
+    // ── header ───────────────────────────────────────────────────────────────
+    in property <bool>          verify-running: false;
+    in property <string>        verify-result: "";   // "" | "ok" | "FAIL: …"
+    in property <int>           total-count: 0;
+
+    // ── filter bar ───────────────────────────────────────────────────────────
+    in property <[string]>      opcode-filter-options: [];
+
+    // ── pagination ───────────────────────────────────────────────────────────
+    in property <bool>          has-older: false;
+
+    // ── callbacks ────────────────────────────────────────────────────────────
+    callback verify-clicked();
+    callback filter-edited(string);
+    callback opcode-filter-changed(int);
+    callback follow-toggled(bool);
+    callback row-selected(int);
+    callback load-older-clicked();
+    callback copy-detail-clicked();
+
+    // ── private state ─────────────────────────────────────────────────────────
+    property <bool> detail-expanded: true;
+    property <bool> follow-active:   false;
+
+    background: Theme.bg-base;
+
+    EntranceFade {
+
+        VerticalLayout {
+            padding: 28px;
+            spacing: 14px;
+            alignment: start;
+
+            // ── view header ───────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 12px;
+                alignment: start;
+                height: 44px;
+
+                // glyph + title/subtitle stack
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: start;
+                    Text {
+                        text: "◈";
+                        color: Theme.audit;
+                        font-family: Theme.font-mono;
+                        font-size: 20px;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "WAL Inspector";
+                            color: Theme.text-primary;
+                            font-family: Theme.font-sans;
+                            font-size: Theme.font-size-md;
+                            letter-spacing: Theme.letter-spacing-tight;
+                        }
+                        Text {
+                            text: "audit-chain browser — cryptographic event ledger";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-wide;
+                        }
+                    }
+                }
+
+                // spacer
+                Rectangle { horizontal-stretch: 1; }
+
+                // total-event-count badge (mono, audit-cyan tint)
+                if root.total-count > 0: Rectangle {
+                    height: 28px;
+                    width: tc-lbl.preferred-width + 20px;
+                    border-radius: Theme.radius-pill;
+                    background: Theme.audit-tint;
+                    border-width: 1px;
+                    border-color: Theme.audit;
+                    tc-lbl := Text {
+                        text: "\{root.total-count} events";
+                        color: Theme.audit;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                // verify-result chip: ok → memory-green, fail → consent-pink
+                if root.verify-result != "": Rectangle {
+                    height: 28px;
+                    width: vr-lbl.preferred-width + 20px;
+                    border-radius: Theme.radius-pill;
+                    background: root.verify-result == "ok"
+                        ? Theme.memory-tint : Theme.consent-tint;
+                    border-width: 1px;
+                    border-color: root.verify-result == "ok"
+                        ? Theme.memory : Theme.consent;
+                    vr-lbl := Text {
+                        text: root.verify-result == "ok"
+                            ? "✓ verified"
+                            : "✗ " + root.verify-result;
+                        color: root.verify-result == "ok"
+                            ? Theme.memory : Theme.consent;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+
+                // verify pill button — cyan accent, ProbeView/DoctorView grammar
+                Rectangle {
+                    height: 38px;
+                    width: vbtn-lbl.preferred-width + 32px;
+                    border-radius: Theme.radius-pill;
+                    background: root.verify-running
+                        ? Theme.surface-2 : Theme.audit-tint;
+                    border-width: 1px;
+                    border-color: root.verify-running
+                        ? Theme.border-default : Theme.audit;
+                    accessible-role: button;
+                    accessible-label: "verify WAL chain integrity";
+                    accessible-enabled: !root.verify-running;
+                    accessible-action-default => {
+                        if (!root.verify-running) { root.verify-clicked(); }
+                    }
+                    vbtn-lbl := Text {
+                        text: root.verify-running ? "verifying…" : "Verify chain";
+                        color: root.verify-running
+                            ? Theme.text-tertiary : Theme.audit;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-sm;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            if (!root.verify-running) { root.verify-clicked(); }
+                        }
+                    }
+                }
+            }
+
+            // hairline separator
+            Rectangle {
+                height: 1px;
+                background: Theme.border-subtle;
+            }
+
+            // ── filter bar ────────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: start;
+                height: 44px;
+
+                // text search
+                NeothLineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: "filter events…";
+                    edited(s) => { root.filter-edited(s); }
+                }
+
+                // opcode combo — only rendered when options are provided
+                if root.opcode-filter-options.length > 0: NeothComboBox {
+                    width: 168px;
+                    model: root.opcode-filter-options;
+                    selected(i) => { root.opcode-filter-changed(i); }
+                }
+
+                // live / paused toggle pill
+                Rectangle {
+                    height: 44px;
+                    width: fp-lbl.preferred-width + 38px;
+                    border-radius: Theme.radius-pill;
+                    background: root.follow-active
+                        ? Theme.memory-tint : Theme.surface-2;
+                    border-width: 1px;
+                    border-color: root.follow-active
+                        ? Theme.memory : Theme.border-default;
+                    accessible-role: button;
+                    accessible-label: root.follow-active
+                        ? "pause live follow" : "enable live follow";
+                    accessible-action-default => {
+                        root.follow-active = !root.follow-active;
+                        root.follow-toggled(root.follow-active);
+                    }
+                    animate background   { duration: Theme.duration-fast; easing: ease-out; }
+                    animate border-color { duration: Theme.duration-fast; easing: ease-out; }
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 14px;
+                        spacing: 7px;
+                        alignment: center;
+                        Led {
+                            state: root.follow-active ? "live" : "off";
+                            dot-size: 6px;
+                        }
+                        fp-lbl := Text {
+                            text: root.follow-active ? "LIVE" : "PAUSED";
+                            color: root.follow-active
+                                ? Theme.memory : Theme.text-tertiary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            vertical-alignment: center;
+                            animate color { duration: Theme.duration-fast; easing: ease-out; }
+                        }
+                    }
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => {
+                            root.follow-active = !root.follow-active;
+                            root.follow-toggled(root.follow-active);
+                        }
+                    }
+                }
+            }
+
+            // ── two-column body (dreaming.slint ScrollView pattern) ────────────
+            ScrollView {
+
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+
+                    // ── LEFT: event list ──────────────────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 3;
+                        spacing: 8px;
+                        alignment: start;
+
+                        Card {
+                            shimmer: false;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+                                alignment: start;
+
+                                // card header
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "EVENTS"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.events.length > 0: Text {
+                                        text: "\{root.events.length} loaded";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        letter-spacing: Theme.letter-spacing-tight;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                // empty state
+                                if root.events.length == 0: Rectangle {
+                                    height: 110px;
+                                    border-radius: Theme.radius-md;
+                                    background: Theme.surface-1;
+                                    border-width: 1px;
+                                    border-color: Theme.border-subtle;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 6px;
+                                        Text {
+                                            text: "◈";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 22px;
+                                            horizontal-alignment: center;
+                                        }
+                                        Text {
+                                            text: "no WAL events";
+                                            color: Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            horizontal-alignment: center;
+                                        }
+                                        Text {
+                                            text: "chain is empty or filter matches nothing";
+                                            color: Theme.text-disabled;
+                                            font-family: Theme.font-mono;
+                                            font-size: 9px;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                            horizontal-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                // event rows
+                                for evt in root.events: WalEventItem {
+                                    data: evt;
+                                    selected: evt.seq == root.selected-seq;
+                                    clicked(seq) => {
+                                        root.selected-seq = seq;
+                                        root.row-selected(seq);
+                                    }
+                                }
+                            }
+                        }
+
+                        // load-older pagination button
+                        if root.has-older: Rectangle {
+                            height: 34px;
+                            border-radius: Theme.radius-pill;
+                            background: older-ta.has-hover
+                                ? Theme.surface-3 : Theme.surface-2;
+                            border-width: 1px;
+                            border-color: older-ta.has-hover
+                                ? Theme.border-strong : Theme.border-default;
+                            accessible-role: button;
+                            accessible-label: "load older WAL events";
+                            accessible-action-default => { root.load-older-clicked(); }
+                            animate background   { duration: Theme.duration-fast; easing: ease-out; }
+                            animate border-color { duration: Theme.duration-fast; easing: ease-out; }
+                            Text {
+                                text: "↑  load older";
+                                color: older-ta.has-hover
+                                    ? Theme.text-primary : Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                                animate color { duration: Theme.duration-fast; easing: ease-out; }
+                            }
+                            older-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.load-older-clicked(); }
+                            }
+                        }
+                    }
+
+                    // ── RIGHT: detail pane ────────────────────────────────────
+                    VerticalLayout {
+                        horizontal-stretch: 2;
+                        spacing: 8px;
+                        alignment: start;
+
+                        Card {
+                            shimmer: false;
+
+                            VerticalLayout {
+                                padding: 12px;
+                                spacing: 8px;
+                                alignment: start;
+
+                                // card header
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    height: 18px;
+                                    Kicker { label: "DETAIL"; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    // seq badge when an event is selected
+                                    if root.selected-seq >= 0: Text {
+                                        text: "#\{root.selected-seq}";
+                                        color: Theme.audit;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        letter-spacing: Theme.letter-spacing-wide;
+                                        vertical-alignment: center;
+                                    }
+                                    // expand / collapse chevron
+                                    Rectangle {
+                                        width: 26px;
+                                        height: 26px;
+                                        border-radius: Theme.radius-sm;
+                                        background: exp-ta.has-hover
+                                            ? Theme.surface-3 : transparent;
+                                        animate background {
+                                            duration: Theme.duration-fast; easing: ease-out;
+                                        }
+                                        Text {
+                                            text: root.detail-expanded ? "▾" : "▸";
+                                            color: Theme.audit;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-sm;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                        exp-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            accessible-role: button;
+                                            accessible-label: root.detail-expanded
+                                                ? "collapse detail pane"
+                                                : "expand detail pane";
+                                            accessible-action-default => {
+                                                root.detail-expanded = !root.detail-expanded;
+                                            }
+                                            clicked => {
+                                                root.detail-expanded = !root.detail-expanded;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // hairline below header
+                                Rectangle {
+                                    height: 1px;
+                                    background: Theme.border-subtle;
+                                }
+
+                                // ── collapsed hint ───────────────────────────
+                                if !root.detail-expanded: Text {
+                                    text: "detail pane collapsed";
+                                    color: Theme.text-disabled;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-xs;
+                                    horizontal-alignment: center;
+                                }
+
+                                // ── no-selection hint ────────────────────────
+                                if root.detail-expanded && root.selected-seq < 0: VerticalLayout {
+                                    spacing: 6px;
+                                    alignment: center;
+                                    Rectangle { height: 14px; }
+                                    Text {
+                                        text: "◈";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 22px;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "select an event";
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-sm;
+                                        horizontal-alignment: center;
+                                    }
+                                    Text {
+                                        text: "click a row to inspect its WAL payload";
+                                        color: Theme.text-disabled;
+                                        font-family: Theme.font-mono;
+                                        font-size: 10px;
+                                        letter-spacing: Theme.letter-spacing-tight;
+                                        horizontal-alignment: center;
+                                        wrap: word-wrap;
+                                    }
+                                    Rectangle { height: 14px; }
+                                }
+
+                                // ── JSON viewer ──────────────────────────────
+                                if root.detail-expanded && root.selected-seq >= 0: VerticalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+
+                                    // bg-void card for mono JSON text
+                                    Rectangle {
+                                        min-height: 300px;
+                                        border-radius: Theme.radius-lg;
+                                        background: Theme.bg-void;
+                                        border-width: 1px;
+                                        border-color: Theme.border-subtle;
+
+                                        Flickable {
+                                            viewport-width: self.width;
+                                            Text {
+                                                x: 16px;
+                                                y: 14px;
+                                                width: parent.width - 32px;
+                                                text: root.detail-json != ""
+                                                    ? root.detail-json : "loading…";
+                                                color: root.detail-json != ""
+                                                    ? Theme.text-secondary
+                                                    : Theme.text-disabled;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-xs;
+                                                wrap: word-wrap;
+                                            }
+                                        }
+                                    }
+
+                                    // copy JSON pill
+                                    Rectangle {
+                                        height: 34px;
+                                        width: copy-lbl.preferred-width + 28px;
+                                        border-radius: Theme.radius-pill;
+                                        background: copy-ta.has-hover
+                                            ? Theme.audit-tint : Theme.surface-2;
+                                        border-width: 1px;
+                                        border-color: copy-ta.has-hover
+                                            ? Theme.audit : Theme.border-default;
+                                        accessible-role: button;
+                                        accessible-label: "copy detail JSON to clipboard";
+                                        accessible-action-default => {
+                                            root.copy-detail-clicked();
+                                        }
+                                        animate background   {
+                                            duration: Theme.duration-fast; easing: ease-out;
+                                        }
+                                        animate border-color {
+                                            duration: Theme.duration-fast; easing: ease-out;
+                                        }
+                                        copy-lbl := Text {
+                                            text: "⎘  copy JSON";
+                                            color: copy-ta.has-hover
+                                                ? Theme.audit : Theme.text-tertiary;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-xs;
+                                            letter-spacing: Theme.letter-spacing-tight;
+                                            vertical-alignment: center;
+                                            horizontal-alignment: center;
+                                            animate color {
+                                                duration: Theme.duration-fast; easing: ease-out;
+                                            }
+                                        }
+                                        copy-ta := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.copy-detail-clicked(); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

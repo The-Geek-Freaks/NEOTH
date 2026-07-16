@@ -600,11 +600,11 @@ export struct ToastData {
 // a 2px progress bar over duration-toast-life.
 //
 // Rust owns lifetime: it appends via push_toast() and removes via
-// prune_toast() after 6 s (matches duration-toast-life exactly).
-// No click-to-dismiss is wired here — operator clicks the overlapping
-// area transparently unless they land on the card itself.
+// prune_toast() after 6 s (matches duration-toast-life exactly) — or
+// immediately when the operator clicks the card (dismissed()).
 component Toast inherits Rectangle {
     in property <ToastData> data;
+    callback dismissed();
 
     // led colour by kind
     property <color> led-color:
@@ -672,6 +672,12 @@ component Toast inherits Rectangle {
         init => { self._drain = 0; }
         animate _drain { duration: Theme.duration-toast-life; easing: linear; }
     }
+
+    // Click anywhere on the card dismisses it immediately.
+    TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.dismissed(); }
+    }
 }
 
 // ── ToastStack ────────────────────────────────────────────────────────
@@ -681,6 +687,8 @@ component Toast inherits Rectangle {
 // transparent gap between cards to content below.
 export component ToastStack inherits Rectangle {
     in property <[ToastData]> toasts;
+    // Fired with the toast's id when the operator clicks a card.
+    callback dismissed(int);
 
     // Transparent background so only the cards themselves catch events.
     background: transparent;
@@ -688,7 +696,10 @@ export component ToastStack inherits Rectangle {
 
     VerticalLayout {
         spacing: 8px; padding: 0px;
-        for t in root.toasts: Toast { data: t; }
+        for t in root.toasts: Toast {
+            data: t;
+            dismissed => { root.dismissed(t.id); }
+        }
     }
 }
 
@@ -1002,6 +1013,7 @@ export component NeothLineEdit inherits Rectangle {
                 vertical-alignment: center;
                 horizontal-alignment: left;
                 enabled: root.enabled;
+                accessible-role: AccessibleRole.text;
                 accessible-label: root.placeholder-text;
                 accessible-placeholder-text: root.placeholder-text;
                 accessible-enabled: root.enabled;
@@ -1120,5 +1132,645 @@ export component FooterBar inherits Rectangle {
         color: Theme.text-dim;
         vertical-alignment: center;
         height: parent.height;
+    }
+}
+
+// ── Command Palette (Ctrl+K) ─────────────────────────────────────────
+// Linear/Raycast-grammar quick switcher: scrim + centered glass card,
+// filter-as-you-type input, arrow-key selection, Enter activates. Rust
+// owns filtering (palette-query-edited → palette-results); activation
+// routes through the same nav path as the sidebar.
+
+export struct PaletteItem {
+    label: string,
+    glyph: string,
+    tab: string,      // nav destination key ("chat", "memory", …)
+    hint: string,     // group eyebrow (CORE / WORK / SYSTEM)
+}
+
+export component CommandPalette inherits Rectangle {
+    in property <[PaletteItem]> results;
+    in-out property <string> query;
+    in-out property <int> selected: 0;
+    callback query-edited(string);
+    callback activated(string);
+    callback closed();
+
+    background: Theme.scrim;
+
+    // Scrim click closes; the card swallows its own clicks below.
+    TouchArea { clicked => { root.closed(); } }
+
+    Rectangle {
+        width: min(560px, root.width - 80px);
+        height: min(64px + 44px * min(root.results.length, 8) + 20px, root.height - 140px);
+        x: (root.width - self.width) / 2;
+        y: 96px;
+        border-radius: Theme.radius-lg;
+        background: Theme.surface-2;
+        border-width: 1px; border-color: Theme.border-strong;
+        drop-shadow-blur: 42px;
+        drop-shadow-color: Theme.bg-void.with-alpha(0.65);
+        clip: true;
+
+        // Entrance: sovereign-curve fade.
+        opacity: 0;
+        init => { self.opacity = 1; pal-input.focus(); }
+        animate opacity { duration: Theme.duration-fast; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+        TouchArea { }   // swallow card clicks
+
+        VerticalLayout {
+            padding: 10px; spacing: 6px;
+
+            // input row
+            Rectangle {
+                height: 44px;
+                border-radius: Theme.radius-md;
+                background: Theme.bg-base;
+                border-width: 1px; border-color: Theme.border-accent;
+                HorizontalLayout {
+                    padding-left: 14px; padding-right: 14px; spacing: 10px;
+                    Text {
+                        text: "⌘";
+                        color: Theme.accent; font-family: Theme.font-mono;
+                        font-size: Theme.font-size-sm; vertical-alignment: center;
+                    }
+                    Rectangle {
+                        if root.query == "": Text {
+                            x: 0; width: parent.width;
+                            text: "Jump to… (type to filter)";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-base;
+                            vertical-alignment: center; horizontal-alignment: left;
+                        }
+                        pal-input := TextInput {
+                            x: 0; width: parent.width;
+                            text <=> root.query;
+                            color: Theme.text-primary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-base;
+                            selection-background-color: Theme.accent.with-alpha(0.4);
+                            selection-foreground-color: Theme.text-primary;
+                            single-line: true;
+                            vertical-alignment: center;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "command palette filter";
+                            edited => { root.selected = 0; root.query-edited(self.text); }
+                            accepted => {
+                                if (root.results.length > 0) {
+                                    root.activated(root.results[min(root.selected, root.results.length - 1)].tab);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // results list — Up/Down handled by the enclosing FocusScope in
+            // main.slint (single-line TextInput rejects them, so they bubble).
+            Flickable {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 2px;
+                    for item[i] in root.results: Rectangle {
+                        height: 42px;
+                        border-radius: Theme.radius-sm;
+                        background: i == root.selected ? Theme.surface-3
+                            : row-ta.has-hover ? Theme.surface-1 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        // active rail — same grammar as the sidebar NavBtn
+                        Rectangle {
+                            x: 0; width: 2px;
+                            height: i == root.selected ? parent.height - 14px : 0px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: 2px;
+                            background: Theme.accent;
+                            animate height { duration: Theme.duration-fast; easing: ease-out; }
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 11px;
+                            Rectangle {
+                                width: 18px;
+                                Text {
+                                    text: item.glyph;
+                                    color: i == root.selected ? Theme.accent : Theme.text-tertiary;
+                                    font-size: Theme.font-size-sm; font-family: Theme.font-mono;
+                                    vertical-alignment: center; horizontal-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: item.label;
+                                color: i == root.selected ? Theme.text-primary : Theme.text-secondary;
+                                font-size: Theme.font-size-sm; font-family: Theme.font-sans;
+                                vertical-alignment: center; horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: item.hint;
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                letter-spacing: Theme.letter-spacing-wide;
+                                vertical-alignment: center;
+                            }
+                        }
+                        row-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.activated(item.tab); }
+                        }
+                    }
+                    if root.results.length == 0: Text {
+                        height: 42px;
+                        text: "No matches — Esc to close";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                        vertical-alignment: center; horizontal-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── TooltipArea ──────────────────────────────────────────────────────
+// Trigger wrapper that surfaces a floating mono glass chip 450 ms after
+// the pointer enters. `@children` fills the full component bounds at all
+// times (never inside an `if` — project rule). The chip is positioned
+// above the component via a negative-y absolute offset; it is visible
+// because Rectangle has `clip: false` by default.
+//
+// Usage:
+//   TooltipArea { text: "Copy to clipboard"; IconBtn { ... } }
+//
+// Properties:
+//   text  — chip label; empty string suppresses the chip entirely.
+
+export component TooltipArea inherits Rectangle {
+    in property <string> text: "";
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.text;
+    background: transparent;
+
+    // Content — NOT wrapped in an if so @children is always mounted.
+    VerticalLayout { @children }
+
+    ta := TouchArea { }
+
+    chip := Rectangle {
+        height: 26px;
+        width: max(48px, chip-txt.preferred-width + Theme.space-3 * 2);
+        // Float above the component. Negative y is rendered because
+        // Rectangle.clip defaults to false.
+        y: -self.height - 4px;
+        x: 0px;
+        background: Theme.surface-glass;
+        border-radius: Theme.radius-sm;
+        border-width: 1px;
+        border-color: Theme.border-subtle;
+        // Delay only on show; hide is instant (better UX than symmetric delay).
+        opacity: 0;
+
+        chip-txt := Text {
+            width: parent.width;
+            height: parent.height;
+            text: root.text;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            color: Theme.text-secondary;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    states [
+        hovered when ta.has-hover && root.text != "": {
+            chip.opacity: 1;
+            in {
+                animate chip.opacity {
+                    delay: 450ms;
+                    duration: Theme.duration-fast;
+                    easing: ease-out;
+                }
+            }
+            out {
+                animate chip.opacity {
+                    duration: Theme.duration-fast;
+                    easing: ease-out;
+                }
+            }
+        }
+    ]
+}
+
+// ── ConfirmDialog ────────────────────────────────────────────────────
+// Full-window scrim overlay with a centered confirmation card. Caller
+// mounts/unmounts via `if show-dialog: ConfirmDialog { ... }` and sizes
+// it to the window (`width: root.width; height: root.height`).
+//
+// Properties:
+//   title          — card heading (required).
+//   body           — secondary explainer text; hidden when empty.
+//   confirm-label  — Confirm button label, default "Confirm".
+//   danger         — true → Confirm uses consent-pink (destructive).
+//
+// Callbacks: confirmed() / cancelled().
+// Escape key and scrim click both fire cancelled().
+
+export component ConfirmDialog inherits Rectangle {
+    in property <string> title:         "";
+    in property <string> body:          "";
+    in property <string> confirm-label: "Confirm";
+    in property <bool>   danger:        false;
+    callback confirmed();
+    callback cancelled();
+
+    // Resolved confirm accent — consent-pink for danger, memory-green otherwise.
+    property <color> _col: root.danger ? Theme.consent : Theme.accent-green;
+
+    // (Slint 1.16 has no `dialog` accessible-role; label carries intent.)
+    accessible-label: root.title;
+    background: Theme.scrim;
+
+    // Keyboard handler — Escape cancels.
+    dlg-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == "\u{1b}" {
+                root.cancelled();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    // Scrim click cancels (card's inner TouchArea swallows its own events).
+    TouchArea { clicked => { root.cancelled(); } }
+
+    dlg-card := Rectangle {
+        width: min(480px, root.width - 80px);
+        height: dlg-layout.preferred-height;
+        x: (root.width  - self.width)  / 2;
+        y: (root.height - self.height) / 2;
+        background: Theme.surface-2;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 40px;
+        drop-shadow-color: Theme.bg-void.with-alpha(0.70);
+
+        opacity: 0;
+        init => {
+            self.opacity = 1;
+            dlg-focus.focus();
+        }
+        animate opacity {
+            duration: Theme.duration-fast;
+            easing: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        // Swallow pointer events so they don't propagate to the scrim.
+        TouchArea { }
+
+        dlg-layout := VerticalLayout {
+            padding: Theme.space-loose;
+            spacing: Theme.space-base;
+
+            Text {
+                text: root.title;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-h2;
+                font-weight: Theme.weight-semibold;
+                color: Theme.text-primary;
+                wrap: word-wrap;
+            }
+
+            if root.body != "": Text {
+                text: root.body;
+                font-family: Theme.font-sans;
+                font-size: Theme.font-size-body;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: Theme.space-tight;
+
+                // ── Cancel ──────────────────────────────────────────
+                cancel-rect := Rectangle {
+                    height: 40px;
+                    width: max(96px, cancel-lbl.preferred-width + Theme.space-base * 2);
+                    background: cancel-ta.has-hover ? Theme.surface-3 : transparent;
+                    border-radius: Theme.radius-button;
+                    border-width: 1px;
+                    border-color: cancel-ta.has-hover ? Theme.border-strong : Theme.border-default;
+                    animate background   { duration: Theme.duration-micro; easing: ease-out; }
+                    animate border-color { duration: Theme.duration-micro; easing: ease-out; }
+                    accessible-role: button;
+                    accessible-label: "Cancel";
+                    accessible-action-default => { root.cancelled(); }
+
+                    cancel-lbl := Text {
+                        width: parent.width; height: parent.height;
+                        text: "Cancel";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    cancel-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.cancelled(); }
+                    }
+                }
+
+                // ── Confirm ─────────────────────────────────────────
+                confirm-rect := Rectangle {
+                    height: 40px;
+                    width: max(96px, confirm-lbl.preferred-width + Theme.space-base * 2);
+                    background: confirm-ta.has-hover
+                        ? root._col.with-alpha(0.28)
+                        : root._col.with-alpha(0.16);
+                    border-radius: Theme.radius-button;
+                    border-width: 1px;
+                    border-color: root._col;
+                    animate background { duration: Theme.duration-micro; easing: ease-out; }
+                    accessible-role: button;
+                    accessible-label: root.confirm-label;
+                    accessible-action-default => { root.confirmed(); }
+
+                    confirm-lbl := Text {
+                        width: parent.width; height: parent.height;
+                        text: root.confirm-label;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        font-weight: Theme.weight-medium;
+                        color: root._col;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                    confirm-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.confirmed(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Skeleton ─────────────────────────────────────────────────────────
+// Shimmer placeholder for async-loading content. Renders `rows` stacked
+// bars on a surface-1 base with an animated lighter band sweeping across.
+// Motion is driven by animation-tick() — no Timer, no state machine.
+// Bar widths decrease per row to simulate natural prose length variation.
+// `radius-md` per spec on every bar.
+
+export component Skeleton inherits Rectangle {
+    in property <int> rows: 3;
+
+    background: transparent;
+    accessible-role: AccessibleRole.text;
+    accessible-label: "Loading…";
+
+    VerticalLayout {
+        spacing: Theme.space-tight;
+
+        for i in root.rows: Rectangle {
+            // Each successive bar is slightly narrower than the last,
+            // bottoming out at 50% to avoid bars that are too short.
+            width: max(parent.width * 0.50,
+                parent.width - i * parent.width * 0.12);
+            height: 16px;
+            border-radius: Theme.radius-md;
+            background: Theme.surface-1;
+            clip: true;
+
+            // Shimmer band: sinusoidal sweep via animation-tick().
+            // Period ≈ 1.6 s keeps the rhythm in the brand's ambient
+            // motion range (duration-breathe / 1). All rows are in
+            // phase because they share the same animation-tick() source.
+            sweep := Rectangle {
+                property <float> _t: animation-tick() / 1600ms;
+                x: (parent.width + self.width)
+                    * (0.5 + 0.5 * sin(360deg * self._t))
+                    - self.width;
+                y: 0px;
+                width: parent.width * 0.38;
+                height: parent.height;
+                // text-primary is white in dark mode, near-black in light —
+                // so the band reads as a highlight in both themes.
+                background: @linear-gradient(90deg,
+                    Theme.text-primary.with-alpha(0.00)  0%,
+                    Theme.text-primary.with-alpha(0.07) 50%,
+                    Theme.text-primary.with-alpha(0.00) 100%);
+            }
+        }
+    }
+}
+
+// ── MenuItem struct + ContextMenu ────────────────────────────────────
+// Overlay right-click / context menu. Avoids PopupWindow (quirks) —
+// instead uses a transparent full-window Rectangle with an explicit
+// card. Caller sizes ContextMenu to the window and feeds menu-x/menu-y
+// from the pointer position; the card clamps inside the window rect.
+//
+// MenuItem fields:
+//   label  — display text.
+//   glyph  — mono icon string; empty hides the glyph column.
+//   danger — true → label + glyph render in consent-pink.
+//
+// Callbacks:
+//   picked(int)  — item index of the row the operator clicked.
+//   dismissed()  — fired on scrim click and after every pick.
+
+export struct MenuItem {
+    label: string,
+    glyph: string,
+    danger: bool,
+}
+
+export component ContextMenu inherits Rectangle {
+    in property <[MenuItem]> items;
+    in property <length> menu-x: 0px;
+    in property <length> menu-y: 0px;
+    callback picked(int);
+    callback dismissed();
+
+    background: transparent;
+
+    // Full-area scrim click-catcher — fires dismissed().
+    TouchArea { clicked => { root.dismissed(); } }
+
+    menu-card := Rectangle {
+        // Fixed card width; height driven by row count.
+        property <length> _cw: 200px;
+        property <length> _ch: menu-rows.preferred-height + 8px;
+        width:  self._cw;
+        height: self._ch;
+        // Clamp so the card never overflows the window rectangle.
+        x: min(root.menu-x, root.width  - self._cw - 4px);
+        y: min(root.menu-y, root.height - self._ch - 4px);
+        background: Theme.surface-2;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border-strong;
+        drop-shadow-blur: 24px;
+        drop-shadow-color: Theme.bg-void.with-alpha(0.55);
+        clip: true;
+
+        opacity: 0;
+        init => { self.opacity = 1; }
+        animate opacity {
+            duration: Theme.duration-fast;
+            easing: cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        // Swallow pointer events so they don't reach the scrim.
+        TouchArea { }
+
+        menu-rows := VerticalLayout {
+            padding: 4px;
+            spacing: 0px;
+
+            for item[i] in root.items: Rectangle {
+                height: 36px;
+                border-radius: Theme.radius-sm;
+                background: row-ta.has-hover ? Theme.surface-3 : transparent;
+                animate background {
+                    duration: Theme.duration-micro;
+                    easing: ease-out;
+                }
+                accessible-role: button;
+                accessible-label: item.label;
+                accessible-action-default => {
+                    root.picked(i);
+                    root.dismissed();
+                }
+
+                HorizontalLayout {
+                    padding-left: Theme.space-base;
+                    padding-right: Theme.space-base;
+                    spacing: Theme.space-tight;
+
+                    if item.glyph != "": Text {
+                        text: item.glyph;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-sm;
+                        color: item.danger ? Theme.consent : Theme.text-secondary;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                        width: 18px;
+                    }
+
+                    Text {
+                        text: item.label;
+                        font-family: Theme.font-sans;
+                        font-size: Theme.font-size-sm;
+                        color: item.danger ? Theme.consent : Theme.text-primary;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                }
+
+                row-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => {
+                        root.picked(i);
+                        root.dismissed();
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── EmptyState ───────────────────────────────────────────────────────
+// Centred placeholder for screens with no data. Four optional slots:
+//   glyph  — large mono icon (28 px, text-disabled).
+//   title  — medium sans title (text-secondary).
+//   hint   — small hint line (text-tertiary, wraps).
+//   action — accent pill button; hidden when action-label is empty.
+//
+// All slots are opt-in — any combination is valid. Caller gives the
+// component a fixed height (or lets it size to content in a layout).
+
+export component EmptyState inherits Rectangle {
+    in property <string> glyph:        "";
+    in property <string> title:        "";
+    in property <string> hint:         "";
+    in property <string> action-label: "";
+    callback action-clicked();
+
+    background: transparent;
+    accessible-role: AccessibleRole.text;
+    accessible-label: root.title != "" ? root.title : root.hint;
+
+    VerticalLayout {
+        alignment: center;
+        spacing: Theme.space-base;
+        padding: Theme.space-screen;
+
+        if root.glyph != "": Text {
+            text: root.glyph;
+            font-family: Theme.font-mono;
+            font-size: 28px;
+            color: Theme.text-disabled;
+            horizontal-alignment: center;
+        }
+
+        if root.title != "": Text {
+            text: root.title;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-body;
+            font-weight: Theme.weight-medium;
+            color: Theme.text-secondary;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.hint != "": Text {
+            text: root.hint;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-sm;
+            color: Theme.text-tertiary;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.action-label != "": Rectangle {
+            height: 40px;
+            width: max(120px, action-lbl.preferred-width + Theme.space-loose * 2);
+            background: action-ta.has-hover
+                ? Theme.accent.with-alpha(0.22)
+                : Theme.accent.with-alpha(0.14);
+            border-radius: Theme.radius-button;
+            border-width: 1px;
+            border-color: action-ta.has-hover
+                ? Theme.accent
+                : Theme.accent.with-alpha(0.45);
+            animate background   { duration: Theme.duration-micro; easing: ease-out; }
+            animate border-color { duration: Theme.duration-micro; easing: ease-out; }
+            accessible-role: button;
+            accessible-label: root.action-label;
+            accessible-action-default => { root.action-clicked(); }
+
+            action-lbl := Text {
+                width: parent.width;
+                height: parent.height;
+                text: root.action-label;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                font-weight: Theme.weight-medium;
+                color: Theme.accent;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            action-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.action-clicked(); }
+            }
+        }
     }
 }

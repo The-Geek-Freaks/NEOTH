@@ -2513,6 +2513,696 @@ pub fn next_toast_id(toasts: &[(i32, String, String, String)]) -> i32 {
     max + 1
 }
 
+// ── Chat code blocks (H19-lite) ──────────────────────────────────────────────
+
+/// Extract fenced code blocks from a chat reply. Returns (joined blocks,
+/// first language tag). Multiple blocks join with a blank line; an
+/// unterminated fence swallows to end-of-text (streaming tail).
+pub fn extract_code_blocks(text: &str) -> (String, String) {
+    let mut blocks: Vec<String> = Vec::new();
+    let mut lang = String::new();
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        let after = &rest[open + 3..];
+        let nl = after.find('\n');
+        let (tag, body_start) = match nl {
+            Some(n) => (after[..n].trim(), n + 1),
+            None => break, // fence at EOF with no body
+        };
+        let body = &after[body_start..];
+        let (block, next) = match body.find("```") {
+            Some(close) => (&body[..close], &body[close + 3..]),
+            None => (body, ""),
+        };
+        let trimmed = block.trim_end_matches('\n');
+        if !trimmed.trim().is_empty() {
+            if lang.is_empty() && !tag.is_empty() {
+                lang = tag.to_string();
+            }
+            blocks.push(trimmed.to_string());
+        }
+        rest = next;
+    }
+    (blocks.join("\n\n"), lang)
+}
+
+// ── Permissions matrix (C2) ──────────────────────────────────────────────────
+
+/// One per-action permission row for the Privacy matrix.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PermRowData {
+    pub action: String,
+    pub decision: String, // "allow" | "confirm" | "deny"
+    pub overridden: bool,
+}
+
+/// Parse `neoth permissions show --output json`: rows come from the
+/// ACTIVE level's decisions with `active_custom_overrides` applied on
+/// top (those mark `overridden`). Returns (rows, active_level).
+pub fn parse_permissions_show(json: &str) -> (Vec<PermRowData>, String) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let level = v
+        .get("active_level")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let overrides = v
+        .get("active_custom_overrides")
+        .and_then(|x| x.as_object())
+        .cloned()
+        .unwrap_or_default();
+    let Some(matrix) = v.get("matrix").and_then(|x| x.as_array()) else {
+        return (Vec::new(), level);
+    };
+    let active = matrix
+        .iter()
+        .find(|m| m.get("level").and_then(|x| x.as_str()) == Some(level.as_str()))
+        .or_else(|| matrix.first());
+    let Some(decisions) = active
+        .and_then(|m| m.get("decisions"))
+        .and_then(|x| x.as_array())
+    else {
+        return (Vec::new(), level);
+    };
+    let rows = decisions
+        .iter()
+        .map(|d| {
+            let action = d
+                .get("action")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string();
+            let base = d
+                .get("decision")
+                .and_then(|x| x.as_str())
+                .unwrap_or("confirm")
+                .to_string();
+            match overrides.get(&action).and_then(|x| x.as_str()) {
+                Some(o) => PermRowData {
+                    action,
+                    decision: o.to_lowercase(),
+                    overridden: true,
+                },
+                None => PermRowData {
+                    action,
+                    decision: base.to_lowercase(),
+                    overridden: false,
+                },
+            }
+        })
+        .collect();
+    (rows, level)
+}
+
+// ── Cost & usage (C7) ────────────────────────────────────────────────────────
+
+/// One top-session cost row for the overview card.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CostSessionData {
+    pub session: String,
+    pub provider: String,
+    pub tokens: String,
+    pub cost: String,
+}
+
+/// Parse `neoth cost top-sessions --output json` (array of row objects;
+/// tolerant of field-name drift by probing common keys).
+pub fn parse_cost_sessions(json: &str) -> Vec<CostSessionData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.as_array().cloned().or_else(|| {
+        v.get("sessions")
+            .or_else(|| v.get("rows"))
+            .and_then(|x| x.as_array())
+            .cloned()
+    }) else {
+        return Vec::new();
+    };
+    fn s(v: &serde_json::Value, keys: &[&str]) -> String {
+        for k in keys {
+            if let Some(x) = v.get(k) {
+                if let Some(t) = x.as_str() {
+                    return t.to_string();
+                }
+                if x.is_number() {
+                    return x.to_string();
+                }
+            }
+        }
+        String::new()
+    }
+    rows.iter()
+        .map(|r| {
+            // `models` is an array; surface the first (usually only) one.
+            let model = r
+                .get("models")
+                .and_then(|x| x.as_array())
+                .and_then(|a| a.first())
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+                .unwrap_or_else(|| s(r, &["provider", "model"]));
+            CostSessionData {
+                session: s(r, &["session", "session_id", "id"])
+                    .chars()
+                    .take(18)
+                    .collect(),
+                provider: model,
+                tokens: s(r, &["total_tokens", "tokens", "output_tokens"]),
+                // top-sessions ranks by tokens, not currency — show the
+                // response count in the cost column (honest, not a fake $).
+                cost: match s(r, &["responses"]).as_str() {
+                    "" => s(r, &["cost", "total_eur", "eur"]),
+                    n => format!("{n} resp"),
+                },
+            }
+        })
+        .take(8)
+        .collect()
+}
+
+/// Parse one `neoth usage … --format json` rollup → (cost_usd, tokens).
+pub fn parse_usage_rollup(json: &str) -> Option<(f64, u64)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).ok()?;
+    let cost = v.get("total_cost_usd")?.as_f64()?;
+    let tokens = v
+        .get("total_input_tokens")
+        .and_then(|x| x.as_u64())
+        .unwrap_or(0)
+        + v.get("total_output_tokens")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0);
+    Some((cost, tokens))
+}
+
+// ── Memory graph (H2) — parse + deterministic force layout ───────────────────
+
+/// One node of the Hebbian association graph, positioned 0..1.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GraphNodeData {
+    pub id: i64,
+    pub label: String,
+    pub tier: String,
+    pub degree: i32,
+    pub community: i32,
+    pub x: f32,
+    pub y: f32,
+    pub r: f32, // 0..1 relative radius (degree-scaled)
+}
+
+/// One positioned edge (endpoints 0..1) with normalized weight.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct GraphEdgeData {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub w: f32,
+}
+
+/// Parse `neoth memory --graph --output json` and lay the graph out with
+/// a deterministic Fruchterman–Reingold pass (nodes start on a circle by
+/// index — no RNG, so the layout is stable across refreshes). Returns
+/// (nodes, edges, communities).
+pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData>, i32) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let communities = v.get("communities").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+    let Some(jnodes) = v.get("nodes").and_then(|x| x.as_array()) else {
+        return (Vec::new(), Vec::new(), 0);
+    };
+    let jedges = v
+        .get("edges")
+        .and_then(|x| x.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let n = jnodes.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new(), communities);
+    }
+    let mut nodes: Vec<GraphNodeData> = jnodes
+        .iter()
+        .enumerate()
+        .map(|(i, jn)| {
+            let ang = std::f32::consts::TAU * (i as f32) / (n as f32);
+            GraphNodeData {
+                id: jn.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
+                label: jn
+                    .get("label")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                tier: jn
+                    .get("tier")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("fact")
+                    .to_string(),
+                degree: jn.get("degree").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                community: jn.get("community").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                x: 0.5 + 0.4 * ang.cos(),
+                y: 0.5 + 0.4 * ang.sin(),
+                r: 0.0,
+            }
+        })
+        .collect();
+    let index_of: std::collections::HashMap<i64, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, nd)| (nd.id, i))
+        .collect();
+    let raw_edges: Vec<(usize, usize, f32)> = jedges
+        .iter()
+        .filter_map(|je| {
+            let a = *index_of.get(&je.get("a")?.as_i64()?)?;
+            let b = *index_of.get(&je.get("b")?.as_i64()?)?;
+            let w = je.get("w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
+            Some((a, b, w))
+        })
+        .collect();
+
+    // Fruchterman–Reingold, 60 iterations, cooling step. O(n²) repulsion
+    // is fine at the 400-link export cap (≤ ~300 nodes).
+    // ponytail: O(n²), grid-bucket it if graphs ever exceed ~1k nodes.
+    let k = (1.0 / n as f32).sqrt();
+    let mut temp = 0.10_f32;
+    for _ in 0..60 {
+        let mut disp = vec![(0.0_f32, 0.0_f32); n];
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let dx = nodes[i].x - nodes[j].x;
+                let dy = nodes[i].y - nodes[j].y;
+                let d2 = (dx * dx + dy * dy).max(1e-6);
+                let d = d2.sqrt();
+                let rep = k * k / d;
+                disp[i].0 += dx / d * rep;
+                disp[i].1 += dy / d * rep;
+                disp[j].0 -= dx / d * rep;
+                disp[j].1 -= dy / d * rep;
+            }
+        }
+        for (a, b, w) in &raw_edges {
+            let dx = nodes[*a].x - nodes[*b].x;
+            let dy = nodes[*a].y - nodes[*b].y;
+            let d = (dx * dx + dy * dy).max(1e-6).sqrt();
+            let att = d * d / k * (0.5 + w.clamp(0.0, 1.0));
+            disp[*a].0 -= dx / d * att;
+            disp[*a].1 -= dy / d * att;
+            disp[*b].0 += dx / d * att;
+            disp[*b].1 += dy / d * att;
+        }
+        for (i, nd) in nodes.iter_mut().enumerate() {
+            let (dx, dy) = disp[i];
+            let d = (dx * dx + dy * dy).max(1e-9).sqrt();
+            let step = d.min(temp);
+            nd.x = (nd.x + dx / d * step).clamp(0.02, 0.98);
+            nd.y = (nd.y + dy / d * step).clamp(0.02, 0.98);
+        }
+        temp *= 0.94;
+    }
+
+    // Normalize into 0.05..0.95 with aspect preserved by the caller.
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = (1.0_f32, 0.0_f32, 1.0_f32, 0.0_f32);
+    for nd in &nodes {
+        min_x = min_x.min(nd.x);
+        max_x = max_x.max(nd.x);
+        min_y = min_y.min(nd.y);
+        max_y = max_y.max(nd.y);
+    }
+    let sx = (max_x - min_x).max(1e-6);
+    let sy = (max_y - min_y).max(1e-6);
+    let max_deg = nodes.iter().map(|nd| nd.degree).max().unwrap_or(1).max(1) as f32;
+    for nd in &mut nodes {
+        nd.x = 0.05 + 0.90 * (nd.x - min_x) / sx;
+        nd.y = 0.05 + 0.90 * (nd.y - min_y) / sy;
+        nd.r = (nd.degree as f32 / max_deg).clamp(0.1, 1.0);
+    }
+
+    let edges: Vec<GraphEdgeData> = raw_edges
+        .iter()
+        .map(|(a, b, w)| GraphEdgeData {
+            x1: nodes[*a].x,
+            y1: nodes[*a].y,
+            x2: nodes[*b].x,
+            y2: nodes[*b].y,
+            w: w.clamp(0.0, 1.0),
+        })
+        .collect();
+    (nodes, edges, communities)
+}
+
+// ── Agents tab — structured card data ─────────────────────────────────────────
+
+/// One agent card parsed from `neoth agents list --output json`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct AgentRowData {
+    pub name: String,
+    pub hemisphere: String, // source label: "built-in" | "operator"
+    pub provider: String,
+    pub model: String,
+    pub state: String, // "idle" | "off"
+    pub current_task: String,
+    pub tasks_done: i32,
+}
+
+/// Tolerant parse; empty vec on any shape mismatch (caller falls back to
+/// the raw mono dump so nothing regresses).
+pub fn parse_agents_list(json: &str) -> Vec<AgentRowData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.get("agents").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .map(|a| AgentRowData {
+            name: a
+                .get("name")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?")
+                .to_string(),
+            hemisphere: a
+                .get("source")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            provider: String::new(),
+            model: a
+                .get("model")
+                .and_then(|x| x.as_str())
+                .unwrap_or("(default)")
+                .to_string(),
+            state: if a.get("enabled").and_then(|x| x.as_bool()).unwrap_or(false) {
+                "idle".to_string()
+            } else {
+                "off".to_string()
+            },
+            current_task: a
+                .get("description")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            tasks_done: 0,
+        })
+        .collect()
+}
+
+// ── WAL inspector ─────────────────────────────────────────────────────────────
+
+/// One row parsed from `neoth wal show --output json` for the inspector.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WalRowData {
+    pub seq: i32,
+    pub ts: String,
+    pub ts_ns: u64,
+    pub opcode: String,
+    pub kind: String,
+    pub summary: String,
+    pub tint: String,
+    pub detail_json: String,
+}
+
+/// One timeline bucket: per-band frame counts inside an equal time slice.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct WalBucketData {
+    pub label: String,
+    pub memory_n: i32,
+    pub audit_n: i32,
+    pub consent_n: i32,
+    pub warning_n: i32,
+    pub plain_n: i32,
+}
+
+/// Slice the cached rows into `n` equal time buckets (oldest first) for
+/// the timeline scrubber. Rows with ts_ns == 0 are skipped. Returns the
+/// buckets plus each bucket's (start_ns, end_ns) so a click can filter
+/// the row list to that slice.
+pub fn bucket_wal_rows(rows: &[WalRowData], n: usize) -> (Vec<WalBucketData>, Vec<(u64, u64)>) {
+    let stamps: Vec<u64> = rows.iter().map(|r| r.ts_ns).filter(|t| *t > 0).collect();
+    let (Some(&min), Some(&max)) = (stamps.iter().min(), stamps.iter().max()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let n = n.max(1);
+    let span = (max - min).max(1);
+    let step = span.div_ceil(n as u64).max(1);
+    let mut buckets = vec![WalBucketData::default(); n];
+    let mut ranges = Vec::with_capacity(n);
+    for (i, b) in buckets.iter_mut().enumerate() {
+        let lo = min + step * i as u64;
+        ranges.push((lo, lo + step));
+        b.label = format_epoch_utc((lo / 1_000_000_000) as i64);
+    }
+    for r in rows {
+        if r.ts_ns == 0 {
+            continue;
+        }
+        let idx = (((r.ts_ns - min) / step) as usize).min(n - 1);
+        let b = &mut buckets[idx];
+        match r.tint.as_str() {
+            "memory" => b.memory_n += 1,
+            "audit" => b.audit_n += 1,
+            "consent" => b.consent_n += 1,
+            "warning" => b.warning_n += 1,
+            _ => b.plain_n += 1,
+        }
+    }
+    (buckets, ranges)
+}
+
+/// Semantic tint per opcode band — mirrors the WAL registry's band map
+/// (events.rs header table) onto the GUI's meaning colours.
+pub fn wal_tint_for(event_type: u8) -> &'static str {
+    match event_type {
+        0x10..=0x2F => "memory",              // memory / recall / self-dev
+        0x30..=0x3F => "audit",               // channels / ingress-egress
+        0x40..=0x4F => "warning",             // cron (amber = in-progress)
+        0x60..=0x6F => "audit",               // council / decisions
+        0x70..=0x7F => "warning",             // coding workflow + loops
+        0xC0..=0xCF => "consent",             // caps / denials / security
+        0xF0..=0xFF => "memory",              // dreaming / high band
+        _ => "plain",
+    }
+}
+
+/// Parse the `wal show` JSON envelope into inspector rows (already
+/// newest-first from the CLI). Returns (rows, frames_matched).
+pub fn parse_wal_show(json: &str) -> (Vec<WalRowData>, i32) {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let matched = v
+        .get("frames_matched")
+        .and_then(|x| x.as_i64())
+        .unwrap_or(0) as i32;
+    let Some(frames) = v.get("frames").and_then(|x| x.as_array()) else {
+        return (Vec::new(), matched);
+    };
+    let rows = frames
+        .iter()
+        .map(|f| {
+            let opcode = f
+                .get("event_type")
+                .and_then(|x| x.as_str())
+                .unwrap_or("0x??")
+                .to_string();
+            let et = u8::from_str_radix(opcode.trim_start_matches("0x"), 16).unwrap_or(0);
+            let ts_ns = f.get("ts_ns").and_then(|x| x.as_u64()).unwrap_or(0);
+            let payload_len = f.get("payload_len").and_then(|x| x.as_u64()).unwrap_or(0);
+            let importance = f.get("importance").and_then(|x| x.as_f64()).unwrap_or(0.0);
+            WalRowData {
+                seq: f.get("event_id").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                ts: format_epoch_utc((ts_ns / 1_000_000_000) as i64),
+                ts_ns,
+                opcode,
+                kind: f
+                    .get("event_name")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                summary: format!("{} B · imp {:.2}", payload_len, importance),
+                tint: wal_tint_for(et).to_string(),
+                detail_json: serde_json::to_string_pretty(f).unwrap_or_default(),
+            }
+        })
+        .collect();
+    (rows, matched)
+}
+
+/// Client-side filter for the inspector: free-text over kind/opcode plus
+/// an opcode-band index matching `WAL_BAND_OPTIONS`.
+pub const WAL_BAND_OPTIONS: &[(&str, Option<(u8, u8)>)] = &[
+    ("all bands", None),
+    ("memory 0x10–0x2F", Some((0x10, 0x2F))),
+    ("channels 0x30–0x3F", Some((0x30, 0x3F))),
+    ("cron 0x40–0x4F", Some((0x40, 0x4F))),
+    ("council 0x60–0x6F", Some((0x60, 0x6F))),
+    ("coding+loops 0x70–0x7F", Some((0x70, 0x7F))),
+    ("security 0xC0–0xCF", Some((0xC0, 0xCF))),
+    ("dreaming 0xF0–0xFF", Some((0xF0, 0xFF))),
+];
+
+pub fn filter_wal_rows(rows: &[WalRowData], text: &str, band_idx: usize) -> Vec<WalRowData> {
+    let q = text.trim().to_lowercase();
+    let band = WAL_BAND_OPTIONS
+        .get(band_idx)
+        .and_then(|(_, range)| *range);
+    rows.iter()
+        .filter(|r| {
+            let et = u8::from_str_radix(r.opcode.trim_start_matches("0x"), 16).unwrap_or(0);
+            let band_ok = band.is_none_or(|(lo, hi)| et >= lo && et <= hi);
+            let text_ok = q.is_empty()
+                || r.kind.to_lowercase().contains(&q)
+                || r.opcode.to_lowercase().contains(&q);
+            band_ok && text_ok
+        })
+        .cloned()
+        .collect()
+}
+
+// ── Mesh fleet dashboard — swarm resource snapshots ──────────────────────────
+
+/// One node row parsed from `neoth cluster swarm --output json`
+/// (top-level `{ "sampling": …, "nodes": [ … ] }`). Fractions are 0..1
+/// ready for SegBar meters.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SwarmNodeData {
+    pub node_id: String,
+    pub cpu_frac: f32,
+    pub ram_frac: f32,
+    pub vram_frac: f32,
+    pub age_secs: i32,
+}
+
+/// Parse the swarm dashboard JSON. Tolerant: bad JSON / missing fields
+/// yield an empty vec / zeroed fractions (meters render empty).
+pub fn parse_swarm_nodes(json: &str) -> Vec<SwarmNodeData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(nodes) = v.get("nodes").and_then(|x| x.as_array()) else {
+        return Vec::new();
+    };
+    fn frac(used: Option<f64>, total: Option<f64>) -> f32 {
+        match (used, total) {
+            (Some(u), Some(t)) if t > 0.0 => (u / t).clamp(0.0, 1.0) as f32,
+            _ => 0.0,
+        }
+    }
+    nodes
+        .iter()
+        .map(|n| SwarmNodeData {
+            node_id: n
+                .get("node_id")
+                .and_then(|x| x.as_str())
+                .unwrap_or("")
+                .to_string(),
+            cpu_frac: (n.get("cpu_pct").and_then(|x| x.as_f64()).unwrap_or(0.0) / 100.0)
+                .clamp(0.0, 1.0) as f32,
+            ram_frac: frac(
+                n.get("ram_used_mb").and_then(|x| x.as_f64()),
+                n.get("ram_total_mb").and_then(|x| x.as_f64()),
+            ),
+            vram_frac: frac(
+                n.get("vram_used_mb").and_then(|x| x.as_f64()),
+                n.get("vram_total_mb").and_then(|x| x.as_f64()),
+            ),
+            age_secs: n.get("age_s").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+        })
+        .collect()
+}
+
+/// Render `cluster events --output json` rows as mono log lines for the
+/// mesh tab's gossip stream, newest first, capped. Tolerant of shape
+/// drift: rows missing fields render with placeholders.
+pub fn format_gossip_lines(json: &str, cap: usize) -> Vec<String> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(rows) = v.as_array() else {
+        return Vec::new();
+    };
+    let mut lines: Vec<(i64, String)> = rows
+        .iter()
+        .map(|r| {
+            let ts = r.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
+            let peer = r
+                .get("origin_peer_pk")
+                .and_then(|x| x.as_str())
+                .unwrap_or("?");
+            let peer8: String = peer.chars().take(8).collect();
+            let et = r.get("event_type").and_then(|x| x.as_u64()).unwrap_or(0);
+            let bytes = r.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+            (
+                ts,
+                format!(
+                    "{}  {}  0x{:02X}  {}",
+                    format_epoch_utc(ts),
+                    peer8,
+                    et,
+                    format_backup_bytes(bytes)
+                ),
+            )
+        })
+        .collect();
+    lines.sort_by_key(|(ts, _)| std::cmp::Reverse(*ts));
+    lines.into_iter().take(cap).map(|(_, l)| l).collect()
+}
+
+// ── Companion overlay position persistence ──────────────────────────────────
+
+/// Parse the "x,y" dotfile written on overlay hide/restore. Whitespace
+/// tolerant; anything malformed yields None (default position applies).
+pub fn parse_overlay_pos(s: &str) -> Option<(i32, i32)> {
+    let (x, y) = s.trim().split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+
+// ── Command palette (Ctrl+K) ─────────────────────────────────────────────────
+// Pure catalog + filter; the Slint plumbing lives in main.rs.
+
+/// One palette entry: (label, glyph, tab-key, group-hint). Mirrors the
+/// sidebar nav in app_shell.slint — keep the two in sync when a tab is
+/// added or renamed.
+pub type PaletteEntry = (&'static str, &'static str, &'static str, &'static str);
+
+/// Every nav destination the palette can jump to. Complexity gating is
+/// deliberately NOT applied here: the palette is the power-user surface,
+/// so it always reaches everything (Raycast grammar).
+pub const PALETTE_CATALOG: &[PaletteEntry] = &[
+    ("Chat", "💬", "chat", "CORE"),
+    ("Overview", "◎", "overview", "CORE"),
+    ("Coding", "⌘", "coding", "WORK"),
+    ("Agents", "⚇", "agents", "WORK"),
+    ("Automation", "⟳", "automation", "WORK"),
+    ("Loops", "∞", "loops", "WORK"),
+    ("n8n", "⇶", "n8n", "WORK"),
+    ("Calendar", "◷", "calendar", "WORK"),
+    ("Evolve", "✦", "evolve", "WORK"),
+    ("Self-Dev", "⊞", "selfdev", "WORK"),
+    ("Dreaming", "☽", "dreaming", "WORK"),
+    ("Buddy Config", "⊙", "buddyconfig", "WORK"),
+    ("Memory", "◈", "memory", "SYSTEM"),
+    ("Memory Graph", "❋", "memgraph", "SYSTEM"),
+    ("Hemispheres", "◐", "hemispheres", "SYSTEM"),
+    ("Channels", "⇄", "channels", "SYSTEM"),
+    ("Privacy", "⛨", "privacy", "SYSTEM"),
+    ("Plugins", "⧉", "plugins", "SYSTEM"),
+    ("Cluster", "⬡", "cluster", "SYSTEM"),
+    ("Resources", "▦", "resources", "SYSTEM"),
+    ("Babel", "◬", "babel", "SYSTEM"),
+    ("Obsidian", "◉", "obsidian", "SYSTEM"),
+    ("Wiki", "⌗", "wiki", "SYSTEM"),
+    ("Companion", "⊕", "companion", "SYSTEM"),
+    ("Mesh", "◇", "mesh", "SYSTEM"),
+    ("WAL", "≣", "wal", "SYSTEM"),
+    ("Doctor", "✚", "doctor", "SYSTEM"),
+    ("Config", "⚙", "config", "SYSTEM"),
+];
+
+/// Case-insensitive substring filter over the catalog. Empty query
+/// returns the full catalog (palette opens showing everything).
+/// Matches on label first, then tab key ("selfdev" finds Self-Dev).
+pub fn filter_palette(query: &str) -> Vec<PaletteEntry> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return PALETTE_CATALOG.to_vec();
+    }
+    PALETTE_CATALOG
+        .iter()
+        .filter(|(label, _, tab, _)| label.to_lowercase().contains(&q) || tab.contains(&q))
+        .copied()
+        .collect()
+}
+
 // ── Wave-2 activity helpers ──────────────────────────────────────────────────
 // Pure, Slint-free functions — the ActivitySidecar plumbing (push_activity,
 // settle_activity) lives in main.rs and calls these for id allocation + cap.
@@ -6536,5 +7226,255 @@ mod tests {
         assert_eq!(format_backup_bytes(512), "512 B");
         assert_eq!(format_backup_bytes(1536), "1.5 KB");
         assert_eq!(format_backup_bytes(2 * 1024 * 1024), "2.0 MB");
+    }
+
+    #[test]
+    fn extract_code_blocks_single_multi_and_unterminated() {
+        let (code, lang) = extract_code_blocks("hi\n```rust\nfn a() {}\n```\nbye");
+        assert_eq!(code, "fn a() {}");
+        assert_eq!(lang, "rust");
+
+        let (code, lang) =
+            extract_code_blocks("```py\nx = 1\n```\ntext\n```\ny = 2\n```");
+        assert_eq!(code, "x = 1\n\ny = 2");
+        assert_eq!(lang, "py", "first tag wins");
+
+        // streaming tail: open fence, no close — swallow to end
+        let (code, _) = extract_code_blocks("```sh\necho hi");
+        assert_eq!(code, "echo hi");
+
+        assert_eq!(extract_code_blocks("no fences here").0, "");
+        assert_eq!(extract_code_blocks("").0, "");
+        // empty block is dropped
+        assert_eq!(extract_code_blocks("```\n\n```").0, "");
+    }
+
+    #[test]
+    fn parse_permissions_show_merges_overrides() {
+        let json = r#"{"active_level":"standard",
+            "active_custom_overrides":{"exec_arbitrary":"deny"},
+            "matrix":[
+              {"level":"strict","decisions":[{"action":"exec_arbitrary","decision":"deny","reason":""}]},
+              {"level":"standard","decisions":[
+                {"action":"exec_arbitrary","decision":"confirm","reason":"r"},
+                {"action":"channel_send","decision":"allow","reason":""}]}]}"#;
+        let (rows, level) = parse_permissions_show(json);
+        assert_eq!(level, "standard");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].action, "exec_arbitrary");
+        assert_eq!(rows[0].decision, "deny", "override wins over base confirm");
+        assert!(rows[0].overridden);
+        assert_eq!(rows[1].decision, "allow");
+        assert!(!rows[1].overridden);
+        assert!(parse_permissions_show("garbage").0.is_empty());
+    }
+
+    #[test]
+    fn parse_usage_rollup_reads_cost_and_tokens() {
+        let json = r#"{"since_unix":0,"until_unix":1,"total_call_count":3,
+            "total_ok_count":3,"total_err_count":0,"total_input_tokens":100,
+            "total_output_tokens":50,"total_cost_usd":0.12}"#;
+        assert_eq!(parse_usage_rollup(json), Some((0.12, 150)));
+        assert_eq!(parse_usage_rollup("junk"), None);
+        assert_eq!(parse_usage_rollup("{}"), None);
+    }
+
+    #[test]
+    fn parse_cost_sessions_tolerates_shapes() {
+        let arr = r#"[{"session_id":"abcdef1234567890XYZ","models":["claude_cli/opus"],
+            "input_tokens":1000,"output_tokens":234,"total_tokens":1234,
+            "responses":7,"last_ts_unix":1}]"#;
+        let rows = parse_cost_sessions(arr);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].session.chars().count(), 18, "session id capped");
+        assert_eq!(rows[0].provider, "claude_cli/opus");
+        assert_eq!(rows[0].tokens, "1234");
+        assert_eq!(rows[0].cost, "7 resp");
+        assert!(parse_cost_sessions("{}").is_empty());
+        assert!(parse_cost_sessions("junk").is_empty());
+    }
+
+    #[test]
+    fn layout_memory_graph_positions_and_normalizes() {
+        let json = r#"{"communities":2,"nodes":[
+            {"id":1,"label":"alpha","tier":"hot","degree":2,"community":0},
+            {"id":2,"label":"beta","tier":"cold","degree":1,"community":0},
+            {"id":3,"label":"gamma","tier":"fact","degree":1,"community":1}],
+            "edges":[{"a":1,"b":2,"w":0.8},{"a":1,"b":3,"w":0.2}]}"#;
+        let (nodes, edges, comms) = layout_memory_graph(json);
+        assert_eq!(nodes.len(), 3);
+        assert_eq!(edges.len(), 2);
+        assert_eq!(comms, 2);
+        for nd in &nodes {
+            assert!((0.05..=0.95).contains(&nd.x), "x in bounds: {}", nd.x);
+            assert!((0.05..=0.95).contains(&nd.y), "y in bounds: {}", nd.y);
+            assert!((0.1..=1.0).contains(&nd.r));
+        }
+        assert_eq!(nodes[0].r, 1.0, "highest degree gets full radius");
+        // determinism — identical input, identical layout
+        let (again, _, _) = layout_memory_graph(json);
+        assert_eq!(nodes, again);
+        // degenerate inputs
+        assert!(layout_memory_graph("").0.is_empty());
+        assert!(layout_memory_graph(r#"{"nodes":[]}"#).0.is_empty());
+    }
+
+    #[test]
+    fn parse_agents_list_maps_fields_and_tolerates_garbage() {
+        let json = r#"{"count":1,"agents":[{"name":"reviewer","source":"built-in",
+            "description":"reviews code","model":"qwen2","tool_count":3,"enabled":true}]}"#;
+        let rows = parse_agents_list(json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "reviewer");
+        assert_eq!(rows[0].hemisphere, "built-in");
+        assert_eq!(rows[0].state, "idle");
+        assert_eq!(rows[0].current_task, "reviews code");
+        assert!(parse_agents_list("nope").is_empty());
+        assert!(parse_agents_list("{}").is_empty());
+    }
+
+    #[test]
+    fn bucket_wal_rows_counts_bands_and_ranges() {
+        let mk = |ts_ns: u64, tint: &str| WalRowData {
+            ts_ns,
+            tint: tint.into(),
+            ..Default::default()
+        };
+        let rows = vec![
+            mk(1_000_000_000, "memory"),
+            mk(2_000_000_000, "warning"),
+            mk(9_000_000_000, "consent"),
+            mk(10_000_000_000, "consent"),
+            mk(0, "audit"), // ts 0 skipped
+        ];
+        let (buckets, ranges) = bucket_wal_rows(&rows, 4);
+        assert_eq!(buckets.len(), 4);
+        assert_eq!(ranges.len(), 4);
+        let total: i32 = buckets
+            .iter()
+            .map(|b| b.memory_n + b.audit_n + b.consent_n + b.warning_n + b.plain_n)
+            .sum();
+        assert_eq!(total, 4, "ts 0 row must be skipped");
+        assert_eq!(buckets[0].memory_n, 1);
+        assert_eq!(buckets[3].consent_n, 2, "newest slice holds both consents");
+        assert!(bucket_wal_rows(&[], 4).0.is_empty());
+    }
+
+    #[test]
+    fn parse_wal_show_rows_and_tints() {
+        let json = r#"{"frames_matched":3,"frames":[
+            {"event_type":"0x40","event_name":"job_fired","event_subtype":0,
+             "payload_len":120,"importance":0.5,"ts_ns":1000000000,"event_id":7,"payload_hash":"00"},
+            {"event_type":"0xC7","event_name":"plugin_cap_denied","event_subtype":0,
+             "payload_len":8,"importance":0.9,"ts_ns":2000000000,"event_id":8,"payload_hash":"01"}]}"#;
+        let (rows, matched) = parse_wal_show(json);
+        assert_eq!(matched, 3);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].seq, 7);
+        assert_eq!(rows[0].tint, "warning", "cron band = amber");
+        assert_eq!(rows[1].tint, "consent", "security band = pink");
+        assert!(rows[0].detail_json.contains("job_fired"));
+        assert!(parse_wal_show("garbage").0.is_empty());
+    }
+
+    #[test]
+    fn filter_wal_rows_by_text_and_band() {
+        let (rows, _) = parse_wal_show(
+            r#"{"frames_matched":2,"frames":[
+            {"event_type":"0x40","event_name":"job_fired","payload_len":1,"importance":0.1,"ts_ns":0,"event_id":1},
+            {"event_type":"0x62","event_name":"council_vote","payload_len":1,"importance":0.1,"ts_ns":0,"event_id":2}]}"#,
+        );
+        assert_eq!(filter_wal_rows(&rows, "", 0).len(), 2);
+        assert_eq!(filter_wal_rows(&rows, "council", 0).len(), 1);
+        assert_eq!(filter_wal_rows(&rows, "0x40", 0).len(), 1);
+        // band 3 = cron 0x40–0x4F
+        let cron = filter_wal_rows(&rows, "", 3);
+        assert_eq!(cron.len(), 1);
+        assert_eq!(cron[0].kind, "job_fired");
+        assert!(filter_wal_rows(&rows, "zzz", 0).is_empty());
+    }
+
+    #[test]
+    fn format_gossip_lines_newest_first_and_capped() {
+        let json = r#"[
+            {"origin_peer_pk":"aabbccddeeff0011","origin_seq":1,"event_type":50,"payload_bytes":100,"received_at":1000},
+            {"origin_peer_pk":"1122334455667788","origin_seq":2,"event_type":64,"payload_bytes":2048,"received_at":2000}]"#;
+        let lines = format_gossip_lines(json, 10);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("11223344"), "newest first: {lines:?}");
+        assert!(lines[0].contains("0x40"));
+        assert!(lines[1].contains("aabbccdd"));
+        assert_eq!(format_gossip_lines(json, 1).len(), 1);
+        assert!(format_gossip_lines("garbage", 5).is_empty());
+        assert!(format_gossip_lines("{}", 5).is_empty());
+    }
+
+    #[test]
+    fn parse_swarm_nodes_full_and_degenerate() {
+        let json = r#"{"sampling":{"enabled":true},"nodes":[
+            {"node_id":"abc","hostname":"cube","cpu_pct":42.5,
+             "ram_used_mb":8000,"ram_total_mb":16000,
+             "vram_used_mb":0,"vram_total_mb":0,"ts_unix":1,"age_s":7}]}"#;
+        let nodes = parse_swarm_nodes(json);
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].node_id, "abc");
+        assert!((nodes[0].cpu_frac - 0.425).abs() < 1e-6);
+        assert!((nodes[0].ram_frac - 0.5).abs() < 1e-6);
+        assert_eq!(nodes[0].vram_frac, 0.0, "zero-total VRAM must not divide");
+        assert_eq!(nodes[0].age_secs, 7);
+
+        assert!(parse_swarm_nodes("").is_empty());
+        assert!(parse_swarm_nodes("{}").is_empty());
+        assert!(parse_swarm_nodes(r#"{"nodes":"nope"}"#).is_empty());
+        // cpu over 100 clamps to 1.0
+        let hot = parse_swarm_nodes(r#"{"nodes":[{"node_id":"x","cpu_pct":250.0}]}"#);
+        assert_eq!(hot[0].cpu_frac, 1.0);
+    }
+
+    #[test]
+    fn parse_overlay_pos_roundtrip_and_garbage() {
+        assert_eq!(parse_overlay_pos("120,340"), Some((120, 340)));
+        assert_eq!(parse_overlay_pos(" -5 , 0 \n"), Some((-5, 0)));
+        assert_eq!(parse_overlay_pos(""), None);
+        assert_eq!(parse_overlay_pos("120"), None);
+        assert_eq!(parse_overlay_pos("a,b"), None);
+    }
+
+    #[test]
+    fn filter_palette_empty_query_returns_full_catalog() {
+        assert_eq!(filter_palette("").len(), PALETTE_CATALOG.len());
+        assert_eq!(filter_palette("   ").len(), PALETTE_CATALOG.len());
+    }
+
+    #[test]
+    fn filter_palette_matches_label_case_insensitive() {
+        let hits = filter_palette("MEM");
+        assert!(hits.iter().any(|(l, _, _, _)| *l == "Memory"));
+        assert!(hits.iter().all(|(l, _, tab, _)| l
+            .to_lowercase()
+            .contains("mem")
+            || tab.contains("mem")));
+    }
+
+    #[test]
+    fn filter_palette_matches_tab_key() {
+        // "selfdev" only exists as the tab key (label is "Self-Dev").
+        let hits = filter_palette("selfdev");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].2, "selfdev");
+    }
+
+    #[test]
+    fn filter_palette_no_match_returns_empty() {
+        assert!(filter_palette("zzz-not-a-tab").is_empty());
+    }
+
+    #[test]
+    fn palette_catalog_tab_keys_are_unique() {
+        let mut keys: Vec<&str> = PALETTE_CATALOG.iter().map(|(_, _, t, _)| *t).collect();
+        keys.sort_unstable();
+        let before = keys.len();
+        keys.dedup();
+        assert_eq!(before, keys.len(), "duplicate tab key in PALETTE_CATALOG");
     }
 }

@@ -1,0 +1,552 @@
+// NEOTH — Memory Graph View
+// Obsidian-style memory knowledge graph: nodes are memories, edges are
+// co-activation links. Rust pre-computes the force layout; Slint renders.
+//
+// Design language: neon-on-near-black. Node fill = tier signal colour
+// (green=hot/memory · amber=warm/warning · cyan=cold/audit · pink=fact/consent).
+// Edges are thin strokes whose opacity scales with co-activation weight.
+//
+// Slint 1.16 constraints observed:
+//   - No @children inside if blocks.
+//   - Property named "row" is reserved; not used here.
+//   - accessible-label paired with accessible-role on the same element.
+//     AccessibleRole.text (fully-qualified) used on Text elements to avoid
+//     the `text` property shadowing the enum short-form.
+//   - Floating hover chips via negative-y Rectangle (clip defaults to false).
+//   - No PopupWindow — chip is an explicit overlay Rectangle.
+//   - Animation via `animate { }` blocks on width/height.
+//   - No inline hex — Theme tokens only.
+//
+// ── WIRING ───────────────────────────────────────────────────────────────────
+//
+// main.slint — imports (already present at line 33):
+//   import { MemoryGraphView, GraphNode, GraphEdge } from "memory_graph.slint";
+//
+// main.slint — export line (already present at line 52):
+//   export { ..., GraphNode, GraphEdge }
+//
+// main.slint — AppWindow instance (place in the Memory tab content area,
+//   replacing or alongside any existing ProbeView wired to memory recall):
+//
+//   MemoryGraphView {
+//       nodes:         root.memory-graph-nodes;
+//       edges:         root.memory-graph-edges;
+//       selected-id  <=> root.memory-graph-selected-id;
+//       detail-text:   root.memory-graph-detail-text;
+//       stats-line:    root.memory-graph-stats-line;
+//       running:       root.memory-graph-running;
+//       node-selected(id) => { root.memory-graph-node-selected(id); }
+//       refresh-clicked() => { root.memory-graph-refresh();          }
+//   }
+//
+// main.slint — AppWindow properties (add to AppWindow):
+//   in property <[GraphNode]>  memory-graph-nodes:       [];
+//   in property <[GraphEdge]>  memory-graph-edges:       [];
+//   in-out property <int>      memory-graph-selected-id: -1;
+//   in property <string>       memory-graph-detail-text: "";
+//   in property <string>       memory-graph-stats-line:  "";
+//   in property <bool>         memory-graph-running:     false;
+//   callback memory-graph-node-selected(int);
+//   callback memory-graph-refresh();
+//
+// ── Rust feed contract (panel_logic.rs) ──────────────────────────────────────
+//
+// Trigger: rebuild whenever the recall index changes or operator clicks Refresh.
+// Force layout is computed by neothd::memory::graph::ForceLayout (Rust side).
+//
+//   fn rebuild_memory_graph(app: &AppWindow, snap: &MemGraphSnapshot) {
+//       let nodes: Vec<GraphNode> = snap.nodes.iter().map(|n| GraphNode {
+//           id:        n.id as i32,
+//           label:     n.label.clone().into(),
+//           x:         n.x,          // 0.0..1.0 normalised by force engine
+//           y:         n.y,
+//           r:         n.degree_norm, // 0.0..1.0 relative radius
+//           tier:      tier_str(n.tier).into(), // "hot"|"warm"|"cold"|"fact"
+//           community: n.community as i32,
+//           degree:    n.degree as i32,
+//       }).collect();
+//
+//       let edges: Vec<GraphEdge> = snap.edges.iter().map(|e| GraphEdge {
+//           x1: e.src_x, y1: e.src_y,
+//           x2: e.dst_x, y2: e.dst_y,
+//           w:  e.weight, // 0.0..1.0 co-activation strength
+//       }).collect();
+//
+//       app.set_memory_graph_nodes(ModelRc::new(VecModel::from(nodes)));
+//       app.set_memory_graph_edges(ModelRc::new(VecModel::from(edges)));
+//       app.set_memory_graph_stats_line(format!(
+//           "{} memories · {} links · {} communities",
+//           snap.node_count, snap.edge_count, snap.community_count,
+//       ));
+//   }
+//
+//   // memory_graph_node_selected handler — populate detail card:
+//   app.on_memory_graph_node_selected(move |id| {
+//       if let Some(node) = snap.nodes.iter().find(|n| n.id as i32 == id) {
+//           app.set_memory_graph_detail_text(format!(
+//               "id:        {}\ntier:      {}\ndegree:    {}\ncommunity: {}\n\n{}",
+//               node.id, tier_str(node.tier), node.degree,
+//               node.community, node.recall_preview,
+//           ));
+//       }
+//   });
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { Theme } from "theme.slint";
+import { EmptyState } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+/// A node in the memory knowledge graph.
+/// `x` and `y` are 0..1 normalised coordinates computed by Rust's force engine.
+/// `r` is the normalised radius (0..1 → 8px–30px on screen).
+/// `tier` is one of: "hot" | "warm" | "cold" | "fact".
+/// `community` is the cluster index and drives the subtle border-color tint.
+/// `degree` is the raw edge count (informational; `r` is the normalised form).
+export struct GraphNode {
+    id:        int,
+    label:     string,
+    x:         float,
+    y:         float,
+    r:         float,
+    tier:      string,
+    community: int,
+    degree:    int,
+}
+
+/// An edge in the memory knowledge graph.
+/// Coordinates mirror the connected GraphNode x/y positions (0..1 normalised).
+/// `w` is the co-activation weight (0..1) and drives edge stroke opacity.
+export struct GraphEdge {
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    w:  float,
+}
+
+// ── MemoryGraphView ───────────────────────────────────────────────────────────
+
+/// Obsidian-style memory knowledge graph panel.
+/// Rust pre-computes the force layout; this component only renders.
+///
+/// Layout: header row (eyebrow + stats + Refresh pill) → split row
+///   (canvas left · detail rail right 260px) → legend row.
+///
+/// Canvas: bg-void rounded card. Edges render as full-canvas Paths
+/// (viewbox 0..1000; stroke opacity scales with weight). Nodes render
+/// as absolutely-positioned circles sized 8px + r·22px; tier drives fill
+/// colour; community mod 4 drives border tint. Hover shows a floating glass
+/// label chip; click selects the node and fires node-selected(id).
+export component MemoryGraphView inherits Rectangle {
+
+    // ── public API ───────────────────────────────────────────────────────────
+
+    /// Force-layout nodes from Rust. x/y: 0..1 normalised; r: 0..1 relative.
+    in property <[GraphNode]>  nodes: [];
+    /// Pre-computed edges from Rust. x1/y1/x2/y2 match node positions.
+    in property <[GraphEdge]>  edges: [];
+    /// Selected node id; -1 = none.
+    in-out property <int>      selected-id: -1;
+    /// Fired when operator clicks a node circle.
+    callback node-selected(int);
+    /// Mono detail text for the selected node (Rust populates on node-selected).
+    in property <string>       detail-text: "";
+    /// Formatted summary shown in the header, e.g. "128 memories · 340 links · 7 communities".
+    in property <string>       stats-line: "";
+    /// Fired when operator clicks the Refresh pill.
+    callback refresh-clicked();
+    /// True while Rust is recomputing the graph layout.
+    in property <bool>         running: false;
+
+    // ── root ─────────────────────────────────────────────────────────────────
+
+    background: Theme.bg-base;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+
+        // ── Header ───────────────────────────────────────────────────────────
+        // Eyebrow MEMORY GRAPH + mono stats-line on the left.
+        // Accent-tint Refresh pill on the right — mirrors ProbeView grammar.
+        HorizontalLayout {
+            alignment: space-between;
+            height: 42px;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 2px;
+
+                // Eyebrow — kicker style: mono, uppercase, widest tracking.
+                Text {
+                    text: "MEMORY GRAPH";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-mono-caps;
+                }
+
+                // Stats summary line (Rust formats, e.g. "128 memories · …").
+                Text {
+                    text: root.stats-line;
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-sm;
+                    overflow: elide;
+                }
+            }
+
+            // Refresh pill — same grammar as ProbeView (tabs.slint).
+            // accent-tint background at rest; surface-2 + dimmed text while running.
+            Rectangle {
+                width: refresh-lbl.preferred-width + 32px;
+                height: 38px;
+                border-radius: Theme.radius-pill;
+                background: root.running ? Theme.surface-2 : Theme.accent-tint;
+                border-width: 1px;
+                border-color: Theme.border-accent;
+                accessible-role: button;
+                accessible-label: root.running
+                    ? "graph refresh in progress"
+                    : "refresh memory graph";
+
+                refresh-lbl := Text {
+                    x: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    text: root.running ? "running…" : "Refresh";
+                    color: root.running ? Theme.text-tertiary : Theme.accent;
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-sm;
+                    vertical-alignment: center;
+                    horizontal-alignment: center;
+                }
+
+                TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { if (!root.running) { root.refresh-clicked(); } }
+                }
+            }
+        }
+
+        // ── Main content ─────────────────────────────────────────────────────
+        // Canvas on the left (flex) + detail rail on the right (fixed 260px).
+        HorizontalLayout {
+            spacing: 12px;
+            vertical-stretch: 1;
+
+            // ── Canvas area ───────────────────────────────────────────────────
+            // bg-void rounded card. Children are absolutely positioned.
+            // clip: false (default) so hover chips can float above node edges.
+            Rectangle {
+                horizontal-stretch: 1;
+                min-height: 300px;
+                background: Theme.bg-void;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                // ── Empty state ───────────────────────────────────────────────
+                // Shown when Rust has not yet pushed any nodes.
+                if root.nodes.length == 0: EmptyState {
+                    width: parent.width;
+                    height: parent.height;
+                    glyph: "◈";
+                    title: "no memory graph yet";
+                    hint: "memories link as they co-activate";
+                }
+
+                // ── Edges ─────────────────────────────────────────────────────
+                // Rendered before nodes so nodes appear on top.
+                // Each edge is a full-canvas Path with a 0..1000 viewbox.
+                // Coordinates: x·1000, y·1000 maps from 0..1 normalised space.
+                // stroke-width 1.5px is in logical pixels (not viewbox units).
+                // fill: transparent prevents any path area fill.
+                for edge in root.edges: Path {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    viewbox-width: 1000;
+                    viewbox-height: 1000;
+                    fill: transparent;
+                    stroke: Theme.border-strong.with-alpha(0.15 + 0.45 * edge.w);
+                    stroke-width: 1.5px;
+                    commands: "M \{edge.x1 * 1000} \{edge.y1 * 1000} L \{edge.x2 * 1000} \{edge.y2 * 1000}";
+                }
+
+                // ── Nodes ─────────────────────────────────────────────────────
+                // Absolutely positioned circles centred on normalised x/y.
+                // Diameter = 8px + r·22px (r is 0..1; max visible dot = 30px).
+                // Hover expands slightly via animated width/height.
+                // Selected node gets a 2px accent-glow ring.
+                // Community mod 4 drives a subtle border tint on non-selected nodes.
+                for node in root.nodes: Rectangle {
+                    property <length> _base: 8px + node.r * 22px;
+
+                    // Tier colour — four signal colours carry tier meaning.
+                    property <color>  _fill:
+                        node.tier == "hot"  ? Theme.memory  :
+                        node.tier == "warm" ? Theme.warning :
+                        node.tier == "cold" ? Theme.audit   : Theme.consent;
+
+                    // Community border tint — mod 4 rotates through the four tier colours.
+                    property <color>  _comm:
+                        mod(node.community, 4) == 0 ? Theme.memory.with-alpha(0.4)  :
+                        mod(node.community, 4) == 1 ? Theme.warning.with-alpha(0.4) :
+                        mod(node.community, 4) == 2 ? Theme.audit.with-alpha(0.4)   :
+                                                      Theme.consent.with-alpha(0.4);
+
+                    // Hover widens; selected adds a smaller bump.
+                    width:  node-ta.has-hover             ? _base + 4px
+                          : root.selected-id == node.id  ? _base + 2px
+                          : _base;
+                    height: self.width;
+
+                    // Centre the circle on the normalised position.
+                    x: node.x * parent.width  - self.width  / 2;
+                    y: node.y * parent.height - self.height / 2;
+
+                    border-radius: self.width / 2;
+                    background: _fill;
+
+                    // Selected: glowing accent ring. Others: community tint border.
+                    border-width: root.selected-id == node.id ? 2px : 1px;
+                    border-color: root.selected-id == node.id
+                        ? Theme.accent-glow
+                        : _comm;
+
+                    animate width  { duration: Theme.duration-fast; easing: ease-out; }
+                    animate height { duration: Theme.duration-fast; easing: ease-out; }
+
+                    // Accessible as a text node (label is not a Text child here).
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: node.label + ", tier " + node.tier
+                        + ", degree " + node.degree;
+
+                    // ── Hover label chip ──────────────────────────────────────
+                    // Glass chip floats above the node via y = -(chip.height + 4px)
+                    // relative to the node Rectangle. clip defaults to false on
+                    // both this Rectangle and the canvas parent, so the chip
+                    // renders even when the node is near the canvas top edge.
+                    if node-ta.has-hover: Rectangle {
+                        height: 20px;
+                        width: hover-lbl.preferred-width + 16px;
+                        x: (parent.width  - self.width) / 2;
+                        y: -(self.height + 4px);
+                        background: Theme.surface-glass;
+                        border-radius: Theme.radius-xs;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        hover-lbl := Text {
+                            x: 8px;
+                            // Cap width so very long labels don't overflow the canvas.
+                            width: min(parent.width - 16px, 196px);
+                            height: parent.height;
+                            text: node.label;
+                            color: Theme.text-secondary;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            overflow: elide;
+                            vertical-alignment: center;
+                            // AccessibleRole.text: qualified to avoid shadowing by `text` property.
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: node.label;
+                        }
+                    }
+
+                    // ── Node interaction ──────────────────────────────────────
+                    node-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        accessible-role: button;
+                        accessible-label: "select memory node " + node.label;
+                        accessible-action-default => {
+                            root.selected-id = node.id;
+                            root.node-selected(node.id);
+                        }
+                        clicked => {
+                            root.selected-id = node.id;
+                            root.node-selected(node.id);
+                        }
+                    }
+                }
+            }
+
+            // ── Detail rail ───────────────────────────────────────────────────
+            // Fixed 260px right panel. Shows node detail card when a node is
+            // selected, or a "click a node" hint when none is selected.
+            Rectangle {
+                width: 260px;
+                background: Theme.surface-1;
+                border-radius: Theme.radius-lg;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+
+                // Detail card — shown when selected-id >= 0.
+                // Scrollable so long detail-text doesn't overflow.
+                if root.selected-id >= 0: ScrollView {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        alignment: start;
+                        min-height: 300px;
+
+                        // Section eyebrow — same style as Kicker.
+                        Text {
+                            text: "NODE DETAIL";
+                            color: Theme.text-disabled;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-mono-caps;
+                            height: 16px;
+                            // AccessibleRole.text: qualified because `text` property exists.
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "node detail section";
+                        }
+
+                        // Mono detail inset — bg-void card, word-wrap.
+                        Rectangle {
+                            border-radius: Theme.radius-md;
+                            background: Theme.bg-void;
+                            border-width: 1px;
+                            border-color: Theme.border-subtle;
+
+                            VerticalLayout {
+                                padding: 10px;
+                                alignment: start;
+
+                                Text {
+                                    text: root.detail-text != ""
+                                        ? root.detail-text
+                                        : "loading…";
+                                    color: root.detail-text != ""
+                                        ? Theme.text-secondary
+                                        : Theme.text-tertiary;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    wrap: word-wrap;
+                                    // AccessibleRole.text: qualified to avoid `text` property shadowing.
+                                    accessible-role: AccessibleRole.text;
+                                    accessible-label: root.detail-text;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Hint — shown when no node is selected (selected-id < 0).
+                if root.selected-id < 0: Text {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    text: "click a node";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-xs;
+                    letter-spacing: Theme.letter-spacing-wide;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    // AccessibleRole.text: qualified to avoid `text` property shadowing.
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "no node selected — click a node in the graph to see details";
+                }
+            }
+        }
+
+        // ── Legend row ────────────────────────────────────────────────────────
+        // Four tier dots with mono 2xs labels, centred at the bottom.
+        // Dot size 8px, border-radius 4px (half) = circle.
+        HorizontalLayout {
+            alignment: center;
+            spacing: 16px;
+            height: 20px;
+
+            // hot — memory green
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: center;
+                height: 20px;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: Theme.memory;
+                }
+                Text {
+                    text: "hot";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "hot tier: most active memories";
+                }
+            }
+
+            // warm — warning amber
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: center;
+                height: 20px;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: Theme.warning;
+                }
+                Text {
+                    text: "warm";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "warm tier: recently active memories";
+                }
+            }
+
+            // cold — audit cyan
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: center;
+                height: 20px;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: Theme.audit;
+                }
+                Text {
+                    text: "cold";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "cold tier: older or less active memories";
+                }
+            }
+
+            // fact — consent pink
+            HorizontalLayout {
+                spacing: 5px;
+                alignment: center;
+                height: 20px;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: Theme.consent;
+                }
+                Text {
+                    text: "fact";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    accessible-role: AccessibleRole.text;
+                    accessible-label: "fact tier: ground truth memories";
+                }
+            }
+        }
+    }
+}

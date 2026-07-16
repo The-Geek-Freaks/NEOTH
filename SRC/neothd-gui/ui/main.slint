@@ -19,16 +19,20 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow } from "settings.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem } from "components.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
 import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { AgentsView, AgentRow } from "agents_view.slint";
+import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
+import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
+import { MemoryGraphView, GraphNode, GraphEdge } from "memory_graph.slint";
 import { CronView, CronJobRow } from "cron.slint";
-import { OverviewView, HemiCard, CalEvent, ConsentEntry } from "overview.slint";
+import { OverviewView, HemiCard, CalEvent, ConsentEntry, CostSessionRow } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 // Design Wave 4a — new real-data panels.
 import { N8nView, N8nWorkflow } from "n8n.slint";
@@ -45,7 +49,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -196,6 +200,8 @@ export component MainWindow inherits Window {
     // Wave-1 toast system. Rust pushes via push_toast(); expires via prune_toast().
     // The ToastStack overlay renders this model in the shell area (top-right, z=70).
     in-out property <[ToastData]> toasts: [];
+    // Operator clicked a toast card — Rust prunes the id immediately.
+    callback toast-dismissed(int);
     in property <string> hardware-summary: "";
     /// GOLD-ADAPT-OH-01 — prior-AI migration card body (welcome step).
     /// Empty = no supported assistant homes detected → card hidden.
@@ -203,6 +209,20 @@ export component MainWindow inherits Window {
     // GOLD-ADAPT-GUI-04 — daemon live-state for the footer Led:
     // "live" | "connecting" | "error" (derived from probe outcomes).
     in property <string> daemon-state: "connecting";
+    // Offline-banner retry — Rust re-runs the daemon/hardware probe.
+    callback daemon-retry-clicked();
+    // Sidebar version line — Rust binds the real CARGO_PKG_VERSION.
+    in property <string> app-version-line: "v1.0 · sovereign";
+    // E4 — About / What's-new overlay (changelog embedded at build time).
+    in-out property <bool> about-open: false;
+    in property <string> about-changelog: "";
+    // Command palette (Ctrl+K). Rust filters palette-results on
+    // palette-query-edited; activation reuses the sidebar nav path.
+    in-out property <bool> palette-open: false;
+    in-out property <string> palette-query: "";
+    in-out property <int> palette-selected: 0;
+    in property <[PaletteItem]> palette-results: [];
+    callback palette-query-edited(string);
     // GOLD-ADAPT-GUI-05 — TypedStatus footer ticker (Rust types it in).
     in property <string> status-message: "";
     // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
@@ -413,6 +433,8 @@ export component MainWindow inherits Window {
     in property <string> buddy-caption: "ready";
     in property <bool> buddy-visible: true;
     callback buddy-clicked();
+    // B4 — quick-action menu open state (pure view state).
+    in-out property <bool> buddy-menu-open: false;
 
     // ── App-shell navigation (design-system desktop layout) ───────────
     // The persistent sidebar's active tab. "chat" shows the ChatView; the
@@ -437,6 +459,40 @@ export component MainWindow inherits Window {
     in property <string> agents-output: "";
     in property <bool> agents-running: false;
     callback agents-refresh-clicked();
+    // Wave 5 — structured agent cards; raw output stays the fallback.
+    in property <[AgentRow]> agents-model: [];
+
+    // Wave 5 — WAL Inspector (audit chain browser).
+    in property <[WalEventRow]> wal-events: [];
+    in-out property <int>       wal-selected-seq: -1;
+    in property <string>        wal-detail-json: "";
+    in property <bool>          wal-verify-running: false;
+    in property <string>        wal-verify-result: "";
+    in property <int>           wal-total-count: 0;
+    in property <bool>          wal-has-older: false;
+    in property <[string]>      wal-opcode-options: [];
+    callback wal-verify-clicked();
+    callback wal-filter-edited(string);
+    callback wal-opcode-filter-changed(int);
+    callback wal-follow-toggled(bool);
+    callback wal-row-selected(int);
+    callback wal-load-older-clicked();
+    callback wal-copy-detail-clicked();
+    // Timeline scrubber — Rust buckets the cached rows by time band.
+    in property <[WalBucket]> wal-buckets: [];
+    in-out property <int>     wal-selected-bucket: -1;
+    in property <int>         wal-timeline-max: 0;
+    callback wal-bucket-selected(int);
+
+    // H2 — memory graph (Hebbian association view).
+    in property <[GraphNode]> memgraph-nodes: [];
+    in property <[GraphEdge]> memgraph-edges: [];
+    in-out property <int>     memgraph-selected: -1;
+    in property <string>      memgraph-detail: "";
+    in property <string>      memgraph-stats: "";
+    in property <bool>        memgraph-running: false;
+    callback memgraph-node-selected(int);
+    callback memgraph-refresh-clicked();
     // Automation tab — CRUD cron panel (GAP-01).
     in property <[CronJobRow]> cron-jobs: [];
     in property <bool>         cron-running: false;
@@ -491,6 +547,10 @@ export component MainWindow inherits Window {
     in property <[ConsentEntry]> ov-consent-entries: [];
     in property <string> ov-smart-approve: "";
     in property <string> ov-refreshed-at: "";
+    // Wave 8 — cost & usage card (C7/H5).
+    in property <[CostSessionRow]> ov-cost-sessions: [];
+    in property <[float]> ov-usage-days: [];
+    in property <string> ov-usage-days-label: "";
     callback overview-refresh-clicked();
 
     // ── Wave 4a — n8n panel ────────────────────────────────────────────────────
@@ -611,6 +671,10 @@ export component MainWindow inherits Window {
     in-out property <bool>   cfg-vad-enabled: false;
     in-out property <bool>   cfg-dictation-enabled: false;
     in-out property <bool>   cfg-proactive-idle-only: false;
+    // DES-09 G37 — proactive quiet hours (UTC).
+    in-out property <bool>   cfg-quiet-hours-enabled: false;
+    in-out property <string> cfg-quiet-hours-start: "22";
+    in-out property <string> cfg-quiet-hours-end: "7";
     in-out property <bool>   cfg-memory-name-sessions: false;
     in-out property <bool>   cfg-memory-recall-shortcut: false;
     in-out property <int>    cfg-memory-vector-backend-idx: 0;
@@ -637,6 +701,7 @@ export component MainWindow inherits Window {
     callback cfg-vad-enabled-changed(bool);
     callback cfg-dictation-enabled-changed(bool);
     callback cfg-proactive-idle-only-changed(bool);
+    callback cfg-quiet-hours-changed(bool, string, string);
     callback cfg-memory-name-sessions-changed(bool);
     callback cfg-memory-recall-shortcut-changed(bool);
     callback cfg-memory-vector-backend-changed(int);
@@ -707,6 +772,10 @@ export component MainWindow inherits Window {
     in property <int>             mesh-foreign-peers: 0;
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
+    // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
+    in property <[string]>        mesh-gossip-events: [];
+    in-out property <string>      mesh-expanded-peer: "";
+    callback mesh-peer-sync-clicked(string);
 
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
@@ -726,6 +795,8 @@ export component MainWindow inherits Window {
         : root.nav-active == "plugins"     ? "Plugins"
         : root.nav-active == "cluster"     ? "Private Mesh"
         : root.nav-active == "resources"   ? "Resources"
+        : root.nav-active == "wal"         ? "WAL Inspector"
+        : root.nav-active == "memgraph"    ? "Memory Graph"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -841,6 +912,28 @@ export component MainWindow inherits Window {
     callback chat-consent-revoke(string);
     /// Chat strip requests a consent data refresh.
     callback chat-consent-refresh();
+    // Wave 5 — message hover actions (copy/retry/delete) + scroll FAB.
+    in-out property <int> chat-unseen-count: 0;
+    callback chat-message-copy(int);
+    callback chat-message-retry(int);
+    callback chat-message-delete(int);
+    // Wave 8 — code-block copy + always-visible stop.
+    callback chat-code-copy(int);
+    callback chat-stop-stream();
+
+    // Wave 8 — C2 per-action permissions matrix (Privacy tab).
+    in property <[PermRow]> cfg-perm-rows: [];
+    in property <string>    cfg-perm-level: "";
+    callback cfg-perm-set(string, string);
+    callback cfg-perm-clear(string);
+
+    // Wave 8 — A4 kanban card context menu.
+    in-out property <bool>   kanban-ctx-open: false;
+    in-out property <string> kanban-ctx-task: "";
+    in-out property <length> kanban-ctx-x: 0px;
+    in-out property <length> kanban-ctx-y: 0px;
+    callback kanban-move-task(string, string);
+    callback kanban-copy-task-id(string);
 
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust populates these from `neothd kanban list/show --output json`
@@ -2785,7 +2878,55 @@ export component MainWindow inherits Window {
         // The design-system desktop layout. Shown for the main experience
         // (chat + settings-family + the net-new mockup tabs); the wizard steps
         // above keep their own full-screen flow for first-run.
-        if (root.step == WizardStep.chat || root.step == WizardStep.settings): HorizontalLayout {
+        // FocusScope wraps the shell so global shortcuts work from anywhere:
+        // a focused child (chat composer, settings fields) rejects Ctrl+K /
+        // palette keys and they bubble up here.
+        if (root.step == WizardStep.chat || root.step == WizardStep.settings): FocusScope {
+            init => { self.focus(); }
+            key-pressed(event) => {
+                if (event.modifiers.control && (event.text == "k" || event.text == "K")) {
+                    root.palette-open = !root.palette-open;
+                    root.palette-query = "";
+                    root.palette-selected = 0;
+                    if (root.palette-open) { root.palette-query-edited(""); }
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.Escape) {
+                    root.palette-open = false;
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.DownArrow) {
+                    root.palette-selected = min(root.palette-selected + 1,
+                        max(root.palette-results.length - 1, 0));
+                    return accept;
+                }
+                if (root.palette-open && event.text == Key.UpArrow) {
+                    root.palette-selected = max(root.palette-selected - 1, 0);
+                    return accept;
+                }
+                // Ctrl+1..5 — direct tab jumps for the core surfaces.
+                if (event.modifiers.control && event.text == "1") {
+                    root.nav-active = "chat"; root.step = WizardStep.chat; return accept;
+                }
+                if (event.modifiers.control && event.text == "2") {
+                    root.nav-active = "overview"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "3") {
+                    root.nav-active = "coding"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "4") {
+                    root.nav-active = "memory"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "5") {
+                    root.nav-active = "channels"; root.step = WizardStep.settings; return accept;
+                }
+                // Ctrl+, — settings/config, the desktop-app convention.
+                if (event.modifiers.control && event.text == ",") {
+                    root.nav-active = "config"; root.step = WizardStep.settings; return accept;
+                }
+                reject
+            }
+            HorizontalLayout {
             if !Theme.sidebar-collapsed: Sidebar {
                 active-tab: root.nav-active;
                 complexity: root.nav-complexity;
@@ -2793,6 +2934,8 @@ export component MainWindow inherits Window {
                 channels-count: root.chat-channels.length;
                 operator-name: root.operator-id != "" ? root.operator-id : "operator";
                 project-domain: root.project-domain;
+                version-line: root.app-version-line;
+                version-clicked => { root.about-open = true; }
                 nav(t) => {
                     root.nav-active = t;
                     root.step = (t == "chat") ? WizardStep.chat : WizardStep.settings;
@@ -2845,12 +2988,53 @@ export component MainWindow inherits Window {
                     }
                 }
 
+                // Daemon-offline banner — ONE shell-level strip instead of four
+                // per-panel blank states. daemon-state is the footer Led's
+                // source of truth; "error" means the startup/retry probe failed.
+                // Retry flips the state back to "connecting" (banner hides) and
+                // re-runs the probe; a second failure brings it back.
+                if root.daemon-state == "error": Rectangle {
+                    height: 40px;
+                    background: Theme.consent-tint;
+                    border-width: 1px; border-color: Theme.consent;
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 12px; spacing: 12px;
+                        Text {
+                            text: "Daemon unreachable — panels may be empty or stale.";
+                            color: Theme.consent;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: retry-lbl.width + 24px; height: 28px;
+                            y: (parent.height - self.height) / 2;
+                            border-radius: Theme.radius-pill;
+                            background: retry-ta.has-hover ? Theme.consent-tint : transparent;
+                            border-width: 1px; border-color: Theme.consent;
+                            animate background { duration: Theme.duration-fast; easing: ease-out; }
+                            retry-lbl := Text {
+                                text: "Retry";
+                                color: Theme.consent;
+                                font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                                horizontal-alignment: center; vertical-alignment: center;
+                            }
+                            retry-ta := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.daemon-retry-clicked(); }
+                            }
+                        }
+                    }
+                }
+
                 // `if` (not `visible:`) so a hidden SettingsView is removed from
                 // the layout tree entirely — a `visible:false` element still
                 // reserves its stretch space and would squash the active tab.
                 if (root.nav-active != "chat"
                         && root.nav-active != "overview"
                         && root.nav-active != "agents" && root.nav-active != "automation"
+                        && root.nav-active != "wal" && root.nav-active != "memgraph"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3105,6 +3289,17 @@ export component MainWindow inherits Window {
                     cfg-elicitation-enabled-changed(v) => { root.cfg-elicitation-enabled-changed(v); }
                     cfg-elicitation-min-intensity-changed(v) => { root.cfg-elicitation-min-intensity-changed(v); }
                     cfg-tone-modifier-enabled-changed(v) => { root.cfg-tone-modifier-enabled-changed(v); }
+                    // Wave 8 — C2 permissions matrix + A4 kanban context menu.
+                    cfg-perm-rows: root.cfg-perm-rows;
+                    cfg-perm-level: root.cfg-perm-level;
+                    cfg-perm-set(a, d) => { root.cfg-perm-set(a, d); }
+                    cfg-perm-clear(a) => { root.cfg-perm-clear(a); }
+                    kanban-task-context(id, cx, cy) => {
+                        root.kanban-ctx-task = id;
+                        root.kanban-ctx-x = cx;
+                        root.kanban-ctx-y = cy;
+                        root.kanban-ctx-open = true;
+                    }
                     // DES-09 Welle B — privacy
                     cfg-review-gate-enabled <=> root.cfg-review-gate-enabled;
                     cfg-cloud-stt-enabled <=> root.cfg-cloud-stt-enabled;
@@ -3113,6 +3308,10 @@ export component MainWindow inherits Window {
                     cfg-vad-enabled <=> root.cfg-vad-enabled;
                     cfg-dictation-enabled <=> root.cfg-dictation-enabled;
                     cfg-proactive-idle-only <=> root.cfg-proactive-idle-only;
+                    cfg-quiet-hours-enabled <=> root.cfg-quiet-hours-enabled;
+                    cfg-quiet-hours-start <=> root.cfg-quiet-hours-start;
+                    cfg-quiet-hours-end <=> root.cfg-quiet-hours-end;
+                    cfg-quiet-hours-changed(en, s, e) => { root.cfg-quiet-hours-changed(en, s, e); }
                     cfg-review-gate-enabled-changed(v) => { root.cfg-review-gate-enabled-changed(v); }
                     cfg-cloud-stt-enabled-changed(v) => { root.cfg-cloud-stt-enabled-changed(v); }
                     cfg-cloud-tts-enabled-changed(v) => { root.cfg-cloud-tts-enabled-changed(v); }
@@ -3167,6 +3366,16 @@ export component MainWindow inherits Window {
                     consent-set-mode(m) => { root.chat-consent-set-mode(m); }
                     consent-revoke(p) => { root.chat-consent-revoke(p); }
                     consent-refresh => { root.chat-consent-refresh(); }
+                    // Wave 5 — message hover actions + scroll FAB + starters.
+                    unseen-count: root.chat-unseen-count;
+                    message-copy(i) => { root.chat-message-copy(i); }
+                    message-retry(i) => { root.chat-message-retry(i); }
+                    message-delete(i) => { root.chat-message-delete(i); }
+                    scroll-to-bottom-clicked => { root.chat-unseen-count = 0; }
+                    starter-clicked(p) => { root.chat-send-clicked(p); }
+                    // Wave 8 — code panel copy + stop-while-streaming.
+                    code-copy(i) => { root.chat-code-copy(i); }
+                    stop-stream-clicked => { root.chat-stop-stream(); }
                 } }  // close ChatView + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.
@@ -3195,6 +3404,11 @@ export component MainWindow inherits Window {
                     ov-smart-approve: root.ov-smart-approve;
                     ov-refreshed-at: root.ov-refreshed-at;
                     overview-refresh-clicked => { root.overview-refresh-clicked(); }
+                    // Wave 8 — cost & usage card (C7/H5).
+                    ov-cost-sessions: root.ov-cost-sessions;
+                    ov-usage-days: root.ov-usage-days;
+                    ov-usage-days-label: root.ov-usage-days-label;
+                    ov-cost-open-clicked => { root.nav-active = "overview"; }
                 }
 
                 // Net-new mockup tab — Resources (live hardware probe, wired).
@@ -3222,14 +3436,56 @@ export component MainWindow inherits Window {
                     security-running: root.doctor-security-running;
                     security-run-clicked => { root.doctor-security-run-clicked(); }
                 }
-                // Agents — the cluster/agent topology (`neoth cluster status`).
-                if root.nav-active == "agents": ProbeView {
-                    blurb: "Agent & worker topology — council hemispheres + cluster nodes.";
-                    action-label: "Refresh agents";
-                    output: root.agents-output;
+                // Agents — structured card grid (Wave 5); raw probe output
+                // stays as the fallback body when parsing fails.
+                if root.nav-active == "agents": AgentsView {
+                    agents: root.agents-model;
                     running: root.agents-running;
-                    empty-hint: "Click \"Refresh agents\" to load the live topology.";
-                    run-clicked => { root.agents-refresh-clicked(); }
+                    raw-output: root.agents-output;
+                    refresh-clicked => { root.agents-refresh-clicked(); }
+                }
+                // WAL Inspector — the audit chain, browsable (Wave 5) with
+                // the timeline scrubber strip above (Wave 6, GUI-only killer:
+                // the opcode bands ARE a pre-colored history).
+                if root.nav-active == "wal": VerticalLayout {
+                    spacing: 0px;
+                    WalTimelineStrip {
+                        buckets: root.wal-buckets;
+                        selected-bucket <=> root.wal-selected-bucket;
+                        max-bucket-n: root.wal-timeline-max;
+                        total-label: "\{root.wal-total-count} frames";
+                        bucket-selected(i) => { root.wal-bucket-selected(i); }
+                    }
+                    WalInspectorView {
+                    vertical-stretch: 1;
+                    events: root.wal-events;
+                    selected-seq <=> root.wal-selected-seq;
+                    detail-json: root.wal-detail-json;
+                    verify-running: root.wal-verify-running;
+                    verify-result: root.wal-verify-result;
+                    total-count: root.wal-total-count;
+                    has-older: root.wal-has-older;
+                    opcode-filter-options: root.wal-opcode-options;
+                    verify-clicked => { root.wal-verify-clicked(); }
+                    filter-edited(s) => { root.wal-filter-edited(s); }
+                    opcode-filter-changed(i) => { root.wal-opcode-filter-changed(i); }
+                    follow-toggled(b) => { root.wal-follow-toggled(b); }
+                    row-selected(seq) => { root.wal-row-selected(seq); }
+                    load-older-clicked => { root.wal-load-older-clicked(); }
+                    copy-detail-clicked => { root.wal-copy-detail-clicked(); }
+                    }  // close WalInspectorView
+                }  // close wal VerticalLayout
+
+                // H2 — memory graph: the Hebbian association web, live.
+                if root.nav-active == "memgraph": MemoryGraphView {
+                    nodes: root.memgraph-nodes;
+                    edges: root.memgraph-edges;
+                    selected-id <=> root.memgraph-selected;
+                    detail-text: root.memgraph-detail;
+                    stats-line: root.memgraph-stats;
+                    running: root.memgraph-running;
+                    node-selected(id) => { root.memgraph-node-selected(id); }
+                    refresh-clicked => { root.memgraph-refresh-clicked(); }
                 }
                 // Automation — CRUD cron scheduler (GAP-01). n8n lives in its own tab.
                 if root.nav-active == "automation": CronView {
@@ -3436,13 +3692,22 @@ export component MainWindow inherits Window {
                     mesh-listen-port: root.mesh-listen-port;
                     mesh-trusted-ssids: root.mesh-trusted-ssids;
                     mesh-peers: root.mesh-peers;
+                    mesh-peer-count: root.mesh-peers.length;
                     mesh-gossip-note: root.mesh-gossip-note;
                     mesh-foreign-rows: root.mesh-foreign-rows;
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;
                     mesh-refreshed-at: root.mesh-refreshed-at;
+                    // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
+                    gossip-events: root.mesh-gossip-events;
+                    expanded-peer: root.mesh-expanded-peer;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
+                    peer-sync-clicked(id) => { root.mesh-peer-sync-clicked(id); }
+                    // Expand-toggle is pure view state — no Rust round-trip.
+                    peer-expanded(id) => {
+                        root.mesh-expanded-peer = (root.mesh-expanded-peer == id) ? "" : id;
+                    }
                 }
 
                 StatusFooter {
@@ -3462,7 +3727,8 @@ export component MainWindow inherits Window {
                 open: root.activity-open;
                 toggle => { root.activity-toggle(); }
             }
-        }  // close shell HorizontalLayout
+            }  // close shell HorizontalLayout
+        }  // close shell FocusScope
     }
 
         // Wizard footer — the app-shell uses its own StatusFooter, so this only
@@ -3490,7 +3756,63 @@ export component MainWindow inherits Window {
         orb-size: 88px;
         x: root.width - self.width - 24px;
         y: root.height - self.height - 24px;
-        clicked => { root.buddy-clicked(); }
+        // B4 — click opens the quick-action menu instead of instantly
+        // minimizing; "Minimize to companion" lives inside the menu.
+        clicked => { root.buddy-menu-open = !root.buddy-menu-open; }
+    }
+
+    // A4 — kanban card context menu. Coordinates come relative to the
+    // SettingsView; offset by the shell chrome (sidebar + topbar) and
+    // clamp so the menu never clips the window edge.
+    if root.kanban-ctx-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: min(root.kanban-ctx-x + (Theme.sidebar-collapsed ? 0px : Theme.sidebar-w),
+                    root.width - 250px);
+        menu-y: min(root.kanban-ctx-y + (Theme.header-hidden ? 0px : 68px),
+                    root.height - 320px);
+        items: [
+            { label: "Move to To-Do", glyph: "◻", danger: false },
+            { label: "Move to In Progress", glyph: "◐", danger: false },
+            { label: "Move to Review", glyph: "◎", danger: false },
+            { label: "Finish (done)", glyph: "✓", danger: false },
+            { label: "Block", glyph: "⛔", danger: true },
+            { label: "Copy task id", glyph: "⧉", danger: false },
+        ];
+        picked(i) => {
+            root.kanban-ctx-open = false;
+            if (i == 0) { root.kanban-move-task(root.kanban-ctx-task, "todo"); }
+            if (i == 1) { root.kanban-move-task(root.kanban-ctx-task, "in_progress"); }
+            if (i == 2) { root.kanban-move-task(root.kanban-ctx-task, "review"); }
+            if (i == 3) { root.kanban-move-task(root.kanban-ctx-task, "done"); }
+            if (i == 4) { root.kanban-move-task(root.kanban-ctx-task, "blocked"); }
+            if (i == 5) { root.kanban-copy-task-id(root.kanban-ctx-task); }
+        }
+        dismissed => { root.kanban-ctx-open = false; }
+    }
+
+    // B4 — Buddy quick-action menu, anchored above the docked orb.
+    if root.buddy-menu-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: root.width - 250px;
+        menu-y: root.height - 290px;
+        items: [
+            { label: "Open chat", glyph: "💬", danger: false },
+            { label: "Minimize to companion", glyph: "⊟", danger: false },
+            { label: root.cfg-quiet-hours-enabled ? "Quiet hours: on — disable" : "Quiet hours: off — enable", glyph: "☾", danger: false },
+            { label: "Buddy settings", glyph: "⊙", danger: false },
+        ];
+        picked(i) => {
+            root.buddy-menu-open = false;
+            if (i == 0) { root.nav-active = "chat"; root.step = WizardStep.chat; }
+            if (i == 1) { root.minimize-to-companion(); }
+            if (i == 2) {
+                root.cfg-quiet-hours-enabled = !root.cfg-quiet-hours-enabled;
+                root.cfg-quiet-hours-changed(root.cfg-quiet-hours-enabled,
+                    root.cfg-quiet-hours-start, root.cfg-quiet-hours-end);
+            }
+            if (i == 3) { root.nav-active = "buddyconfig"; root.step = WizardStep.settings; }
+        }
+        dismissed => { root.buddy-menu-open = false; }
     }
 
     // ── Wave-1 toast overlay ───────────────────────────────────────────
@@ -3502,9 +3824,111 @@ export component MainWindow inherits Window {
     if (root.step == WizardStep.chat || root.step == WizardStep.settings)
             && root.toasts.length > 0: ToastStack {
         toasts: root.toasts;
+        dismissed(id) => { root.toast-dismissed(id); }
         x: root.width - self.width - 12px;
         y: 78px;
         // height is driven by content; no explicit height needed.
+    }
+
+    // ── E4 — About / What's-new overlay ────────────────────────────────
+    if root.about-open: Rectangle {
+        width: 100%; height: 100%;
+        background: Theme.scrim;
+        TouchArea { clicked => { root.about-open = false; } }
+        Rectangle {
+            width: min(620px, root.width - 80px);
+            height: min(560px, root.height - 100px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            border-radius: Theme.radius-lg;
+            background: Theme.surface-2;
+            border-width: 1px; border-color: Theme.border-strong;
+            drop-shadow-blur: 42px;
+            drop-shadow-color: Theme.bg-void.with-alpha(0.65);
+            clip: true;
+            TouchArea { }   // swallow card clicks
+            VerticalLayout {
+                padding: 24px; spacing: 12px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "NEOTH"; color: Theme.accent;
+                            font-family: Theme.font-wordmark; font-size: 30px;
+                            font-weight: Theme.weight-bold; letter-spacing: 2px;
+                        }
+                        Text {
+                            text: root.app-version-line + " · local-first · fail-closed";
+                            color: Theme.text-tertiary;
+                            font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                            letter-spacing: Theme.letter-spacing-mono-caps;
+                        }
+                    }
+                    Rectangle {
+                        width: 32px; height: 32px; border-radius: Theme.radius-sm;
+                        background: about-close-ta.has-hover ? Theme.surface-3 : transparent;
+                        animate background { duration: Theme.duration-fast; easing: ease-out; }
+                        Text {
+                            text: "✕"; color: Theme.text-secondary;
+                            font-size: Theme.font-size-sm;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                        about-close-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.about-open = false; }
+                        }
+                    }
+                }
+                Rectangle { height: 1px; background: Theme.border-subtle; }
+                Text {
+                    text: "WHAT'S NEW";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    letter-spacing: Theme.letter-spacing-extra-wide;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-radius: Theme.radius-md;
+                    background: Theme.bg-void;
+                    border-width: 1px; border-color: Theme.border-subtle;
+                    clip: true;
+                    Flickable {
+                        viewport-width: self.width;
+                        Text {
+                            x: 16px; y: 14px; width: parent.width - 32px;
+                            text: root.about-changelog != "" ? root.about-changelog
+                                : "changelog not bundled in this build";
+                            color: Theme.text-secondary;
+                            font-family: Theme.font-mono; font-size: Theme.font-size-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Text {
+                    text: "© 2026 The Geek Freaks · Apache-2.0 / MIT · Your buddy. Your life.";
+                    color: Theme.text-disabled;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+
+    // ── Command palette overlay (Ctrl+K) — above toasts, below the tour ─
+    if root.palette-open
+            && (root.step == WizardStep.chat || root.step == WizardStep.settings): CommandPalette {
+        width: 100%; height: 100%;
+        results: root.palette-results;
+        query <=> root.palette-query;
+        selected <=> root.palette-selected;
+        query-edited(q) => { root.palette-query-edited(q); }
+        activated(tab) => {
+            root.nav-active = tab;
+            root.step = (tab == "chat") ? WizardStep.chat : WizardStep.settings;
+            root.palette-open = false;
+        }
+        closed => { root.palette-open = false; }
     }
 
     // ── GOLD-ADAPT-OH-12 — first-run guided tour ───────────────────────
