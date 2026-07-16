@@ -1377,6 +1377,9 @@ export component ChatView inherits Rectangle {
                 // Clicking snaps the viewport back to the bottom and fires
                 // scroll-to-bottom-clicked so Rust can reset unseen-count.
                 if !root.auto-follow: Rectangle {
+                    // Ease in when the user scrolls away instead of popping.
+                    opacity: 0; init => { self.opacity = 1; }
+                    animate opacity { duration: Theme.duration-fast; easing: ease-out; }
                     x: parent.width - self.width - Theme.space-base;
                     y: parent.height - self.height - Theme.space-base;
                     width: fab-row.preferred-width + Theme.space-base;

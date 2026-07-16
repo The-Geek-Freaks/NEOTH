@@ -418,6 +418,8 @@ export component Buddy inherits Rectangle {
     if root.is-mood("sleeping"): Text {
         opacity: 0; init => { self.opacity = 1; }
         animate opacity { duration: Theme.duration-fast; easing: ease-out; }
+        accessible-role: AccessibleRole.text;
+        accessible-label: "sleeping";
         x: 64 * root.u; y: 22 * root.u; text: "z z z";
         color: root.hue.with-alpha(0.60 + 0.15 * root.breathe);
         font-size: 11 * root.u; font-italic: true;
