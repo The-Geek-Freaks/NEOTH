@@ -1449,6 +1449,29 @@ fn main() -> Result<()> {
             let pm = read_nested_str_in_freedom(fp, "persona_mode", "");
             window.set_cfg_persona_mode_idx(if pm == "loyal_buddy" { 1 } else { 0 });
             window.set_cfg_user_tz(read_nested_str_in_freedom(fp, "user_tz", "").into());
+            // C3 — operator identity preload.
+            window.set_cfg_operator_id(read_nested_str_in_freedom(fp, "operator_id", "").into());
+            window.set_cfg_language_primary(
+                read_nested_str_in_freedom(fp, "language_primary", "").into(),
+            );
+            window
+                .set_cfg_language_code(read_nested_str_in_freedom(fp, "language_code", "").into());
+            window.set_cfg_role_custom(read_nested_str_in_freedom(fp, "role_custom", "").into());
+            {
+                let role = read_nested_str_in_freedom(fp, "role", "none");
+                let idx = [
+                    "developer",
+                    "security-researcher",
+                    "founder",
+                    "data-scientist",
+                    "writer",
+                    "none",
+                ]
+                .iter()
+                .position(|r| *r == role)
+                .unwrap_or(5);
+                window.set_cfg_role_idx(idx as i32);
+            }
             window.set_cfg_elicitation_enabled(read_nested_bool_in_freedom(
                 fp,
                 "elicitation.enabled",
@@ -1765,6 +1788,38 @@ fn main() -> Result<()> {
     let chat_budget_for_send = chat_auto_nudge_budget.clone();
     let chat_auto_flag_for_send = chat_auto_in_progress.clone();
     let chat_attach_for_send = chat_attachments.clone();
+
+    // H4 — drag-drop ingestion: files dropped anywhere on the main window
+    // land in the chat attachment strip (same path as the picker). The
+    // winit event callback runs on the UI thread, so direct set_* is safe.
+    {
+        use slint::winit_030::{EventResult, WinitWindowAccessor};
+        let attachments = chat_attachments.clone();
+        let weak_drop = window.as_weak();
+        window.window().on_winit_window_event(move |_w, event| {
+            if let slint::winit_030::winit::event::WindowEvent::DroppedFile(path) = event {
+                if let Ok(mut v) = attachments.lock() {
+                    v.push(path.clone());
+                    if let Some(w) = weak_drop.upgrade() {
+                        sync_attachment_strip(&w, &v);
+                        push_toast(
+                            &weak_drop,
+                            "success",
+                            "File attached",
+                            &format!(
+                                "{} → chat composer",
+                                path.file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| path.display().to_string())
+                            ),
+                        );
+                    }
+                }
+                return EventResult::PreventDefault;
+            }
+            EventResult::Propagate
+        });
+    }
 
     // Wave 8 — always-visible Stop: kill the in-flight chat subprocess
     // immediately (same kill path as the stall watchdog's Stop). The
@@ -7094,6 +7149,28 @@ fn main() -> Result<()> {
             });
         }
         wire_nested_str!(on_cfg_user_tz_changed, "user_tz", "Timezone");
+        // C3 — operator identity.
+        wire_nested_str!(on_cfg_operator_id_changed, "operator_id", "Operator id");
+        wire_nested_str!(
+            on_cfg_language_primary_changed,
+            "language_primary",
+            "Language"
+        );
+        wire_nested_str!(on_cfg_language_code_changed, "language_code", "Language code");
+        wire_nested_str!(on_cfg_role_custom_changed, "role_custom", "Custom role");
+        wire_nested_int_combo!(
+            on_cfg_role_changed,
+            "role",
+            &[
+                "developer",
+                "security-researcher",
+                "founder",
+                "data-scientist",
+                "writer",
+                "none"
+            ],
+            "Role"
+        );
         wire_nested_bool!(
             on_cfg_elicitation_enabled_changed,
             "elicitation.enabled",

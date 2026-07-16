@@ -48,7 +48,7 @@
 - [x] C1 WAL-Inspector-Tab: Events pagen, Opcode-Filter, verify-Button (audit-cyan).
 - [x] C2 Permissions-Matrix in Privacy (custom_autonomy.overrides, ~20 Action-Keys,
       aus `neoth permissions show --output json`).
-- [ ] C3 Operator-Identity in Config (operator_id, language_primary/code, role, role_custom).
+- [x] C3 Operator-Identity in Config (operator_id, language_primary/code, role, role_custom).
 - [ ] C4 MCP-Panel (`neoth mcp` list/add/remove/toggle).
 - [ ] C5 Undo-Trigger + Slash-Command-Lücken: /quit (Daemon-Stop-Button Doctor),
       /critic + /background (Chat-Composer-Buttons), /tour //recipe //glossary (Chat).
@@ -62,7 +62,7 @@
       Listen (Sessions, Channels, Cron, Plugins, Memory).
 - [ ] D3 Einheitliche hover/focus/active-Grammar + Focus-Rings überall (ein Muster).
 - [ ] D4 Filter-as-you-type in jeder Listen-View.
-- [ ] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
+- [x] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
       Shortcut-Cheatsheet (? oder Ctrl+/).
 
 ### Wave E — Homogenität & Polish (GOLD-R4-09)
@@ -96,7 +96,7 @@ GUI-only Superpowers (Rangfolge nach wow×feasibility):
       Timeline; scrubben durch die Audit-History statt grep-Dump. (Killer, eigener Tab/WAL-Inspector-Erweiterung)
 - [x] H2 **Memory Force-Directed Graph** — Obsidian-style Graph-View über Memory-Tiers/Hebbian-Links. (Killer)
 - [ ] H3 **System-Tray + Windows-Toasts + Jump-List** — App lebt im Tray, native Notifications. (Killer)
-- [ ] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
+- [x] H4 **Drag-Drop-Ingestion** — Files in Chat/Memory ziehen. (Killer)
 - [x] H5 Overview: Time-Series-Charts (7-Tage-Sparkline) (Token/Cost/Activity Sparklines). (Killer)
 - [ ] H6 Live-Theme-Editor mit Instant-Preview (tweaks.toml GUI). (High)
 
@@ -106,7 +106,7 @@ Buddy (Companion-Research):
 - [x] H9 **Daemon-Event-Mood-Reactions** (Event-Bus, Spec-Agent läuft). (Killer)
 - [x] H10 State-Ring (listening/thinking/speaking-Visualisierung). (Killer)
 - [ ] H11 Click-through default + hover-to-activate; Quiet-Hours/Attention-Budget. (High)
-- [ ] H12 Rechtsklick auf Orb → Quick-Command-Palette. (High)
+- [x] H12 Rechtsklick auf Orb → Quick-Command-Palette. (High)
 
 Kanban (Linear/Height/GH-Projects):
 - [ ] H13 **Space-Peek-Panel** (Karte nicht-disruptiv previewen). (Killer)

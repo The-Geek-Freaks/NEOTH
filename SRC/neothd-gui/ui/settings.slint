@@ -847,11 +847,23 @@ export component SettingsView inherits Rectangle {
     // ── DES-09 Welle A — Profile + Behavior editors ───────────────────────
     in-out property <int>    cfg-persona-mode-idx: 0;  // 0=(none) 1=loyal_buddy
     in-out property <string> cfg-user-tz: "";
+    // C3 — operator identity.
+    in-out property <string> cfg-operator-id: "";
+    in-out property <string> cfg-language-primary: "";
+    in-out property <string> cfg-language-code: "";
+    in-out property <int>    cfg-role-idx: 5;   // default "none"
+    in-out property <string> cfg-role-custom: "";
     in-out property <bool>   cfg-elicitation-enabled: false;
     in-out property <int>    cfg-elicitation-min-intensity-idx: 1;  // 0=low 1=medium 2=high 3=urgent
     in-out property <bool>   cfg-tone-modifier-enabled: false;
     callback cfg-persona-mode-changed(int);
     callback cfg-user-tz-changed(string);
+    // C3 — operator identity.
+    callback cfg-operator-id-changed(string);
+    callback cfg-language-primary-changed(string);
+    callback cfg-language-code-changed(string);
+    callback cfg-role-changed(int);
+    callback cfg-role-custom-changed(string);
     callback cfg-elicitation-enabled-changed(bool);
     callback cfg-elicitation-min-intensity-changed(int);
     callback cfg-tone-modifier-enabled-changed(bool);
@@ -4500,6 +4512,76 @@ export component SettingsView inherits Rectangle {
                             edited(t) => {
                                 root.cfg-user-tz = t;
                                 root.cfg-user-tz-changed(t);
+                            }
+                        }
+                    }
+                    // C3 — operator identity (operator_id, language, role).
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Operator id"; color: Theme.text-secondary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center; width: 130px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "how NEOTH addresses you";
+                            text: root.cfg-operator-id;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-operator-id = t;
+                                root.cfg-operator-id-changed(t);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Language"; color: Theme.text-secondary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center; width: 130px;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "e.g. Deutsch";
+                            text: root.cfg-language-primary;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-language-primary = t;
+                                root.cfg-language-primary-changed(t);
+                            }
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "code, e.g. de";
+                            text: root.cfg-language-code;
+                            width: 110px;
+                            edited(t) => {
+                                root.cfg-language-code = t;
+                                root.cfg-language-code-changed(t);
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Role"; color: Theme.text-secondary;
+                            font-family: Theme.font-sans; font-size: Theme.font-size-sm;
+                            vertical-alignment: center; width: 130px;
+                        }
+                        NeothComboBox {
+                            model: ["developer", "security-researcher", "founder", "data-scientist", "writer", "none"];
+                            current-index: root.cfg-role-idx;
+                            horizontal-stretch: 1;
+                            selected(i) => {
+                                root.cfg-role-idx = i;
+                                root.cfg-role-changed(i);
+                            }
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "custom role (optional)";
+                            text: root.cfg-role-custom;
+                            horizontal-stretch: 1;
+                            edited(t) => {
+                                root.cfg-role-custom = t;
+                                root.cfg-role-custom-changed(t);
                             }
                         }
                     }

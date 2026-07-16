@@ -418,6 +418,8 @@ export component BuddyDock inherits Rectangle {
     // Forward VU level to the inner Buddy so the state-ring responds to live audio.
     in property <float> audio-level: 0.0;
     callback clicked();
+    // H12 — right-click summons the command palette.
+    callback right-clicked();
 
     width: bud.width + 8px;
     height: bud.height + (root.caption != "" ? cap.height + 6px : 0px);
@@ -425,7 +427,15 @@ export component BuddyDock inherits Rectangle {
     bud := Buddy {
         mood: root.mood; orb-size: root.orb-size; audio-level: root.audio-level;
         x: (parent.width - self.width) / 2; y: 0;
-        TouchArea { clicked => { root.clicked(); } }
+        TouchArea {
+            clicked => { root.clicked(); }
+            pointer-event(ev) => {
+                if (ev.button == PointerEventButton.right
+                        && ev.kind == PointerEventKind.up) {
+                    root.right-clicked();
+                }
+            }
+        }
     }
     cap := Rectangle {
         x: (parent.width - self.width) / 2; y: bud.height + 6px;
