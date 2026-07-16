@@ -115,7 +115,7 @@ Kanban (Linear/Height/GH-Projects):
 
 Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)
-- [ ] H18 **Regenerate mit Model-Picker**. (Killer) — VERIFIZIERT: `neoth chat --model` existiert
+- [x] H18 **Regenerate mit Model-Picker**. (Killer) — SHIPPED: `models catalog`-Dump + Picker am Retry (Same model + Live-Catalog des Providers) + one-shot `--model`-Override im Send-Pfad. Ursprüngliche Analyse: `neoth chat --model` existiert
       (Priority CLI > tweaks > freedom). FEHLT: Provider-Catalog-Dump im CLI (`models list` = nur
       lokale Managed-Models). Schritt 1: `neoth models catalog --output json` (live catalog,
       model-version-agnostic). Schritt 2: Picker am Retry-Button (ContextMenu-Primitive),

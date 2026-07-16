@@ -49,7 +49,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -944,6 +944,12 @@ export component MainWindow inherits Window {
     // Wave 8 — code-block copy + always-visible stop.
     callback chat-code-copy(int);
     callback chat-stop-stream();
+    // H18 — regenerate with model: Retry opens a picker (Same model +
+    // live-catalog entries); Rust builds the items and executes.
+    in-out property <bool> regen-menu-open: false;
+    in-out property <int> regen-msg-idx: -1;
+    in property <[MenuItem]> regen-menu-items: [];
+    callback chat-regen-picked(int);
 
     // Wave 8 — C2 per-action permissions matrix (Privacy tab).
     in property <[PermRow]> cfg-perm-rows: [];
@@ -3831,6 +3837,20 @@ export component MainWindow inherits Window {
             root.palette-selected = 0;
             root.palette-query-edited("");
         }
+    }
+
+    // H18 — regenerate-with-model picker (centered; the retry chip has
+    // no cursor coordinates, a stable position beats a wrong one).
+    if root.regen-menu-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: (root.width - 260px) / 2;
+        menu-y: root.height * 25%;
+        items: root.regen-menu-items;
+        picked(i) => {
+            root.regen-menu-open = false;
+            root.chat-regen-picked(i);
+        }
+        dismissed => { root.regen-menu-open = false; }
     }
 
     // A4 — kanban card context menu. Coordinates come relative to the

@@ -846,6 +846,13 @@ static KANBAN_SESSION_OVERRIDE: std::sync::atomic::AtomicI64 =
 /// A3 — ids parallel to the selector labels (set by apply_kanban_snapshot).
 static KANBAN_SESSION_IDS: std::sync::Mutex<Vec<i64>> = std::sync::Mutex::new(Vec::new());
 
+/// H18 — one-shot model override consumed by the next chat send
+/// (the regenerate-with-model picker arms it, the send path takes it).
+static CHAT_MODEL_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// H18 — picker entries from the live models catalog (loaded at startup).
+static REGEN_MODELS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
 #[derive(Debug, Deserialize)]
 struct CodingTaskJson {
     task_id: i64,
@@ -1248,6 +1255,22 @@ fn main() -> Result<()> {
         const CHANGELOG: &str = include_str!("../../../CHANGELOG.md");
         let head: String = CHANGELOG.chars().take(6000).collect();
         window.set_about_changelog(head.into());
+    }
+
+    // H18 — load the live models catalog for the regenerate picker.
+    // Provider kind scopes the list; empty catalog = picker shows only
+    // "same model" (honest degradation, no invented ids).
+    {
+        let provider_kind = read_nested_str_in_freedom(
+            &neoth_dir.join("freedom.yaml"),
+            "provider_kind",
+            "",
+        );
+        std::thread::spawn(move || {
+            let out = run_neothd_probe(&["models", "catalog", "--output", "json"]);
+            let models = panel_logic::parse_models_catalog(&out, &provider_kind);
+            *REGEN_MODELS.lock().unwrap_or_else(|e| e.into_inner()) = models;
+        });
     }
 
     // Daemon→GUI activity bus — the Buddy reacts live to WAL events
@@ -1995,15 +2018,50 @@ fn main() -> Result<()> {
             }
         });
 
-        // Retry: resend the nearest operator message at-or-before the
-        // clicked bubble through the normal send path.
+        // H18 — Retry opens the regenerate picker: "same model" plus the
+        // live-catalog entries for the configured provider. Selecting an
+        // entry arms a one-shot --model override for the resend.
         let weak_retry = window.as_weak();
         window.on_chat_message_retry(move |idx| {
-            let Some(w) = weak_retry.upgrade() else {
-                return;
-            };
+            let Some(w) = weak_retry.upgrade() else { return };
+            let models = REGEN_MODELS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone();
+            let mut items: Vec<MenuItem> = vec![MenuItem {
+                label: "Retry — same model".into(),
+                glyph: "↺".into(),
+                danger: false,
+            }];
+            items.extend(models.iter().map(|m| MenuItem {
+                label: m.as_str().into(),
+                glyph: "◇".into(),
+                danger: false,
+            }));
+            w.set_regen_menu_items(slint::ModelRc::new(std::rc::Rc::new(
+                slint::VecModel::from(items),
+            )));
+            w.set_regen_msg_idx(idx);
+            w.set_regen_menu_open(true);
+        });
+
+        // Picker selection: 0 = same model, n>0 = catalog entry n-1.
+        let weak_regen = window.as_weak();
+        window.on_chat_regen_picked(move |pick| {
+            let Some(w) = weak_regen.upgrade() else { return };
+            if pick > 0 {
+                let model = REGEN_MODELS
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .get((pick - 1) as usize)
+                    .cloned();
+                *CHAT_MODEL_OVERRIDE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner()) = model;
+            }
+            let idx = w.get_regen_msg_idx();
             let msgs = w.get_chat_messages();
-            let mut i = idx as usize;
+            let mut i = idx.max(0) as usize;
             loop {
                 let Some(m) = msgs.row_data(i) else { break };
                 if m.role == "operator" {
@@ -2146,6 +2204,14 @@ fn main() -> Result<()> {
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut cmd = spawn_neothd_plain(&bin);
                 cmd.arg("chat").arg("--stream");
+                // H18 — one-shot model override from the regenerate picker.
+                if let Some(m) = CHAT_MODEL_OVERRIDE
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .take()
+                {
+                    cmd.arg("--model").arg(m);
+                }
                 // ODY-03 — attachments ride as repeatable --attach args.
                 for p in &attach_paths {
                     cmd.arg("--attach").arg(p);
