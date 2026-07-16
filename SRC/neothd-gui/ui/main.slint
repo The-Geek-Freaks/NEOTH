@@ -412,6 +412,17 @@ export component MainWindow inherits Window {
     /// startup from freedom.yaml; toggle fires the callback
     /// which mutates freedom.yaml + drops the reload sentinel.
     in-out property <bool> cluster-mdns-enabled: true;
+    // C6 — cluster transport config.
+    in-out property <bool>   cfg-cluster-enabled: false;
+    in-out property <string> cfg-cluster-name: "";
+    in-out property <int>    cfg-cluster-transport-idx: 0;
+    in-out property <bool>   cfg-cluster-announce-untrusted: false;
+    in-out property <string> cfg-cluster-ssids: "";
+    callback cfg-cluster-enabled-changed(bool);
+    callback cfg-cluster-name-changed(string);
+    callback cfg-cluster-transport-changed(int);
+    callback cfg-cluster-announce-untrusted-changed(bool);
+    callback cfg-cluster-ssids-changed(string);
     in-out property <int> cluster-listen-port: 49737;
     in-out property <string> cluster-trusted-ssids-summary: "";
     callback cluster-mdns-enabled-changed(bool);
@@ -3266,6 +3277,17 @@ export component MainWindow inherits Window {
             // see the latest value); the changed-callback bubbles
             // up to MainWindow where Rust mutates freedom.yaml.
             cluster-mdns-enabled <=> root.cluster-mdns-enabled;
+            // C6 — cluster transport config.
+            cfg-cluster-enabled <=> root.cfg-cluster-enabled;
+            cfg-cluster-name <=> root.cfg-cluster-name;
+            cfg-cluster-transport-idx <=> root.cfg-cluster-transport-idx;
+            cfg-cluster-announce-untrusted <=> root.cfg-cluster-announce-untrusted;
+            cfg-cluster-ssids <=> root.cfg-cluster-ssids;
+            cfg-cluster-enabled-changed(v) => { root.cfg-cluster-enabled-changed(v); }
+            cfg-cluster-name-changed(v) => { root.cfg-cluster-name-changed(v); }
+            cfg-cluster-transport-changed(i) => { root.cfg-cluster-transport-changed(i); }
+            cfg-cluster-announce-untrusted-changed(v) => { root.cfg-cluster-announce-untrusted-changed(v); }
+            cfg-cluster-ssids-changed(v) => { root.cfg-cluster-ssids-changed(v); }
             cluster-listen-port: root.cluster-listen-port;
             cluster-trusted-ssids-summary: root.cluster-trusted-ssids-summary;
             cluster-mdns-enabled-changed(enabled) => {

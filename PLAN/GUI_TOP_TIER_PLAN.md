@@ -57,7 +57,7 @@
 - [ ] C4 MCP-Panel (`neoth mcp` list/add/remove/toggle).
 - [ ] C5 Undo-Trigger + Slash-Command-Lücken: /quit (Daemon-Stop-Button Doctor),
       /critic + /background (Chat-Composer-Buttons), /tour //recipe //glossary (Chat).
-- [ ] C6 Cluster-Config editierbar (master switch, transport, peers, trusted_ssids).
+- [x] C6 Cluster-Config editierbar (master switch, name, transport-Combo, announce-policy, trusted_ssids als Array-Writer). peers-Liste bewusst CLI-only (iroh endpoint ids).
 - [x] C7 Usage/Cost-Analytics-View (`neoth cost/usage`) im Overview.
 
 ### Wave D — Interaction-Grammar (Best-in-Class-Transfer)
