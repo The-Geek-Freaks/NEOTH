@@ -109,7 +109,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, NeothLineEdit, NeothComboBox, Kicker } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, NeothLineEdit, NeothComboBox, Kicker, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 /// One WAL event row.
@@ -518,38 +518,11 @@ export component WalInspectorView inherits Rectangle {
                                 }
 
                                 // empty state
-                                if root.events.length == 0: Rectangle {
+                                if root.events.length == 0: EmptyState {
                                     height: 110px;
-                                    border-radius: Theme.radius-md;
-                                    background: Theme.surface-1;
-                                    border-width: 1px;
-                                    border-color: Theme.border-subtle;
-                                    VerticalLayout {
-                                        alignment: center;
-                                        spacing: 6px;
-                                        Text {
-                                            text: "◈";
-                                            color: Theme.text-disabled;
-                                            font-family: Theme.font-mono;
-                                            font-size: 22px;
-                                            horizontal-alignment: center;
-                                        }
-                                        Text {
-                                            text: "no WAL events";
-                                            color: Theme.text-tertiary;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-sm;
-                                            horizontal-alignment: center;
-                                        }
-                                        Text {
-                                            text: "chain is empty or filter matches nothing";
-                                            color: Theme.text-disabled;
-                                            font-family: Theme.font-mono;
-                                            font-size: 9px;
-                                            letter-spacing: Theme.letter-spacing-tight;
-                                            horizontal-alignment: center;
-                                        }
-                                    }
+                                    glyph: "◈";
+                                    title: "no WAL events";
+                                    hint: "chain is empty or filter matches nothing";
                                 }
 
                                 // event rows
@@ -676,34 +649,10 @@ export component WalInspectorView inherits Rectangle {
                                 }
 
                                 // ── no-selection hint ────────────────────────
-                                if root.detail-expanded && root.selected-seq < 0: VerticalLayout {
-                                    spacing: 6px;
-                                    alignment: center;
-                                    Rectangle { height: 14px; }
-                                    Text {
-                                        text: "◈";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: 22px;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: "select an event";
-                                        color: Theme.text-tertiary;
-                                        font-family: Theme.font-mono;
-                                        font-size: Theme.font-size-sm;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: "click a row to inspect its WAL payload";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: 10px;
-                                        letter-spacing: Theme.letter-spacing-tight;
-                                        horizontal-alignment: center;
-                                        wrap: word-wrap;
-                                    }
-                                    Rectangle { height: 14px; }
+                                if root.detail-expanded && root.selected-seq < 0: EmptyState {
+                                    glyph: "◈";
+                                    title: "select an event";
+                                    hint: "click a row to inspect its WAL payload";
                                 }
 
                                 // ── JSON viewer ──────────────────────────────
