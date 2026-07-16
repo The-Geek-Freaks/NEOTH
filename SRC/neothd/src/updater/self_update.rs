@@ -173,35 +173,15 @@ fn validate_owner_repo(owner_repo: &str) -> Result<()> {
     }
 }
 
-/// Read the optional GitHub API token without ever logging or serializing it.
-/// A configured non-Unicode value is rejected instead of silently falling back
-/// to the anonymous rate limit while claiming authentication is active.
-fn github_api_token() -> Result<Option<String>> {
-    match std::env::var("GITHUB_TOKEN") {
-        Ok(token) if token.trim().is_empty() => Ok(None),
-        Ok(token) => Ok(Some(token.trim().to_string())),
-        Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            anyhow::bail!("GITHUB_TOKEN is not valid Unicode")
-        }
-    }
-}
-
-/// Build one GitHub API GET. The optional bearer token raises the API rate
-/// limit and supports private release feeds; it is sent only to the fixed
-/// `api.github.com` URL assembled by the validated owner/repo call sites.
-fn github_api_get(
-    client: &reqwest::Client,
-    url: &str,
-    token: Option<&str>,
-) -> reqwest::RequestBuilder {
-    let request = client
+/// Build one anonymous GitHub API GET for the public release feed.
+///
+/// The runtime updater deliberately has no credential input. NEOTH releases
+/// are public, so accepting `GITHUB_TOKEN` would widen the secret-handling
+/// surface without changing which signed artifacts the updater may install.
+fn github_api_get(client: &reqwest::Client, url: &str) -> reqwest::RequestBuilder {
+    client
         .get(url)
-        .header("Accept", "application/vnd.github+json");
-    match token {
-        Some(token) => request.bearer_auth(token),
-        None => request,
-    }
+        .header("Accept", "application/vnd.github+json")
 }
 
 /// Pick the highest SemVer release admitted by the configured ring. Invalid
@@ -243,8 +223,7 @@ pub async fn fetch_latest_release(owner_repo: &str) -> Result<LatestRelease> {
         .user_agent(ua)
         .build()
         .context("build update-check reqwest client")?;
-    let token = github_api_token()?;
-    let resp = github_api_get(&client, &url, token.as_deref())
+    let resp = github_api_get(&client, &url)
         .send()
         .await
         .with_context(|| format!("GET {url}"))?;
@@ -254,7 +233,7 @@ pub async fn fetch_latest_release(owner_repo: &str) -> Result<LatestRelease> {
             "GitHub release check failed: HTTP {} — {}",
             status,
             match status.as_u16() {
-                403 => "rate-limited (set GITHUB_TOKEN env var to raise the limit)",
+                403 => "rate-limited (wait for the public API window to reset, then retry)",
                 404 => "repo has no published releases yet",
                 _ => "see GitHub status page",
             },
@@ -294,8 +273,7 @@ pub async fn fetch_release_for_channel(
         .user_agent(ua)
         .build()
         .context("build update-check reqwest client")?;
-    let token = github_api_token()?;
-    let resp = github_api_get(&client, &url, token.as_deref())
+    let resp = github_api_get(&client, &url)
         .send()
         .await
         .with_context(|| format!("GET {url}"))?;
@@ -306,7 +284,7 @@ pub async fn fetch_release_for_channel(
             channel,
             status,
             match status.as_u16() {
-                403 => "rate-limited (set GITHUB_TOKEN env var to raise the limit)",
+                403 => "rate-limited (wait for the public API window to reset, then retry)",
                 404 => "repo has no published releases yet",
                 _ => "see GitHub status page",
             },
@@ -3041,39 +3019,20 @@ mod tests {
     }
 
     #[test]
-    fn github_api_request_wires_optional_token_without_network_io() {
+    fn github_api_request_is_anonymous_and_pins_accept_header() {
         let client = reqwest::Client::new();
-        let authenticated = github_api_get(
+        let request = github_api_get(
             &client,
             "https://api.github.com/repos/owner/repo/releases/latest",
-            Some("test-token"),
         )
         .build()
         .unwrap();
         assert_eq!(
-            authenticated
-                .headers()
-                .get(reqwest::header::AUTHORIZATION)
-                .unwrap(),
-            "Bearer test-token"
-        );
-        assert_eq!(
-            authenticated
-                .headers()
-                .get(reqwest::header::ACCEPT)
-                .unwrap(),
+            request.headers().get(reqwest::header::ACCEPT).unwrap(),
             "application/vnd.github+json"
         );
-
-        let anonymous = github_api_get(
-            &client,
-            "https://api.github.com/repos/owner/repo/releases/latest",
-            None,
-        )
-        .build()
-        .unwrap();
         assert!(
-            anonymous
+            request
                 .headers()
                 .get(reqwest::header::AUTHORIZATION)
                 .is_none()

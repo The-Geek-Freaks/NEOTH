@@ -661,7 +661,9 @@ struct HomeArtifact {
 
 /// Memory import deliberately excludes credential/auth/browser stores. A
 /// migration must never turn a bearer token or cookie into a recallable fact.
-/// Config/credential conversion remains the explicit `import-config` surface.
+/// OpenClaw config inspection remains the explicit, read-only
+/// `import-openclaw`/deprecated `import-config --config` surface; neither path
+/// copies credentials or emits target config.
 const SENSITIVE_PATH_PARTS: &[&str] = &[
     "auth",
     "oauth",

@@ -4632,251 +4632,74 @@ fn main() -> Result<()> {
         let weak = weak_channel_remove.clone();
         let name = name.to_string();
         std::thread::spawn(move || {
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("channel")
-                        .arg("remove")
-                        .arg(&name)
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let message = match which_neothd() {
+                None => format!(
+                    "Channel {name} remove failed: NEOTH CLI not found; reinstall or repair PATH."
+                ),
+                Some(bin) => match channel_remove_command(&bin, &name).output() {
+                    Err(error) => format!("Channel {name} remove failed: {error}"),
+                    Ok(output) if !output.status.success() => {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        let detail = stderr
+                            .lines()
+                            .map(str::trim)
+                            .find(|line| !line.is_empty())
+                            .unwrap_or("unknown error");
+                        format!("Channel {name} remove failed: {detail}")
+                    }
+                    Ok(output) => match parse_channel_removed(&output.stdout, &name) {
+                        Some(true) => format!("Channel {name} credential removed."),
+                        Some(false) => format!(
+                            "Channel {name} had no removable credential. Effective status refreshed."
+                        ),
+                        None => format!(
+                            "Channel {name} remove response invalid; no removal was confirmed."
+                        ),
+                    },
+                },
+            };
             let channels = fetch_channel_status();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     apply_channels(&w, channels);
-                    w.set_status_line(if ok {
-                        format!("Channel {name} credential removed.").into()
-                    } else {
-                        format!("Channel {name} remove failed (is neoth installed and writable?).")
-                            .into()
-                    });
+                    w.set_status_line(message.into());
                 }
             });
         });
     });
 
-    // GOLD-R3-04 — Add/repair every registered channel from the GUI.
-    // Maps the typed form fields to canonical `neoth channel add` flags.
-    // Empty required fields are caught before shelling; on success the canonical
-    // channel inventory is refreshed exactly like on_channel_remove.
+    // GOLD-R3-04 — Add/repair every registered channel from the GUI. The
+    // credential envelope travels only over private child stdin; process argv
+    // contains no secret values. On success the canonical channel inventory is
+    // refreshed exactly like on_channel_remove.
     let weak_channel_add = window.as_weak();
     window.on_channel_add(move |ctype, f1, f2, f3, f4, f5, f6, flag| {
         let ctype = ctype.to_string();
-        let f1 = f1.trim().to_string();
-        let f2 = f2.trim().to_string();
-        let f3 = f3.trim().to_string();
-        let f4 = f4.trim().to_string();
-        let f5 = f5.trim().to_string();
-        let f6 = f6.trim().to_string();
+        let request_result = panel_logic::build_channel_credential_request(
+            &ctype,
+            [
+                f1.as_str(),
+                f2.as_str(),
+                f3.as_str(),
+                f4.as_str(),
+                f5.as_str(),
+                f6.as_str(),
+            ],
+            flag,
+        );
 
-        // Build the flag args for this channel type; return Err(hint) on missing required fields.
-        let args_result: Result<Vec<String>, String> = (|| match ctype.as_str() {
-            "telegram" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("telegram needs: --token and --telegram-user-id".into());
-                }
-                if f2.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
-                    return Err("telegram user ID must be a positive integer".into());
-                }
-                Ok(vec![
-                    "--token".into(),
-                    f1,
-                    "--telegram-user-id".into(),
-                    f2,
-                ])
-            }
-            "slack" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("slack needs: --bot-token and --app-token".into());
-                }
-                Ok(vec!["--bot-token".into(), f1, "--app-token".into(), f2])
-            }
-            "whatsapp" => {
-                if f1.is_empty() || f2.is_empty() || f3.is_empty() || f4.is_empty() {
-                    return Err(
-                        "whatsapp needs: --token, --phone-id, --verify-token, and --app-secret"
-                            .into(),
-                    );
-                }
-                Ok(vec![
-                    "--token".into(),
-                    f1,
-                    "--phone-id".into(),
-                    f2,
-                    "--verify-token".into(),
-                    f3,
-                    "--app-secret".into(),
-                    f4,
-                ])
-            }
-            "whatsapp_baileys" => {
-                if f1.is_empty() || f2.is_empty() || f3.is_empty() {
-                    return Err(
-                        "whatsapp_baileys needs: --url, --token, and --allowed-sender"
-                            .into(),
-                    );
-                }
-                let mut args = vec![
-                    "--url".into(),
-                    f1,
-                    "--token".into(),
-                    f2,
-                    "--allowed-sender".into(),
-                    f3,
-                ];
-                if !f4.is_empty() {
-                    args.extend(["--allowed-rooms-csv".into(), f4]);
-                }
-                Ok(args)
-            }
-            "keet" => {
-                if f1.is_empty() || f2.is_empty() || f3.is_empty() || f4.is_empty() {
-                    return Err(
-                        "keet needs: --url, --token, --server (topic), and --allowed-sender"
-                            .into(),
-                    );
-                }
-                Ok(vec![
-                    "--url".into(),
-                    f1,
-                    "--token".into(),
-                    f2,
-                    "--server".into(),
-                    f3,
-                    "--allowed-sender".into(),
-                    f4,
-                ])
-            }
-            "discord" => {
-                if f1.is_empty() {
-                    return Err("discord needs: --token".into());
-                }
-                Ok(vec!["--token".into(), f1])
-            }
-            "signal" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("signal needs: --url and --phone".into());
-                }
-                Ok(vec!["--url".into(), f1, "--phone".into(), f2])
-            }
-            "line" => {
-                if f1.is_empty() {
-                    return Err("line needs: --token".into());
-                }
-                let mut a = vec!["--token".into(), f1];
-                if !f2.is_empty() {
-                    a.extend(["--password".into(), f2]);
-                }
-                Ok(a)
-            }
-            "irc" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("irc needs: --server and --nick".into());
-                }
-                let mut a = vec!["--server".into(), f1, "--nick".into(), f2];
-                if !f3.is_empty() {
-                    a.extend(["--password".into(), f3]);
-                }
-                if !f4.is_empty() {
-                    a.extend(["--channels-csv".into(), f4]);
-                }
-                Ok(a)
-            }
-            "imessage" | "bluebubbles" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err(format!("{ctype} needs: --url and --password"));
-                }
-                Ok(vec!["--url".into(), f1, "--password".into(), f2])
-            }
-            "mattermost" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("mattermost needs: --url and --token".into());
-                }
-                Ok(vec!["--url".into(), f1, "--token".into(), f2])
-            }
-            "gchat" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err(
-                        "gchat needs: --url (service-account JSON path) and --server (subscription)"
-                            .into(),
-                    );
-                }
-                Ok(vec!["--url".into(), f1, "--server".into(), f2])
-            }
-            "matrix" => {
-                if f1.is_empty() || f2.is_empty() || (f3.is_empty() && f4.is_empty()) {
-                    return Err(
-                        "matrix needs: --url, --nick, and either --token or --password"
-                            .into(),
-                    );
-                }
-                let mut args = vec!["--url".into(), f1, "--nick".into(), f2];
-                if !f3.is_empty() {
-                    args.extend(["--token".into(), f3]);
-                }
-                if !f4.is_empty() {
-                    args.extend(["--password".into(), f4]);
-                }
-                if !f5.is_empty() {
-                    args.extend(["--allowed-sender".into(), f5]);
-                }
-                if !f6.is_empty() {
-                    args.extend(["--allowed-rooms-csv".into(), f6]);
-                }
-                if flag {
-                    args.push("--allow-plaintext".into());
-                }
-                Ok(args)
-            }
-            "twitch" => {
-                if f1.is_empty() || f2.is_empty() || f3.is_empty() {
-                    return Err("twitch needs: --nick, --token, and --channels-csv".into());
-                }
-                Ok(vec![
-                    "--nick".into(),
-                    f1,
-                    "--token".into(),
-                    f2,
-                    "--channels-csv".into(),
-                    f3,
-                ])
-            }
-            "nostr" => {
-                if f1.is_empty() || f2.is_empty() {
-                    return Err("nostr needs: --token and --channels-csv (relay URLs)".into());
-                }
-                Ok(vec![
-                    "--token".into(),
-                    f1,
-                    "--channels-csv".into(),
-                    f2,
-                ])
-            }
-            other => Err(format!("unknown channel type: {other}")),
-        })();
-
-        match args_result {
+        match request_result {
             Err(hint) => {
                 push_toast(&weak_channel_add, "warn", "Add channel", &hint);
             }
-            Ok(extra_args) => {
+            Ok(request_body) => {
                 let weak = weak_channel_add.clone();
                 let ctype_clone = ctype.clone();
                 std::thread::spawn(move || {
-                    let result = which_neothd().and_then(|bin| {
-                        let mut cmd = spawn_neothd_plain(&bin);
-                        cmd.arg("channel").arg("add").arg(&ctype_clone);
-                        for a in &extra_args {
-                            cmd.arg(a);
-                        }
-                        cmd.arg("--output").arg("json").output().ok()
-                    });
+                    let result = persist_channel_credentials_via_cli(request_body);
 
                     let (toast_kind, toast_title, toast_body, refresh) = match result {
-                        Some(o) if o.status.success() => {
+                        Ok(o) if o.status.success() => {
                             // The CLI emits pretty JSON, so whitespace-sensitive
                             // substring checks misclassified every successful add.
                             let saved = parse_channel_saved(&o.stdout, &ctype_clone);
@@ -4905,7 +4728,7 @@ fn main() -> Result<()> {
                                 ),
                             }
                         }
-                        Some(o) => {
+                        Ok(o) => {
                             let stderr = String::from_utf8_lossy(&o.stderr);
                             let detail = stderr
                                 .lines()
@@ -4920,12 +4743,10 @@ fn main() -> Result<()> {
                                 false,
                             )
                         }
-                        None => (
+                        Err(detail) => (
                             "error",
                             "Add channel failed",
-                            format!(
-                                "{ctype_clone}: NEOTH CLI not found; reinstall or repair PATH"
-                            ),
+                            format!("{ctype_clone}: {detail}"),
                             false,
                         ),
                     };
@@ -7439,6 +7260,21 @@ fn parse_channel_saved(stdout: &[u8], expected_channel: &str) -> Option<bool> {
     Some(acknowledgement.saved)
 }
 
+/// Parse and bind the authoritative acknowledgement from
+/// `neoth channel remove --output json`. A zero exit status alone never proves
+/// that a credential existed or was removed.
+fn parse_channel_removed(stdout: &[u8], expected_channel: &str) -> Option<bool> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ChannelRemoveAcknowledgement {
+        channel: String,
+        removed: bool,
+    }
+
+    let acknowledgement: ChannelRemoveAcknowledgement = serde_json::from_slice(stdout).ok()?;
+    (acknowledgement.channel == expected_channel).then_some(acknowledgement.removed)
+}
+
 /// Plain-data snapshot the wizard hands off to disk. Keeps the Slint
 /// type surface separate from the on-disk schema so future schema
 /// bumps stay loosely coupled to the UI.
@@ -9346,6 +9182,65 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     cmd
 }
 
+fn channel_credential_command(bin: &Path) -> std::process::Command {
+    let mut command = spawn_neothd_plain(bin);
+    command
+        .arg("channel")
+        .arg("set-credentials")
+        .arg("--output")
+        .arg("json")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    command
+}
+
+fn channel_remove_command(bin: &Path, channel: &str) -> std::process::Command {
+    let mut command = spawn_neothd_plain(bin);
+    command
+        .arg("channel")
+        .arg("remove")
+        .arg(channel)
+        .arg("--output")
+        .arg("json");
+    command
+}
+
+/// Send channel credentials through the child's private stdin. The body is
+/// zeroized on every return and unwind path, including lookup/spawn failures.
+fn persist_channel_credentials_via_cli(
+    body: zeroize::Zeroizing<Vec<u8>>,
+) -> Result<std::process::Output, String> {
+    use std::io::Write as _;
+
+    let child_result = (|| {
+        let bin = which_neothd()
+            .ok_or_else(|| "NEOTH CLI not found; reinstall or repair PATH".to_string())?;
+        let mut child = channel_credential_command(&bin)
+            .spawn()
+            .map_err(|error| format!("start private channel credential update: {error}"))?;
+        let write_result = child
+            .stdin
+            .take()
+            .ok_or_else(|| "open private channel credential stdin".to_string())
+            .and_then(|mut stdin| {
+                stdin
+                    .write_all(body.as_slice())
+                    .map_err(|error| format!("write private channel credential stdin: {error}"))
+            });
+        if let Err(error) = write_result {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        Ok(child)
+    })();
+    drop(body);
+    child_result?
+        .wait_with_output()
+        .map_err(|error| format!("wait for private channel credential update: {error}"))
+}
+
 /// Run `neothd kanban list/show --output json` + group tasks by status.
 /// Returns an empty snapshot with a friendly summary when the operator
 /// hasn't opened a coding session yet, OR when the daemon binary is
@@ -9969,6 +9864,10 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
         Ok(channels) => (channels, String::new()),
         Err(error) => (Vec::new(), error),
     };
+    let channel_types = channels
+        .iter()
+        .map(|channel| slint::SharedString::from(channel.name.as_str()))
+        .collect::<Vec<_>>();
     let rows = channels
         .into_iter()
         .map(|channel| ChannelRow {
@@ -9976,8 +9875,15 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
             status: channel.status.into(),
             configured: channel.configured,
             detail: channel.detail.into(),
+            setup_secret_f1: channel.setup_secret_mask[0],
+            setup_secret_f2: channel.setup_secret_mask[1],
+            setup_secret_f3: channel.setup_secret_mask[2],
+            setup_secret_f4: channel.setup_secret_mask[3],
+            setup_secret_f5: channel.setup_secret_mask[4],
+            setup_secret_f6: channel.setup_secret_mask[5],
         })
         .collect::<Vec<_>>();
+    window.set_channel_types(ModelRc::new(VecModel::from(channel_types)));
     window.set_channels(ModelRc::new(VecModel::from(rows)));
     window.set_channel_status_error(error.into());
 }
@@ -12838,7 +12744,7 @@ const GUI_PARENT_COMMIT_ENV: &str = "NEOTH_GUI_PARENT_COMMIT";
 const GUI_LAUNCH_DIR: &str = ".gui-launch";
 const GUI_READY_TOKEN_BYTES: usize = 56;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct GuiParentHandoff {
     ready_path: PathBuf,
     token: String,
@@ -14785,6 +14691,95 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn channel_remove_parser_preserves_true_and_false() {
+        assert_eq!(
+            parse_channel_removed(
+                b"{\n  \"channel\": \"telegram\",\n  \"removed\": true\n}",
+                "telegram",
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            parse_channel_removed(
+                b"{\n  \"channel\": \"telegram\",\n  \"removed\": false\n}",
+                "telegram",
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn channel_remove_parser_rejects_unbound_or_noncanonical_acknowledgements() {
+        assert_eq!(
+            parse_channel_removed(b"{\"channel\":\"slack\",\"removed\":true}", "telegram",),
+            None
+        );
+        assert_eq!(
+            parse_channel_removed(
+                b"{\"channel\":\"telegram\",\"removed\":\"true\"}",
+                "telegram",
+            ),
+            None
+        );
+        assert_eq!(
+            parse_channel_removed(
+                b"{\"channel\":\"telegram\",\"removed\":true,\"status\":\"ok\"}",
+                "telegram",
+            ),
+            None
+        );
+        assert_eq!(parse_channel_removed(b"{}", "telegram"), None);
+        assert_eq!(parse_channel_removed(b"not-json", "telegram"), None);
+    }
+
+    #[test]
+    fn channel_remove_command_requests_machine_readable_acknowledgement() {
+        let command = channel_remove_command(Path::new("neoth"), "telegram");
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "channel".to_string(),
+                "remove".to_string(),
+                "telegram".to_string(),
+                "--output".to_string(),
+                "json".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn channel_credential_command_never_places_secrets_in_argv() {
+        let secret = "PROCESS_LIST_SECRET_SENTINEL";
+        let request = panel_logic::build_channel_credential_request(
+            "discord",
+            [secret, "", "", "", "", ""],
+            false,
+        )
+        .unwrap();
+        assert!(String::from_utf8_lossy(request.as_slice()).contains(secret));
+
+        let command = channel_credential_command(Path::new("neoth"));
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            args,
+            vec![
+                "channel".to_string(),
+                "set-credentials".to_string(),
+                "--output".to_string(),
+                "json".to_string(),
+            ]
+        );
+        assert!(!args.iter().any(|arg| arg.contains(secret)));
     }
 
     fn empty_snapshot() -> WizardSnapshot {

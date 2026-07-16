@@ -33,7 +33,7 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 31);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 32);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(
@@ -53,6 +53,12 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
         assert!(
             is_allowed_client_event(c),
             "{c:#x} (consent) must be allowed"
+        );
+    }
+    for c in [0xDAu8, 0xDD] {
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (preset/FULL-AUTO transaction) must be allowed"
         );
     }
     // GOLD-ADOPT-23 point 3 — `neoth risk-confirm` grant audit.
@@ -89,13 +95,14 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let proof_rotation = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
     let http_intent = crate::wal::events::ExtendedSubtype::ExternalHttpIntent as u8;
     let http_result = crate::wal::events::ExtendedSubtype::ExternalHttpResult as u8;
+    let self_edit_proposed = crate::wal::events::ExtendedSubtype::SelfEditProposed as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[proof_rotation, http_intent, http_result]
     );
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(!is_allowed_client_event_pair(0x00, 0));
-    assert!(!is_allowed_client_event_pair(0x00, proof_rotation + 1));
+    assert!(!is_allowed_client_event_pair(0x00, self_edit_proposed));
     assert!(is_allowed_client_event_pair(0xA8, 0));
     assert!(
         !is_allowed_client_event_pair(0xA8, proof_rotation),
@@ -159,7 +166,8 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
     use crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH;
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: "tok-valid".into(),
         writer: writer.clone(),
@@ -203,7 +211,8 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
 async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: "tok-subtype".into(),
         writer: writer.clone(),
@@ -248,7 +257,8 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
 async fn wrong_token_is_401_and_writes_no_frame() {
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: "tok-valid".into(),
         writer: writer.clone(),
@@ -277,7 +287,8 @@ async fn blocked_event_type_is_422_and_emits_reject() {
     use crate::wal::events::EVENT_TYPE_AUDIT_RPC_REJECT;
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: "tok".into(),
         writer: writer.clone(),
@@ -306,7 +317,8 @@ async fn client_round_trips_against_a_live_listener() {
     let seg_dir = tempdir().unwrap();
     let seg = seg_dir.path().join("000001.wal");
     let token = init_rpc_token(home.path()).unwrap();
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: token.clone(),
         writer: writer.clone(),
@@ -342,7 +354,8 @@ async fn subtype_client_round_trips_against_a_live_listener() {
     let seg_dir = tempdir().unwrap();
     let seg = seg_dir.path().join("000001.wal");
     let token = init_rpc_token(home.path()).unwrap();
-    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();
     let state = AuditRpcState {
         token: token.clone(),
         writer: writer.clone(),

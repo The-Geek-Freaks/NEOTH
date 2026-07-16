@@ -83,7 +83,9 @@ async fn run_apply(
     gui_token: Option<String>,
 ) -> Result<()> {
     let preset = presets::resolve(home, name)?;
-    let (report, body) = presets::plan_apply(home, &preset)?;
+    let project_full_auto = preset.autonomy.as_deref() == Some("full");
+    let prepared = presets::prepare_apply(home, &preset, project_full_auto)?;
+    let report = prepared.report.clone();
 
     if dry_run {
         // GUI consent-modal feed: full plan, nothing written.
@@ -118,67 +120,63 @@ async fn run_apply(
         }
     }
 
-    // P1 — fail-closed: a preset can change provider / cloud-fallback / rail /
-    // autonomy-adjacent fields, so under `required_for_oneshot_permission_events`
-    // the apply REFUSES if the `0xDA PRESET_APPLIED` audit cannot be written
-    // (live daemon + unreachable audit-RPC listener). Identical contract to the
-    // external-task-write gate.
-    let cfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
-    let audit_home = crate::config::FreedomConfig::default_neoth_home();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-        Ok(Some(_))
+    // Ceremony/token consumption authorizes the already prepared target but
+    // never mutates config. FULL-AUTO and all preset fields remain one body.
+    if project_full_auto {
+        crate::cli::autonomy::authorize_full_auto_at(home, gui_confirmed, gui_token)
+            .await
+            .context("FULL-AUTO was not authorized — preset NOT applied")?;
+    }
+
+    let required_audit = prepared.required_audit;
+    let previous_autonomy = prepared.previous_autonomy;
+    let binding = crate::cli::autonomy::ConfigAuditBinding::new(
+        prepared.source_existed(),
+        prepared.source_sha256(),
+        prepared.target_sha256(),
     );
-    crate::daemon::audit_rpc::enforce_required_audit(
-        cfg.audit_rpc.required_for_oneshot_permission_events,
-        daemon_live,
-        &audit_home,
+    emit_apply_audit_phase(
+        home,
+        name,
+        &report,
+        project_full_auto,
+        previous_autonomy,
+        &binding,
+        crate::cli::autonomy::MutationAuditPhase::Intent,
+        required_audit,
     )
-    .context("preset apply refused: required audit cannot be written")?;
+    .await
+    .context("preset audit intent was not durable; config was not changed")?;
 
-    // ZF-01 (review wave 2026-07-04) — the full-auto ceremony runs BEFORE
-    // commit: an aborted ceremony must leave NOTHING applied (previously
-    // the feature flags were already committed + the reload sentinel
-    // fired when the operator answered `n`). The ceremony writes
-    // autonomy + skills.enable_all_bundled itself, so the plan is
-    // recomputed on the post-ceremony freedom.yaml — otherwise the
-    // commit would clobber the ceremony's writes with the stale body.
-    let body = if report.autonomy_requested.as_deref() == Some("full") {
-        crate::cli::autonomy::run_autonomy(
-            crate::cli::autonomy::AutonomyArgs {
-                action: crate::cli::autonomy::AutonomyAction::FullAuto {
-                    gui_confirmed,
-                    gui_token,
-                },
-            },
-            crate::cli::OutputFormat::Table,
+    if let Err(error) = prepared.commit() {
+        let _ = emit_apply_audit_phase(
+            home,
+            name,
+            &report,
+            project_full_auto,
+            previous_autonomy,
+            &binding,
+            crate::cli::autonomy::MutationAuditPhase::Aborted,
+            false,
         )
-        .await
-        .context("FULL-AUTO was not enabled — preset NOT applied")?;
-        let (_report2, body2) = presets::plan_apply(home, &preset)?;
-        body2
-    } else {
-        body
-    };
+        .await;
+        return Err(error).context(
+            "preset CAS publication failed; the reviewed preset/FULL-AUTO target was not published",
+        );
+    }
 
-    presets::commit_planned(home, &body)?;
-
-    // P1 — durable record: WHICH preset, WHICH field NAMES changed (never the
-    // values), from WHICH surface. One-shot-writer-or-audit-RPC path.
-    let now = crate::time::now_unix_secs();
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "name": name,
-        "fields_changed": report.fields_changed,
-        "source": "cli",
-        "ts_unix": now,
-    }))
-    .unwrap_or_default();
-    crate::cli::todo::emit_oneshot_audit(
-        crate::wal::events::EVENT_TYPE_PRESET_APPLIED,
-        payload,
-        "PRESET_APPLIED",
+    emit_apply_audit_phase(
+        home,
+        name,
+        &report,
+        project_full_auto,
+        previous_autonomy,
+        &binding,
+        crate::cli::autonomy::MutationAuditPhase::Committed,
+        required_audit,
     )
-    .await;
+    .await
+    .context("preset was published, but its required committed audit failed")?;
 
     if report.fields_changed.is_empty() && report.autonomy_requested.is_none() {
         println!("applied preset `{name}` (no changes — preset was empty)");
@@ -194,8 +192,9 @@ async fn run_apply(
 
     // ZF-01 — nudge the running daemon's reload poller (best-effort; the
     // daemon may not be running).
-    let sentinel = audit_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
-    let _ = std::fs::write(&sentinel, b"preset-apply");
+    if let Err(error) = crate::cli::reload::request_reload_at(home) {
+        tracing::warn!(%error, "preset applied but reload request could not be persisted");
+    }
     let cron_flips = report
         .fields_changed
         .iter()
@@ -208,6 +207,50 @@ async fn run_apply(
         );
     }
 
+    Ok(())
+}
+
+async fn emit_apply_audit_phase(
+    home: &Path,
+    name: &str,
+    report: &crate::config::presets::ApplyReport,
+    full_auto: bool,
+    previous_autonomy: crate::permissions::AutonomyLevel,
+    binding: &crate::cli::autonomy::ConfigAuditBinding,
+    phase: crate::cli::autonomy::MutationAuditPhase,
+    required: bool,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "fields_changed": report.fields_changed,
+        "source": "cli",
+        "operation_id": binding.operation_id(),
+        "phase": phase.as_str(),
+        "source_existed": binding.source_existed(),
+        "source_config_sha256": binding.source_sha256(),
+        "target_config_sha256": binding.target_sha256(),
+        "ts_unix": crate::time::now_unix_secs(),
+    }))
+    .context("serialize preset mutation audit")?;
+    crate::cli::todo::emit_oneshot_audit_at(
+        home,
+        crate::wal::events::EVENT_TYPE_PRESET_APPLIED,
+        payload,
+        "PRESET_APPLIED",
+        required,
+    )
+    .await?;
+    if full_auto {
+        crate::cli::autonomy::emit_full_auto_audit_phase(
+            previous_autonomy,
+            "full-auto-preset",
+            home,
+            binding,
+            phase,
+            required,
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -310,7 +353,31 @@ fn run_deactivate(home: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use crate::config::presets::{Preset, upsert};
+    use std::collections::BTreeMap;
     use tempfile::tempdir;
+
+    struct NeothHomeGuard(Option<std::ffi::OsString>);
+
+    impl Drop for NeothHomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
+                None => unsafe { std::env::remove_var("NEOTH_HOME") },
+            }
+        }
+    }
+
+    fn write_default_config(home: &Path) -> crate::config::FreedomConfig {
+        std::fs::create_dir_all(home).unwrap();
+        let config = crate::config::FreedomConfig::default();
+        let body = config.public_yaml().unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &home.join("freedom.yaml"),
+            body.as_bytes(),
+        )
+        .unwrap();
+        config
+    }
 
     #[test]
     fn run_list_with_no_presets_prints_hint_without_error() {
@@ -431,5 +498,76 @@ mod tests {
         run_deactivate(dir.path()).unwrap();
         let f = presets::load(dir.path()).unwrap();
         assert!(f.active.is_none());
+    }
+
+    #[test]
+    fn apply_is_bound_to_the_explicit_home_for_config_audit_and_reload() {
+        let _env = crate::test_env::lock();
+        let root = tempdir().unwrap();
+        let selected_home = root.path().join("selected-instance");
+        let decoy_default_home = root.path().join("default-instance");
+        let _restore = NeothHomeGuard(std::env::var_os("NEOTH_HOME"));
+        unsafe { std::env::set_var("NEOTH_HOME", &decoy_default_home) };
+
+        let selected_before = write_default_config(&selected_home);
+        let decoy_before = write_default_config(&decoy_default_home);
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "proactive.enabled".to_owned(),
+            serde_yaml::Value::Bool(!selected_before.proactive.enabled),
+        );
+        upsert(
+            &selected_home,
+            "selected-only",
+            Preset {
+                overrides,
+                ..Preset::default()
+            },
+        )
+        .unwrap();
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(run_apply(
+                &selected_home,
+                "selected-only",
+                true,
+                false,
+                false,
+                None,
+            ))
+            .unwrap();
+
+        let selected_after =
+            crate::config::FreedomConfig::load_from_path(&selected_home.join("freedom.yaml"))
+                .unwrap();
+        let decoy_after =
+            crate::config::FreedomConfig::load_from_path(&decoy_default_home.join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            selected_after.proactive.enabled,
+            !selected_before.proactive.enabled
+        );
+        assert_eq!(
+            decoy_after.proactive.enabled,
+            decoy_before.proactive.enabled
+        );
+        assert!(
+            selected_home
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+        assert!(selected_home.join("wal").join("000001.wal").exists());
+        assert!(selected_home.join("wal").join("hmac.key").exists());
+        assert!(
+            !decoy_default_home
+                .join(crate::config::reload::RELOAD_SENTINEL_NAME)
+                .exists()
+        );
+        assert!(!decoy_default_home.join("wal").join("000001.wal").exists());
+        assert!(!decoy_default_home.join("wal").join("hmac.key").exists());
     }
 }

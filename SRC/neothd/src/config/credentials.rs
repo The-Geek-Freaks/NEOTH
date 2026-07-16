@@ -811,10 +811,30 @@ impl Credentials {
             freedom_path,
             credentials_path,
             mutation,
-            |path, body| {
+            Some(|path: &Path, body: &[u8]| {
                 crate::util::atomic_write::atomic_write_private(path, body)
                     .with_context(|| format!("atomically write {}", path.display()))
-            },
+            }),
+        )
+    }
+
+    /// Lock and strictly load both stores, but commit only credentials.yaml.
+    /// Channel mutations use this when freedom.yaml is read-only input (most
+    /// adapters), avoiding a lossy public-config rewrite while retaining the
+    /// same lock order as Telegram's dual-file transaction.
+    pub(crate) fn update_with_freedom_read_at<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+    ) -> Result<R>
+    where
+        F: FnOnce(&super::FreedomConfig, &mut Self) -> Result<R>,
+    {
+        Self::update_with_freedom_at_using(
+            freedom_path,
+            credentials_path,
+            |freedom, credentials| mutation(freedom, credentials),
+            None::<fn(&Path, &[u8]) -> Result<()>>,
         )
     }
 
@@ -822,7 +842,7 @@ impl Credentials {
         freedom_path: &Path,
         credentials_path: &Path,
         mutation: F,
-        write_freedom: W,
+        write_freedom: Option<W>,
     ) -> Result<R>
     where
         F: FnOnce(&mut super::FreedomConfig, &mut Self) -> Result<R>,
@@ -856,9 +876,15 @@ impl Credentials {
             .with_context(|| format!("load {} for dual-file update", credentials_path.display()))?;
         let value = mutation(&mut freedom, &mut credentials)?;
 
-        // Validate and serialize the public config before either commit. This
-        // catches invalid config values without touching the credential file.
-        let freedom_body = freedom.public_yaml()?;
+        // Validate and render before either commit. Telegram intentionally
+        // removes its legacy inline token, but unrelated legacy inline
+        // provider/inference secrets must survive with their exact string
+        // values. Capture those values from the raw file, never from the
+        // effective config (which may contain keychain-only material).
+        let freedom_body = write_freedom
+            .as_ref()
+            .map(|_| render_freedom_preserving_unrelated_inline_secrets(&freedom, &freedom_before))
+            .transpose()?;
 
         if let Err(write_error) = credentials.write(credentials_path) {
             let rollback = rollback_file_pair(
@@ -875,7 +901,9 @@ impl Credentials {
             return Err(write_error).context("credential phase failed; prior bytes restored");
         }
 
-        if let Err(write_error) = write_freedom(freedom_path, freedom_body.as_bytes()) {
+        if let (Some(write_freedom), Some(freedom_body)) = (write_freedom, freedom_body)
+            && let Err(write_error) = write_freedom(freedom_path, freedom_body.as_bytes())
+        {
             let rollback = rollback_file_pair(
                 freedom_path,
                 &freedom_before,
@@ -898,6 +926,59 @@ impl Credentials {
 enum FileSnapshot {
     Missing,
     Present(zeroize::Zeroizing<Vec<u8>>),
+}
+
+#[derive(Default, Deserialize)]
+struct LegacyInlineSecrets {
+    #[serde(default)]
+    provider_key: Option<SecretString>,
+    #[serde(default)]
+    inference: LegacyInlineInferenceSecrets,
+}
+
+#[derive(Default, Deserialize)]
+struct LegacyInlineInferenceSecrets {
+    #[serde(default)]
+    left: LegacyInlineSlotSecret,
+    #[serde(default)]
+    right: LegacyInlineSlotSecret,
+    #[serde(default)]
+    cerebellum: LegacyInlineSlotSecret,
+    #[serde(default)]
+    default_slot: LegacyInlineSlotSecret,
+}
+
+#[derive(Default, Deserialize)]
+struct LegacyInlineSlotSecret {
+    #[serde(default)]
+    key: Option<SecretString>,
+}
+
+fn render_freedom_preserving_unrelated_inline_secrets(
+    freedom: &super::FreedomConfig,
+    before: &FileSnapshot,
+) -> Result<zeroize::Zeroizing<String>> {
+    let legacy = match before {
+        FileSnapshot::Present(bytes) => serde_yaml::from_slice::<LegacyInlineSecrets>(bytes)
+            .context("parse legacy inline secrets before dual-file update")?,
+        FileSnapshot::Missing => LegacyInlineSecrets::default(),
+    };
+
+    // Run the canonical public renderer first for all validation gates. The
+    // resulting body is secret-free; the persisted clone below receives only
+    // values proven to have existed inline in the pre-transaction file.
+    let _ = freedom.public_yaml()?;
+    let mut persisted = freedom.clone();
+    persisted.telegram_token = None;
+    persisted.provider_key = legacy.provider_key;
+    persisted.inference.left.key = legacy.inference.left.key;
+    persisted.inference.right.key = legacy.inference.right.key;
+    persisted.inference.cerebellum.key = legacy.inference.cerebellum.key;
+    persisted.inference.default_slot.key = legacy.inference.default_slot.key;
+    Ok(zeroize::Zeroizing::new(
+        serde_yaml::to_string(&persisted)
+            .context("serialize freedom.yaml while preserving legacy inline secrets")?,
+    ))
 }
 
 impl FileSnapshot {
@@ -1499,7 +1580,7 @@ mod tests {
                 credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
                 Ok(())
             },
-            |_, _| anyhow::bail!("injected second-file failure"),
+            Some(|_: &Path, _: &[u8]| anyhow::bail!("injected second-file failure")),
         )
         .unwrap_err();
 
@@ -1509,6 +1590,53 @@ mod tests {
             std::fs::read(&credentials_path).unwrap(),
             credentials_before
         );
+    }
+
+    #[test]
+    fn telegram_dual_file_update_preserves_unrelated_inline_legacy_secrets() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut freedom = crate::config::FreedomConfig::default();
+        freedom.provider_key = Some(SecretString::from("legacy-provider"));
+        freedom.telegram_token = Some(SecretString::from("111111111:legacy-telegram"));
+        freedom.inference.left.key = Some(SecretString::from("legacy-left"));
+        freedom.inference.right.key = Some(SecretString::from("legacy-right"));
+        freedom.inference.cerebellum.key = Some(SecretString::from("legacy-cerebellum"));
+        freedom.inference.default_slot.key = Some(SecretString::from("legacy-default"));
+        std::fs::write(&freedom_path, serde_yaml::to_string(&freedom).unwrap()).unwrap();
+
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                config.telegram_user_id = Some(222_222_222);
+                credentials.telegram_token = Some(SecretString::from("222222222:new-telegram"));
+                Ok(())
+            },
+        )
+        .unwrap();
+
+        let persisted: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&freedom_path).unwrap()).unwrap();
+        assert_eq!(persisted["provider_key"].as_str(), Some("legacy-provider"));
+        assert_eq!(
+            persisted["inference"]["left"]["key"].as_str(),
+            Some("legacy-left")
+        );
+        assert_eq!(
+            persisted["inference"]["right"]["key"].as_str(),
+            Some("legacy-right")
+        );
+        assert_eq!(
+            persisted["inference"]["cerebellum"]["key"].as_str(),
+            Some("legacy-cerebellum")
+        );
+        assert_eq!(
+            persisted["inference"]["default_slot"]["key"].as_str(),
+            Some("legacy-default")
+        );
+        assert!(persisted["telegram_token"].is_null());
     }
 
     #[test]

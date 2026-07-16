@@ -41,6 +41,33 @@ Every wrapper echoes its command-specific final token: `BUILD_EXIT=`, `TEST_EXIT
 - Crash-safe recovery rule (2026-07-07, **verschärft 2026-07-12 nach 2× BSOD in einer Session**): after a BSOD/thermal/driver-risk session, do **not** start broad `cargo clippy`, full build, or broad test gates from an agent terminal. First use cheap gates only: `git diff --check`, file-scoped `rustfmt --check`, and `cargo metadata --manifest-path SRC\Cargo.toml --no-deps --format-version 1`. If a compile/test gate is truly required, set `CARGO_BUILD_JOBS=1`, use the checked-in wrapper, and run the narrowest package/filter. Never treat a partial compile log as green without the wrapper's `*_EXIT=0` token. **2026-07-12 Eskalation:** die Box crashte diese Session ZWEIMAL, auch unter sequenziellen `-j 1/-j 2`-Gates — selbst Einzel-Builds sind Risiko. Post-BSOD-Muster: (1) COMMIT ZUERST (Arbeit sichern, check+clippy-Grün von vor dem Crash zählt als Kompilier-Beweis), (2) dann narrowest `-j 1 --test-threads=1` Filter einzeln, (3) den GUI-**Test**-Link (Monolith-Binary, #8d-OOM-Klasse) lokal ganz vermeiden — `cargo check -p neothd-gui -j 1` mit `CARGO_PROFILE_DEV_DEBUG=0` als Kompilier-Beweis, Test-Ausführung an die CI delegieren (workspace-Tests laufen dort ohnehin).
 - Per-item workflow: flip `[ ]`→`[x]` in `PROGRESS_v1_0.md` AND this file in the SAME commit; conventional commit; tests green before claiming done; `git push`.
 
+### Fast validation cadence for multi-slice Gold waves
+
+Repeatedly relinking the monolithic Core or GUI test binary after every small
+edit wastes hours and does not increase confidence when later slices still
+touch the same frontend. Use this dependency-aware cadence without weakening
+the release gates:
+
+1. Freeze ownership and source boundaries for the wave. Each independent slice
+   gets cheap static checks plus its smallest real unit/contract filter; do not
+   run concurrent Cargo processes against the shared target directory.
+2. Reuse the warm compiler cache and batch filters that share a link artifact.
+   After the last source edit in a package, run one package check and one strict
+   Clippy pass, then execute all affected focused regressions against that
+   frozen source. A passing filter before a later source change is historical
+   evidence only.
+3. Link the large GUI test executable once per source-frozen GUI wave, not once
+   per callback. Move reusable parser/DTO/registry contracts into a small
+   library test target when practical so ordinary drift checks avoid the GUI
+   event-loop binary.
+4. Run the full workspace, all-feature matrix, native installer VMs and clean-
+   machine journeys at integration checkpoints and the release candidate, not
+   between dependency-ordered implementation slices. Exact-head CI remains the
+   final authority; scoped local gates never replace it.
+5. A source edit after a green compile invalidates only evidence whose source-
+   to-sink path intersects that edit. Record exact pass counts and the frozen
+   source boundary so unchanged expensive evidence can be reused honestly.
+
 ---
 
 ## 2. WAL / Code Gotchas
@@ -79,9 +106,15 @@ Every wrapper echoes its command-specific final token: `BUILD_EXIT=`, `TEST_EXIT
 | WS-HR Headroom token-compression port (native Rust) | 16 | 1 (HR-00, operator-only) | 15 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14) | 10 | **1** | **9** |
-| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 10 | **9** | **1** |
+| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 13 | **12** | **1** |
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
+
+**SUPERSEDED adoption verdict (2026-07-15):** the 2026-07-11 sentence above
+that says “adoptions are COMPLETE” and “no adoption build is required for
+v1.0” is a checkbox-era audit snapshot. WS-R4 and Plan 002 supersede it:
+install, coupling, packaging, authenticated readiness, migration and
+GUI/CLI/Buddy parity must still be proven for every retained adoption.
 
 **Historical mechanical whole-file recount 2026-07-14 (post OMI closure): `914 [x] / 1 [ ] / 0 [~]` = 915 total.** This snapshot is superseded by the forensic Gold correction below. It correctly described the checkbox state at that moment, but the checkbox state itself omitted confirmed production-contract gaps and therefore was not a valid release-readiness statement.
 
@@ -154,6 +187,9 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
 - [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.
 - [ ] **GOLD-R4-09 DAU, accessibility and polish gate:** keyboard-only and screen-reader navigation, scaling/high-DPI, contrast, localization-safe layout, clear progress/cancel/retry, no terminal flashes for GUI users, and no unexplained jargon or raw stack traces. Test the complete fresh-user journey rather than isolated screens.
 - [ ] **GOLD-R4-10 Truthful high-reach repository launch:** regenerate README, SVG diagrams, screenshots/demos, install snippets, comparison tables, feature matrix, architecture/security story, release notes, website/wiki metadata and social preview from the verified final product. Lead with NEOTH's real differentiators and zero-friction path, keep every claim linked to shipped behavior, and prepare channel-specific launch material without faking publication, users or benchmarks.
+- [ ] **GOLD-R4-11 Default-on local communication adaptation:** ship a subject-isolated, deterministic local communication-profile engine that learns observable presentation and clarification preferences across authenticated sessions, applies them on every CLI, Channel, GUI, Buddy, Council, retry, fallback and sub-agent prompt path, and exposes the same inspect/correct/pin/reset/forget controls everywhere. Explicit settings outrank feedback and passive evidence; passive evidence requires bounded provenance, multi-session confidence and decay. FULL-AUTO may promote stable low-risk accommodations to durable-until-revoked state, but never bypasses subject, poisoning, privacy or medical-inference guards. Health, autism and ADHD labels may be stored only after an explicit operator declaration and are not exported to a provider unless the operator explicitly selects label export; the default prompt exports accommodations only. Incognito performs zero profile reads and writes. `self-dev accept` must transactionally apply every proposal type or report a typed recoverable failure; `Accepted` without an effect is forbidden.
+- [ ] **GOLD-R4-12 Real Mobile Companion product:** replace the current loopback/one-shot pairing preview with a versioned, authenticated, durable phone protocol and installable Android and iOS clients. Pairing must use an actually reachable route/carrier, bind a durable revocable device identity and scoped authority, survive daemon/app restart and upgrade, provide chat/stream/cancel/status/notifications/file-transfer plus encrypted ACKed offline replay, and expose list/status/revoke/retry in CLI, GUI and Buddy. Release gates must build, sign and content-test APK/AAB and iOS archive/TestFlight-ready artifacts, exercise emulator/simulator and clean-device pair/reconnect/revoke/upgrade flows, and never call timeout/rejection a successful pair.
+- [ ] **GOLD-R4-13 Cluster product completion:** retain the proven authenticated durable gossip/ACK/replay substrate, then finish the missing master-side task coordinator, idempotent delegated-execution/result outbox, correlation/deadline/retry/redelegation, operator/device/capability binding, transactional audited peer mutation and GUI/CLI/Buddy/Doctor control parity. The product must state and test whether remote material remains an explicit backup/restore ledger or participates in recall; cross-origin conflicts may never be silently merged. Every advertised transport and mDNS setting must be consumed or removed, and no worker-only task executor may be marketed as complete distributed execution.
 
 **Current Keet slice (2026-07-14; boxes remain open):** `bridges/keet/` now
 implements a repository-owned, full-duplex Keet-identity Pear/Hyperswarm text
@@ -243,6 +279,70 @@ create a second backlog or supersede this file, and the historical WS-I `308/308
 snapshot must not be used to infer that these current production-consumer,
 packaging, migration or surface-parity contracts are complete.
 
+**Current shared-control-plane foundation (2026-07-15; this foundation closes
+no additional broad WS-R4 box):** `SRC/neothd/src/integrations/` now contains
+the first typed, bounded capability DAG and durable SQLite integration-job
+state machine. The foundation enforces canonical IDs, exhaustive transitions,
+monotone progress, cancellation, revision-CAS, one active mutating job per
+capability, exact manifest-bound retry/restart validation, private persistence
+and contract-bound progress/Ready/resume proof primitives. Restart recovery
+validates every adapter disposition before opening one immediate SQLite
+transaction, then records the exact adopted/terminated/staging disposition for
+all interrupted jobs atomically; a missing validator leaves rows unchanged and
+fails closed. Cancellation intent and terminal outcome are distinct typed
+evidence. The frozen-source integration suite is **41/41** and strict Core
+Clippy is green. These are state-engine proof boundaries, not production proof
+issuers: cancellation/recovery receipts still need durable authenticated
+WAL/state binding, and real adapters must mint their own exact process,
+artifact and probe evidence. It is intentionally not counted as a finished
+adoption: no daemon/App-State owner, permission/WAL orchestrator, artifact
+adapter, lifecycle supervisor, retention, IPC/SSE, CLI, GUI, Buddy or Doctor
+consumer exists yet. QR/OAuth/device/signing work also needs an explicit
+`AwaitingUser` state before a consumer can report truthfully.
+
+The Channel slice now has one typed 15-channel descriptor registry shared by
+Core inventory/probes/CLI and the GUI status/add projection. Enum/descriptor
+bijection, aliases, setup keys, secret flags, Required/Optional/OneOf semantics,
+status totals/order and every canonical GUI add binding are fail-closed drift
+contracts; WhatsApp Business and Matrix setup-schema drift plus the canonical
+BlueBubbles/WhatsApp GUI paths are corrected. GUI credential submission now
+uses one bounded private stdin envelope, preserves exact secret bytes, never
+places secrets in argv or Debug output, and requires a strict bound JSON remove
+acknowledgement before showing success. Slash `/connect` stages a candidate,
+probes it before publication, then uses a file-state CAS plus compensating
+keychain snapshot/rollback; reconfiguration replaces rather than merges stale
+optional values, and disconnect removes the effective backend secrets. Inbound
+IRC, BlueBubbles, Mattermost, Google Chat, Matrix and Nostr identity policies
+fail closed when their required allowlist is absent. Current frozen-source
+evidence is Channel **69/69**, probes **14/14**, slash **56/56**, registry
+**6/6**, credentials **30/30**, Audit-RPC **14/14**, strict Core Clippy and the
+GUI/Slint check. The current GUI behavior suite is **372/372**. This closes
+registry duplication and the named
+credential/reconfiguration bypasses, not R4-07: `line_webhook_port`, `irc_port`,
+`irc_tls`, `irc_allowed_nick` and `matrix_store_path` still lack full CLI/GUI
+configuration surfaces; file publication plus OS-keychain compensation still
+needs a durable intent/recovery journal for a process crash between the two
+stores. Slack, WhatsApp Business, Discord, Signal, LINE and Twitch still
+authenticate their transport/bot but lack a mandatory operator/sender policy;
+workspace, server or room membership is not an authorization boundary. Their
+inbound adapters must gain account-scoped allow/pairing policy before the
+universal fail-closed Channel contract can close. Persisted multi-account
+identity, descriptor-rendered forms, GUI/Buddy/account-runtime parity,
+OpenClaw apply/rollback and behavior equivalence also remain explicit
+acceptance work.
+
+The complete non-Obsidian adoption re-audit found no inspected family closed
+across acquisition, verification, configuration, supervision, authenticated
+probe, repair, update and safe uninstall. The dependency-efficient sequence is:
+(1) make the daemon own the shared job service and expose the same status/events
+to all surfaces; then in parallel (2) bind Qwen/Ouro/CLIP/Candle-Whisper to the
+existing secure model-download rails, (3) package all 181 skills plus every
+sibling resource and dependency gate, and (4) ship a pinned managed Node/package
+closure with WhatsApp Baileys as the first supervised `AwaitingUser` consumer.
+That Node foundation is then reused by n8n, Hex Graph and Mobile MCP. Keet,
+CalDAV and native model acquisition are the strongest existing starting points,
+but none is promoted to complete by this audit.
+
 **Release-bound Graphify self-knowledge contract (operator directive
 2026-07-15; WS-R4 boxes remain open):** every real release must build a fresh,
 complete Graphify snapshot from the clean, exact release-tag HEAD. Reusing a
@@ -297,6 +397,32 @@ parity, visible long-running progress, full Self-Improve proposal/review wiring,
 public Wiki publication, signed native-installer execution and exact-head
 clean-machine qualification remain completion gates under R4-01, R4-02, R4-04,
 R4-05, R4-06, R4-08 and R4-10.
+
+**Adaptive-communication, Mobile and Cluster truth correction (2026-07-16):**
+the existing profile persistence is not yet the requested adaptive communication
+feature. General claim learning and the passive profile cron default to off;
+normal CLI, Channel and GUI answers do not receive the stored profile. The only
+production profile prompt sink is the Council `Split`/Callosum branch, and
+`self-dev accept` records acceptance without applying four behavioral proposal
+types. The passive collector also lacks subject/source identity and can mix
+operator, other-channel-sender and automation text. Before default-on, the
+health/neurotype extractor must reject inferred diagnoses, Incognito must
+perform zero profile reads and writes, and a typed local communication layer
+must cover every provider-bound prompt after explicit current-turn instructions
+but before request/cost authorization. It learns accommodations such as
+directness, structure, literalness, context amount, pacing and clarification
+style, not hidden autism/ADHD labels. Explicit declarations remain separately
+operator-controlled; FULL-AUTO may make stable low-risk accommodations durable
+until revoked but never weakens provenance, privacy or anti-poisoning gates.
+
+The current Mobile Companion is also not release-ready: the wizard renders a
+LAN URL for a loopback-only listener and the wrong route, does not enable the
+required P2P carrier, reports timeout as success, stores tokens only in memory
+and has no Android/iOS client or release artifact. The cluster's authenticated
+durable gossip, transactional receipt and restart replay are real, but delegated
+execution has only the worker side; master coordination, durable result
+correlation/retry and GUI/Buddy management are absent. These confirmed gaps are
+now explicit GOLD-R4-11..13 and may not disappear inside broader parity boxes.
 
 ### 3.3 Public reconciliation of the 20 confirmed WS-I wiring gaps
 
@@ -1275,6 +1401,7 @@ https://github.com/loadingalias/rscrypto
 - [x] **GOLD-ADAPT-JV-IMP-01** 3 new `foreign_import.rs` readers: `read_openclaw_memory_index` (index.json memories[]), `read_openclaw_mempalace` (nodes + replay hebbianLinks via `hebbian_reinforce`), `read_openclaw_memory_db` (SQLite `summaries.learned+completed` → groundtruth). *NEOTH:* `memory/foreign_import.rs`. M. **refines OH-01.** **SHIPPED (loop):** readers 2+3 added (`read_openclaw_mempalace` nodes+hebbianLinks, `read_openclaw_memory_db` SQLite summaries→ImportedClaim) following reader-1's pattern; 22 foreign_import tests green, clippy-clean. (Salvaged after a reconnect corrupted shared .git refs.)
 - [x] **GOLD-ADAPT-JV-IMP-02** Unblock `neoth-migrate apply` bail → batch groundtruth insert + dry-run preview report + WAL `IMPORT_COMPLETE`. *src/NEOTH:* `SRC/neoth-migrate/src/main.rs::run_apply` + `cli/migrate.rs`. M. **refines GOLD-FEAT-04** (the bail is honest today per GOLD-HON-01; this makes it real). **SHIPPED:** `run_apply` fully implemented — `--dry-run` flag previews scan JSON without opening views.db; `--confirm` opens `~/.neoth/views.db` (overridable via `--db`), schema-checks `idx_groundtruth` columns (fails fast with actionable message if table missing), runs all inserts in one transaction via `INSERT OR IGNORE` (idempotent across re-runs), emits JSONL audit line `{event:"GROUNDTRUTH_IMPORTED", event_type:153}` to `~/.neoth/neoth-migrate-audit.jsonl`; `readers::emit_claims` dispatches per-kind: Sqlite (TEXT-column walk + hint-driven source tag), MarkdownFile/Markdown (pulldown-cmark paragraph+heading extraction, ≥8-char filter), JsonFile/JsonDir (array-of-strings, array-of-objects with `statement`/`text`/`content`/`body` field probe), Lance/Faiss/Git bail cleanly. Source tags mirror `neothd::Source::as_str()` exactly (`import:hermes`/`import:openclaw`/`import:obsidian`/`import:session`/…). 91 tests 91/0 green, clippy-clean. Wired into: `neoth-migrate/src/main.rs::run_apply` (CLI consumer) + `neoth-migrate/src/readers.rs::emit_claims` (per-kind emitter).
 - [x] **GOLD-ADAPT-JV-IMP-03** OpenClaw config → provider import (`auth.profiles`+`models.providers` → `freedom.yaml` provider stanzas; map claude-cli/gemini/openai/openai-compat; keys prompted separately, NEVER auto-extracted). *NEOTH:* `neoth-migrate import-config`. S. NEW. **SHIPPED (loop):** new `import_config.rs` module + `ImportConfig` subcommand in `main.rs`; maps 5 OpenClaw kinds to NEOTH providers; key-safety sanitiser drops all sensitive fields before processing; `render_yaml` emits YAML with credentials.yaml reminder; 18 tests (fixture round-trip + key-leak assertion + dedup + skipped kinds). 18/0 green, clippy clean.
+  - **FORENSIC CORRECTION (2026-07-15; historical implementation superseded):** the provider-only converter could not preserve channels, accounts, policies, routes, runtime state or unknown fields, so its apparent-success path was not a complete adoption. The public `import-config` name now fails closed for the old flags and aliases the same full-`openclaw.json`, secret-redacted, source-set-bound inspector as `import-openclaw`; it emits no provider fragment and advertises `apply_available=false`. Lossless provider/channel/account apply remains open under `GOLD-R4-07` and `plans/001-openclaw-channel-migration-parity.md`; this historical checkbox is not evidence that current OpenClaw configuration migration is complete.
 - [x] **GOLD-ADAPT-JV-IMP-04** Systemd-timer/crontab → operator-cron import (`OnCalendar`/`OnUnitActiveSec`/cron-expr → `freedom.yaml::operator_crons[]`, ExecStart → NEOTH-native cmd). *NEOTH:* `neoth-migrate import-crons` (needs JV-PRO-01). S. NEW. **SHIPPED (loop):** new `import_crons.rs` module + `ImportCrons` subcommand in `main.rs`; parses OnCalendar shortcuts (daily/hourly/weekly/monthly/yearly/minutely) + `*-*-* HH:MM:SS` time specs + DOW prefixes + OnUnitActiveSec intervals (s/min/h/d/week/month) + standard 5-field crontab + @shorthand (@daily/@reboot etc.); ExecStart → `prompt: "Run: <cmd>"`; render_yaml emits jobs.yaml-ready YAML with IMPORT NOTE comments; 33 tests (fixture timer + crontab line → expected Job entries, schedule mapping, notes, skipped reporting). 33/0 green, clippy clean.
 - [x] **GOLD-ADAPT-JV-IMP-05** Obsidian bidirectional vault crons (vault-reader: `source: openclaw-*`/`neoth-*` frontmatter detection + SHA256 hash tracking → recall index; vault-writer: frontmatter + entity backlinks; vault-synthesis weekly Phase-1). *src:* `vault-reader.py`/`vault-writer.py`/`vault-synthesis.py`. *NEOTH:* `neoth obsidian sync` operator crons (`config::obsidian_*` already exists). L. **refines OH-14.** **SHIPPED:** `daemon/obsidian_vault_reader_cron.rs` — SHA-256-tracked reader pass writes managed notes to `idx_groundtruth` via `groundtruth::insert(Source::ImportObsidian)`; writer pass syncs operator-attested GT rows to `<vault>/NEOTH-Facts/<scope>/<id>.md` via `WriteCoalescer`; weekly synthesis writes `<vault>/NEOTH-Synthesis/<YYYY-WW>.md` + `Source::Synthesis` GT row. `is_managed_obsidian_note`/`strip_yaml_frontmatter`/`obsidian_folder_scope` promoted `pub(crate)` in `memory/foreign_import.rs`. Config fields `obsidian_vault_reader_enabled`/`obsidian_vault_reader_secs` in `FreedomConfig`. Wired: `spawn_obsidian_vault_reader` in `cli/serve_tasks.rs` → spawned in `cli/serve.rs::run_serve` + aborted in `shutdown_background_tasks`. 4 tests green, 9533/0 full suite, clippy clean.
 - [x] **GOLD-ADAPT-JV-IMP-06** Obsidian manual-note one-shot import (notes WITHOUT `source: openclaw-*` → vault-index + groundtruth; folder→scope: `05-Personen`→people, `06-Regeln`→rules, `09-Dokumente`→documents, `00-MOCs`→moc). *NEOTH:* new `read_obsidian_vault()` in `foreign_import.rs`. S. NEW.

@@ -83,10 +83,42 @@ URL + own E.164 number · **line** channel access token (+ channel secret for
 inbound webhooks; blank = push-only) · **irc** server host, nick, optional
 NickServ password + channels csv · **imessage** BlueBubbles server URL +
 password · **mattermost** server URL + token · **gchat** path to the GCP
-service-account JSON key + Pub/Sub subscription name. Optional hardening fields
-(`irc_allowed_account`, `imessage_allowed_sender`, per-channel allowlists) are
-set directly in `credentials.yaml`. `channel list` reports canonical static
-configuration truth; `channel test` adds live credential/reachability truth.
+service-account JSON key + Pub/Sub subscription name. Six adapters already
+enforce a mandatory inbound identity policy: IRC requires
+`irc_allowed_account`, BlueBubbles requires
+`imessage_allowed_sender`, Mattermost requires `mattermost_allowed_user_id`,
+Google Chat requires `gchat_allowed_sender`, Nostr requires
+`nostr_allowed_pubkey`, and Matrix requires at least one of
+`matrix_allowed_user_id` or `matrix_allowed_room_ids`. The shared
+`--allowed-sender` flag supplies the channel-appropriate single identity;
+Matrix additionally accepts `--allowed-rooms-csv`. `channel list` reports
+canonical static configuration truth; `channel test` adds live
+credential/reachability truth.
+
+This is not yet universal. Slack, WhatsApp Business, Discord, Signal, LINE and
+Twitch currently authenticate the workspace/API/bot transport but do not yet
+require an operator sender, conversation or mention policy before dispatch.
+Transport membership is not operator authorization. Their common typed
+DM/group/pairing gate, descriptor-rendered setup and OpenClaw policy migration
+are explicit v1.0 Gold blockers; until that lands, do not expose those adapters
+to an untrusted workspace, server, number or stream audience.
+
+Five advanced runtime settings are currently file-only and remain explicit
+GUI/CLI parity work for v1.0. Set them under `credentials.yaml` only when the
+safe defaults do not fit:
+
+| Field | Current behavior |
+| :-- | :-- |
+| `line_webhook_port` | Loopback webhook port; defaults to `8444`. |
+| `irc_port` | IRC server port; defaults to `6697`. |
+| `irc_tls` | IRC transport security; defaults to `true`. |
+| `irc_allowed_nick` | Optional secondary nick check; it never replaces the required authenticated `irc_allowed_account`. |
+| `matrix_store_path` | Owner-restricted Matrix crypto/session store; defaults to `~/.neoth/matrix_store/`. |
+
+These keys are documented for existing operators, not presented as a
+zero-friction setup claim. Descriptor-rendered forms for them, durable recovery
+across a process crash between OS-keychain and file publication, and persisted
+multi-account channel identity are still release-blocking work.
 
 ## Telegram
 
@@ -229,7 +261,7 @@ Discord notes:
 | Gateway | Uses Discord Gateway WebSocket. |
 | Message content | Requires Message Content Intent. |
 | Formatting | CommonMark-ish with Discord length limits and splitting. |
-| Scope | DM and configured guild/channel use based on allowlist policy. |
+| Inbound authorization | Bot-token/Gateway authentication exists, but operator/guild/channel/role/mention policy is not wired yet. Treat inbound Discord as trusted-environment-only until the v1.0 Gold ingress gate lands. |
 
 ## Matrix
 
@@ -272,7 +304,7 @@ Matrix policy is fail-closed at the boundaries:
 | `matrix_allowed_user_id` / `--allowed-sender` | Restricts inbound senders and inviters to one Matrix user id. |
 | `matrix_allowed_room_ids` / `--allowed-rooms-csv` | Restricts joins, inbound messages, and proactive sends to the listed room ids. |
 | Both allowlists set | Both must match. One allowlist cannot bypass the other. |
-| Neither allowlist set | Existing joined rooms remain compatible, but every new invitation is rejected. |
+| Neither allowlist set | Matrix is not started. Existing-room messages would otherwise bypass the invite-only gate, so an open adapter is refused. |
 | `matrix_require_encryption` | Defaults to `true`, including old config files without the field. Plaintext rooms are neither read nor written. |
 | `--allow-plaintext` | Explicitly writes `matrix_require_encryption: false`; `channel list`/doctor surface the plaintext posture as a warning. |
 

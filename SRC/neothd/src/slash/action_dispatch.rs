@@ -10,6 +10,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::schema::{CommandSource, SlashAction};
+use crate::channels::registry::{ChannelId, channel_descriptors, resolve_channel_id};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 
@@ -410,80 +411,104 @@ fn channel_arg<'a>(args: &'a str, command: &str) -> std::result::Result<&'a str,
     Ok(parts[0])
 }
 
+fn known_slash_channel_names() -> String {
+    channel_descriptors()
+        .iter()
+        .flat_map(|descriptor| {
+            std::iter::once(descriptor.id.as_str()).chain(descriptor.aliases.iter().copied())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn resolve_slash_channel(
+    args: &str,
+    command: &str,
+) -> std::result::Result<ChannelId, ActionOutcome> {
+    let channel = channel_arg(args, command)?;
+    resolve_channel_id(channel).ok_or_else(|| ActionOutcome::InvalidArgs {
+        text: format!(
+            "/{command} {channel} — unknown channel. Available canonical IDs and aliases: {}",
+            known_slash_channel_names()
+        ),
+    })
+}
+
 async fn handle_connect(args: &str, home: &Path) -> ActionOutcome {
-    let channel = match channel_arg(args, "connect") {
-        Ok(channel) => channel.to_ascii_lowercase(),
+    let channel_id = match resolve_slash_channel(args, "connect") {
+        Ok(channel_id) => channel_id,
         Err(outcome) => return outcome,
     };
-    if !matches!(
-        channel.as_str(),
-        "telegram" | "whatsapp" | "slack" | "discord" | "keet"
-    ) {
-        return ActionOutcome::InvalidArgs {
-            text: format!(
-                "/connect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord, keet"
-            ),
-        };
-    }
-    if let Err(error) = crate::cli::channel::run_add_at(
+    let channel = channel_id.as_str();
+    let prepared = match crate::cli::channel::prepare_channel_add_at(
         home,
-        &channel,
+        channel,
         &crate::cli::channel::ChannelAddFlags::default(),
-        &OutputFormat::Table,
     )
     .await
     {
-        return failed("/connect", error);
-    }
-    let verification = match crate::cli::channel::test_channel_at(home, &channel).await {
-        Ok(result) => result,
-        Err(error) => {
-            let _ = crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table);
-            return failed(
-                "/connect credential verification (credentials rolled back)",
-                error,
-            );
-        }
+        Ok(prepared) => prepared,
+        Err(error) => return failed("/connect candidate preparation", error),
     };
-    if verification.status != "ok" {
-        return match crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table) {
-            Ok(()) => ActionOutcome::Failed {
+    debug_assert_eq!(prepared.channel_id(), channel_id);
+    let verification = match crate::cli::channel::test_prepared_channel(&prepared).await {
+        Ok(result) => result,
+        Err(error) => return failed("/connect candidate verification; nothing was saved", error),
+    };
+
+    let verified = match connect_probe_disposition(verification.status) {
+        ConnectProbeDisposition::Verified => true,
+        ConnectProbeDisposition::Unavailable => false,
+        ConnectProbeDisposition::Reject => {
+            return ActionOutcome::Failed {
                 text: format!(
-                    "/connect {channel} verification failed: {}. Stored credentials were rolled back.",
+                    "/connect {channel} verification failed: {}. Candidate credentials were not saved; existing channel state is unchanged.",
                     verification.detail
                 ),
-            },
-            Err(rollback_error) => failed(
-                "/connect verification failed and credential rollback",
-                format!("{}; {rollback_error}", verification.detail),
-            ),
-        };
+            };
+        }
+    };
+
+    if let Err(error) = crate::cli::channel::commit_prepared_channel_add_at(home, prepared) {
+        return failed("/connect verified-candidate commit", error);
     }
-    handled_after_reload(
-        home,
+
+    let status = if verified {
         format!(
-            "Channel `{channel}` credentials saved and verified: {}",
+            "credentials saved after a successful live check: {}",
             verification.detail
-        ),
-    )
+        )
+    } else {
+        format!(
+            "credentials saved, but no side-effect-free live verification was available: {}. NEOTH does not claim this adapter is live; check daemon runtime status after reload",
+            verification.detail
+        )
+    };
+    handled_after_reload(home, format!("Channel `{channel}` {status}."))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ConnectProbeDisposition {
+    Verified,
+    Unavailable,
+    Reject,
+}
+
+fn connect_probe_disposition(status: &str) -> ConnectProbeDisposition {
+    match status {
+        "ok" => ConnectProbeDisposition::Verified,
+        "unavailable" => ConnectProbeDisposition::Unavailable,
+        _ => ConnectProbeDisposition::Reject,
+    }
 }
 
 fn handle_disconnect(args: &str, home: &Path) -> ActionOutcome {
-    let channel = match channel_arg(args, "disconnect") {
-        Ok(channel) => channel.to_ascii_lowercase(),
+    let channel_id = match resolve_slash_channel(args, "disconnect") {
+        Ok(channel_id) => channel_id,
         Err(outcome) => return outcome,
     };
-    if !matches!(
-        channel.as_str(),
-        "telegram" | "whatsapp" | "slack" | "discord" | "keet"
-    ) {
-        return ActionOutcome::InvalidArgs {
-            text: format!(
-                "/disconnect {channel} — unknown channel. Available: telegram, whatsapp, slack, discord, keet"
-            ),
-        };
-    }
-    match crate::cli::channel::run_remove_at(home, &channel, &OutputFormat::Table) {
+    let channel = channel_id.as_str();
+    match crate::cli::channel::run_remove_at(home, channel, &OutputFormat::Table) {
         Ok(()) => handled_after_reload(home, format!("Channel `{channel}` disconnected.")),
         Err(error) => failed("/disconnect", error),
     }
@@ -1056,6 +1081,54 @@ mod tests {
     fn disconnect_rejects_unknown_channel_without_mutation() {
         let out = handle_disconnect("carrier-pigeon", Path::new("."));
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
+        assert!(out.text().contains("whatsapp_baileys"));
+        assert!(out.text().contains("imessage_bluebubbles"));
+    }
+
+    #[test]
+    fn connect_probe_disposition_never_treats_fail_or_skipped_as_committable() {
+        assert_eq!(
+            connect_probe_disposition("ok"),
+            ConnectProbeDisposition::Verified
+        );
+        assert_eq!(
+            connect_probe_disposition("unavailable"),
+            ConnectProbeDisposition::Unavailable
+        );
+        for status in ["fail", "skipped", "", "future-status"] {
+            assert_eq!(
+                connect_probe_disposition(status),
+                ConnectProbeDisposition::Reject
+            );
+        }
+    }
+
+    #[test]
+    fn slash_channel_resolution_covers_all_canonical_ids_and_operator_aliases() {
+        let descriptors = channel_descriptors();
+        assert_eq!(descriptors.len(), 15, "v1 channel inventory drifted");
+
+        for descriptor in descriptors {
+            assert_eq!(
+                resolve_slash_channel(descriptor.id.as_str(), "connect").unwrap(),
+                descriptor.id,
+                "canonical slash resolution drifted for {}",
+                descriptor.id.as_str()
+            );
+            for alias in descriptor.aliases {
+                assert_eq!(
+                    resolve_slash_channel(alias, "disconnect").unwrap(),
+                    descriptor.id,
+                    "operator alias `{alias}` drifted for {}",
+                    descriptor.id.as_str()
+                );
+            }
+        }
+
+        assert_eq!(
+            resolve_slash_channel("  GoOgLe_ChAt  ", "connect").unwrap(),
+            crate::channels::ChannelKind::GoogleChat
+        );
     }
 
     #[tokio::test]

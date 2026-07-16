@@ -74,6 +74,7 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
     "whatsapp_token",
     "whatsapp_verify_token",
     "whatsapp_app_secret",
+    "whatsapp_baileys_token",
     "slack_bot_token",
     "slack_app_token",
     "discord_bot_token",

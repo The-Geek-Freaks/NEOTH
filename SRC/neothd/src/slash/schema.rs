@@ -93,8 +93,8 @@ pub enum SlashAction {
     /// chat dispatch fallback rule.
     ProviderSwitch,
     /// `/connect <channel>` — walk the operator through credential
-    /// entry + token verification for a channel adapter
-    /// (whatsapp / telegram / slack / discord).
+    /// entry + candidate verification for any canonical registry adapter;
+    /// persistence is compare-and-swap after the probe.
     ConnectChannel,
     /// `/disconnect <channel>` — revoke credentials + leave the
     /// adapter shell. Idempotent for already-disconnected channels.

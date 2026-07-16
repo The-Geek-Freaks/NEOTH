@@ -2,7 +2,8 @@
 
 **Plan ID:** `001-openclaw-channel-migration-parity`
 
-**Status:** Proposed; implementation has not started
+**Status:** In progress; canonical registry and complete-source inspection
+foundations exist, but account/runtime/apply parity remains release-blocking
 
 **Created:** 2026-07-15
 
@@ -48,9 +49,55 @@ This plan implements the current Road-to-Gold correction in `PLAN/ROAD_TO_1_0_GO
 
 The OpenClaw audit used the clean checkout at `C:\Users\Shadow-PC\CascadeProjects\AGENTER\QUELLEN\openclaw`, exact HEAD `4c667aac8859114bd8f0a589ac6cd1de8bfe1474`. All `OpenClaw:` references below are relative to that root. OpenClaw schemas, manifests, source tests, and current docs are authoritative in that order.
 
-The NEOTH audit used exact committed HEAD `19f74b228cc6d43fc2542922bbc28e324ba52ac6`. Dirty concurrent work was treated as uncommitted work-in-progress and was not used to claim this plan complete.
+The original NEOTH audit used exact committed HEAD `19f74b228cc6d43fc2542922bbc28e324ba52ac6`. Dirty concurrent work was treated as uncommitted work-in-progress and was not used to claim the original audit complete.
 
-No source, roadmap, progress, or documentation file was changed by this audit. This file is the only audit output.
+**Original audit boundary:** no source, roadmap, progress, or documentation file
+was changed by that audit; this file was its only output. The execution
+checkpoints below are later implementation evidence and intentionally update
+the Road/Progress documents in the same integration wave.
+
+### Current execution checkpoint (2026-07-15; plan acceptance remains open)
+
+- The independent provider-only `import-config` path is removed. Both public
+  OpenClaw names now require a complete `openclaw.json` source and enter the
+  same read-only, secret-redacted inspector. The report binds the exact audited
+  OpenClaw commit, pinned 26-key channel-manifest inventory digest and every
+  primary/include path, byte length and SHA-256; it explicitly reports
+  `apply_available=false`.
+- Core now has one typed 15-channel registry. Core owns and consumes canonical
+  IDs, aliases, setup keys, secret markers, Required/Optional/OneOf rules,
+  capabilities, transport, lifecycle and target availability. GUI currently
+  validates registry identity, aliases, setup fields, secret markers and
+  requirements, while retaining checked static form bindings. Drift at those
+  implemented boundaries is rejected instead of silently tolerated.
+- GUI credential writes now use a bounded private stdin envelope, preserve
+  exact secret bytes, never place secrets in argv, and require a channel-bound
+  JSON acknowledgement before reporting remove success. `/connect` prepares
+  the complete replacement candidate in memory, probes it before publication,
+  rejects failed/skipped probes, then performs a file-state CAS with
+  compensating keychain snapshot/rollback. Disconnect clears effective
+  backend secrets. Required inbound identity policies for IRC, BlueBubbles,
+  Mattermost, Google Chat, Matrix and Nostr now fail closed.
+- This checkpoint does not provide account-scoped persistence, identities,
+  sessions, queues, routing, credentials or runtime adapter instances. All
+  current descriptors therefore state the honest legacy-default-only account
+  mode. A typed `ChannelRef` is a foundation type, not proof that the message
+  pipeline carries it.
+- Apply/status/rollback, target-state source binding, descriptor-generated
+  edit/test/remove/Buddy forms, account-aware runtime behavior, OpenClaw field
+  and migration-alias parity, missing adapters and authenticated per-account
+  readiness remain open. CLI operator aliases now canonicalize across
+  add/remove/test/connect and required-flag planning. The five optional runtime
+  fields `line_webhook_port`, `irc_port`, `irc_tls`, `irc_allowed_nick` and
+  `matrix_store_path` still lack complete CLI/GUI configuration surfaces. A
+  durable intent/recovery journal is also still required to recover a process
+  crash between OS-keychain mutation and file publication; the current CAS
+  plus compensation handles ordinary errors, not that crash window. Frozen-
+  source evidence is Channel **67/67**, probes **14/14**, slash **56/56**,
+  registry **6/6** and GUI **372/372**. Slack, WhatsApp Business, Discord,
+  Signal, LINE and Twitch still start from transport credentials without a
+  mandatory operator/sender policy; those account-scoped allow/pairing gates
+  remain release work. No broad R4 box closes here.
 
 ## Required target contract
 
@@ -108,11 +155,11 @@ Every adopted or upgraded channel row in the ledger inherits all requirements be
 - **Risk:** High; persistent-key migration touches security and message delivery.
 - **Confidence:** High
 
-### F-02 — The importer cannot apply and its source vocabulary has already drifted
+### F-02 — Apply remains absent; the legacy bypass and known-channel drift are closed
 
 - **Priority:** P0
-- **Evidence:** reports are hardcoded `dry_run_only: true` (`SRC/neoth-migrate/src/openclaw_channels.rs:595-613`); account leaves are unsupported (`SRC/neoth-migrate/src/openclaw_channels.rs:986-998`); the command never writes (`SRC/neoth-migrate/src/main.rs:695-717`). `KNOWN_CHANNEL_KEYS` omits current manifest/docs surfaces including `raft`, `reef`, and `sms` (`SRC/neoth-migrate/src/openclaw_channels.rs:23-50`; compare `OpenClaw: docs/channels/index.md:31-35`). A second public command, `import-config`, independently emits only provider stanzas, silently drops credential-shaped leaves, and merely reports/skips unknown provider kinds (`SRC/neoth-migrate/src/import_config.rs:1-34`; `SRC/neoth-migrate/src/main.rs:661-692`).
-- **Impact:** The current command is a useful safe inspector, not a migration. Manual re-entry is required, a handwritten schema ledger will continue drifting, and the legacy public path can still produce an apparently successful but incomplete OpenClaw import outside the fail-closed plan/apply contract.
+- **Current evidence (2026-07-15):** both public names now enter one `neoth-openclaw-inspect-v1` complete-source inspector. Provider-only legacy flags fail closed; the independent lossy converter is gone. The report binds every primary/include file and a deterministic source-set SHA-256, and the manifest-evidenced known-channel inventory is pinned at 26 keys including Raft, Reef and SMS. The locked `neoth-migrate` suite is 125/125 and the OpenClaw slice is 21/21. Reports still state `dry_run_only=true` and `apply_available=false`; account leaves and missing runtime semantics remain blockers.
+- **Impact:** The silent-success bypass and immediate vocabulary drift are closed, but the current command is still an inspector rather than a migration. Manual re-entry remains necessary until F-01 plus Slice 7 implement source-revalidated atomic apply, status, activation and rollback.
 - **Effort:** L after F-01; impossible before it.
 - **Risk:** High if apply is added without source binding and atomicity.
 - **Confidence:** High
@@ -126,11 +173,23 @@ Every adopted or upgraded channel row in the ledger inherits all requirements be
 - **Risk:** High; false parity is worse than an explicit blocker.
 - **Confidence:** High
 
-### F-04 — Registry truth is duplicated across Core, CLI, and GUI
+### F-04 — Canonical registry foundation exists; complete generated surfaces remain open
 
 - **Priority:** P0
-- **Evidence:** Core has a fixed 15-row registry (`SRC/neothd/src/channels/probe.rs:218-234`); GUI pins another fixed 15 IDs (`SRC/neothd-gui/src/panel_logic.rs:1177-1196`); CLI add/status behavior is implemented separately (`SRC/neothd/src/cli/channel.rs:37-123`).
-- **Impact:** New channels and capabilities can be wired in one surface but absent, stale, or misleading in another. Buddy cannot reliably consume a canonical account/action model.
+- **Current evidence (2026-07-15):** `SRC/neothd/src/channels/registry.rs`
+  now owns the typed descriptor inventory, aliases, setup schema and lifecycle/
+  capability metadata. Core probes/list/status and GUI status/add projection
+  consume it, with enum/descriptor, setup, secret, requirement, order and total
+  drift tests. The old standalone GUI status-ID constant is gone; a checked
+  per-channel form/flag map remains. Credential create/remove and slash
+  reconfiguration now use the private-stdin, strict-ack, pre-probe and
+  compensating-rollback contracts described above. The five named optional
+  runtime fields, Slint form bodies, Buddy actions and account-scoped runtime
+  state are not yet generated from the descriptor contract; keychain/file
+  crash recovery still needs a durable intent journal.
+- **Impact:** The recurring ID/setup-list drift is closed at the current
+  registry boundary. A new field/action/account capability can still be wired
+  incompletely until every surface and runtime consumer is descriptor-driven.
 - **Effort:** L
 - **Risk:** Medium; broad UI blast radius, but it removes recurring drift.
 - **Confidence:** High
@@ -343,11 +402,11 @@ neoth-migrate import-openclaw rollback --migration-id <id> --confirm
 
 **Engine changes:**
 
-0. Retire `import-config` as an independent lossy conversion engine. During compatibility, make it a deprecated front end to the same canonical plan ledger: sensitive source paths become path-specific `needs_secret`/`needs_relink` actions, unknown provider kinds block, and no leaf is silently dropped or counted as a successful skip.
-1. Parse JSON5 and `$include` with existing byte/count/depth limits; record canonical source paths and hashes for every included file.
+0. [x] Retire `import-config` as an independent lossy conversion engine. During compatibility, make it a deprecated front end to the same canonical plan ledger: sensitive source paths become path-specific `needs_secret`/`needs_relink` actions, unknown provider kinds block, and no leaf is silently dropped or counted as a successful skip. **Closed 2026-07-15:** both names use the one complete-source inspector; provider-only flags fail closed.
+1. [x] Parse JSON5 and `$include` with existing byte/count/depth limits; record canonical source paths and hashes for every included file. **Closed 2026-07-15:** lossless relative path, byte length and SHA-256 per primary/include file plus deterministic contract-bound source-set hash.
 2. Inspect channel config plus channel-coupled non-secret state: default accounts, bindings, broadcast groups, pairing/allow/block IDs, routing, portable session metadata, and runtime requirements. Auth stores, tokens, cookies, device keys, and QR sessions are never copied.
 3. Produce a complete per-leaf/per-account ledger with `mapped`, `needs_secret`, `needs_relink`, `needs_runtime`, `explicit_skip`, `unsupported`, or `unknown`. `unsupported`, `unknown`, unaccepted skip, or unresolved required action blocks apply/activation.
-4. Bind the reviewed plan to source-set digest, pinned OpenClaw schema commit, NEOTH target version, registry digest, and importer version.
+4. [ ] Bind the reviewed plan to source-set digest, pinned OpenClaw schema commit, NEOTH target version, registry digest, and importer version. **Partial 2026-07-15:** the read-only report and its source-set hash now bind the audited source commit, migrator/target version and the 26-key known-channel inventory digest. The future generated target-registry digest and apply-time revalidation remain open.
 5. Stage target public config, secret-reference placeholders, route/policy/session state, pairing IDs, and required action queue under one migration ID. Validate the full target graph before publication.
 6. Publish config/database changes transactionally with backups and a commit marker. Crash before marker resumes or rolls back deterministically; rerun is idempotent.
 7. Execute secret prompts, OAuth/QR relinks, managed runtime installs, and transport conversions through the normal channel onboarding engine. Activate each account only after its probe and capability conformance check pass.

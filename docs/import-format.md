@@ -30,13 +30,26 @@ history or inserted into ground truth:
 ```text
 neoth-migrate import-openclaw --config ~/.openclaw/openclaw.json
 neoth-migrate import-openclaw --config ~/.openclaw/openclaw.json --json
+neoth-migrate import-config --config ~/.openclaw/openclaw.json --json
 ```
 
-This command is a read-only migration plan. It accepts OpenClaw's JSON5 syntax,
+`import-config` is a deprecated compatibility name for the same complete-source
+inspector. The former provider-only flags are rejected because they cannot
+account for channels, accounts, policies, routes, or unknown fields. Neither
+entry point emits provider YAML or writes target state.
+
+The inspector is a read-only migration plan. It accepts OpenClaw's JSON5 syntax,
 resolves `$include` files only inside the canonical configuration directory,
 and rejects traversal, symlink escapes, cycles, duplicate keys, excessive
 depth, excessive file count and oversized inputs. Include paths are resolved
-relative to the file that contains them.
+relative to the file that contains them. Its machine-readable report names the
+`neoth-openclaw-inspect-v1` contract, migrator/target NEOTH version, the exact
+audited OpenClaw schema commit and a digest of its 26-key known-channel
+inventory. It binds that review vocabulary plus every primary/include file by
+lossless relative path, byte length and SHA-256 into a deterministic
+`source_set_sha256`. A later apply implementation must validate that exact
+source set and review vocabulary again; the current report states
+`apply_available=false`.
 
 Every effective configuration leaf after include/merge resolution is listed
 exactly once without its value. The report marks a leaf as `mapped`,
@@ -165,15 +178,18 @@ configuration. Sensitive config keys and credential-like paths are reduced to
 references such as `key:model.api_key` or `file:<path>`; the value bytes are not
 serialised into the plan, checklist or review artifact.
 
-The older focused converters remain available for standalone review exports:
+The old provider-only converter is intentionally unavailable: it could produce
+an apparently successful provider fragment while dropping channel, account,
+policy, route, runtime and unknown state. Its public command name remains only
+as a fail-closed compatibility entry to the canonical complete-source ledger:
 
 ```text
-neoth-migrate import-config --auth-profiles <path> --models-providers <path>
+neoth-migrate import-config --config ~/.openclaw/openclaw.json
 ```
 
-That command strips sensitive fields and emits reviewable `freedom.yaml`
-provider stanzas; it never writes API keys into memory. Cron conversion is
-similarly explicit and review-first:
+It never emits partial `freedom.yaml` provider stanzas, copies credentials, or
+claims that inspection applied a migration. Cron conversion remains explicit
+and review-first:
 
 ```text
 neoth-migrate import-crons --timer <unit.timer> --crontab <file>
@@ -329,6 +345,10 @@ converter.
 
 ## Changelog
 
+- 2026-07-15 — Retired provider-only `import-config`. Its compatibility name
+  now requires a complete `openclaw.json`, enters the same read-only
+  source-set/inventory-bound inspector as `import-openclaw`, and reports
+  `apply_available=false`; the former provider-only flags fail closed.
 - 2026-07-14 — Added the complete GOLD-R3-08 contract: deterministic
   SHA-256-bound plan checkpoints, source mutation refusal, crash-resumable
   artifact markers, OpenHuman config/cron/agent/skill adoption, value-free

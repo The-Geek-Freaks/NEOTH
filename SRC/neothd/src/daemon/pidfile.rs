@@ -215,9 +215,9 @@ fn read_pid(path: &Path) -> Result<u32> {
 /// Is the process with this PID currently alive?
 ///
 /// `unix`: `kill(pid, 0)` returns 0 if the process exists (errno ESRCH if not).
-/// `windows`: OpenProcess + GetExitCodeProcess — but to avoid a `windows` crate
-/// dependency we shell out to `tasklist /FI "PID eq <pid>"` and grep for the PID.
-/// The subprocess approach is the same shape as `win_acl::icacls` (see D-008).
+/// `windows`: `OpenProcess` + `GetExitCodeProcess`. Native Win32 avoids locale-
+/// dependent `tasklist` output and restricted shells where spawning `tasklist`
+/// is denied even for the current process.
 ///
 /// `pub(crate)` so the AUDIT-RPC-01 client can reject a stale sidecar (a
 /// crashed daemon's port may have been recycled by another local process —
@@ -236,18 +236,34 @@ pub(crate) fn pid_is_alive(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        use std::process::Command;
-        let out = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        match out {
-            Ok(o) => {
-                let s = String::from_utf8_lossy(&o.stdout);
-                // tasklist returns "INFO: No tasks are running which match..." when not found.
-                s.contains(&pid.to_string())
-            }
-            Err(_) => false,
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_ACCESS_DENIED, GetLastError, STILL_ACTIVE,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        if pid == 0 {
+            return false;
         }
+
+        // SAFETY: `pid` is a value read from a local sidecar/pidfile. The
+        // returned handle is checked for null and closed exactly once below.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            // Access denied still proves that a process owns the PID (for
+            // example a protected system process), matching Unix EPERM.
+            // Other errors are fail-closed for audit-RPC token disclosure.
+            return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
+        }
+
+        let mut exit_code = 0u32;
+        // SAFETY: `handle` is a live process handle and `exit_code` points to
+        // writable storage for the duration of the call.
+        let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) };
+        // SAFETY: this function owns the successful `OpenProcess` handle.
+        let _ = unsafe { CloseHandle(handle) };
+        queried != 0 && exit_code == STILL_ACTIVE as u32
     }
     #[cfg(not(any(unix, windows)))]
     {

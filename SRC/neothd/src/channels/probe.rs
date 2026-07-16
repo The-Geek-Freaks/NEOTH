@@ -10,7 +10,7 @@
 //! message. The view is assembled from `freedom.yaml` + `credentials.yaml`; the
 //! probe itself does no IO, so it is trivially testable and can't leak a token.
 
-use crate::channels::ChannelKind;
+use crate::channels::{ChannelKind, registry::channel_descriptors};
 
 /// Health verdict for one channel adapter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -90,6 +90,7 @@ pub struct ChannelCredsView {
     /// GOLD-FEAT-10b — BlueBubbles iMessage relay.
     pub bluebubbles_url: bool,
     pub bluebubbles_password: bool,
+    pub bluebubbles_allowed_sender: bool,
     pub signal_phone_number: bool,
     pub matrix_homeserver: bool,
     pub matrix_user_id: bool,
@@ -111,10 +112,12 @@ pub struct ChannelCredsView {
     pub irc_server: bool,
     /// GOLD-FEAT-10 — IRC bot nick present.
     pub irc_nick: bool,
+    pub irc_allowed_account: bool,
     /// GOLD-FEAT-10 — Mattermost server URL present.
     pub mattermost_url: bool,
     /// GOLD-FEAT-10 — Mattermost personal-access/bot token present.
     pub mattermost_token: bool,
+    pub mattermost_allowed_user: bool,
     /// GOLD-FEAT-10 — Twitch bot username present.
     pub twitch_username: bool,
     /// GOLD-FEAT-10 — Twitch OAuth token present.
@@ -125,10 +128,12 @@ pub struct ChannelCredsView {
     pub nostr_key: bool,
     /// GOLD-FEAT-10 — Nostr relay list present.
     pub nostr_relays: bool,
+    pub nostr_allowed_pubkey: bool,
     /// B9 — Google Chat service-account JSON path present.
     pub gchat_sa_json: bool,
     /// B9 — Google Chat Pub/Sub subscription name present.
     pub gchat_subscription: bool,
+    pub gchat_allowed_sender: bool,
 }
 
 impl ChannelCredsView {
@@ -190,6 +195,7 @@ impl ChannelCredsView {
             signal_cli_url: text_present(creds.signal_cli_url.as_deref()),
             bluebubbles_url: text_present(creds.bluebubbles_url.as_deref()),
             bluebubbles_password: secret_present(creds.bluebubbles_password.as_ref()),
+            bluebubbles_allowed_sender: text_present(creds.imessage_allowed_sender.as_deref()),
             signal_phone_number: text_present(creds.signal_phone_number.as_deref()),
             matrix_homeserver,
             matrix_user_id,
@@ -201,37 +207,22 @@ impl ChannelCredsView {
             line_channel_secret: secret_present(creds.line_channel_secret.as_ref()),
             irc_server: text_present(creds.irc_server.as_deref()),
             irc_nick: text_present(creds.irc_nick.as_deref()),
+            irc_allowed_account: text_present(creds.irc_allowed_account.as_deref()),
             mattermost_url: text_present(creds.mattermost_url.as_deref()),
             mattermost_token: secret_present(creds.mattermost_token.as_ref()),
+            mattermost_allowed_user: text_present(creds.mattermost_allowed_user_id.as_deref()),
             twitch_username: text_present(creds.twitch_username.as_deref()),
             twitch_oauth: secret_present(creds.twitch_oauth_token.as_ref()),
             twitch_channels: text_present(creds.twitch_channels.as_deref()),
             nostr_key: secret_present(creds.nostr_secret_key.as_ref()),
             nostr_relays: text_present(creds.nostr_relays.as_deref()),
+            nostr_allowed_pubkey: text_present(creds.nostr_allowed_pubkey.as_deref()),
             gchat_sa_json: text_present(creds.gchat_service_account_json.as_deref()),
             gchat_subscription: text_present(creds.gchat_subscription.as_deref()),
+            gchat_allowed_sender: text_present(creds.gchat_allowed_sender.as_deref()),
         }
     }
 }
-
-/// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 15] = [
-    ChannelKind::Telegram,
-    ChannelKind::Slack,
-    ChannelKind::WhatsAppBusiness,
-    ChannelKind::WhatsAppBaileys,
-    ChannelKind::Keet,
-    ChannelKind::Discord,
-    ChannelKind::Signal,
-    ChannelKind::IMessageBlueBubbles,
-    ChannelKind::Matrix,
-    ChannelKind::Line,
-    ChannelKind::Irc,
-    ChannelKind::Mattermost,
-    ChannelKind::Twitch,
-    ChannelKind::Nostr,
-    ChannelKind::GoogleChat,
-];
 
 /// Classify one channel's health from the credential view. Pure.
 pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
@@ -370,15 +361,19 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 "Signal needs BOTH signal_cli_url AND signal_phone_number",
             ),
         },
-        ChannelKind::IMessageBlueBubbles => match (v.bluebubbles_url, v.bluebubbles_password) {
-            (true, true) => (
+        ChannelKind::IMessageBlueBubbles => match (
+            v.bluebubbles_url,
+            v.bluebubbles_password,
+            v.bluebubbles_allowed_sender,
+        ) {
+            (true, true, true) => (
                 ProbeStatus::Ok,
-                "bluebubbles_url + password configured (poll loop) — requires a reachable BlueBubbles server on the operator's Mac",
+                "bluebubbles_url + password + exact sender allowlist configured (poll loop) — requires a reachable BlueBubbles server on the operator's Mac",
             ),
-            (false, false) => (ProbeStatus::NotConfigured, "no bluebubbles config"),
+            (false, false, false) => (ProbeStatus::NotConfigured, "no bluebubbles config"),
             _ => (
                 ProbeStatus::Error,
-                "BlueBubbles needs BOTH bluebubbles_url AND bluebubbles_password",
+                "BlueBubbles needs bluebubbles_url, bluebubbles_password, AND imessage_allowed_sender; open inbound adapters are refused",
             ),
         },
         ChannelKind::Matrix => probe_matrix(v, cfg!(feature = "matrix-channel")),
@@ -398,15 +393,19 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             ),
         },
         ChannelKind::Irc => probe_irc(v, cfg!(feature = "irc-channel")),
-        ChannelKind::Mattermost => match (v.mattermost_url, v.mattermost_token) {
-            (true, true) => (
+        ChannelKind::Mattermost => match (
+            v.mattermost_url,
+            v.mattermost_token,
+            v.mattermost_allowed_user,
+        ) {
+            (true, true, true) => (
                 ProbeStatus::Ok,
-                "mattermost_url + mattermost_token configured — NEOTH dials out to the WebSocket API (no public URL)",
+                "mattermost_url + token + exact sender allowlist configured — NEOTH dials out to the WebSocket API (no public URL)",
             ),
-            (false, false) => (ProbeStatus::NotConfigured, "no mattermost config"),
+            (false, false, false) => (ProbeStatus::NotConfigured, "no mattermost config"),
             _ => (
                 ProbeStatus::Error,
-                "Mattermost needs BOTH mattermost_url AND mattermost_token",
+                "Mattermost needs mattermost_url, mattermost_token, AND mattermost_allowed_user_id; open inbound adapters are refused",
             ),
         },
         ChannelKind::Twitch => probe_twitch(v, cfg!(feature = "irc-channel")),
@@ -421,17 +420,20 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
 }
 
 fn probe_irc(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &'static str) {
-    match (v.irc_server, v.irc_nick) {
-        (false, false) => (ProbeStatus::NotConfigured, "no irc config"),
-        (true, true) if !runtime_compiled => (
+    match (v.irc_server, v.irc_nick, v.irc_allowed_account) {
+        (false, false, false) => (ProbeStatus::NotConfigured, "no irc config"),
+        (true, true, true) if !runtime_compiled => (
             ProbeStatus::Error,
             "IRC credentials are complete, but this binary lacks the `irc-channel` feature and cannot start the adapter",
         ),
-        (true, true) => (
+        (true, true, true) => (
             ProbeStatus::Ok,
-            "irc_server + irc_nick configured; `irc-channel` runtime is compiled",
+            "irc_server + irc_nick + IRCv3 services-account allowlist configured; `irc-channel` runtime is compiled",
         ),
-        _ => (ProbeStatus::Error, "IRC needs BOTH irc_server AND irc_nick"),
+        _ => (
+            ProbeStatus::Error,
+            "IRC needs irc_server, irc_nick, AND irc_allowed_account; open or nick-only inbound adapters are refused",
+        ),
     }
 }
 
@@ -454,37 +456,41 @@ fn probe_twitch(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &
 }
 
 fn probe_nostr(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &'static str) {
-    match (v.nostr_key, v.nostr_relays) {
-        (false, false) => (ProbeStatus::NotConfigured, "no nostr config"),
-        (true, true) if !runtime_compiled => (
+    match (v.nostr_key, v.nostr_relays, v.nostr_allowed_pubkey) {
+        (false, false, false) => (ProbeStatus::NotConfigured, "no nostr config"),
+        (true, true, true) if !runtime_compiled => (
             ProbeStatus::Error,
             "Nostr credentials are complete, but this binary lacks the `nostr-channel` feature and cannot start the adapter",
         ),
-        (true, true) => (
+        (true, true, true) => (
             ProbeStatus::Ok,
-            "nostr_secret_key + nostr_relays configured; `nostr-channel` NIP-17 runtime is compiled",
+            "nostr_secret_key + relays + exact sender pubkey configured; `nostr-channel` NIP-17 runtime is compiled",
         ),
         _ => (
             ProbeStatus::Error,
-            "Nostr needs BOTH nostr_secret_key AND nostr_relays",
+            "Nostr needs nostr_secret_key, nostr_relays, AND nostr_allowed_pubkey; open inbound adapters are refused",
         ),
     }
 }
 
 fn probe_gchat(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &'static str) {
-    match (v.gchat_sa_json, v.gchat_subscription) {
-        (false, false) => (ProbeStatus::NotConfigured, "no gchat config"),
-        (true, true) if !runtime_compiled => (
+    match (
+        v.gchat_sa_json,
+        v.gchat_subscription,
+        v.gchat_allowed_sender,
+    ) {
+        (false, false, false) => (ProbeStatus::NotConfigured, "no gchat config"),
+        (true, true, true) if !runtime_compiled => (
             ProbeStatus::Error,
             "Google Chat credentials are complete, but this binary lacks the `gchat-channel` feature and cannot start the adapter",
         ),
-        (true, true) => (
+        (true, true, true) => (
             ProbeStatus::Ok,
-            "Google Chat service account + subscription configured; `gchat-channel` Pub/Sub runtime is compiled",
+            "Google Chat service account + subscription + exact sender allowlist configured; `gchat-channel` Pub/Sub runtime is compiled",
         ),
         _ => (
             ProbeStatus::Error,
-            "Google Chat needs BOTH gchat_service_account_json AND gchat_subscription",
+            "Google Chat needs gchat_service_account_json, gchat_subscription, AND gchat_allowed_sender; open inbound adapters are refused",
         ),
     }
 }
@@ -513,16 +519,10 @@ fn probe_matrix(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &
             "Matrix credentials are complete, but this binary lacks the `matrix-channel` feature and cannot start the adapter",
         );
     }
-    if !v.matrix_invite_policy && v.matrix_encryption_required {
-        return (
-            ProbeStatus::Warn,
-            "Matrix runtime is compiled and encrypted rooms are required; existing joined rooms can run, but all invitations are denied until matrix_allowed_user_id or matrix_allowed_room_ids is set",
-        );
-    }
     if !v.matrix_invite_policy {
         return (
-            ProbeStatus::Warn,
-            "Matrix runtime is compiled; plaintext rooms are explicitly allowed and all invitations are denied until matrix_allowed_user_id or matrix_allowed_room_ids is set",
+            ProbeStatus::Error,
+            "Matrix requires matrix_allowed_user_id or matrix_allowed_room_ids; open existing-room inbound adapters are refused",
         );
     }
     if !v.matrix_encryption_required {
@@ -537,9 +537,12 @@ fn probe_matrix(v: &ChannelCredsView, runtime_compiled: bool) -> (ProbeStatus, &
     )
 }
 
-/// Probe every channel. Display/registry order is [`ALL_CHANNELS`].
+/// Probe every channel in canonical descriptor order.
 pub fn probe_all(v: &ChannelCredsView) -> Vec<ChannelHealth> {
-    ALL_CHANNELS.iter().map(|k| probe_channel(*k, v)).collect()
+    channel_descriptors()
+        .iter()
+        .map(|descriptor| probe_channel(descriptor.id, v))
+        .collect()
 }
 
 /// The channels in an `Error` (actively misconfigured) state — what the MONITOR
@@ -774,11 +777,11 @@ mod tests {
             matrix_encryption_required: true,
             ..Default::default()
         };
-        assert_eq!(probe_matrix(&no_invite_rule, true).0, ProbeStatus::Warn);
+        assert_eq!(probe_matrix(&no_invite_rule, true).0, ProbeStatus::Error);
         assert!(
             probe_matrix(&no_invite_rule, true)
                 .1
-                .contains("all invitations are denied")
+                .contains("open existing-room inbound adapters are refused")
         );
 
         let plaintext = ChannelCredsView {
@@ -826,13 +829,16 @@ mod tests {
         let view = ChannelCredsView {
             irc_server: true,
             irc_nick: true,
+            irc_allowed_account: true,
             twitch_username: true,
             twitch_oauth: true,
             twitch_channels: true,
             nostr_key: true,
             nostr_relays: true,
+            nostr_allowed_pubkey: true,
             gchat_sa_json: true,
             gchat_subscription: true,
+            gchat_allowed_sender: true,
             ..Default::default()
         };
 
@@ -908,7 +914,7 @@ mod tests {
             ..Default::default()
         };
         let all = probe_all(&v);
-        assert_eq!(all.len(), ALL_CHANNELS.len());
+        assert_eq!(all.len(), channel_descriptors().len());
         let bad = misconfigured(&v);
         assert_eq!(bad.len(), 1);
         assert_eq!(bad[0].channel, "slack");

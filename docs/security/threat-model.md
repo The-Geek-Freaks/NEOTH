@@ -357,6 +357,16 @@ the configured bot identity without sending a message. Inbound delivery is
 Gateway-WebSocket-driven and is therefore not an outbound REST surface. Every
 send is audited via `CHANNEL_EGRESS` (`0x33`).
 
+The current bot token authenticates NEOTH to Discord; it does not authenticate
+an inbound human to NEOTH. The Gateway parser currently dispatches a
+transport-valid message without a mandatory operator/guild/channel/role/mention
+policy. Slack, WhatsApp Business, Signal, LINE and Twitch have the same
+transport-authenticated-but-not-operator-authenticated gap. They are v1.0 Gold
+blockers, not safe open-inbound defaults. The planned common ingress gate keeps
+stable sender and conversation identities through parsing, represents missing
+policy separately from explicit Open, and refuses adapter startup when a
+required policy is absent or an allowlist is empty.
+
 ### 1.12 Email / Gmail IMAP ingest
 
 The IMAP path is implemented and network-live when `neothd` is compiled with

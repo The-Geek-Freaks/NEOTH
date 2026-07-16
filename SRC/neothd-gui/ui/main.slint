@@ -926,6 +926,7 @@ export component MainWindow inherits Window {
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
     in property <[ChannelRow]> channels: [];
+    in property <[string]> channel-types: [];
     in property <string> channel-status-error: "";
     in-out property <int> channel-add-success-seq: 0;
     // DES-10 — live channel-activity feed (metadata only, no message bodies).
@@ -2979,6 +2980,7 @@ export component MainWindow inherits Window {
             plugin-detail-close => { root.plugin-detail-close(); }
             autonomy-set-clicked(level) => { root.autonomy-set(level); }
             channels: root.channels;
+            channel-types: root.channel-types;
             channel-status-error: root.channel-status-error;
             channel-add-success-seq: root.channel-add-success-seq;
             channel-activity: root.channel-activity;

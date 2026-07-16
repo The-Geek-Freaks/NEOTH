@@ -678,6 +678,31 @@ pub const EVENT_TYPE_CHANNEL_ACK: u8 = 0x37;
 /// edit. Payload is metadata-only and includes `direction`, channel/message id,
 /// text hash, byte length, and timestamp.
 pub const EVENT_TYPE_CHANNEL_EDIT: u8 = 0x38;
+
+/// Whether a WAL event can carry or bind raw operator/provider/channel content
+/// and therefore belongs to the historical `raw_ingress` transfer/retention
+/// class and GDPR foreign-frame erasure. The class includes both directions
+/// plus metadata events that bind a raw exchange; its name is compatibility
+/// vocabulary, not a claim that every member is inbound.
+///
+/// This classification lives with the event registry rather than behind the
+/// optional `cluster` feature. Memory erasure must retain identical semantics
+/// in slim `--no-default-features` builds, and both callers must fail together
+/// when a new raw-content event is added.
+pub const fn is_raw_ingress_event(event_type: u8) -> bool {
+    matches!(
+        event_type,
+        EVENT_TYPE_RAW_TEXT
+            | EVENT_TYPE_PROVIDER_REQUEST
+            | EVENT_TYPE_PROVIDER_RESPONSE
+            | EVENT_TYPE_CHANNEL_INGRESS
+            | EVENT_TYPE_CHANNEL_EGRESS
+            | EVENT_TYPE_INGRESS_QUARANTINED
+            | EVENT_TYPE_INGRESS_SANITIZED
+            | EVENT_TYPE_CHANNEL_ACK
+            | EVENT_TYPE_CHANNEL_EDIT
+    )
+}
 /// `0x39 N8N_REQUEST` — n8n workflow hit the NEOTH localhost HTTP API.
 /// One frame per inbound request to `/api/*` (after bearer-auth success).
 /// Payload: `{endpoint, source_ip, request_id, ts_unix}`. The matching
@@ -3449,6 +3474,28 @@ const _: () = {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_ingress_classification_is_exact_and_feature_independent() {
+        let expected = [
+            EVENT_TYPE_RAW_TEXT,
+            EVENT_TYPE_PROVIDER_REQUEST,
+            EVENT_TYPE_PROVIDER_RESPONSE,
+            EVENT_TYPE_CHANNEL_INGRESS,
+            EVENT_TYPE_CHANNEL_EGRESS,
+            EVENT_TYPE_INGRESS_QUARANTINED,
+            EVENT_TYPE_INGRESS_SANITIZED,
+            EVENT_TYPE_CHANNEL_ACK,
+            EVENT_TYPE_CHANNEL_EDIT,
+        ];
+        for code in u8::MIN..=u8::MAX {
+            assert_eq!(
+                is_raw_ingress_event(code),
+                expected.contains(&code),
+                "raw-ingress classification drift for 0x{code:02X}"
+            );
+        }
+    }
 
     /// GOLD-FEAT WAL-blocker: the EXTENDED escape hatch is registered at 0x00
     /// and its sub-type registry round-trips.

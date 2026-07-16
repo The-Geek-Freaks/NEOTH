@@ -1185,9 +1185,8 @@ pub enum ChannelAction {
     ///   twitch:                --nick --token --channels-csv
     ///   nostr:                 --token --channels-csv
     Add {
-        /// Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, keet, discord,
-        /// signal, line, irc, imessage, bluebubbles, mattermost, gchat,
-        /// matrix, twitch, nostr).
+        /// Canonical channel ID or accepted alias. Run `neoth channel list`
+        /// for the registry-backed inventory.
         channel: String,
         /// Numeric Telegram user ID allowed to drive the bot. Required with
         /// Telegram so the inbound adapter never starts with an open sender
@@ -1251,6 +1250,12 @@ pub enum ChannelAction {
         #[arg(long)]
         allow_plaintext: bool,
     },
+    /// Read one strict, bounded channel credential envelope from stdin.
+    ///
+    /// This machine-facing path keeps secrets out of argv. Interactive users
+    /// should continue to use `neoth channel add`.
+    #[command(hide = true)]
+    SetCredentials,
     /// List configured channels
     List,
     /// Run a read-only live probe; returns typed skipped/unavailable when no safe probe exists
@@ -1987,6 +1992,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 };
                 channel::run_add(&ch, &flags, &global_output).await?;
             }
+            ChannelAction::SetCredentials => channel::run_set_credentials(&global_output)?,
             ChannelAction::Remove { channel: ch } => channel::run_remove(&ch, &global_output)?,
         },
         Commands::Plugin(mut args) => {

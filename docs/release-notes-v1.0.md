@@ -1,16 +1,56 @@
 # NEOTH 1.0 Release Notes
 
-> **Release target: stable `1.0.0`.** The source tree carries the final version,
-> but tagged artifacts are not published yet. Its documented limitations remain
-> explicit below; nothing here claims more than the source tree delivers.
+> **Release-candidate target: stable `1.0.0`.** The source tree carries that
+> version, but it is not Gold/tag-ready and no public artifacts have been
+> published. The open v1 contracts below must close before the `v1.0.0` tag.
 
 NEOTH 1.0 is the first public release intended for real personal use: one
 operator, one private memory, many approved surfaces, local-first defaults, and
 operator-readable proof.
 
-## Known v1.0 limitations
+## Open v1.0 release blockers
 
-These are documented 1.0.0 limitations — tracked, not hidden:
+These are unfinished v1 contracts, not accepted post-1.0 limitations:
+
+- **Integration/adoption lifecycle:** the capability DAG, durable job store,
+  lifecycle state machine, progress events and contract-bound Ready-evidence primitives
+  are a contract foundation. A production daemon owner, permission/WAL
+  orchestrator, artifact adapters, supervisor/retention policy, IPC/SSE,
+  CLI/GUI/Buddy/Doctor consumers, production receipt issuer and an explicit
+  `AwaitingUser` state for QR/OAuth/device/signing work are not wired yet.
+- **Channel completion and OpenClaw parity:** IRC, BlueBubbles, Mattermost,
+  Google Chat, Matrix and Nostr fail closed on their named inbound identity
+  policies. Slack, WhatsApp Business, Discord, Signal, LINE and Twitch still
+  authenticate only the transport/bot and need a mandatory typed sender,
+  conversation and mention/pairing policy before release. Five advanced settings are still file-only
+  (`line_webhook_port`, `irc_port`, `irc_tls`, `irc_allowed_nick`,
+  `matrix_store_path`). Durable cross-store credential recovery, persisted
+  multi-account identity, descriptor-rendered forms and OpenClaw
+  apply/status/rollback plus runtime-behaviour parity remain open.
+- **Zero-friction retained adoptions:** models, Obsidian preload, n8n,
+  Paperless, WhatsApp/managed Node, Keet and the other retained integrations do
+  not yet share a proved acquire -> verify -> configure -> supervise ->
+  authenticated Ready -> repair/update/uninstall path on every clean target.
+- **Release proof:** exact-head CI, Security and CodeQL, signed native-installer
+  execution, clean-machine install/upgrade/repair/uninstall and complete
+  release-feature packaging must be green before tagging.
+- **Adaptive communication, Mobile and Cluster:** default-on local communication
+  adaptation still needs subject isolation, non-diagnostic evidence/decay and
+  prompt parity on every answer path. The current phone pairing preview has no
+  installable Android/iOS client or durable device session. Cluster gossip and
+  replay are durable, but master-side delegated-task/result coordination and
+  full GUI/Buddy control are incomplete. These are v1.0 Gold work, not
+  post-release promises.
+- **Breaking OpenClaw import correction:** provider-only `import-config`
+  conversion is retired. The compatibility command now requires a complete
+  `openclaw.json`, uses the same read-only source-set/inventory-bound inspector
+  as `import-openclaw`, and reports `apply_available=false`. Its former
+  provider-only flags fail closed.
+
+## Implemented boundaries and operational limitations
+
+These limits describe implemented surfaces honestly; they do not close or
+defer the release blockers above:
 
 - **GUI settings depth (GU-01):** all 10 post-onboarding settings tabs are now real
   panels (GU-01 closed in the Session-37 GUI batch — see the GUI honest-status note
@@ -18,8 +58,9 @@ These are documented 1.0.0 limitations — tracked, not hidden:
   refresh, add/reconfigure, read-only live test, and confirmed removal. A few other
   panels stay intentionally thin — the Chat tab is a launch-point for the composer,
   Hemispheres/Plugins/Memory are read-only views, and not every individual
-  `freedom.yaml` flag has its own toggle yet — but the covered behavior remains
-  operable via the CLI and/or documented configuration today.
+  `freedom.yaml` flag has its own toggle yet. In particular, the five advanced
+  Channel fields named above currently require a direct configuration-file
+  edit; they have no first-class CLI or GUI control.
   (GUI rendering is compile-verified; visual QA is a manual step.)
 - **Migration shadow-run (ARCH-05):** the deterministic recall-parity GATE +
   runbook ship; the 14-day shadow-run, grading, and cutover are
@@ -33,7 +74,11 @@ These are documented 1.0.0 limitations — tracked, not hidden:
   a verified `.minisig`, checksum, and cosign bundle. The remaining limitation
   is operational: no `v1.0.0` tag or resulting public artifact exists yet.
 
-## What works
+## What is implemented today
+
+Implementation in this table does not imply that every related adoption has
+the zero-friction lifecycle or clean-machine proof required by the blockers
+above.
 
 | Area | Status |
 | :-- | :-- |
@@ -41,12 +86,12 @@ These are documented 1.0.0 limitations — tracked, not hidden:
 | CLI | Chat, recall, profile, privacy audit, Doctor, providers, channels, plugins, cluster, coding, credential-safe-by-default backup, WAL verification. |
 | Memory | Five-tier local memory + vault ingest, with profile facts, evidence, confidence, redaction, recall, and consolidation. |
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
-| Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
+| Local models | Qwen profile path, optional local thinking-model path and model-cache diagnostics. Unified visible acquire/materialize progress and the complete managed adoption lifecycle remain open. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | CLI and the post-onboarding GUI share one 15-adapter registry and the same add/reconfigure, test, remove, and refresh contracts. Telegram adoption includes its exact numeric sender policy; status never masquerades as reachability, and Test returns the adapter's typed live or unavailable verdict. Desktop archives also ship the repository-owned, full-duplex `neoth-keet-bridge` for private Keet-identity Pear/Hyperswarm topics; it deliberately does not claim interoperability with existing Keet app rooms. |
+| Channels | CLI and the post-onboarding GUI share one 15-adapter registry and the same add/reconfigure, test, remove and refresh contracts. Six named inbound identity policies fail closed; six other adapters still need the common operator/sender/conversation gate and therefore are not Gold-ready for untrusted audiences. Status never masquerades as reachability, and Test returns the adapter's typed live or unavailable verdict. Five advanced fields, persisted multi-account identity, cross-store recovery and OpenClaw apply/runtime parity remain open. Desktop archives also ship the repository-owned, full-duplex `neoth-keet-bridge` for private Keet-identity Pear/Hyperswarm topics; it deliberately does not claim interoperability with existing Keet app rooms. |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Release self-knowledge | Every archive and native installer carries a pinned-Graphify map of the exact tag. Runtime verification binds version, source HEAD, closed file set, and canonical payload digest; upgrade/uninstall preserve operator-owned `User Overlays`. |
-| Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates, and typed request/downstream audit events. |
+| Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates and typed request/downstream audit events. Zero-friction post-install n8n coupling and the shared adoption lifecycle remain open. |
 | Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
 | Private mesh | Authenticated peeroxide/iroh carriers share durable per-peer pending frames, exact cursor-bound ACKs, restart replay, and transactional receive/materialization for canonical memory and ground-truth snapshots. Raw ingress remains default-off and the mesh is intentionally scoped to typed NEOTH content rather than arbitrary device files. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
@@ -59,21 +104,22 @@ These are documented 1.0.0 limitations — tracked, not hidden:
 > and drives add/reconfigure, typed live Test, and confirmed Remove through the same
 > CLI contracts. Chat remains a launch-point for the composer, and
 > Hemispheres/Plugins/Memory are read-only views (rebind/enable still flow through the
-> CLI); not every single `freedom.yaml` flag has a dedicated toggle yet. The covered
-> behavior remains operable via the CLI and/or documented configuration; GUI rendering is
-> compile-verified, not yet visually QA'd. This note exists so the
+> CLI); not every single `freedom.yaml` flag has a dedicated toggle yet. The five
+> advanced Channel fields named above are currently file-only, so they are not
+> covered by first-class CLI/GUI controls. GUI rendering is compile-verified,
+> not yet visually QA'd. This note exists so the
 > GUI claim is never read as more than it is.
 
-## What is not yet done
+## Deliberate post-1.0 boundaries
 
-These are deliberate post-1.0 areas, not hidden broken promises.
+Only the areas in this table are deliberate post-1.0 boundaries. The open v1
+release blockers above are not moved into this table.
 
 | Area | 1.0 boundary |
 | :-- | :-- |
 | Multi-tenant SaaS | NEOTH 1.0 is single-operator/private-cluster first. No hosted account control plane is required or promised. |
 | Enterprise admin console | Policy is local and operator-owned; fleet admin UX belongs after the personal product is stable. |
 | Public plugin marketplace trust at scale | 1.0 supports capability gates and audits; large ecosystem moderation is later work. |
-| Native mobile app parity | Phone use comes through channels/private surfaces first; full native mobile clients are post-1.0. |
 | General-purpose device/file replication | Durable v1 mesh sync is scoped to canonical NEOTH memory, ground-truth, and policy-approved WAL classes. It is not a filesystem, account, or arbitrary application-data sync service. |
 | Perfect deletion from third-party providers | NEOTH can redact local memory and stop re-promotion; it cannot erase data already sent to a provider by approved policy. |
 | Arbitrary untrusted autonomous control | Autonomy is policy-gated and auditable. NEOTH is not a "give it root and pray" product. |

@@ -4439,8 +4439,7 @@ pub(crate) fn channel_credential_fingerprints(
     use std::hash::Hasher as _;
     use zeroize::Zeroize as _;
 
-    crate::channels::probe::ALL_CHANNELS
-        .into_iter()
+    crate::channels::registry::channel_ids()
         .map(|kind| {
             let mut selected = credentials_for_channel(credentials, kind);
             if kind == ChannelKind::Telegram && config.telegram_token.is_some() {
@@ -4497,8 +4496,7 @@ pub(crate) fn changed_channel_credentials(
     old: &std::collections::HashMap<ChannelKind, u64>,
     new: &std::collections::HashMap<ChannelKind, u64>,
 ) -> Vec<ChannelKind> {
-    crate::channels::probe::ALL_CHANNELS
-        .into_iter()
+    crate::channels::registry::channel_ids()
         .filter(|kind| old.get(kind) != new.get(kind))
         .collect()
 }
@@ -4781,9 +4779,13 @@ pub(crate) fn spawn_channel_adapters(
     match (
         creds.bluebubbles_url.clone(),
         creds.bluebubbles_password.clone(),
+        creds
+            .imessage_allowed_sender
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
         shared_provider.as_ref(),
     ) {
-        (Some(url), Some(password), Some(provider)) => {
+        (Some(url), Some(password), Some(allowed_sender), Some(provider)) => {
             // Parse optional comma-separated chat GUID allowlist.
             let chat_guid_allowlist: Option<Vec<String>> =
                 creds.bluebubbles_chat_guid.as_deref().map(|s| {
@@ -4796,7 +4798,7 @@ pub(crate) fn spawn_channel_adapters(
                 url,
                 password,
                 chat_guid_allowlist,
-                creds.imessage_allowed_sender.clone(),
+                Some(allowed_sender),
             ) {
                 Ok(channel) => {
                     let channel = channel.with_gate_writer(writer.clone());
@@ -4833,17 +4835,22 @@ pub(crate) fn spawn_channel_adapters(
                 ),
             }
         }
-        (Some(_), Some(_), None) => warn!(
+        (Some(_), Some(_), Some(_), None) => warn!(
             channel = "imessage_bluebubbles",
             status = "CONFIGURED-NOT-STARTED",
             "BlueBubbles configured but provider unavailable; channel not started"
         ),
-        (Some(_), None, _) | (None, Some(_), _) => warn!(
+        (Some(_), Some(_), None, _) => warn!(
+            channel = "imessage_bluebubbles",
+            status = "CONFIGURED-NOT-STARTED",
+            "BlueBubbles is missing imessage_allowed_sender; open inbound adapters are refused"
+        ),
+        (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
             channel = "imessage_bluebubbles",
             status = "CONFIGURED-NOT-STARTED",
             "BlueBubbles needs BOTH bluebubbles_url and bluebubbles_password; only one supplied — not started"
         ),
-        (None, None, _) => {}
+        (None, None, _, _) => {}
     }
 
     // GOLD-FEAT-10 — Mattermost inbound via the WebSocket API (NEOTH dials OUT,
@@ -4853,11 +4860,15 @@ pub(crate) fn spawn_channel_adapters(
     match (
         creds.mattermost_url.clone(),
         creds.mattermost_token.clone(),
+        creds
+            .mattermost_allowed_user_id
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
         shared_provider.as_ref(),
     ) {
-        (Some(url), Some(token), Some(provider)) => {
+        (Some(url), Some(token), Some(allowed_user), Some(provider)) => {
             let channel = crate::channels::mattermost::MattermostChannel::new(url, token)
-                .with_allowlist(creds.mattermost_allowed_user_id.clone(), writer.clone());
+                .with_allowlist(Some(allowed_user), writer.clone());
             let handler: PipelineHandler = build_channel_handler(
                 provider.clone(),
                 config,
@@ -4884,17 +4895,22 @@ pub(crate) fn spawn_channel_adapters(
                 "channel: spawned (mattermost WebSocket loop)"
             );
         }
-        (Some(_), Some(_), None) => warn!(
+        (Some(_), Some(_), Some(_), None) => warn!(
             channel = "mattermost",
             status = "CONFIGURED-NOT-STARTED",
             "Mattermost configured but provider unavailable; channel not started"
         ),
-        (Some(_), None, _) | (None, Some(_), _) => warn!(
+        (Some(_), Some(_), None, _) => warn!(
+            channel = "mattermost",
+            status = "CONFIGURED-NOT-STARTED",
+            "Mattermost is missing mattermost_allowed_user_id; open inbound adapters are refused"
+        ),
+        (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
             channel = "mattermost",
             status = "CONFIGURED-NOT-STARTED",
             "Mattermost needs BOTH mattermost_url and mattermost_token; only one supplied — not started"
         ),
-        (None, None, _) => {}
+        (None, None, _, _) => {}
     }
 
     // GOLD-FEAT-10 — Matrix inbound via matrix-sdk (feature `matrix-channel`).
@@ -4921,6 +4937,14 @@ pub(crate) fn spawn_channel_adapters(
                 .matrix_access_token
                 .as_ref()
                 .is_some_and(|value| !value.expose().trim().is_empty());
+        let matrix_inbound_policy = creds
+            .matrix_allowed_user_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+            || creds
+                .matrix_allowed_room_ids
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty());
         let matrix_any_configured = creds.matrix_homeserver.is_some()
             || creds.matrix_user_id.is_some()
             || creds.matrix_password.is_some()
@@ -4933,9 +4957,10 @@ pub(crate) fn spawn_channel_adapters(
             matrix_homeserver,
             matrix_user_id,
             matrix_auth_configured,
+            matrix_inbound_policy,
             shared_provider.as_ref(),
         ) {
-            (Some(homeserver), Some(user_id), true, Some(provider)) => {
+            (Some(homeserver), Some(user_id), true, true, Some(provider)) => {
                 let channel = crate::channels::matrix::MatrixChannel::new(
                     homeserver,
                     user_id,
@@ -4983,32 +5008,37 @@ pub(crate) fn spawn_channel_adapters(
                     "channel: spawned; Matrix authentication and initial sync pending"
                 );
             }
-            (Some(_), Some(_), true, None) => warn!(
+            (Some(_), Some(_), true, true, None) => warn!(
                 channel = "matrix",
                 status = "CONFIGURED-NOT-STARTED",
                 "Matrix configured but provider unavailable; channel not started"
             ),
-            (Some(_), Some(_), false, _) => warn!(
+            (Some(_), Some(_), true, false, _) => warn!(
+                channel = "matrix",
+                status = "CONFIGURED-NOT-STARTED",
+                "Matrix is missing matrix_allowed_user_id/matrix_allowed_room_ids; open existing-room inbound adapters are refused"
+            ),
+            (Some(_), Some(_), false, _, _) => warn!(
                 channel = "matrix",
                 status = "CONFIGURED-NOT-STARTED",
                 "Matrix needs matrix_password or matrix_access_token; neither supplied — not started"
             ),
-            (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
+            (Some(_), None, _, _, _) | (None, Some(_), _, _, _) => warn!(
                 channel = "matrix",
                 status = "CONFIGURED-NOT-STARTED",
                 "Matrix needs BOTH matrix_homeserver and matrix_user_id; only one supplied — not started"
             ),
-            (None, None, true, _) => warn!(
+            (None, None, true, _, _) => warn!(
                 channel = "matrix",
                 status = "CONFIGURED-NOT-STARTED",
                 "Matrix authentication is set but matrix_homeserver and matrix_user_id are missing — not started"
             ),
-            (None, None, false, _) if matrix_any_configured => warn!(
+            (None, None, false, _, _) if matrix_any_configured => warn!(
                 channel = "matrix",
                 status = "CONFIGURED-NOT-STARTED",
                 "Matrix store/policy fields are set without homeserver, user id, and authentication — not started"
             ),
-            (None, None, false, _) => {}
+            (None, None, false, _, _) => {}
         }
     }
     #[cfg(not(feature = "matrix-channel"))]
@@ -5036,9 +5066,13 @@ pub(crate) fn spawn_channel_adapters(
         match (
             creds.irc_server.clone(),
             creds.irc_nick.clone(),
+            creds
+                .irc_allowed_account
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
             shared_provider.as_ref(),
         ) {
-            (Some(server), Some(nick), Some(provider)) => {
+            (Some(server), Some(nick), Some(allowed_account), Some(provider)) => {
                 let channel = crate::channels::irc::IrcChannel::new(
                     server,
                     creds.irc_port.unwrap_or(6697),
@@ -5048,7 +5082,7 @@ pub(crate) fn spawn_channel_adapters(
                     creds.irc_tls.unwrap_or(true),
                 )
                 .with_allowlist(creds.irc_allowed_nick.clone(), writer.clone())
-                .with_allowed_account(creds.irc_allowed_account.clone());
+                .with_allowed_account(Some(allowed_account));
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
                     config,
@@ -5069,17 +5103,22 @@ pub(crate) fn spawn_channel_adapters(
                     "channel: spawned (irc TCP receive loop)"
                 );
             }
-            (Some(_), Some(_), None) => warn!(
+            (Some(_), Some(_), Some(_), None) => warn!(
                 channel = "irc",
                 status = "CONFIGURED-NOT-STARTED",
                 "IRC configured but provider unavailable; channel not started"
             ),
-            (Some(_), None, _) | (None, Some(_), _) => warn!(
+            (Some(_), Some(_), None, _) => warn!(
+                channel = "irc",
+                status = "CONFIGURED-NOT-STARTED",
+                "IRC is missing irc_allowed_account; open or nick-only inbound adapters are refused"
+            ),
+            (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
                 channel = "irc",
                 status = "CONFIGURED-NOT-STARTED",
                 "IRC needs BOTH irc_server and irc_nick; only one supplied — not started"
             ),
-            (None, None, _) => {}
+            (None, None, _, _) => {}
         }
     }
     #[cfg(not(feature = "irc-channel"))]
@@ -5168,11 +5207,15 @@ pub(crate) fn spawn_channel_adapters(
         match (
             creds.nostr_secret_key.clone(),
             creds.nostr_relays.clone(),
+            creds
+                .nostr_allowed_pubkey
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
             shared_provider.as_ref(),
         ) {
-            (Some(secret_key), Some(relays), Some(provider)) => {
+            (Some(secret_key), Some(relays), Some(allowed_pubkey), Some(provider)) => {
                 let channel = crate::channels::nostr::NostrChannel::new(secret_key, relays)
-                    .with_allowlist(creds.nostr_allowed_pubkey.clone(), writer.clone())
+                    .with_allowlist(Some(allowed_pubkey), writer.clone())
                     .with_cursor_path(neoth_home.join("channel-state/nostr-cursor.json"));
                 let handler: PipelineHandler = build_channel_handler(
                     provider.clone(),
@@ -5194,17 +5237,22 @@ pub(crate) fn spawn_channel_adapters(
                     "channel: spawned (nostr relay receive loop)"
                 );
             }
-            (Some(_), Some(_), None) => warn!(
+            (Some(_), Some(_), Some(_), None) => warn!(
                 channel = "nostr",
                 status = "CONFIGURED-NOT-STARTED",
                 "Nostr configured but provider unavailable; channel not started"
             ),
-            (Some(_), None, _) | (None, Some(_), _) => warn!(
+            (Some(_), Some(_), None, _) => warn!(
+                channel = "nostr",
+                status = "CONFIGURED-NOT-STARTED",
+                "Nostr is missing nostr_allowed_pubkey; open inbound adapters are refused"
+            ),
+            (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
                 channel = "nostr",
                 status = "CONFIGURED-NOT-STARTED",
                 "Nostr needs BOTH nostr_secret_key and nostr_relays; only one supplied — not started"
             ),
-            (None, None, _) => {}
+            (None, None, _, _) => {}
         }
     }
     #[cfg(not(feature = "nostr-channel"))]
@@ -5225,16 +5273,19 @@ pub(crate) fn spawn_channel_adapters(
         match (
             creds.gchat_service_account_json.clone(),
             creds.gchat_subscription.clone(),
+            creds
+                .gchat_allowed_sender
+                .clone()
+                .filter(|value| !value.trim().is_empty()),
             shared_provider.as_ref(),
         ) {
-            (Some(sa_path), Some(subscription), Some(provider)) => {
+            (Some(sa_path), Some(subscription), Some(allowed_sender), Some(provider)) => {
                 match crate::channels::gchat::GChatChannel::new(
                     std::path::Path::new(&sa_path),
                     subscription,
                 ) {
                     Ok(channel) => {
-                        let channel = channel
-                            .with_allowlist(creds.gchat_allowed_sender.clone(), writer.clone());
+                        let channel = channel.with_allowlist(Some(allowed_sender), writer.clone());
                         let handler: PipelineHandler = build_channel_handler(
                             provider.clone(),
                             config,
@@ -5269,17 +5320,22 @@ pub(crate) fn spawn_channel_adapters(
                     ),
                 }
             }
-            (Some(_), Some(_), None) => warn!(
+            (Some(_), Some(_), Some(_), None) => warn!(
                 channel = "gchat",
                 status = "CONFIGURED-NOT-STARTED",
                 "Google Chat configured but provider unavailable; channel not started"
             ),
-            (Some(_), None, _) | (None, Some(_), _) => warn!(
+            (Some(_), Some(_), None, _) => warn!(
+                channel = "gchat",
+                status = "CONFIGURED-NOT-STARTED",
+                "Google Chat is missing gchat_allowed_sender; open inbound adapters are refused"
+            ),
+            (Some(_), None, _, _) | (None, Some(_), _, _) => warn!(
                 channel = "gchat",
                 status = "CONFIGURED-NOT-STARTED",
                 "Google Chat needs BOTH gchat_service_account_json and gchat_subscription; only one supplied — not started"
             ),
-            (None, None, _) => {}
+            (None, None, _, _) => {}
         }
     }
     #[cfg(not(feature = "gchat-channel"))]

@@ -85,14 +85,20 @@ lifecycle in `~/.neoth/neoth-migrate-audit.jsonl`:
 `MIGRATION_COMPLETE`, or `MIGRATION_FAILED` with a truthful rollback outcome.
 `neoth-migrate status` reads the latest operation.
 
-Provider config and cron conversion are separate review-only commands:
+OpenClaw config inspection and cron conversion are separate review-only
+commands:
 
 ```text
-neoth-migrate import-config --auth-profiles <path> --models-providers <path>
+neoth-migrate import-openclaw --config <path-to-openclaw.json> --json
+# Deprecated compatibility name; identical complete-source ledger:
+neoth-migrate import-config --config <path-to-openclaw.json> --json
 neoth-migrate import-crons --timer <unit.timer> --crontab <file>
 ```
 
-Neither command activates foreign credentials or automation implicitly.
+Provider-only `--auth-profiles`/`--models-providers` imports are rejected: they
+cannot preserve channel/account/policy/runtime state. The OpenClaw commands are
+read-only and report `apply_available=false`; no command above activates
+foreign credentials or automation implicitly.
 
 ### Day 64 -- Re-Embed Pipeline
 

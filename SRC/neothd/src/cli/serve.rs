@@ -862,8 +862,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             let mut channel_generations: std::collections::HashMap<
                 crate::channels::ChannelKind,
                 u64,
-            > = crate::channels::probe::ALL_CHANNELS
-                .into_iter()
+            > = crate::channels::registry::channel_ids()
                 .map(|kind| (kind, 0))
                 .collect();
             type PendingChannelReload = (
@@ -939,7 +938,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             for handle in old {
                                 let _ = handle.await;
                             }
-                            failed_channels.extend(crate::channels::probe::ALL_CHANNELS);
+                            failed_channels.extend(crate::channels::registry::channel_ids());
                             error!(
                                 error = %load_error,
                                 "effective credential store became unreadable; all channel adapters stopped fail-closed"
@@ -956,7 +955,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .keys()
                         .copied()
                         .collect();
-                    for kind in crate::channels::probe::ALL_CHANNELS {
+                    for kind in crate::channels::registry::channel_ids() {
                         if crate::cli::serve_tasks::channel_runtime_expected(
                             &fresh_config,
                             &fresh_creds,
@@ -1009,7 +1008,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         &new_fingerprints,
                     )
                 } else {
-                    crate::channels::probe::ALL_CHANNELS.to_vec()
+                    crate::channels::registry::channel_ids().collect()
                 };
                 if retry_failed {
                     changed.extend(failed_channels.iter().copied());

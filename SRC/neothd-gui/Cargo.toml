@@ -38,6 +38,7 @@ toml = "0.8"
 serde.workspace      = true
 serde_json.workspace = true
 serde_yaml = "0.9"
+zeroize.workspace = true
 tracing.workspace    = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 getrandom = "0.2"
@@ -50,4 +51,5 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Securit
 slint-build = "1.8"
 
 [dev-dependencies]
+neothd = { package = "neoth", path = "../neothd", default-features = false }
 tempfile = "3"

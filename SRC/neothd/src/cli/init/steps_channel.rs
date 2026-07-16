@@ -55,8 +55,9 @@ pub(crate) async fn step6_channel(
         state.telegram_user_id = args.telegram_user_id;
     } else if interactive {
         println!(
-            "  [6/9] Telegram skipped. Run `neoth channel list` to see all 15 adapters, \
-             then `neoth channel add <name>` to connect one."
+            "  [6/9] Telegram skipped. Run `neoth channel list` to see all {} adapters, \
+             then `neoth channel add <name>` to connect one.",
+            crate::channels::registry::channel_descriptors().len()
         );
     }
 

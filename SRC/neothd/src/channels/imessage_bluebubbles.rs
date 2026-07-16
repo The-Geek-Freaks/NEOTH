@@ -16,8 +16,9 @@
 //!    - `bluebubbles_password`: the BB server password             (secret)
 //!    - `bluebubbles_chat_guid`: (optional) comma-separated BB chat GUIDs to
 //!      accept; omit to accept all chats NEOTH can see.
-//!    - `imessage_allowed_sender`: (optional) single iMessage handle that may
-//!      reach the pipeline; omit for open-to-all-watched-chats.
+//!    - `imessage_allowed_sender`: required single iMessage handle that may
+//!      reach the pipeline. Production serve refuses to start this adapter
+//!      without the policy; watched-chat filtering is only an additional gate.
 //!
 //! ## Spoofing characteristics
 //!
@@ -25,7 +26,8 @@
 //! they are either a real phone number or an Apple-ID email, tied to an
 //! iCloud account. This makes them **LOW spoof-risk** — significantly harder
 //! to fake than IRC nicks or Nostr aliases, and comparable to WhatsApp phone
-//! numbers. Still enforce the operator allowlist for defence-in-depth.
+//! numbers. The operator allowlist remains mandatory even with that lower
+//! spoof risk.
 //!
 //! ## Polling cursor
 //!
@@ -225,8 +227,9 @@ pub struct BlueBubblesChannel {
     password: crate::secret::SecretString,
     /// Optional comma-separated chat GUIDs to watch. `None` = all chats.
     chat_guid_allowlist: Option<Vec<String>>,
-    /// Optional single iMessage handle that may reach the pipeline.
-    /// Checked via [`sender_blocked_by_allowlist`] after chat filtering.
+    /// Required production sender policy. The `Option` supports construction
+    /// and tests; serve rejects `None` before starting the adapter. Checked via
+    /// [`sender_blocked_by_allowlist`] after chat filtering.
     allowed_sender: Option<String>,
     /// Shared HTTP client (keep-alive, rustls TLS).
     http: reqwest::Client,

@@ -734,9 +734,7 @@ pub(crate) fn matching_foreign_event_ids(conn: &Connection, topic: &str) -> Resu
             matches.push(id);
             continue;
         };
-        if crate::cluster::wal_sync::classify_event(event_type)
-            != crate::cluster::wal_sync::ReplicationClass::RawIngressGated
-        {
+        if !crate::wal::events::is_raw_ingress_event(event_type) {
             continue;
         }
         match foreign_frame_contains_topic(&frame, event_type, topic) {

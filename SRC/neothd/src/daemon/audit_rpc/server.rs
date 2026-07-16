@@ -58,6 +58,7 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xDA, // PRESET_APPLIED         — `neoth preset apply` merged a preset into freedom.yaml
     0xDB, // CONSENT_GRANTED        — `neoth consent grant` wrote a cloud-provider consent marker
     0xDC, // CONSENT_REVOKED        — `neoth consent revoke` removed a consent marker
+    0xDD, // SUDOMODE_PRESET_APPLIED — FULL-AUTO config transaction phase
     0x54, // RISK_CONFIRM_GRANTED   — `neoth risk-confirm` granted a risk-override lease
     0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
     0xF6, // RECON_RUN              — `neoth recon uncover/tlsx` ran a gated recon tool

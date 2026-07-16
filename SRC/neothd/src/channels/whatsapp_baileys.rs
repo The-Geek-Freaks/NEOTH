@@ -497,7 +497,7 @@ fn validate_bridge_url(raw: &str) -> Result<String, BridgeError> {
     let host = parsed
         .host_str()
         .ok_or_else(|| BridgeError::Config("URL has no host".to_string()))?;
-    let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
+    let loopback = is_loopback_host(host);
     match parsed.scheme() {
         "https" => {}
         "http" if loopback => {}
@@ -513,6 +513,19 @@ fn validate_bridge_url(raw: &str) -> Result<String, BridgeError> {
         }
     }
     Ok(trimmed.to_string())
+}
+
+/// Shared by CLI staging and the live bridge constructor so both surfaces
+/// apply the exact same loopback-only HTTP exception (including IPv6 forms).
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    let literal = host
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(host);
+    literal.eq_ignore_ascii_case("localhost")
+        || literal
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
 }
 
 fn normalize_sender_id(value: &str) -> String {
@@ -893,11 +906,15 @@ mod tests {
     #[test]
     fn url_policy_requires_tls_off_host() {
         assert!(validate_bridge_url("http://127.0.0.1:9120").is_ok());
+        assert!(validate_bridge_url("http://127.42.0.9:9120").is_ok());
         assert!(validate_bridge_url("http://[::1]:9120/").is_ok());
         assert!(validate_bridge_url("https://wa-bridge.example.test").is_ok());
         assert!(validate_bridge_url("http://wa-bridge.example.test").is_err());
         assert!(validate_bridge_url("file:///tmp/socket").is_err());
         assert!(validate_bridge_url("https://user:pw@example.test").is_err());
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("[::1]"));
+        assert!(!is_loopback_host("example.test"));
     }
 
     #[test]

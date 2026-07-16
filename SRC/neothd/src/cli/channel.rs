@@ -5,17 +5,45 @@
 //! [`probe_all`], so `list` always agrees with `neoth status`. Pure +
 //! read-only: no network, no mutation, no secrets printed (only presence).
 //!
-//! The mutating sub-actions (`add`/`test`/`remove`) cover all 15 registered
+//! The mutating sub-actions (`add`/`test`/`remove`) cover all registered
 //! channel kinds; `list` drives from the same probe as `neoth status`.
 
+use std::io::Read;
+
 use anyhow::{Context, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::channels::probe::{ChannelCredsView, ProbeStatus, probe_all};
+use crate::channels::registry::{
+    CHANNEL_REGISTRY_SCHEMA_VERSION, ChannelId, channel_descriptors, resolve_channel_id,
+    validate_registry,
+};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::config::credentials::Credentials;
 use crate::secret::SecretString;
+
+fn known_channel_names() -> String {
+    channel_descriptors()
+        .iter()
+        .flat_map(|descriptor| {
+            std::iter::once(descriptor.id.as_str()).chain(descriptor.aliases.iter().copied())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn resolve_operator_channel(channel: &str) -> Result<ChannelId> {
+    resolve_channel_id(channel).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown channel `{}`. Known canonical IDs and aliases: {}. \
+             `neoth channel list` shows configured state.",
+            channel.trim(),
+            known_channel_names()
+        )
+    })
+}
 
 /// One channel's configured-state, derived purely from config + credentials.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -92,9 +120,14 @@ pub(crate) fn load_channel_statuses_at(home: &std::path::Path) -> Result<Vec<Cha
 /// Render the inventory as table or JSON. Returned as a String so it is
 /// unit-testable without capturing stdout.
 fn render(rows: &[ChannelStatus], output: &OutputFormat) -> Result<String> {
+    validate_registry().context("canonical channel registry is invalid")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let obj = serde_json::json!({
+                "registry": {
+                    "schema_version": CHANNEL_REGISTRY_SCHEMA_VERSION,
+                    "channels": channel_descriptors(),
+                },
                 "channels": rows,
                 "configured": configured_count(rows),
                 "total": rows.len(),
@@ -171,6 +204,16 @@ pub enum ChannelTestPlan {
 /// `auth.test` (the app token is for socket mode, not auth), so the test bar
 /// is lower than the "startable" bar `channel_statuses` uses for slack.
 pub fn plan_channel_test(name: &str, cfg: &FreedomConfig, creds: &Credentials) -> ChannelTestPlan {
+    resolve_channel_id(name)
+        .map(|channel_id| plan_channel_test_for_id(channel_id, cfg, creds))
+        .unwrap_or(ChannelTestPlan::Unknown)
+}
+
+fn plan_channel_test_for_id(
+    channel_id: ChannelId,
+    cfg: &FreedomConfig,
+    creds: &Credentials,
+) -> ChannelTestPlan {
     let view = ChannelCredsView::from_config(Some(cfg), creds);
     let yes_if = |configured: bool, yes: ChannelTestPlan| {
         if configured {
@@ -179,63 +222,57 @@ pub fn plan_channel_test(name: &str, cfg: &FreedomConfig, creds: &Credentials) -
             ChannelTestPlan::NotConfigured
         }
     };
-    match name.trim().to_ascii_lowercase().as_str() {
-        "telegram" => yes_if(view.telegram_token, ChannelTestPlan::Telegram),
-        "slack" => yes_if(view.slack_bot, ChannelTestPlan::Slack),
-        "whatsapp" => yes_if(
+    match channel_id {
+        ChannelId::Telegram => yes_if(view.telegram_token, ChannelTestPlan::Telegram),
+        ChannelId::Slack => yes_if(view.slack_bot, ChannelTestPlan::Slack),
+        ChannelId::WhatsAppBusiness => yes_if(
             view.whatsapp_token && view.whatsapp_phone_id,
             ChannelTestPlan::Whatsapp,
         ),
-        "keet" => yes_if(
+        ChannelId::Keet => yes_if(
             view.keet_bridge_url
                 && view.keet_topic
                 && view.keet_allowed_senders
                 && view.keet_bearer,
             ChannelTestPlan::Keet,
         ),
-        "discord" => yes_if(view.discord_bot, ChannelTestPlan::Discord),
-        "signal" => yes_if(
+        ChannelId::Discord => yes_if(view.discord_bot, ChannelTestPlan::Discord),
+        ChannelId::Signal => yes_if(
             view.signal_cli_url && view.signal_phone_number,
             ChannelTestPlan::Signal,
         ),
-        "line" => yes_if(
+        ChannelId::Line => yes_if(
             view.line_access_token || view.line_channel_secret,
             ChannelTestPlan::Line,
         ),
-        "irc" => yes_if(view.irc_server && view.irc_nick, ChannelTestPlan::Irc),
-        "imessage" | "imessage_bluebubbles" | "bluebubbles" => yes_if(
+        ChannelId::Irc => yes_if(view.irc_server && view.irc_nick, ChannelTestPlan::Irc),
+        ChannelId::IMessageBlueBubbles => yes_if(
             view.bluebubbles_url && view.bluebubbles_password,
             ChannelTestPlan::IMessageBlueBubbles,
         ),
-        "mattermost" => yes_if(
+        ChannelId::Mattermost => yes_if(
             view.mattermost_url && view.mattermost_token,
             ChannelTestPlan::Mattermost,
         ),
-        "gchat" | "google_chat" => yes_if(
+        ChannelId::GoogleChat => yes_if(
             view.gchat_sa_json && view.gchat_subscription,
             ChannelTestPlan::GoogleChat,
         ),
-        "matrix" => yes_if(
+        ChannelId::Matrix => yes_if(
             view.matrix_homeserver && view.matrix_user_id && view.matrix_login,
             ChannelTestPlan::Matrix,
         ),
-        "twitch" => yes_if(
+        ChannelId::Twitch => yes_if(
             view.twitch_username && view.twitch_oauth && view.twitch_channels,
             ChannelTestPlan::Twitch,
         ),
-        "nostr" => yes_if(view.nostr_key && view.nostr_relays, ChannelTestPlan::Nostr),
-        // Aliases for probe-canonical names.
-        "whatsapp_business" => yes_if(
-            view.whatsapp_token && view.whatsapp_phone_id,
-            ChannelTestPlan::Whatsapp,
-        ),
-        "whatsapp_baileys" => yes_if(
+        ChannelId::Nostr => yes_if(view.nostr_key && view.nostr_relays, ChannelTestPlan::Nostr),
+        ChannelId::WhatsAppBaileys => yes_if(
             view.whatsapp_baileys_url
                 && view.whatsapp_baileys_token
                 && view.whatsapp_baileys_allowed_senders,
             ChannelTestPlan::WhatsappBaileys,
         ),
-        _ => ChannelTestPlan::Unknown,
     }
 }
 
@@ -290,6 +327,7 @@ pub(crate) async fn test_channel_at(
     home: &std::path::Path,
     name: &str,
 ) -> Result<ChannelTestResult> {
+    let channel_id = resolve_operator_channel(name)?;
     let config_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
     let cfg = FreedomConfig::load_from_path(&config_path)
@@ -302,16 +340,21 @@ pub(crate) async fn test_channel_at(
                 credentials_path.display()
             )
         })?;
-    let chan = name.trim().to_ascii_lowercase();
+    test_channel_candidate_for_id(channel_id, &cfg, &creds).await
+}
 
-    let result = match plan_channel_test(&chan, &cfg, &creds) {
-        ChannelTestPlan::Unknown => anyhow::bail!(
-            "unknown channel `{name}`. Known: telegram, slack, whatsapp_business, \
-             whatsapp_baileys, keet, discord, signal, line, irc, imessage_bluebubbles, \
-             mattermost, gchat, matrix, twitch, nostr \
-             (aliases: whatsapp, google_chat, imessage, bluebubbles). \
-             `neoth channel list` shows configured state."
-        ),
+/// Verify an in-memory candidate without persisting it first. This is the
+/// safety boundary used by `/connect`: invalid credentials cannot overwrite a
+/// previously working channel, and protocols without a side-effect-free probe
+/// return the same typed `unavailable` result as `neoth channel test`.
+async fn test_channel_candidate_for_id(
+    channel_id: ChannelId,
+    cfg: &FreedomConfig,
+    creds: &Credentials,
+) -> Result<ChannelTestResult> {
+    let chan = channel_id.as_str().to_string();
+    let result = match plan_channel_test_for_id(channel_id, cfg, creds) {
+        ChannelTestPlan::Unknown => unreachable!("typed channel ids always have a test plan"),
         ChannelTestPlan::NotConfigured => skipped(
             chan,
             "not configured — `neoth channel list` shows what to set".to_string(),
@@ -522,26 +565,12 @@ pub(crate) async fn test_channel_at(
             }
         }
         ChannelTestPlan::Telegram => {
-            if cfg.telegram_user_id.is_none() {
-                return Ok(fail(
-                    chan,
-                    "telegram_user_id is missing; NEOTH refuses an open inbound Telegram adapter"
-                        .to_string(),
-                ));
-            }
-            let ch = crate::channels::telegram::TelegramChannel::new(
-                // The token may live in either store; the plan guarantees at least
-                // one is Some, so the cfg-or-creds chain never hits the expect.
-                cfg.telegram_token
-                    .clone()
-                    .or_else(|| creds.telegram_token.clone())
-                    .expect("plan guarantees configured"),
-                cfg.telegram_user_id,
-            );
-            match ch.validate().await {
-                Ok(user) => ok(chan, format!("bot @{user}")),
-                Err(e) => fail(chan, e.to_string()),
-            }
+            return probe_telegram_candidate_with(chan, cfg, creds, |token, allowed_user_id| async move {
+                crate::channels::telegram::TelegramChannel::new(token, allowed_user_id)
+                    .validate()
+                    .await
+            })
+            .await;
         }
         ChannelTestPlan::Slack => {
             let bot = creds
@@ -640,6 +669,37 @@ pub(crate) async fn test_channel_at(
     Ok(result)
 }
 
+async fn probe_telegram_candidate_with<F, Fut>(
+    chan: String,
+    cfg: &FreedomConfig,
+    creds: &Credentials,
+    validate: F,
+) -> Result<ChannelTestResult>
+where
+    F: FnOnce(SecretString, Option<u64>) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<String, crate::channels::ChannelError>>,
+{
+    if cfg.telegram_user_id.is_none() {
+        return Ok(fail(
+            chan,
+            "telegram_user_id is missing; NEOTH refuses an open inbound Telegram adapter"
+                .to_string(),
+        ));
+    }
+    // A staged `/connect` candidate lives in `creds`, while `cfg` may still
+    // carry the previously working legacy inline token.  Probe the candidate
+    // first; retain the config fallback only for legacy read-only `test` calls.
+    let token = creds
+        .telegram_token
+        .clone()
+        .or_else(|| cfg.telegram_token.clone())
+        .expect("plan guarantees configured");
+    Ok(match validate(token, cfg.telegram_user_id).await {
+        Ok(user) => ok(chan, format!("bot @{user}")),
+        Err(error) => fail(chan, error.to_string()),
+    })
+}
+
 fn ok(channel: String, detail: String) -> ChannelTestResult {
     ChannelTestResult {
         channel,
@@ -697,27 +757,27 @@ fn render_test(r: &ChannelTestResult, output: &OutputFormat) -> Result<String> {
 /// Per-channel inputs the operator supplied (read from stdin / no-echo prompt).
 /// All optional so the validator reports exactly which required field is
 /// missing rather than panicking.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ChannelAddFields {
     /// Telegram's exact numeric inbound sender allowlist. It is public policy
     /// and therefore persisted in freedom.yaml, not credentials.yaml.
     pub telegram_user_id: Option<u64>,
     /// telegram bot token / whatsapp access token / discord bot token /
     /// line channel access token / mattermost token.
-    pub token: Option<String>,
+    pub token: Option<SecretString>,
     /// slack bot token (`xoxb-…`).
-    pub bot_token: Option<String>,
+    pub bot_token: Option<SecretString>,
     /// slack app token (`xapp-…`).
-    pub app_token: Option<String>,
+    pub app_token: Option<SecretString>,
     /// whatsapp phone-number id (numeric).
     pub phone_id: Option<String>,
     /// WhatsApp webhook verification token (inbound challenge).
-    pub verify_token: Option<String>,
+    pub verify_token: Option<SecretString>,
     /// WhatsApp Meta app secret (inbound HMAC verification).
-    pub app_secret: Option<String>,
+    pub app_secret: Option<SecretString>,
     /// Deprecated speculative native-Keet seed flag retained for parse
     /// compatibility. The companion integration rejects it.
-    pub seed: Option<String>,
+    pub seed: Option<SecretString>,
     /// B9 — base URL (signal-cli daemon / BlueBubbles server / Mattermost).
     pub url: Option<String>,
     /// B9 — signal own phone number (E.164).
@@ -728,7 +788,7 @@ pub struct ChannelAddFields {
     pub nick: Option<String>,
     /// B9 — password/secret (irc NickServ · BlueBubbles server password ·
     /// LINE channel secret).
-    pub password: Option<String>,
+    pub password: Option<SecretString>,
     /// B9 — irc channels csv (`#neoth,#dev`).
     pub channels_csv: Option<String>,
     /// Matrix inbound/invite sender allowlist (`@user:server`) or Keet exact
@@ -738,6 +798,225 @@ pub struct ChannelAddFields {
     pub allowed_rooms_csv: Option<String>,
     /// Matrix-only explicit opt-out from the encrypted-room requirement.
     pub allow_plaintext: bool,
+}
+
+const CHANNEL_CREDENTIAL_SCHEMA_VERSION: u32 = 1;
+const MAX_CHANNEL_CREDENTIAL_STDIN_BYTES: u64 = 8 * 1024;
+
+/// Private machine-facing credential envelope used by the desktop GUI. Secret
+/// values arrive only over the child process' stdin and therefore never enter
+/// argv, shell history, or process-list command lines.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ChannelCredentialEnvelope {
+    schema_version: u32,
+    channel: String,
+    fields: ChannelCredentialWireFields,
+}
+
+/// Superset of the registry's setup fields. Per-channel scoping is validated
+/// separately so a valid field for one adapter cannot be silently applied to
+/// another adapter after a stale GUI selection or hand-written request.
+#[derive(Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ChannelCredentialWireFields {
+    telegram_user_id: Option<u64>,
+    token: Option<SecretString>,
+    bot_token: Option<SecretString>,
+    app_token: Option<SecretString>,
+    phone_id: Option<String>,
+    verify_token: Option<SecretString>,
+    app_secret: Option<SecretString>,
+    seed: Option<SecretString>,
+    url: Option<String>,
+    phone: Option<String>,
+    server: Option<String>,
+    nick: Option<String>,
+    password: Option<SecretString>,
+    channels_csv: Option<String>,
+    allowed_sender: Option<String>,
+    allowed_rooms_csv: Option<String>,
+    allow_plaintext: Option<bool>,
+}
+
+struct ValidatedChannelCredentialRequest {
+    channel_id: ChannelId,
+    fields: ChannelAddFields,
+}
+
+impl ChannelCredentialWireFields {
+    fn provided_field_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.telegram_user_id.is_some() {
+            names.push("telegram_user_id");
+        }
+        if self.token.is_some() {
+            names.push("token");
+        }
+        if self.bot_token.is_some() {
+            names.push("bot_token");
+        }
+        if self.app_token.is_some() {
+            names.push("app_token");
+        }
+        if self.phone_id.is_some() {
+            names.push("phone_id");
+        }
+        if self.verify_token.is_some() {
+            names.push("verify_token");
+        }
+        if self.app_secret.is_some() {
+            names.push("app_secret");
+        }
+        if self.seed.is_some() {
+            names.push("seed");
+        }
+        if self.url.is_some() {
+            names.push("url");
+        }
+        if self.phone.is_some() {
+            names.push("phone");
+        }
+        if self.server.is_some() {
+            names.push("server");
+        }
+        if self.nick.is_some() {
+            names.push("nick");
+        }
+        if self.password.is_some() {
+            names.push("password");
+        }
+        if self.channels_csv.is_some() {
+            names.push("channels_csv");
+        }
+        if self.allowed_sender.is_some() {
+            names.push("allowed_sender");
+        }
+        if self.allowed_rooms_csv.is_some() {
+            names.push("allowed_rooms_csv");
+        }
+        if self.allow_plaintext.is_some() {
+            names.push("allow_plaintext");
+        }
+        names
+    }
+
+    fn into_add_fields(self) -> ChannelAddFields {
+        ChannelAddFields {
+            telegram_user_id: self.telegram_user_id,
+            token: self.token,
+            bot_token: self.bot_token,
+            app_token: self.app_token,
+            phone_id: self.phone_id,
+            verify_token: self.verify_token,
+            app_secret: self.app_secret,
+            seed: self.seed,
+            url: self.url,
+            phone: self.phone,
+            server: self.server,
+            nick: self.nick,
+            password: self.password,
+            channels_csv: self.channels_csv,
+            allowed_sender: self.allowed_sender,
+            allowed_rooms_csv: self.allowed_rooms_csv,
+            allow_plaintext: self.allow_plaintext.unwrap_or(false),
+        }
+    }
+}
+
+fn private_fields_for(channel_id: ChannelId) -> &'static [&'static str] {
+    match channel_id {
+        ChannelId::Telegram => &["telegram_user_id", "token"],
+        ChannelId::Slack => &["bot_token", "app_token"],
+        ChannelId::WhatsAppBusiness => &["token", "phone_id", "verify_token", "app_secret"],
+        ChannelId::WhatsAppBaileys => &["url", "token", "allowed_sender", "allowed_rooms_csv"],
+        ChannelId::Keet => &["url", "token", "server", "allowed_sender"],
+        ChannelId::Discord => &["token"],
+        ChannelId::Signal => &["url", "phone"],
+        ChannelId::Line => &["token", "password"],
+        ChannelId::Irc => &[
+            "server",
+            "nick",
+            "password",
+            "channels_csv",
+            "allowed_sender",
+        ],
+        ChannelId::IMessageBlueBubbles => &["url", "password", "allowed_sender", "channels_csv"],
+        ChannelId::Mattermost => &["url", "token", "allowed_sender"],
+        ChannelId::GoogleChat => &["url", "server", "allowed_sender"],
+        ChannelId::Matrix => &[
+            "url",
+            "nick",
+            "password",
+            "token",
+            "allowed_sender",
+            "allowed_rooms_csv",
+            "allow_plaintext",
+        ],
+        ChannelId::Twitch => &["nick", "token", "channels_csv"],
+        ChannelId::Nostr => &["token", "channels_csv", "allowed_sender"],
+    }
+}
+
+fn parse_channel_credential_request(body: &[u8]) -> Result<ValidatedChannelCredentialRequest> {
+    let request: ChannelCredentialEnvelope =
+        serde_json::from_slice(body).context("parse channel credential request JSON")?;
+    if request.schema_version != CHANNEL_CREDENTIAL_SCHEMA_VERSION {
+        anyhow::bail!(
+            "unsupported channel credential schema version {}; expected {}",
+            request.schema_version,
+            CHANNEL_CREDENTIAL_SCHEMA_VERSION
+        );
+    }
+
+    let raw_channel = request.channel.as_str();
+    let channel_id = resolve_channel_id(raw_channel)
+        .ok_or_else(|| anyhow::anyhow!("unknown canonical channel id in credential request"))?;
+    if raw_channel != channel_id.as_str() {
+        anyhow::bail!(
+            "private channel credential requests require canonical channel id `{}`",
+            channel_id.as_str()
+        );
+    }
+
+    let provided = request.fields.provided_field_names();
+    if provided.is_empty() {
+        anyhow::bail!("channel credential request has no fields");
+    }
+    let allowed = private_fields_for(channel_id);
+    let unexpected = provided
+        .into_iter()
+        .filter(|field| !allowed.contains(field))
+        .collect::<Vec<_>>();
+    if !unexpected.is_empty() {
+        anyhow::bail!(
+            "channel credential request contains fields not valid for `{}`: {}",
+            channel_id.as_str(),
+            unexpected.join(", ")
+        );
+    }
+
+    Ok(ValidatedChannelCredentialRequest {
+        channel_id,
+        fields: request.fields.into_add_fields(),
+    })
+}
+
+fn read_channel_credential_request_from(
+    reader: impl Read,
+) -> Result<ValidatedChannelCredentialRequest> {
+    let mut body = Zeroizing::new(Vec::new());
+    reader
+        .take(MAX_CHANNEL_CREDENTIAL_STDIN_BYTES + 1)
+        .read_to_end(&mut body)
+        .context("read channel credential request from stdin")?;
+    if body.len() as u64 > MAX_CHANNEL_CREDENTIAL_STDIN_BYTES {
+        anyhow::bail!(
+            "channel credential request exceeds {} bytes",
+            MAX_CHANNEL_CREDENTIAL_STDIN_BYTES
+        );
+    }
+    parse_channel_credential_request(&body)
 }
 
 /// B9 — a base URL field must be `http(s)://…` (fail fast on a bare host —
@@ -763,6 +1042,16 @@ fn require_e164(v: &Option<String>, what: &str) -> Result<String> {
 fn require(v: &Option<String>, what: &str) -> Result<String> {
     match v.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
         Some(s) => Ok(s.to_string()),
+        None => anyhow::bail!("missing {what}"),
+    }
+}
+
+/// Require a non-blank secret while preserving its exact bytes. Trimming a
+/// password/token during validation silently changes credentials and can make
+/// a successfully copied value impossible to authenticate with.
+fn require_secret<'a>(v: &'a Option<SecretString>, what: &str) -> Result<&'a SecretString> {
+    match v.as_ref().filter(|value| !value.expose().trim().is_empty()) {
+        Some(value) => Ok(value),
         None => anyhow::bail!("missing {what}"),
     }
 }
@@ -877,48 +1166,60 @@ pub fn stage_channel_add(
     fields: &ChannelAddFields,
     base: Credentials,
 ) -> Result<Credentials> {
-    let mut creds = base;
-    match channel.trim().to_ascii_lowercase().as_str() {
-        "telegram" => {
-            let t = require(&fields.token, "telegram bot token (from @BotFather)")?;
+    stage_channel_add_for_id(resolve_operator_channel(channel)?, fields, base)
+}
+
+fn stage_channel_add_for_id(
+    channel_id: ChannelId,
+    fields: &ChannelAddFields,
+    base: Credentials,
+) -> Result<Credentials> {
+    // Reconfiguration is a typed replacement of this channel, never a merge
+    // with stale optional values. This prevents an omitted IRC password from
+    // following a new server, and applies the same rule to LINE secrets,
+    // Matrix allowlists, and every other channel-specific optional field.
+    let (mut creds, _) = stage_channel_remove_for_id(channel_id, base)?;
+    match channel_id {
+        ChannelId::Telegram => {
+            let t = require_secret(&fields.token, "telegram bot token (from @BotFather)")?;
             let user_id = fields.telegram_user_id.context(
                 "missing telegram user ID (--telegram-user-id); NEOTH refuses an open inbound sender policy",
             )?;
             if user_id == 0 {
                 anyhow::bail!("telegram user ID must be a positive integer");
             }
-            crate::cli::init::validate_telegram_token(&t)?;
-            creds.telegram_token = Some(SecretString::from(t.as_str()));
+            crate::cli::init::validate_telegram_token(t.expose())?;
+            creds.telegram_token = Some(t.clone());
         }
-        "slack" => {
-            let bot = require(&fields.bot_token, "slack bot token (xoxb-…)")?;
-            let app = require(&fields.app_token, "slack app token (xapp-…)")?;
-            if !bot.starts_with("xoxb-") {
+        ChannelId::Slack => {
+            let bot = require_secret(&fields.bot_token, "slack bot token (xoxb-…)")?;
+            let app = require_secret(&fields.app_token, "slack app token (xapp-…)")?;
+            if !bot.expose().starts_with("xoxb-") {
                 anyhow::bail!("slack bot token should start with `xoxb-`");
             }
-            if !app.starts_with("xapp-") {
+            if !app.expose().starts_with("xapp-") {
                 anyhow::bail!("slack app token should start with `xapp-` (socket-mode app token)");
             }
-            creds.slack_bot_token = Some(SecretString::from(bot.as_str()));
-            creds.slack_app_token = Some(SecretString::from(app.as_str()));
+            creds.slack_bot_token = Some(bot.clone());
+            creds.slack_app_token = Some(app.clone());
         }
-        "whatsapp" | "whatsapp_business" => {
-            let t = require(&fields.token, "whatsapp access token")?;
+        ChannelId::WhatsAppBusiness => {
+            let t = require_secret(&fields.token, "whatsapp access token")?;
             let phone = require(&fields.phone_id, "whatsapp phone-number id")?;
-            let verify = require(&fields.verify_token, "whatsapp webhook verify token")?;
-            let app_secret = require(&fields.app_secret, "whatsapp Meta app secret")?;
+            let verify = require_secret(&fields.verify_token, "whatsapp webhook verify token")?;
+            let app_secret = require_secret(&fields.app_secret, "whatsapp Meta app secret")?;
             if !phone.chars().all(|c| c.is_ascii_digit()) {
                 anyhow::bail!(
                     "whatsapp phone id must be the NUMERIC phone-number id from the Meta console \
                      (not the phone number itself)"
                 );
             }
-            creds.whatsapp_token = Some(SecretString::from(t.as_str()));
+            creds.whatsapp_token = Some(t.clone());
             creds.whatsapp_phone_id = Some(phone);
-            creds.whatsapp_verify_token = Some(SecretString::from(verify.as_str()));
-            creds.whatsapp_app_secret = Some(SecretString::from(app_secret.as_str()));
+            creds.whatsapp_verify_token = Some(verify.clone());
+            creds.whatsapp_app_secret = Some(app_secret.clone());
         }
-        "whatsapp_baileys" => {
+        ChannelId::WhatsAppBaileys => {
             let url = require_http_url(&fields.url, "Baileys bridge URL")?;
             // The live adapter applies the strict remote-HTTPS/loopback-HTTP
             // policy too; validate here so bad config is never persisted.
@@ -933,13 +1234,14 @@ pub fn stage_channel_add(
                 anyhow::bail!("Baileys bridge URL must not contain a query or fragment");
             }
             let host = parsed.host_str().unwrap_or_default();
-            let loopback = matches!(host, "localhost" | "127.0.0.1" | "::1");
-            if parsed.scheme() == "http" && !loopback {
+            if parsed.scheme() == "http"
+                && !crate::channels::whatsapp_baileys::is_loopback_host(host)
+            {
                 anyhow::bail!("remote Baileys bridge URLs must use HTTPS; HTTP is loopback-only");
             }
-            let token = require(&fields.token, "Baileys bridge bearer token")?;
-            if token.len() < 32
-                || !token.bytes().all(|byte| {
+            let token = require_secret(&fields.token, "Baileys bridge bearer token")?;
+            if token.expose().len() < 32
+                || !token.expose().bytes().all(|byte| {
                     byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-')
                 })
             {
@@ -953,15 +1255,15 @@ pub fn stage_channel_add(
                 fields.allowed_rooms_csv.as_deref().unwrap_or_default(),
             )?;
             creds.whatsapp_baileys_url = Some(url);
-            creds.whatsapp_baileys_token = Some(SecretString::from(token.as_str()));
+            creds.whatsapp_baileys_token = Some(token.clone());
             creds.whatsapp_baileys_allowed_senders = Some(senders);
             creds.whatsapp_baileys_allowed_groups = groups;
         }
-        "keet" => {
+        ChannelId::Keet => {
             if fields
                 .seed
-                .as_deref()
-                .is_some_and(|seed| !seed.trim().is_empty())
+                .as_ref()
+                .is_some_and(|seed| !seed.expose().trim().is_empty())
             {
                 anyhow::bail!(
                     "--seed belongs to the removed speculative native Keet transport; \
@@ -969,8 +1271,8 @@ pub fn stage_channel_add(
                 );
             }
             let url = require_http_url(&fields.url, "Keet companion URL")?;
-            let token = require(&fields.token, "Keet companion bearer token")?;
-            crate::channels::keet_bridge::KeetBridge::new(&url, SecretString::from(token.as_str()))
+            let token = require_secret(&fields.token, "Keet companion bearer token")?;
+            crate::channels::keet_bridge::KeetBridge::new(&url, token.clone())
                 .context("validate Keet companion URL/token")?;
             let topic = require(&fields.server, "Keet topic (--server)")?;
             crate::channels::keet_bridge::validate_topic(&topic).context("validate Keet topic")?;
@@ -981,39 +1283,38 @@ pub fn stage_channel_add(
             creds.keet_bridge_url = Some(url);
             creds.keet_topic = Some(SecretString::from(topic));
             creds.keet_allowed_senders = Some(allowed_senders);
-            creds.keet_bridge_bearer_token = Some(SecretString::from(token.as_str()));
+            creds.keet_bridge_bearer_token = Some(token.clone());
             // Never preserve a speculative seed beside the real companion
             // contract: it is not consumed and would mislead operators.
             creds.keet_seed_phrase = None;
         }
-        "discord" => {
-            let t = require(
+        ChannelId::Discord => {
+            let t = require_secret(
                 &fields.token,
                 "discord bot token (from the developer portal)",
             )?;
-            creds.discord_bot_token = Some(SecretString::from(t.as_str()));
+            creds.discord_bot_token = Some(t.clone());
         }
-        "signal" => {
+        ChannelId::Signal => {
             let url = require_http_url(&fields.url, "signal-cli daemon URL")?;
             let phone = require_e164(&fields.phone, "signal phone number")?;
             creds.signal_cli_url = Some(url);
             creds.signal_phone_number = Some(phone);
         }
-        "line" => {
-            let t = require(&fields.token, "LINE channel access token")?;
+        ChannelId::Line => {
+            let t = require_secret(&fields.token, "LINE channel access token")?;
             // The channel secret verifies inbound webhook signatures — optional
             // (push-only works without it), but inbound stays off until set.
-            creds.line_channel_access_token = Some(SecretString::from(t.as_str()));
+            creds.line_channel_access_token = Some(t.clone());
             if let Some(s) = fields
                 .password
                 .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
+                .filter(|s| !s.expose().trim().is_empty())
             {
-                creds.line_channel_secret = Some(SecretString::from(s));
+                creds.line_channel_secret = Some(s.clone());
             }
         }
-        "irc" => {
+        ChannelId::Irc => {
             let server = require(&fields.server, "irc server host (e.g. irc.libera.chat)")?;
             if server.contains("://") {
                 anyhow::bail!("irc server is a bare host, not a URL (drop the scheme)");
@@ -1024,10 +1325,9 @@ pub fn stage_channel_add(
             if let Some(pw) = fields
                 .password
                 .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty())
+                .filter(|s| !s.expose().trim().is_empty())
             {
-                creds.irc_password = Some(SecretString::from(pw));
+                creds.irc_password = Some(pw.clone());
             }
             if let Some(ch) = fields
                 .channels_csv
@@ -1037,25 +1337,52 @@ pub fn stage_channel_add(
             {
                 creds.irc_channels = Some(ch.to_string());
             }
+            let allowed_account = require(
+                &fields.allowed_sender,
+                "IRC services-account allowlist (--allowed-sender)",
+            )?;
+            if allowed_account
+                .chars()
+                .any(|ch| ch.is_whitespace() || ch.is_control())
+            {
+                anyhow::bail!("IRC allowed services account must not contain whitespace");
+            }
+            creds.irc_allowed_account = Some(allowed_account);
         }
-        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+        ChannelId::IMessageBlueBubbles => {
             let url = require_http_url(&fields.url, "BlueBubbles server URL")?;
-            let pw = require(&fields.password, "BlueBubbles server password")?;
+            let pw = require_secret(&fields.password, "BlueBubbles server password")?;
             creds.bluebubbles_url = Some(url);
-            creds.bluebubbles_password = Some(SecretString::from(pw.as_str()));
+            creds.bluebubbles_password = Some(pw.clone());
+            creds.imessage_allowed_sender = Some(require(
+                &fields.allowed_sender,
+                "iMessage sender allowlist (--allowed-sender)",
+            )?);
+            creds.bluebubbles_chat_guid = fields
+                .channels_csv
+                .as_ref()
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
         }
-        "mattermost" => {
+        ChannelId::Mattermost => {
             let url = require_http_url(&fields.url, "Mattermost server URL")?;
-            let t = require(&fields.token, "Mattermost bot/personal-access token")?;
+            let t = require_secret(&fields.token, "Mattermost bot/personal-access token")?;
             creds.mattermost_url = Some(url);
-            creds.mattermost_token = Some(SecretString::from(t.as_str()));
+            creds.mattermost_token = Some(t.clone());
+            creds.mattermost_allowed_user_id = Some(require(
+                &fields.allowed_sender,
+                "Mattermost user-ID allowlist (--allowed-sender)",
+            )?);
         }
-        "gchat" | "google_chat" => {
+        ChannelId::GoogleChat => {
             let path = require(
                 &fields.url,
                 "path to the GCP service-account JSON key (the file stays where it is)",
             )?;
-            if !std::path::Path::new(&path).is_file() {
+            let canonical_path = std::fs::canonicalize(&path)
+                .with_context(|| format!("service-account key not found at `{path}`"))?;
+            if !canonical_path.is_file() {
                 anyhow::bail!("service-account key not found at `{path}`");
             }
             let sub = require(
@@ -1068,31 +1395,37 @@ pub fn stage_channel_add(
                      `projects/<project>/subscriptions/<name>` (got `{sub}`)"
                 );
             }
-            creds.gchat_service_account_json = Some(path);
+            creds.gchat_service_account_json = Some(canonical_path.display().to_string());
             creds.gchat_subscription = Some(sub);
+            let allowed_sender = require(
+                &fields.allowed_sender,
+                "Google Chat sender allowlist (--allowed-sender)",
+            )?;
+            if !allowed_sender.starts_with("users/") {
+                anyhow::bail!("Google Chat allowed sender must start with `users/`");
+            }
+            creds.gchat_allowed_sender = Some(allowed_sender);
         }
-        "matrix" => {
+        ChannelId::Matrix => {
             let url = require_http_url(&fields.url, "Matrix homeserver URL")?;
             let user_id = require(&fields.nick, "Matrix user ID (@user:server.org)")?;
             validate_matrix_user_id(&user_id, "Matrix user ID")?;
             let pw = fields
                 .password
                 .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.expose().trim().is_empty());
             let tok = fields
                 .token
                 .as_ref()
-                .map(|s| s.trim())
-                .filter(|s| !s.is_empty());
+                .filter(|s| !s.expose().trim().is_empty());
             if pw.is_none() && tok.is_none() {
                 anyhow::bail!(
                     "Matrix needs either --password (account password) or \
                      --token (pre-issued access token)"
                 );
             }
-            creds.matrix_password = pw.map(SecretString::from);
-            creds.matrix_access_token = tok.map(SecretString::from);
+            creds.matrix_password = pw.cloned();
+            creds.matrix_access_token = tok.cloned();
             creds.matrix_homeserver = Some(url);
             creds.matrix_user_id = Some(user_id);
             let allowed_user = fields
@@ -1118,57 +1451,70 @@ pub fn stage_channel_add(
             if let Some(allowed_rooms) = allowed_rooms {
                 creds.matrix_allowed_room_ids = Some(allowed_rooms);
             }
+            if creds.matrix_allowed_user_id.is_none() && creds.matrix_allowed_room_ids.is_none() {
+                anyhow::bail!(
+                    "Matrix requires at least one inbound sender or room allowlist; NEOTH refuses an open adapter"
+                );
+            }
             creds.matrix_require_encryption = Some(!fields.allow_plaintext);
         }
-        "twitch" => {
+        ChannelId::Twitch => {
             let nick = require(&fields.nick, "Twitch bot username")?.to_ascii_lowercase();
-            let token = require(&fields.token, "Twitch OAuth token (oauth:…)")?;
+            let token = require_secret(&fields.token, "Twitch OAuth token (oauth:…)")?;
             let channels = normalize_twitch_channels(&require(
                 &fields.channels_csv,
                 "Twitch channels (comma-separated)",
             )?)?;
             creds.twitch_username = Some(nick);
-            creds.twitch_oauth_token = Some(SecretString::from(token.as_str()));
+            creds.twitch_oauth_token = Some(token.clone());
             creds.twitch_channels = Some(channels);
         }
-        "nostr" => {
-            let key = require(&fields.token, "Nostr secret key (nsec1… or 64-char hex)")?;
+        ChannelId::Nostr => {
+            let key = require_secret(&fields.token, "Nostr secret key (nsec1… or 64-char hex)")?;
             let relays = require(
                 &fields.channels_csv,
                 "Nostr relay list (comma-separated wss:// URLs)",
             )?;
             #[cfg(feature = "nostr-channel")]
             {
-                let key = SecretString::from(key.as_str());
+                let allowed_pubkey = require(
+                    &fields.allowed_sender,
+                    "Nostr sender pubkey allowlist (--allowed-sender)",
+                )?
+                .to_ascii_lowercase();
+                if allowed_pubkey.len() != 64
+                    || !allowed_pubkey.bytes().all(|byte| byte.is_ascii_hexdigit())
+                {
+                    anyhow::bail!(
+                        "Nostr allowed sender must be the exact 64-character hex public key"
+                    );
+                }
+                let key = key.clone();
                 let relays = crate::channels::nostr::validate_configuration(&key, &relays)?;
                 creds.nostr_secret_key = Some(key);
                 creds.nostr_relays = Some(relays);
+                creds.nostr_allowed_pubkey = Some(allowed_pubkey);
             }
             #[cfg(not(feature = "nostr-channel"))]
             {
-                let _ = (key, relays);
+                let _ = (key, relays, &fields.allowed_sender);
                 anyhow::bail!(
                     "this binary lacks the `nostr-channel` feature; install a release build with Nostr support before adding Nostr credentials"
                 );
             }
         }
-        other => anyhow::bail!(
-            "unknown channel `{other}`. Addable: telegram, slack, whatsapp, keet, discord, \
-             whatsapp_baileys, signal, line, irc, imessage, mattermost, gchat, matrix, twitch, nostr. \
-             `neoth channel list` shows configured state."
-        ),
     }
     Ok(creds)
 }
 
-/// CLI flags for `neoth channel add` — mirrors [`ChannelAddFields`] 1:1 so the
-/// GUI (or any non-interactive caller) can pass all credential values as
-/// `--long-flag` arguments without stdin prompts.
+/// Legacy CLI flags for `neoth channel add` — mirrors [`ChannelAddFields`] 1:1
+/// for interactive operators and existing scripts. The GUI uses the bounded
+/// private-stdin envelope instead so credentials never enter process argv.
 ///
 /// Passed from the clap `ChannelAction::Add` variant into [`run_add`]; kept
 /// separate from `ChannelAddFields` so the internal staging API stays free of
 /// clap types.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ChannelAddFlags {
     pub telegram_user_id: Option<u64>,
     pub token: Option<String>,
@@ -1214,18 +1560,18 @@ impl ChannelAddFlags {
     fn into_fields(self) -> ChannelAddFields {
         ChannelAddFields {
             telegram_user_id: self.telegram_user_id,
-            token: self.token,
-            bot_token: self.bot_token,
-            app_token: self.app_token,
+            token: self.token.map(SecretString::from),
+            bot_token: self.bot_token.map(SecretString::from),
+            app_token: self.app_token.map(SecretString::from),
             phone_id: self.phone_id,
-            verify_token: self.verify_token,
-            app_secret: self.app_secret,
-            seed: self.seed,
+            verify_token: self.verify_token.map(SecretString::from),
+            app_secret: self.app_secret.map(SecretString::from),
+            seed: self.seed.map(SecretString::from),
             url: self.url,
             phone: self.phone,
             server: self.server,
             nick: self.nick,
-            password: self.password,
+            password: self.password.map(SecretString::from),
             channels_csv: self.channels_csv,
             allowed_sender: self.allowed_sender,
             allowed_rooms_csv: self.allowed_rooms_csv,
@@ -1235,27 +1581,29 @@ impl ChannelAddFlags {
 }
 
 /// Required flags per channel, for the "no TTY + no flags" bail message.
-fn required_flags_for(channel: &str) -> &'static str {
-    match channel {
-        "telegram" => "--token --telegram-user-id",
-        "slack" => "--bot-token --app-token",
-        "whatsapp" => "--token --phone-id --verify-token --app-secret",
-        "whatsapp_baileys" => "--url --token --allowed-sender [--allowed-rooms-csv]",
-        "keet" => "--url --token --server (topic) --allowed-sender",
-        "discord" => "--token",
-        "signal" => "--url --phone",
-        "line" => "--token  [--password]",
-        "irc" => "--server --nick  [--password --channels-csv]",
-        "imessage" | "imessage_bluebubbles" | "bluebubbles" => "--url --password",
-        "mattermost" => "--url --token",
-        "gchat" | "google_chat" => "--url --server",
-        "whatsapp_business" => "--token --phone-id --verify-token --app-secret",
-        "matrix" => {
+fn required_flags_for(channel_id: ChannelId) -> &'static str {
+    match channel_id {
+        ChannelId::Telegram => "--token --telegram-user-id",
+        ChannelId::Slack => "--bot-token --app-token",
+        ChannelId::WhatsAppBusiness => "--token --phone-id --verify-token --app-secret",
+        ChannelId::WhatsAppBaileys => "--url --token --allowed-sender [--allowed-rooms-csv]",
+        ChannelId::Keet => "--url --token --server (topic) --allowed-sender",
+        ChannelId::Discord => "--token",
+        ChannelId::Signal => "--url --phone",
+        ChannelId::Line => "--token  [--password]",
+        ChannelId::Irc => "--server --nick --allowed-sender  [--password --channels-csv]",
+        ChannelId::IMessageBlueBubbles => {
+            "--url --password --allowed-sender [--channels-csv (chat GUIDs)]"
+        }
+        ChannelId::Mattermost => "--url --token --allowed-sender",
+        ChannelId::GoogleChat => "--url --server --allowed-sender",
+        ChannelId::Matrix => {
             "--url (homeserver) --nick (user_id) [--password | --token (access_token)] [--allowed-sender] [--allowed-rooms-csv] [--allow-plaintext]"
         }
-        "twitch" => "--nick --token --channels-csv",
-        "nostr" => "--token (nsec1… key or 64-char hex) --channels-csv (relay wss:// URLs csv)",
-        _ => "(unknown channel)",
+        ChannelId::Twitch => "--nick --token --channels-csv",
+        ChannelId::Nostr => {
+            "--token (nsec1… key or 64-char hex) --channels-csv (relay wss:// URLs csv) --allowed-sender (64-char hex pubkey)"
+        }
     }
 }
 
@@ -1264,10 +1612,11 @@ fn required_flags_for(channel: &str) -> &'static str {
 /// credentials.yaml (token) and freedom.yaml (exact sender ID); that pair uses
 /// one locked rollback-safe transaction. Other channels remain single-file.
 ///
-/// **Non-interactive path** (GUI / scripting): when `flags` has at least one
+/// **Legacy non-interactive path** (scripting): when `flags` has at least one
 /// field set, `ChannelAddFields` is built directly from the flags and stdin is
-/// never read.  If `flags` is empty AND stdin is not a TTY, the command bails
-/// with a message listing the required flags for that channel.
+/// never read. If `flags` is empty AND stdin is not a TTY, the command bails
+/// with a message listing the required flags for that channel. The GUI uses
+/// `channel set-credentials` and its bounded private-stdin envelope.
 ///
 /// **Interactive path**: when no flags are set and stdin is a TTY the existing
 /// `prompt_channel_fields` flow runs unchanged.
@@ -1280,6 +1629,201 @@ pub async fn run_add(channel: &str, flags: &ChannelAddFlags, output: &OutputForm
     run_add_at(&FreedomConfig::default_neoth_home(), channel, flags, output).await
 }
 
+/// A validated, live-testable channel mutation that has not touched durable
+/// state. The expected fingerprints bind the eventual commit to the exact
+/// config and credential snapshots from which this candidate was derived.
+/// Deliberately no `Debug`: the staged fields and credentials contain secrets.
+pub(crate) struct PreparedChannelAdd {
+    channel_id: ChannelId,
+    fields: ChannelAddFields,
+    candidate_config: FreedomConfig,
+    candidate_credentials: Credentials,
+    expected_config: [u8; 32],
+    expected_credentials: [u8; 32],
+    expected_keychain: Option<[u8; 32]>,
+}
+
+impl PreparedChannelAdd {
+    pub(crate) fn channel_id(&self) -> ChannelId {
+        self.channel_id
+    }
+}
+
+fn config_fingerprint(config: &FreedomConfig) -> Result<[u8; 32]> {
+    use sha2::{Digest as _, Sha256};
+
+    Ok(Sha256::digest(config.public_yaml()?.as_bytes()).into())
+}
+
+fn credentials_fingerprint(credentials: &Credentials) -> Result<[u8; 32]> {
+    use sha2::{Digest as _, Sha256};
+
+    let body = Zeroizing::new(
+        serde_yaml::to_string(credentials).context("serialize credential snapshot for CAS")?,
+    );
+    Ok(Sha256::digest(body.as_bytes()).into())
+}
+
+fn keychain_fingerprint(store: &dyn crate::config::keychain::SecretStore) -> Result<[u8; 32]> {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    for &key in crate::config::keychain::SECRET_FIELD_KEYS {
+        digest.update((key.len() as u64).to_le_bytes());
+        digest.update(key.as_bytes());
+        let mut value = store
+            .get(key)
+            .with_context(|| format!("read OS keychain entry `{key}` for channel CAS"))?;
+        if value.is_none() && key == "keet_bridge_bearer_token" {
+            value = store
+                .get("pears_bearer_token")
+                .context("read legacy OS keychain Keet bearer for channel CAS")?;
+        }
+        match value {
+            Some(value) => {
+                digest.update([1]);
+                digest.update((value.expose().len() as u64).to_le_bytes());
+                digest.update(value.expose().as_bytes());
+            }
+            None => digest.update([0]),
+        }
+    }
+    Ok(digest.finalize().into())
+}
+
+fn collect_channel_add_fields(
+    channel_id: ChannelId,
+    flags: &ChannelAddFlags,
+) -> Result<ChannelAddFields> {
+    let chan = channel_id.as_str();
+    if flags.any_set() {
+        return Ok(flags.clone().into_fields());
+    }
+
+    let is_tty = {
+        #[cfg(feature = "wizard")]
+        {
+            use std::io::IsTerminal;
+            std::io::stdin().is_terminal()
+        }
+        #[cfg(not(feature = "wizard"))]
+        {
+            false
+        }
+    };
+
+    if is_tty {
+        prompt_channel_fields(channel_id)
+    } else {
+        anyhow::bail!(
+            "non-interactive stdin with no flags supplied for channel `{chan}`.\n\
+             Pass the required flags: neoth channel add {chan} {required}",
+            required = required_flags_for(channel_id)
+        )
+    }
+}
+
+fn prepare_channel_add_with_fields_at(
+    home: &std::path::Path,
+    channel_id: ChannelId,
+    fields: ChannelAddFields,
+) -> Result<PreparedChannelAdd> {
+    let config_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let config = FreedomConfig::load_from_path(&config_path)
+        .with_context(|| format!("load config at {}", config_path.display()))?;
+    let raw_credentials = Credentials::load_or_default(&credentials_path)
+        .with_context(|| format!("load credentials at {}", credentials_path.display()))?;
+    let effective_credentials =
+        Credentials::load_effective(&credentials_path, config.secrets_backend).with_context(
+            || {
+                format!(
+                    "load effective credentials at {} for candidate verification",
+                    credentials_path.display()
+                )
+            },
+        )?;
+
+    let expected_config = config_fingerprint(&config)?;
+    let expected_credentials = credentials_fingerprint(&raw_credentials)?;
+    let expected_keychain = if config.secrets_backend == crate::config::SecretsBackend::Keychain {
+        let store = crate::config::keychain::open_store()
+            .context("open OS keychain for channel candidate CAS snapshot")?;
+        Some(keychain_fingerprint(store.as_ref())?)
+    } else {
+        None
+    };
+    let candidate_credentials =
+        stage_channel_add_for_id(channel_id, &fields, effective_credentials)?;
+    let mut candidate_config = config;
+    if channel_id == ChannelId::Telegram {
+        // Candidate verification must never fall back to a still-working
+        // legacy inline token. The staged credential is the only token under
+        // test; commit remains separate and CAS-bound.
+        candidate_config.telegram_token = None;
+        candidate_config.telegram_user_id = fields.telegram_user_id;
+    }
+
+    Ok(PreparedChannelAdd {
+        channel_id,
+        fields,
+        candidate_config,
+        candidate_credentials,
+        expected_config,
+        expected_credentials,
+        expected_keychain,
+    })
+}
+
+/// Collect and validate a slash-channel candidate without writing either
+/// freedom.yaml or credentials.yaml.
+pub(crate) async fn prepare_channel_add_at(
+    home: &std::path::Path,
+    channel: &str,
+    flags: &ChannelAddFlags,
+) -> Result<PreparedChannelAdd> {
+    let channel_id = resolve_operator_channel(channel)?;
+    let fields = collect_channel_add_fields(channel_id, flags)?;
+    prepare_channel_add_with_fields_at(home, channel_id, fields)
+}
+
+pub(crate) async fn test_prepared_channel(
+    prepared: &PreparedChannelAdd,
+) -> Result<ChannelTestResult> {
+    test_channel_candidate_for_id(
+        prepared.channel_id,
+        &prepared.candidate_config,
+        &prepared.candidate_credentials,
+    )
+    .await
+}
+
+/// Commit a successfully tested candidate iff neither input snapshot changed
+/// in the meantime. The dual-file transaction supplies a single lock order for
+/// every channel, not only Telegram, so a reconfigure cannot clobber a newer
+/// operator mutation after its probe finishes.
+pub(crate) fn commit_prepared_channel_add_at(
+    home: &std::path::Path,
+    prepared: PreparedChannelAdd,
+) -> Result<()> {
+    persist_channel_replacement_at(
+        home,
+        prepared.channel_id,
+        &prepared.fields,
+        Some(ChannelStateFingerprint {
+            config: prepared.expected_config,
+            credentials: prepared.expected_credentials,
+            keychain: prepared.expected_keychain,
+        }),
+    )
+    .with_context(|| {
+        format!(
+            "commit verified `{}` channel candidate",
+            prepared.channel_id.as_str()
+        )
+    })
+}
+
 /// Home-scoped channel credential mutation shared by CLI and action surfaces.
 /// Input collection happens before the locked, reload-under-lock RMW.
 pub(crate) async fn run_add_at(
@@ -1288,109 +1832,57 @@ pub(crate) async fn run_add_at(
     flags: &ChannelAddFlags,
     output: &OutputFormat,
 ) -> Result<()> {
-    let chan = channel.trim().to_ascii_lowercase();
+    let channel_id = resolve_operator_channel(channel)?;
+    // B17: collect ALL interactive input BEFORE entering the lock.
+    let fields = collect_channel_add_fields(channel_id, flags)?;
+
+    persist_channel_add_fields_at(home, channel_id, &fields, output)
+}
+
+/// Machine-facing GUI path. The bounded, strict JSON envelope is consumed from
+/// stdin so no credential can appear in the process command line. Persistence
+/// deliberately converges on the same locked transaction as legacy flags and
+/// interactive prompts.
+pub fn run_set_credentials(output: &OutputFormat) -> Result<()> {
+    run_set_credentials_from(
+        &FreedomConfig::default_neoth_home(),
+        std::io::stdin().lock(),
+        output,
+    )
+}
+
+fn run_set_credentials_from(
+    home: &std::path::Path,
+    reader: impl Read,
+    output: &OutputFormat,
+) -> Result<()> {
+    let request = read_channel_credential_request_from(reader)?;
+    persist_channel_add_fields_at(home, request.channel_id, &request.fields, output)
+}
+
+fn persist_channel_add_fields_at(
+    home: &std::path::Path,
+    channel_id: ChannelId,
+    fields: &ChannelAddFields,
+    output: &OutputFormat,
+) -> Result<()> {
+    let chan = channel_id.as_str();
     let path = home.join("credentials.yaml");
     let freedom_path = home.join("freedom.yaml");
+    persist_channel_replacement_at(home, channel_id, fields, None)?;
 
-    // Reject unknown channels BEFORE prompting (no point asking for a token we
-    // can't store) — let the staging validator produce the precise message.
-    // Uses a throwaway default base because the purpose is purely name validation
-    // (stage_channel_add always bails for unknown names regardless of base).
-    if !matches!(
-        chan.as_str(),
-        "telegram"
-            | "slack"
-            | "whatsapp"
-            | "whatsapp_business"
-            | "whatsapp_baileys"
-            | "keet"
-            | "discord"
-            | "signal"
-            | "line"
-            | "irc"
-            | "imessage"
-            | "imessage_bluebubbles"
-            | "bluebubbles"
-            | "mattermost"
-            | "gchat"
-            | "google_chat"
-            | "matrix"
-            | "twitch"
-            | "nostr"
-    ) {
-        stage_channel_add(&chan, &ChannelAddFields::default(), Credentials::default())?;
-        return Ok(()); // unreachable — the line above always errors for these
-    }
-
-    // B17: collect ALL interactive input BEFORE entering the lock.
-    // prompt_channel_fields / flag parsing must complete here; never hold
-    // CRED_LOCK or the OS file lock while waiting at a terminal prompt.
-    let fields = if flags.any_set() {
-        // Non-interactive: build fields directly from CLI flags.
-        flags.clone().into_fields()
-    } else {
-        // No flags supplied — decide between interactive prompt and hard bail.
-        let is_tty = {
-            #[cfg(feature = "wizard")]
-            {
-                use std::io::IsTerminal;
-                std::io::stdin().is_terminal()
-            }
-            #[cfg(not(feature = "wizard"))]
-            {
-                false
-            }
-        };
-
-        if is_tty {
-            prompt_channel_fields(&chan)?
-        } else {
-            anyhow::bail!(
-                "non-interactive stdin with no flags supplied for channel `{chan}`.\n\
-                 Pass the required flags: neoth channel add {chan} {flags}",
-                flags = required_flags_for(&chan)
-            );
-        }
-    };
-
-    if chan == "telegram" {
-        // Telegram's token and inbound sender policy are one logical adoption.
-        // The dual-file writer loads both strictly, commits each via atomic
-        // rename, and restores both snapshots if the second commit fails.
-        Credentials::update_with_freedom_at(&freedom_path, &path, |config, credentials| {
-            let updated = stage_channel_add(&chan, &fields, credentials.clone())?;
-            config.telegram_user_id = fields.telegram_user_id;
-            *credentials = updated;
-            Ok(())
-        })
-        .with_context(|| {
-            format!(
-                "update Telegram token + sender policy at {} and {}",
-                path.display(),
-                freedom_path.display()
-            )
-        })?;
+    if channel_id == ChannelId::Telegram {
         crate::cli::reload::request_reload_at(home).with_context(|| {
             "Telegram token and sender policy were stored, but the live-reload request failed; run `neoth reload` before trusting the active adapter"
         })?;
-    } else {
-        // B17 RMW: acquire cross-process lock, reload under lock, mutate, write atomically.
-        // If credentials.yaml exists but is corrupt the load inside update_at returns Err
-        // and update_at propagates without touching the file (STOP invariant).
-        Credentials::update_at(&path, |c| {
-            let updated = stage_channel_add(&chan, &fields, c.clone())?;
-            *c = updated;
-            Ok(())
-        })
-        .with_context(|| format!("update credentials at {}", path.display()))?;
     }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(&add_result_json(&chan))?);
+            println!("{}", serde_json::to_string_pretty(&add_result_json(chan))?);
         }
         OutputFormat::Table => {
-            if chan == "telegram" {
+            if channel_id == ChannelId::Telegram {
                 println!(
                     "✓ telegram credentials saved to {} and exact sender policy to {}",
                     path.display(),
@@ -1419,10 +1911,10 @@ fn add_result_json(channel: &str) -> serde_json::Value {
 
 /// Prompt for each field the channel needs. Prompts go to STDERR so stdout
 /// stays clean for `--output json` / piping.
-fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
+fn prompt_channel_fields(channel_id: ChannelId) -> Result<ChannelAddFields> {
     let mut f = ChannelAddFields::default();
-    match channel {
-        "telegram" => {
+    match channel_id {
+        ChannelId::Telegram => {
             f.token = Some(read_secret("Telegram bot token (from @BotFather)")?);
             let user_id = read_plain("Allowed Telegram user ID (numeric, from @userinfobot)")?;
             f.telegram_user_id = Some(
@@ -1432,11 +1924,11 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
                     .context("Telegram user ID must be a positive integer")?,
             );
         }
-        "slack" => {
+        ChannelId::Slack => {
             f.bot_token = Some(read_secret("Slack bot token (xoxb-…)")?);
             f.app_token = Some(read_secret("Slack app token (xapp-…, socket mode)")?);
         }
-        "whatsapp" | "whatsapp_business" => {
+        ChannelId::WhatsAppBusiness => {
             f.token = Some(read_secret("WhatsApp access token")?);
             f.phone_id = Some(read_plain(
                 "WhatsApp phone-number id (numeric, from Meta console)",
@@ -1444,7 +1936,7 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
             f.verify_token = Some(read_secret("WhatsApp webhook verification token")?);
             f.app_secret = Some(read_secret("WhatsApp Meta app secret")?);
         }
-        "whatsapp_baileys" => {
+        ChannelId::WhatsAppBaileys => {
             f.url = Some(read_plain(
                 "Baileys bridge URL (usually http://127.0.0.1:9120)",
             )?);
@@ -1456,7 +1948,7 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
                 "Allowed group JIDs, comma-separated (blank denies all groups)",
             )?);
         }
-        "keet" => {
+        ChannelId::Keet => {
             f.url = Some(read_plain(
                 "NEOTH Keet companion URL (usually http://127.0.0.1:9130)",
             )?);
@@ -1470,46 +1962,55 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
                 "Allowed 43-character Keet sender IDs from the companion, comma-separated",
             )?);
         }
-        "discord" => f.token = Some(read_secret("Discord bot token (developer portal)")?),
-        "signal" => {
+        ChannelId::Discord => f.token = Some(read_secret("Discord bot token (developer portal)")?),
+        ChannelId::Signal => {
             f.url = Some(read_plain(
                 "signal-cli daemon URL (e.g. http://127.0.0.1:8080)",
             )?);
             f.phone = Some(read_plain("Signal phone number (E.164, e.g. +4917…)")?);
         }
-        "line" => {
+        ChannelId::Line => {
             f.token = Some(read_secret("LINE channel access token")?);
             f.password = Some(read_secret(
                 "LINE channel secret (empty = push-only, no inbound webhook)",
             )?);
         }
-        "irc" => {
+        ChannelId::Irc => {
             f.server = Some(read_plain("IRC server host (e.g. irc.libera.chat)")?);
             f.nick = Some(read_plain("IRC bot nick")?);
             f.password = Some(read_secret("NickServ/bouncer password (empty = none)")?);
             f.channels_csv = Some(read_plain("Channels to join, csv (e.g. #neoth,#dev)")?);
+            f.allowed_sender = Some(read_plain(
+                "Allowed IRC services account (IRCv3 account-tag; required)",
+            )?);
         }
-        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+        ChannelId::IMessageBlueBubbles => {
             f.url = Some(read_plain(
                 "BlueBubbles server URL (e.g. http://192.168.1.5:1234)",
             )?);
             f.password = Some(read_secret("BlueBubbles server password")?);
+            f.allowed_sender = Some(read_plain("Allowed iMessage sender handle")?);
+            f.channels_csv = Some(read_plain(
+                "Allowed BlueBubbles chat GUIDs, comma-separated (blank = all chats from allowed sender)",
+            )?);
         }
-        "mattermost" => {
+        ChannelId::Mattermost => {
             f.url = Some(read_plain(
                 "Mattermost server URL (e.g. https://mm.example.com)",
             )?);
             f.token = Some(read_secret("Mattermost bot/personal-access token")?);
+            f.allowed_sender = Some(read_plain("Allowed Mattermost sender user ID")?);
         }
-        "gchat" | "google_chat" => {
+        ChannelId::GoogleChat => {
             f.url = Some(read_plain(
                 "Path to the GCP service-account JSON key (kept in place, only the path is stored)",
             )?);
             f.server = Some(read_plain(
                 "Pub/Sub subscription (projects/<p>/subscriptions/<s>)",
             )?);
+            f.allowed_sender = Some(read_plain("Allowed Google Chat sender (users/<id>)")?);
         }
-        "matrix" => {
+        ChannelId::Matrix => {
             f.url = Some(read_plain(
                 "Matrix homeserver URL (e.g. https://matrix.org)",
             )?);
@@ -1533,29 +2034,31 @@ fn prompt_channel_fields(channel: &str) -> Result<ChannelAddFields> {
             )?;
             f.allow_plaintext = plaintext.trim().eq_ignore_ascii_case("yes");
         }
-        "twitch" => {
+        ChannelId::Twitch => {
             f.nick = Some(read_plain("Twitch bot username")?);
             f.token = Some(read_secret("Twitch OAuth token (oauth:…)")?);
             f.channels_csv = Some(read_plain(
                 "Twitch channels to join, comma-separated (e.g. #mychannel)",
             )?);
         }
-        "nostr" => {
+        ChannelId::Nostr => {
             f.token = Some(read_secret(
                 "Nostr secret key (nsec1… bech32 or 64-char hex)",
             )?);
             f.channels_csv = Some(read_plain(
                 "Nostr relay URLs, comma-separated (e.g. wss://relay.damus.io)",
             )?);
+            f.allowed_sender = Some(read_plain(
+                "Allowed Nostr sender (exact 64-character hex public key)",
+            )?);
         }
-        _ => {}
     }
     Ok(f)
 }
 
 /// Read a SECRET field. No terminal echo on an interactive TTY (wizard build);
 /// plain line read when piped or built without the `wizard` feature.
-fn read_secret(prompt: &str) -> Result<String> {
+fn read_secret(prompt: &str) -> Result<SecretString> {
     #[cfg(feature = "wizard")]
     {
         use std::io::IsTerminal;
@@ -1563,10 +2066,11 @@ fn read_secret(prompt: &str) -> Result<String> {
             return dialoguer::Password::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt(prompt)
                 .interact()
+                .map(SecretString::from)
                 .context("read secret (hidden) input");
         }
     }
-    read_plain(prompt)
+    read_plain(prompt).map(SecretString::from)
 }
 
 /// Read a non-secret line from stdin (prompt to stderr).
@@ -1583,25 +2087,317 @@ fn read_plain(prompt: &str) -> Result<String> {
 
 // ── `neoth channel remove <channel>` ──────────────────────────────────────
 
+/// Secret-store keys owned by one channel. Non-secret routing/config fields
+/// remain in credentials.yaml and are cleared by [`stage_channel_remove_for_id`].
+/// The legacy Pears key is included so a Keet disconnect cannot resurrect an
+/// upgraded credential through the compatibility fallback.
+fn channel_keychain_field_keys(channel_id: ChannelId) -> &'static [&'static str] {
+    match channel_id {
+        ChannelId::Telegram => &["telegram_token"],
+        ChannelId::Slack => &["slack_bot_token", "slack_app_token"],
+        ChannelId::WhatsAppBusiness => &[
+            "whatsapp_token",
+            "whatsapp_verify_token",
+            "whatsapp_app_secret",
+        ],
+        ChannelId::WhatsAppBaileys => &["whatsapp_baileys_token"],
+        ChannelId::Keet => &[
+            "keet_topic",
+            "keet_seed_phrase",
+            "keet_bridge_bearer_token",
+            "pears_bearer_token",
+        ],
+        ChannelId::Discord => &["discord_bot_token"],
+        ChannelId::Signal | ChannelId::GoogleChat => &[],
+        ChannelId::Line => &["line_channel_access_token", "line_channel_secret"],
+        ChannelId::Irc => &["irc_password"],
+        ChannelId::IMessageBlueBubbles => &["bluebubbles_password"],
+        ChannelId::Mattermost => &["mattermost_token"],
+        ChannelId::Matrix => &["matrix_password", "matrix_access_token"],
+        ChannelId::Twitch => &["twitch_oauth_token"],
+        ChannelId::Nostr => &["nostr_secret_key"],
+    }
+}
+
+struct KeychainEntrySnapshot {
+    key: &'static str,
+    value: Option<SecretString>,
+}
+
+fn channel_keychain_value<'a>(credentials: &'a Credentials, key: &str) -> Option<&'a SecretString> {
+    match key {
+        "telegram_token" => credentials.telegram_token.as_ref(),
+        "slack_bot_token" => credentials.slack_bot_token.as_ref(),
+        "slack_app_token" => credentials.slack_app_token.as_ref(),
+        "whatsapp_token" => credentials.whatsapp_token.as_ref(),
+        "whatsapp_verify_token" => credentials.whatsapp_verify_token.as_ref(),
+        "whatsapp_app_secret" => credentials.whatsapp_app_secret.as_ref(),
+        "whatsapp_baileys_token" => credentials.whatsapp_baileys_token.as_ref(),
+        "keet_topic" => credentials.keet_topic.as_ref(),
+        "keet_seed_phrase" => credentials.keet_seed_phrase.as_ref(),
+        "keet_bridge_bearer_token" => credentials.keet_bridge_bearer_token.as_ref(),
+        "discord_bot_token" => credentials.discord_bot_token.as_ref(),
+        "line_channel_access_token" => credentials.line_channel_access_token.as_ref(),
+        "line_channel_secret" => credentials.line_channel_secret.as_ref(),
+        "irc_password" => credentials.irc_password.as_ref(),
+        "bluebubbles_password" => credentials.bluebubbles_password.as_ref(),
+        "mattermost_token" => credentials.mattermost_token.as_ref(),
+        "matrix_password" => credentials.matrix_password.as_ref(),
+        "matrix_access_token" => credentials.matrix_access_token.as_ref(),
+        "twitch_oauth_token" => credentials.twitch_oauth_token.as_ref(),
+        "nostr_secret_key" => credentials.nostr_secret_key.as_ref(),
+        // Compatibility-only lookup key: replacements always remove it so
+        // the canonical Keet entry is the sole source after reconfiguration.
+        "pears_bearer_token" => None,
+        _ => None,
+    }
+}
+
+fn clear_channel_keychain_values(channel_id: ChannelId, credentials: &mut Credentials) {
+    match channel_id {
+        ChannelId::Telegram => credentials.telegram_token = None,
+        ChannelId::Slack => {
+            credentials.slack_bot_token = None;
+            credentials.slack_app_token = None;
+        }
+        ChannelId::WhatsAppBusiness => {
+            credentials.whatsapp_token = None;
+            credentials.whatsapp_verify_token = None;
+            credentials.whatsapp_app_secret = None;
+        }
+        ChannelId::WhatsAppBaileys => credentials.whatsapp_baileys_token = None,
+        ChannelId::Keet => {
+            credentials.keet_topic = None;
+            credentials.keet_seed_phrase = None;
+            credentials.keet_bridge_bearer_token = None;
+        }
+        ChannelId::Discord => credentials.discord_bot_token = None,
+        ChannelId::Signal | ChannelId::GoogleChat => {}
+        ChannelId::Line => {
+            credentials.line_channel_access_token = None;
+            credentials.line_channel_secret = None;
+        }
+        ChannelId::Irc => credentials.irc_password = None,
+        ChannelId::IMessageBlueBubbles => credentials.bluebubbles_password = None,
+        ChannelId::Mattermost => credentials.mattermost_token = None,
+        ChannelId::Matrix => {
+            credentials.matrix_password = None;
+            credentials.matrix_access_token = None;
+        }
+        ChannelId::Twitch => credentials.twitch_oauth_token = None,
+        ChannelId::Nostr => credentials.nostr_secret_key = None,
+    }
+}
+
+fn restore_keychain_entries(
+    store: &dyn crate::config::keychain::SecretStore,
+    snapshots: &[KeychainEntrySnapshot],
+) -> Result<()> {
+    let mut failures = Vec::new();
+    for snapshot in snapshots {
+        let result = match &snapshot.value {
+            Some(value) => store.set(snapshot.key, value),
+            None => store.delete(snapshot.key),
+        };
+        if let Err(error) = result {
+            failures.push(format!("{}: {error}", snapshot.key));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!("restore OS keychain snapshot: {}", failures.join("; "))
+    }
+}
+
+/// Snapshot then revoke every keychain value for a channel. A partial delete
+/// is rolled back before returning, so callers either receive a complete
+/// snapshot for later transaction rollback or leave the store unchanged.
+fn revoke_keychain_entries(
+    store: &dyn crate::config::keychain::SecretStore,
+    channel_id: ChannelId,
+) -> Result<Vec<KeychainEntrySnapshot>> {
+    replace_keychain_entries(store, channel_id, None)
+}
+
+/// Replace the complete keychain-owned secret set for a channel. `None`
+/// revokes it; `Some` writes the staged replacement and deletes omitted
+/// optional values. Reads finish before the first mutation, and every failure
+/// restores the original snapshot.
+fn replace_keychain_entries(
+    store: &dyn crate::config::keychain::SecretStore,
+    channel_id: ChannelId,
+    replacement: Option<&Credentials>,
+) -> Result<Vec<KeychainEntrySnapshot>> {
+    let mut snapshots = Vec::new();
+    for &key in channel_keychain_field_keys(channel_id) {
+        snapshots.push(KeychainEntrySnapshot {
+            key,
+            value: store
+                .get(key)
+                .with_context(|| format!("read OS keychain entry `{key}` before revocation"))?,
+        });
+    }
+
+    for snapshot in &snapshots {
+        let replacement_value =
+            replacement.and_then(|credentials| channel_keychain_value(credentials, snapshot.key));
+        let mutation = match replacement_value {
+            Some(value) => store.set(snapshot.key, value),
+            None => store.delete(snapshot.key),
+        };
+        if let Err(mutation_error) = mutation {
+            let rollback = restore_keychain_entries(store, &snapshots);
+            return match rollback {
+                Ok(()) => Err(mutation_error).with_context(|| {
+                    format!(
+                        "replace OS keychain entry `{}`; keychain snapshot restored",
+                        snapshot.key
+                    )
+                }),
+                Err(rollback_error) => anyhow::bail!(
+                    "replace OS keychain entry `{}` failed: {mutation_error}; rollback also failed: {rollback_error}",
+                    snapshot.key
+                ),
+            };
+        }
+    }
+    Ok(snapshots)
+}
+
+/// Persist a complete channel replacement through the configured secret
+/// backend. File mode writes the staged secrets to credentials.yaml. Keychain
+/// mode replaces that channel's OS entries, removes its secret fields from the
+/// YAML payload, and restores the keychain snapshot if either durable file
+/// commit fails. Optional expected fingerprints turn the same primitive into a
+/// compare-and-swap commit for `/connect`.
+#[derive(Clone, Copy)]
+struct ChannelStateFingerprint {
+    config: [u8; 32],
+    credentials: [u8; 32],
+    keychain: Option<[u8; 32]>,
+}
+
+fn persist_channel_replacement_at(
+    home: &std::path::Path,
+    channel_id: ChannelId,
+    fields: &ChannelAddFields,
+    expected: Option<ChannelStateFingerprint>,
+) -> Result<()> {
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let initial_config = FreedomConfig::load_from_path(&freedom_path)
+        .with_context(|| format!("load config at {}", freedom_path.display()))?;
+    let initial_config_fingerprint = config_fingerprint(&initial_config)?;
+    let keychain_store =
+        if initial_config.secrets_backend == crate::config::SecretsBackend::Keychain {
+            Some(crate::config::keychain::open_store().with_context(|| {
+                format!(
+                    "open OS keychain before replacing `{}` credentials",
+                    channel_id.as_str()
+                )
+            })?)
+        } else {
+            None
+        };
+    let mut keychain_snapshot = None;
+    let mut apply = |config: &FreedomConfig, credentials: &mut Credentials| -> Result<()> {
+        if config_fingerprint(config)? != initial_config_fingerprint {
+            anyhow::bail!(
+                "channel config changed while `{}` credentials were being prepared; no state changed — retry",
+                channel_id.as_str()
+            );
+        }
+        if let Some(expected) = expected {
+            let keychain_matches = match (expected.keychain, keychain_store.as_deref()) {
+                (Some(expected), Some(store)) => keychain_fingerprint(store)? == expected,
+                (None, None) => true,
+                _ => false,
+            };
+            if config_fingerprint(config)? != expected.config
+                || credentials_fingerprint(credentials)? != expected.credentials
+                || !keychain_matches
+            {
+                anyhow::bail!(
+                    "channel state changed while `{}` was being verified; no candidate credentials were saved — retry /connect",
+                    channel_id.as_str()
+                );
+            }
+        }
+
+        let mut updated = stage_channel_add_for_id(channel_id, fields, credentials.clone())?;
+        if config.secrets_backend == crate::config::SecretsBackend::Keychain {
+            let store = keychain_store
+                .as_deref()
+                .context("keychain backend changed during channel replacement")?;
+            // All NEOTH channel writers hold the same credentials file lock
+            // across this fingerprint check and mutation. Only an external OS
+            // credential-store writer can race this point.
+            keychain_snapshot = Some(replace_keychain_entries(store, channel_id, Some(&updated))?);
+            clear_channel_keychain_values(channel_id, &mut updated);
+        }
+        *credentials = updated;
+        Ok(())
+    };
+
+    let update = if channel_id == ChannelId::Telegram {
+        Credentials::update_with_freedom_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| {
+                apply(config, credentials)?;
+                config.telegram_user_id = fields.telegram_user_id;
+                Ok(())
+            },
+        )
+    } else {
+        Credentials::update_with_freedom_read_at(
+            &freedom_path,
+            &credentials_path,
+            |config, credentials| apply(config, credentials),
+        )
+    }
+    .with_context(|| format!("atomically replace `{}` channel state", channel_id.as_str()));
+
+    if let Err(error) = update {
+        if let (Some(store), Some(snapshot)) = (keychain_store.as_deref(), &keychain_snapshot)
+            && let Err(rollback_error) = restore_keychain_entries(store, snapshot)
+        {
+            anyhow::bail!(
+                "{error}; durable channel commit failed and OS keychain rollback also failed: {rollback_error}"
+            );
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Clear `channel`'s credentials from `base`, returning the updated
 /// [`Credentials`] + whether anything was actually configured (so the caller
 /// can say "nothing to remove" rather than rewriting an unchanged file). PURE —
 /// only the named channel's fields are cleared; other channels are untouched.
 pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credentials, bool)> {
+    stage_channel_remove_for_id(resolve_operator_channel(channel)?, base)
+}
+
+fn stage_channel_remove_for_id(
+    channel_id: ChannelId,
+    base: Credentials,
+) -> Result<(Credentials, bool)> {
     let mut creds = base;
-    let removed = match channel.trim().to_ascii_lowercase().as_str() {
-        "telegram" => {
+    let removed = match channel_id {
+        ChannelId::Telegram => {
             let had = creds.telegram_token.is_some();
             creds.telegram_token = None;
             had
         }
-        "slack" => {
+        ChannelId::Slack => {
             let had = creds.slack_bot_token.is_some() || creds.slack_app_token.is_some();
             creds.slack_bot_token = None;
             creds.slack_app_token = None;
             had
         }
-        "whatsapp" | "whatsapp_business" => {
+        ChannelId::WhatsAppBusiness => {
             let had = creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some();
             creds.whatsapp_token = None;
             creds.whatsapp_phone_id = None;
@@ -1609,7 +2405,7 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.whatsapp_app_secret = None;
             had
         }
-        "whatsapp_baileys" => {
+        ChannelId::WhatsAppBaileys => {
             let had = creds.whatsapp_baileys_url.is_some()
                 || creds.whatsapp_baileys_token.is_some()
                 || creds.whatsapp_baileys_allowed_senders.is_some()
@@ -1620,7 +2416,7 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.whatsapp_baileys_allowed_groups = None;
             had
         }
-        "keet" => {
+        ChannelId::Keet => {
             let had = creds.keet_bridge_url.is_some()
                 || creds.keet_topic.is_some()
                 || creds.keet_allowed_senders.is_some()
@@ -1633,25 +2429,25 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.keet_bridge_bearer_token = None;
             had
         }
-        "discord" => {
+        ChannelId::Discord => {
             let had = creds.discord_bot_token.is_some();
             creds.discord_bot_token = None;
             had
         }
-        "signal" => {
+        ChannelId::Signal => {
             let had = creds.signal_cli_url.is_some() || creds.signal_phone_number.is_some();
             creds.signal_cli_url = None;
             creds.signal_phone_number = None;
             had
         }
-        "line" => {
+        ChannelId::Line => {
             let had = creds.line_channel_access_token.is_some();
             creds.line_channel_access_token = None;
             creds.line_channel_secret = None;
             creds.line_webhook_port = None;
             had
         }
-        "irc" => {
+        ChannelId::Irc => {
             let had = creds.irc_server.is_some() || creds.irc_nick.is_some();
             creds.irc_server = None;
             creds.irc_port = None;
@@ -1663,7 +2459,7 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.irc_allowed_account = None;
             had
         }
-        "imessage" | "imessage_bluebubbles" | "bluebubbles" => {
+        ChannelId::IMessageBlueBubbles => {
             let had = creds.bluebubbles_url.is_some() || creds.bluebubbles_password.is_some();
             creds.bluebubbles_url = None;
             creds.bluebubbles_password = None;
@@ -1671,14 +2467,14 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.imessage_allowed_sender = None;
             had
         }
-        "mattermost" => {
+        ChannelId::Mattermost => {
             let had = creds.mattermost_url.is_some() || creds.mattermost_token.is_some();
             creds.mattermost_url = None;
             creds.mattermost_token = None;
             creds.mattermost_allowed_user_id = None;
             had
         }
-        "gchat" | "google_chat" => {
+        ChannelId::GoogleChat => {
             let had =
                 creds.gchat_service_account_json.is_some() || creds.gchat_subscription.is_some();
             creds.gchat_service_account_json = None;
@@ -1686,7 +2482,7 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.gchat_allowed_sender = None;
             had
         }
-        "matrix" => {
+        ChannelId::Matrix => {
             let had = creds.matrix_homeserver.is_some()
                 || creds.matrix_user_id.is_some()
                 || creds.matrix_password.is_some()
@@ -1704,25 +2500,20 @@ pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credent
             creds.matrix_require_encryption = None;
             had
         }
-        "twitch" => {
+        ChannelId::Twitch => {
             let had = creds.twitch_username.is_some();
             creds.twitch_username = None;
             creds.twitch_oauth_token = None;
             creds.twitch_channels = None;
             had
         }
-        "nostr" => {
+        ChannelId::Nostr => {
             let had = creds.nostr_secret_key.is_some();
             creds.nostr_secret_key = None;
             creds.nostr_relays = None;
             creds.nostr_allowed_pubkey = None;
             had
         }
-        other => anyhow::bail!(
-            "unknown channel `{other}`. Removable: telegram, slack, whatsapp, keet, discord, \
-             whatsapp_baileys, signal, line, irc, imessage, mattermost, gchat, matrix, twitch, nostr. \
-             `neoth channel list` shows configured state."
-        ),
     };
     Ok((creds, removed))
 }
@@ -1743,38 +2534,89 @@ pub(crate) fn run_remove_at(
     channel: &str,
     output: &OutputFormat,
 ) -> Result<()> {
-    let chan = channel.trim().to_ascii_lowercase();
+    let channel_id = resolve_operator_channel(channel)?;
+    let chan = channel_id.as_str();
     let path = home.join("credentials.yaml");
     let freedom_path = home.join("freedom.yaml");
+    let initial_config = FreedomConfig::load_from_path(&freedom_path).with_context(|| {
+        format!(
+            "load config at {} before channel removal",
+            freedom_path.display()
+        )
+    })?;
+    let expected_config = config_fingerprint(&initial_config)?;
+    let keychain_store = if initial_config.secrets_backend
+        == crate::config::SecretsBackend::Keychain
+    {
+        Some(crate::config::keychain::open_store().with_context(|| {
+            format!(
+                "open OS keychain before removing `{chan}`; refusing to leave effective credentials behind"
+            )
+        })?)
+    } else {
+        None
+    };
     let mut was_removed = false;
-    if chan == "telegram" {
+    let mut keychain_snapshot = None;
+    let mut remove_credentials = |config: &FreedomConfig,
+                                  credentials: &mut Credentials|
+     -> Result<bool> {
+        let mut removed = false;
+        if config_fingerprint(config)? != expected_config {
+            anyhow::bail!(
+                "channel config changed while `{chan}` disconnect was starting; no state changed — retry /disconnect"
+            );
+        }
+        if config.secrets_backend == crate::config::SecretsBackend::Keychain {
+            let store = keychain_store.as_deref().context(
+                "secrets backend changed to keychain during channel removal; no state changed",
+            )?;
+            let snapshot = revoke_keychain_entries(store, channel_id)?;
+            let keychain_removed = snapshot.iter().any(|entry| entry.value.is_some());
+            keychain_snapshot = Some(snapshot);
+            removed |= keychain_removed;
+        }
+        let (updated, token_removed) =
+            stage_channel_remove_for_id(channel_id, credentials.clone())?;
+        *credentials = updated;
+        Ok(removed || token_removed)
+    };
+    let update = if channel_id == ChannelId::Telegram {
         Credentials::update_with_freedom_at(&freedom_path, &path, |config, credentials| {
-            let (updated, token_removed) = stage_channel_remove(&chan, credentials.clone())?;
+            let token_removed = remove_credentials(config, credentials)?;
             let policy_removed = config.telegram_user_id.take().is_some();
-            *credentials = updated;
-            was_removed = token_removed || policy_removed;
+            was_removed |= token_removed || policy_removed;
             Ok(())
         })
-        .with_context(|| {
-            format!(
-                "remove Telegram token + sender policy at {} and {}",
-                path.display(),
-                freedom_path.display()
-            )
-        })?;
+    } else {
+        Credentials::update_with_freedom_read_at(&freedom_path, &path, |config, credentials| {
+            was_removed |= remove_credentials(config, credentials)?;
+            Ok(())
+        })
+    }
+    .with_context(|| {
+        format!(
+            "remove `{chan}` file, policy, and effective keychain state at {} and {}",
+            path.display(),
+            freedom_path.display()
+        )
+    });
+
+    if let Err(error) = update {
+        if let (Some(store), Some(snapshot)) = (keychain_store.as_deref(), &keychain_snapshot)
+            && let Err(rollback_error) = restore_keychain_entries(store, snapshot)
+        {
+            anyhow::bail!(
+                "{error}; durable file transaction failed and OS keychain rollback also failed: {rollback_error}"
+            );
+        }
+        return Err(error);
+    }
+
+    if channel_id == ChannelId::Telegram {
         crate::cli::reload::request_reload_at(home).with_context(|| {
             "Telegram token and sender policy were removed, but the live-reload request failed; run `neoth reload` before trusting the active adapter"
         })?;
-    } else {
-        // B17 RMW: collect the removal outcome via a captured mutable bool;
-        // the update_at closure holds the lock for the whole load→mutate→write cycle.
-        Credentials::update_at(&path, |c| {
-            let (updated, removed) = stage_channel_remove(&chan, c.clone())?;
-            *c = updated;
-            was_removed = removed;
-            Ok(())
-        })
-        .with_context(|| format!("update credentials at {}", path.display()))?;
     }
     let removed = was_removed;
 
@@ -1789,7 +2631,7 @@ pub(crate) fn run_remove_at(
             );
         }
         OutputFormat::Table if removed => {
-            if chan == "telegram" {
+            if channel_id == ChannelId::Telegram {
                 println!(
                     "✓ removed telegram credentials from {} and sender policy from {}",
                     path.display(),
@@ -1810,10 +2652,7 @@ pub(crate) fn run_remove_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    // ALL_CHANNELS is only referenced by the coverage/parity tests below, so it
-    // lives in the test-module scope (a module-level import would be unused in
-    // the non-test lib build → `-D warnings`).
-    use crate::channels::probe::ALL_CHANNELS;
+    use crate::channels::registry::channel_ids;
 
     const TEST_KEET_TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const TEST_KEET_SENDER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -1828,8 +2667,8 @@ mod tests {
         let rows = channel_statuses(&FreedomConfig::default(), &creds_empty());
         assert_eq!(
             rows.len(),
-            ALL_CHANNELS.len(),
-            "must cover all 15 channel kinds"
+            channel_descriptors().len(),
+            "must cover every descriptor-backed channel kind"
         );
         assert_eq!(configured_count(&rows), 0);
         // Every off channel has configured=false (all NotConfigured).
@@ -2142,7 +2981,7 @@ mod tests {
     fn stage_add_telegram_validates_and_stores_token() {
         let f = ChannelAddFields {
             telegram_user_id: Some(123_456_789),
-            token: Some(valid_tg_token()),
+            token: Some(SecretString::from(valid_tg_token())),
             ..Default::default()
         };
         let c = stage_channel_add("telegram", &f, Credentials::default()).unwrap();
@@ -2170,7 +3009,7 @@ mod tests {
 
         let zero_sender = ChannelAddFields {
             telegram_user_id: Some(0),
-            token: Some(valid_tg_token()),
+            token: Some(SecretString::from(valid_tg_token())),
             ..Default::default()
         };
         let error =
@@ -2415,6 +3254,7 @@ mod tests {
             nick: Some("neoth".into()),
             password: Some("".into()),
             channels_csv: Some("#neoth,#dev".into()),
+            allowed_sender: Some("alex-account".into()),
             ..Default::default()
         };
         let c = stage_channel_add("irc", &good, Credentials::default()).unwrap();
@@ -2430,6 +3270,7 @@ mod tests {
             let f = ChannelAddFields {
                 url: Some("http://192.168.1.5:1234".into()),
                 password: Some("bb-pass".into()),
+                allowed_sender: Some("alex@example.com".into()),
                 ..Default::default()
             };
             let c = stage_channel_add(alias, &f, Credentials::default()).unwrap();
@@ -2438,6 +3279,7 @@ mod tests {
         let f = ChannelAddFields {
             url: Some("https://mm.example.com/".into()),
             token: Some("mm-token".into()),
+            allowed_sender: Some("mattermost-user-id".into()),
             ..Default::default()
         };
         let c = stage_channel_add("mattermost", &f, Credentials::default()).unwrap();
@@ -2451,6 +3293,7 @@ mod tests {
         let key = dir.path().join("sa.json");
         std::fs::write(&key, "{}").unwrap();
         let key_str = key.display().to_string();
+        let canonical_key = std::fs::canonicalize(&key).unwrap().display().to_string();
         // missing key file → err
         let f = ChannelAddFields {
             url: Some(dir.path().join("nope.json").display().to_string()),
@@ -2470,12 +3313,13 @@ mod tests {
             let f = ChannelAddFields {
                 url: Some(key_str.clone()),
                 server: Some("projects/p/subscriptions/s".into()),
+                allowed_sender: Some("users/123".into()),
                 ..Default::default()
             };
             let c = stage_channel_add(alias, &f, Credentials::default()).unwrap();
             assert_eq!(
                 c.gchat_service_account_json.as_deref(),
-                Some(key_str.as_str())
+                Some(canonical_key.as_str())
             );
             assert_eq!(
                 c.gchat_subscription.as_deref(),
@@ -2631,7 +3475,7 @@ mod tests {
         let mut cfg = FreedomConfig::default();
         cfg.telegram_token = Some(SecretString::from("t"));
         let rows = channel_statuses(&cfg, &creds_empty());
-        let total = ALL_CHANNELS.len();
+        let total = channel_descriptors().len();
         let table = render(&rows, &OutputFormat::Table).unwrap();
         assert!(table.contains("error"));
         assert!(table.contains("not_configured"));
@@ -2696,22 +3540,259 @@ mod tests {
         };
         let f = flags.into_fields();
         assert_eq!(f.telegram_user_id, Some(42));
-        assert_eq!(f.token.as_deref(), Some("t"));
-        assert_eq!(f.bot_token.as_deref(), Some("b"));
-        assert_eq!(f.app_token.as_deref(), Some("a"));
+        assert_eq!(f.token.as_ref().map(SecretString::expose), Some("t"));
+        assert_eq!(f.bot_token.as_ref().map(SecretString::expose), Some("b"));
+        assert_eq!(f.app_token.as_ref().map(SecretString::expose), Some("a"));
         assert_eq!(f.phone_id.as_deref(), Some("p"));
-        assert_eq!(f.verify_token.as_deref(), Some("v"));
-        assert_eq!(f.app_secret.as_deref(), Some("as"));
-        assert_eq!(f.seed.as_deref(), Some("s"));
+        assert_eq!(f.verify_token.as_ref().map(SecretString::expose), Some("v"));
+        assert_eq!(f.app_secret.as_ref().map(SecretString::expose), Some("as"));
+        assert_eq!(f.seed.as_ref().map(SecretString::expose), Some("s"));
         assert_eq!(f.url.as_deref(), Some("u"));
         assert_eq!(f.phone.as_deref(), Some("ph"));
         assert_eq!(f.server.as_deref(), Some("sv"));
         assert_eq!(f.nick.as_deref(), Some("n"));
-        assert_eq!(f.password.as_deref(), Some("pw"));
+        assert_eq!(f.password.as_ref().map(SecretString::expose), Some("pw"));
         assert_eq!(f.channels_csv.as_deref(), Some("c"));
         assert_eq!(f.allowed_sender.as_deref(), Some("@alice:example.org"));
         assert_eq!(f.allowed_rooms_csv.as_deref(), Some("!safe:example.org"));
         assert!(f.allow_plaintext);
+    }
+
+    #[test]
+    fn private_credential_request_accepts_canonical_scoped_fields() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "matrix",
+            "fields": {
+                "url": "https://matrix.example.org",
+                "nick": "@neoth:example.org",
+                "token": "MATRIX_PRIVATE_TOKEN_SENTINEL",
+                "allow_plaintext": false
+            }
+        }))
+        .unwrap();
+
+        let request = parse_channel_credential_request(&body).unwrap();
+        assert_eq!(request.channel_id, ChannelId::Matrix);
+        assert_eq!(
+            request.fields.token.as_ref().map(SecretString::expose),
+            Some("MATRIX_PRIVATE_TOKEN_SENTINEL")
+        );
+        assert!(!request.fields.allow_plaintext);
+    }
+
+    #[test]
+    fn private_credential_request_rejects_alias_version_and_wrong_scope() {
+        let alias = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "whatsapp",
+            "fields": { "token": "ALIAS_SECRET_SENTINEL" }
+        }))
+        .unwrap();
+        let alias_error = parse_channel_credential_request(&alias)
+            .err()
+            .expect("alias must be rejected")
+            .to_string();
+        assert!(alias_error.contains("canonical channel id `whatsapp_business`"));
+        assert!(!alias_error.contains("ALIAS_SECRET_SENTINEL"));
+
+        let future = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION + 1,
+            "channel": "discord",
+            "fields": { "token": "VERSION_SECRET_SENTINEL" }
+        }))
+        .unwrap();
+        let version_error = parse_channel_credential_request(&future)
+            .err()
+            .expect("future schema must be rejected")
+            .to_string();
+        assert!(version_error.contains("unsupported channel credential schema"));
+        assert!(!version_error.contains("VERSION_SECRET_SENTINEL"));
+
+        let wrong_scope = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "slack",
+            "fields": { "token": "WRONG_SCOPE_SECRET_SENTINEL" }
+        }))
+        .unwrap();
+        let scope_error = parse_channel_credential_request(&wrong_scope)
+            .err()
+            .expect("cross-channel field must be rejected")
+            .to_string();
+        assert!(scope_error.contains("not valid for `slack`: token"));
+        assert!(!scope_error.contains("WRONG_SCOPE_SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn private_credential_request_denies_unknown_fields_without_echoing_values() {
+        let body = br#"{
+            "schema_version": 1,
+            "channel": "discord",
+            "fields": {
+                "token": "KNOWN_SECRET_SENTINEL",
+                "future_secret": "UNKNOWN_SECRET_SENTINEL"
+            }
+        }"#;
+        let error = parse_channel_credential_request(body)
+            .err()
+            .expect("unknown field must be rejected");
+        let error = format!("{error:#}");
+        assert!(error.contains("unknown field `future_secret`"));
+        assert!(!error.contains("KNOWN_SECRET_SENTINEL"));
+        assert!(!error.contains("UNKNOWN_SECRET_SENTINEL"));
+
+        let unknown_channel = br#"{
+            "schema_version": 1,
+            "channel": "CHANNEL_VALUE_SECRET_SENTINEL",
+            "fields": { "token": "TOKEN_VALUE_SECRET_SENTINEL" }
+        }"#;
+        let error = parse_channel_credential_request(unknown_channel)
+            .err()
+            .expect("unknown channel must be rejected")
+            .to_string();
+        assert_eq!(error, "unknown canonical channel id in credential request");
+        assert!(!error.contains("CHANNEL_VALUE_SECRET_SENTINEL"));
+        assert!(!error.contains("TOKEN_VALUE_SECRET_SENTINEL"));
+    }
+
+    #[test]
+    fn private_credential_request_is_bounded_and_uses_shared_persistence() {
+        let oversized = vec![b'x'; MAX_CHANNEL_CREDENTIAL_STDIN_BYTES as usize + 1];
+        let error = read_channel_credential_request_from(std::io::Cursor::new(oversized))
+            .err()
+            .expect("oversized body must be rejected")
+            .to_string();
+        assert!(error.contains("exceeds 8192 bytes"));
+
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let body = serde_json::to_vec(&serde_json::json!({
+            "schema_version": CHANNEL_CREDENTIAL_SCHEMA_VERSION,
+            "channel": "slack",
+            "fields": {
+                "bot_token": "xoxb-private-stdin",
+                "app_token": "xapp-private-stdin"
+            }
+        }))
+        .unwrap();
+        run_set_credentials_from(home.path(), std::io::Cursor::new(body), &OutputFormat::Json)
+            .unwrap();
+        let persisted =
+            Credentials::load_or_default(&home.path().join("credentials.yaml")).unwrap();
+        assert_eq!(
+            persisted.slack_bot_token.as_ref().unwrap().expose(),
+            "xoxb-private-stdin"
+        );
+        assert_eq!(
+            persisted.slack_app_token.as_ref().unwrap().expose(),
+            "xapp-private-stdin"
+        );
+    }
+
+    #[test]
+    fn prepared_channel_is_non_mutating_and_commit_rejects_a_stale_snapshot() {
+        let home = tempfile::tempdir().unwrap();
+        write_default_freedom(home.path());
+        let credentials_path = home.path().join("credentials.yaml");
+        let original = "discord_bot_token: existing-discord-token\n";
+        std::fs::write(&credentials_path, original).unwrap();
+        let prepared = prepare_channel_add_with_fields_at(
+            home.path(),
+            ChannelId::Slack,
+            ChannelAddFields {
+                bot_token: Some("xoxb-candidate".into()),
+                app_token: Some("xapp-candidate".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&credentials_path).unwrap(),
+            original
+        );
+
+        Credentials::update_at(&credentials_path, |credentials| {
+            credentials.provider_key = Some(SecretString::from("concurrent-provider-key"));
+            Ok(())
+        })
+        .unwrap();
+        let concurrent = std::fs::read(&credentials_path).unwrap();
+        let error = commit_prepared_channel_add_at(home.path(), prepared).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("changed while `slack` was being verified"));
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), concurrent);
+        let current = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(current.slack_bot_token.is_none());
+        assert!(current.slack_app_token.is_none());
+    }
+
+    #[test]
+    fn channel_reconfigure_replaces_omitted_optional_values() {
+        let mut existing = Credentials::default();
+        existing.irc_server = Some("old.example".into());
+        existing.irc_nick = Some("old-bot".into());
+        existing.irc_password = Some(SecretString::from("old-password"));
+        existing.irc_channels = Some("#old".into());
+        existing.irc_allowed_nick = Some("old-nick".into());
+        existing.irc_allowed_account = Some("old-account".into());
+
+        let replaced = stage_channel_add(
+            "irc",
+            &ChannelAddFields {
+                server: Some("irc.example".into()),
+                nick: Some("new-bot".into()),
+                allowed_sender: Some("new-account".into()),
+                ..Default::default()
+            },
+            existing,
+        )
+        .unwrap();
+        assert!(replaced.irc_password.is_none());
+        assert!(replaced.irc_channels.is_none());
+        assert!(replaced.irc_allowed_nick.is_none());
+        assert_eq!(replaced.irc_allowed_account.as_deref(), Some("new-account"));
+    }
+
+    #[test]
+    fn keychain_channel_replace_and_rollback_cover_all_owned_entries() {
+        use crate::config::keychain::SecretStore as _;
+
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        store
+            .set("slack_bot_token", &SecretString::from("old-bot"))
+            .unwrap();
+        store
+            .set("slack_app_token", &SecretString::from("old-app"))
+            .unwrap();
+        let replacement = Credentials {
+            slack_bot_token: Some(SecretString::from("new-bot")),
+            slack_app_token: Some(SecretString::from("new-app")),
+            ..Default::default()
+        };
+        let snapshot =
+            replace_keychain_entries(&store, ChannelId::Slack, Some(&replacement)).unwrap();
+        assert_eq!(
+            store.get("slack_bot_token").unwrap().unwrap().expose(),
+            "new-bot"
+        );
+        assert_eq!(
+            store.get("slack_app_token").unwrap().unwrap().expose(),
+            "new-app"
+        );
+
+        restore_keychain_entries(&store, &snapshot).unwrap();
+        assert_eq!(
+            store.get("slack_bot_token").unwrap().unwrap().expose(),
+            "old-bot"
+        );
+        assert_eq!(
+            store.get("slack_app_token").unwrap().unwrap().expose(),
+            "old-app"
+        );
+        assert!(
+            channel_keychain_field_keys(ChannelId::WhatsAppBaileys)
+                .contains(&"whatsapp_baileys_token")
+        );
     }
 
     /// Non-interactive add for telegram: flags → stage → write → credentials present.
@@ -2769,32 +3850,62 @@ mod tests {
     /// required_flags_for returns the right hint for every known channel.
     #[test]
     fn required_flags_for_covers_known_channels() {
-        let channels = [
-            "telegram",
-            "slack",
-            "whatsapp",
-            "whatsapp_business",
-            "keet",
-            "discord",
-            "signal",
-            "line",
-            "irc",
-            "imessage",
-            "imessage_bluebubbles",
-            "bluebubbles",
-            "mattermost",
-            "gchat",
-            "google_chat",
-            "matrix",
-            "twitch",
-            "nostr",
-        ];
-        for ch in channels {
-            let hint = required_flags_for(ch);
+        for channel_id in channel_ids() {
             assert!(
-                !hint.is_empty() && hint != "(unknown channel)",
-                "missing hint for channel `{ch}`"
+                !required_flags_for(channel_id).is_empty(),
+                "missing hint for channel `{}`",
+                channel_id.as_str()
             );
+        }
+    }
+
+    #[test]
+    fn every_operator_alias_is_canonical_across_staged_surfaces() {
+        let cfg = FreedomConfig::default();
+        let fields = ChannelAddFields::default();
+
+        for descriptor in channel_descriptors() {
+            let canonical = descriptor.id.as_str();
+            for alias in descriptor.aliases {
+                let resolved = resolve_channel_id(alias)
+                    .unwrap_or_else(|| panic!("registry alias `{alias}` must resolve"));
+                assert_eq!(resolved, descriptor.id, "wrong target for alias `{alias}`");
+                assert_eq!(
+                    required_flags_for(resolved),
+                    required_flags_for(descriptor.id),
+                    "required flags diverged for alias `{alias}`"
+                );
+                assert_eq!(
+                    plan_channel_test(alias, &cfg, &Credentials::default()),
+                    plan_channel_test(canonical, &cfg, &Credentials::default()),
+                    "test planning diverged for alias `{alias}`"
+                );
+                assert_eq!(
+                    crate::cli::connect::channel_details(alias),
+                    crate::cli::connect::channel_details(canonical),
+                    "connect on-ramp diverged for alias `{alias}`"
+                );
+
+                let alias_add = stage_channel_add(alias, &fields, Credentials::default())
+                    .map(|_| "ok".to_string())
+                    .unwrap_or_else(|error| error.to_string());
+                let canonical_add = stage_channel_add(canonical, &fields, Credentials::default())
+                    .map(|_| "ok".to_string())
+                    .unwrap_or_else(|error| error.to_string());
+                assert_eq!(
+                    alias_add, canonical_add,
+                    "add routing diverged for alias `{alias}`"
+                );
+
+                let (_, alias_removed) =
+                    stage_channel_remove(alias, Credentials::default()).unwrap();
+                let (_, canonical_removed) =
+                    stage_channel_remove(canonical, Credentials::default()).unwrap();
+                assert_eq!(
+                    alias_removed, canonical_removed,
+                    "remove routing diverged for alias `{alias}`"
+                );
+            }
         }
     }
 
@@ -2888,11 +3999,12 @@ mod tests {
             .await
             .unwrap_err();
 
+        let error = format!("{error:#}");
         assert!(
-            error
-                .to_string()
-                .contains("update Telegram token + sender policy")
+            error.contains("load config at"),
+            "unexpected error: {error}"
         );
+        assert!(error.contains("parse YAML"), "unexpected error: {error}");
         assert_eq!(std::fs::read(&freedom_path).unwrap(), malformed);
         assert_eq!(
             std::fs::read(&credentials_path).unwrap(),
@@ -2988,6 +4100,60 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), malformed);
     }
 
+    #[tokio::test]
+    async fn telegram_candidate_probe_prefers_staged_token_over_legacy_config_token() {
+        let mut config = FreedomConfig::default();
+        config.telegram_user_id = Some(123_456_789);
+        config.telegram_token = Some(SecretString::from("111111111:legacy-token"));
+        let credentials = Credentials {
+            telegram_token: Some(SecretString::from("222222222:candidate-token")),
+            ..Default::default()
+        };
+
+        let result = probe_telegram_candidate_with(
+            "telegram".to_string(),
+            &config,
+            &credentials,
+            |token, allowed_user_id| async move {
+                assert_eq!(token.expose(), "222222222:candidate-token");
+                assert_eq!(allowed_user_id, Some(123_456_789));
+                Ok::<_, crate::channels::ChannelError>("candidate_bot".to_string())
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, "ok");
+        assert!(result.detail.contains("candidate_bot"));
+    }
+
+    #[test]
+    fn removing_non_telegram_channel_keeps_freedom_bytes_exact() {
+        let home = tempfile::tempdir().unwrap();
+        let freedom_path = home.path().join("freedom.yaml");
+        let credentials_path = home.path().join("credentials.yaml");
+        let mut freedom = FreedomConfig::default().public_yaml().unwrap();
+        freedom.push_str("# operator formatting sentinel\n");
+        std::fs::write(&freedom_path, freedom.as_bytes()).unwrap();
+        Credentials {
+            discord_bot_token: Some(SecretString::from("discord-secret")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let before = std::fs::read(&freedom_path).unwrap();
+
+        run_remove_at(home.path(), "discord", &OutputFormat::Json).unwrap();
+
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), before);
+        assert!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .discord_bot_token
+                .is_none()
+        );
+    }
+
     #[test]
     fn run_add_invalid_utf8_is_err_and_file_unchanged() {
         let dir = tempfile::tempdir().unwrap();
@@ -3009,7 +4175,7 @@ mod tests {
         Credentials::update_at(&path, |c| {
             let fields = ChannelAddFields {
                 telegram_user_id: Some(123_456_789),
-                token: Some(valid_tg_token()),
+                token: Some(SecretString::from(valid_tg_token())),
                 ..Default::default()
             };
             let updated = stage_channel_add("telegram", &fields, c.clone())?;
@@ -3023,7 +4189,7 @@ mod tests {
 
     // ── B21 new tests ─────────────────────────────────────────────────────
 
-    /// channel_statuses must return exactly one row per ALL_CHANNELS entry, no
+    /// channel_statuses must return exactly one row per descriptor, no
     /// omissions and no duplicates — by construction the "add succeeds, list
     /// omits" bug becomes impossible.
     #[test]
@@ -3031,14 +4197,14 @@ mod tests {
         let rows = channel_statuses(&FreedomConfig::default(), &creds_empty());
         assert_eq!(
             rows.len(),
-            ALL_CHANNELS.len(),
-            "channel_statuses row count must equal ALL_CHANNELS"
+            channel_descriptors().len(),
+            "channel_statuses row count must equal the descriptor registry"
         );
-        for kind in &ALL_CHANNELS {
+        for kind in channel_ids() {
             let name = kind.as_str();
             assert!(
                 rows.iter().any(|r| r.name == name),
-                "channel `{name}` from ALL_CHANNELS is missing from channel_statuses output"
+                "channel `{name}` from the descriptor registry is missing from channel_statuses output"
             );
         }
         // No duplicates.
@@ -3123,13 +4289,13 @@ mod tests {
         c
     }
 
-    /// For every channel in ALL_CHANNELS, plan_channel_test with the canonical
+    /// For every channel descriptor, plan_channel_test with the canonical
     /// as_str() name must never return Unknown — only NotConfigured, a live plan,
     /// or a typed unavailable plan.
     #[test]
     fn no_unknown_test_plan_for_configured_channel() {
         let cfg = FreedomConfig::default();
-        for kind in &ALL_CHANNELS {
+        for kind in channel_ids() {
             let name = kind.as_str();
             let creds = min_creds_for_channel(name);
             let plan = plan_channel_test(name, &cfg, &creds);
@@ -3244,6 +4410,7 @@ mod tests {
         let mut creds2 = creds_empty();
         creds2.irc_server = Some("irc.libera.chat".into());
         creds2.irc_nick = Some("neoth".into());
+        creds2.irc_allowed_account = Some("operator-account".into());
         let rows2 = channel_statuses(&FreedomConfig::default(), &creds2);
         let i = rows2.iter().find(|r| r.name == "irc").unwrap();
         assert!(
@@ -3267,6 +4434,7 @@ mod tests {
         let mut creds4 = creds_empty();
         creds4.nostr_secret_key = Some(SecretString::from("nsec1test"));
         creds4.nostr_relays = Some("wss://relay.example.com".into());
+        creds4.nostr_allowed_pubkey = Some("22".repeat(32));
         let rows4 = channel_statuses(&FreedomConfig::default(), &creds4);
         let n = rows4.iter().find(|r| r.name == "nostr").unwrap();
         assert!(
@@ -3299,6 +4467,7 @@ mod tests {
             url: Some("https://matrix.org".into()),
             nick: Some("@bot:matrix.org".into()),
             password: Some("pw".into()),
+            allowed_sender: Some("@alice:matrix.org".into()),
             ..Default::default()
         };
         let c = stage_channel_add("matrix", &good_pw, Credentials::default()).unwrap();
@@ -3313,6 +4482,7 @@ mod tests {
             url: Some("https://matrix.org".into()),
             nick: Some("@bot:matrix.org".into()),
             token: Some("syt_abc".into()),
+            allowed_rooms_csv: Some("!safe:matrix.org".into()),
             ..Default::default()
         };
         let c2 = stage_channel_add("matrix", &good_tok, Credentials::default()).unwrap();
@@ -3404,8 +4574,9 @@ mod tests {
     #[test]
     fn nostr_add_uses_runtime_key_parser_and_secure_relay_validator() {
         let hex64 = ChannelAddFields {
-            token: Some("11".repeat(32)),
+            token: Some(SecretString::from("11".repeat(32))),
             channels_csv: Some("WSS://Relay.Example.com, wss://relay.example.com/room".into()),
+            allowed_sender: Some("22".repeat(32)),
             ..Default::default()
         };
         let c = stage_channel_add("nostr", &hex64, Credentials::default()).unwrap();
@@ -3428,7 +4599,7 @@ mod tests {
 
         for relay in ["ws://relay.example.com", "https://relay.example.com"] {
             let insecure = ChannelAddFields {
-                token: Some("11".repeat(32)),
+                token: Some(SecretString::from("11".repeat(32))),
                 channels_csv: Some(relay.into()),
                 ..Default::default()
             };
@@ -3437,7 +4608,7 @@ mod tests {
 
         // Missing relays → rejected.
         let no_relays = ChannelAddFields {
-            token: Some("11".repeat(32)),
+            token: Some(SecretString::from("11".repeat(32))),
             channels_csv: None,
             ..Default::default()
         };
@@ -3461,7 +4632,7 @@ mod tests {
     #[test]
     fn nostr_add_refuses_when_runtime_is_not_compiled() {
         let fields = ChannelAddFields {
-            token: Some("11".repeat(32)),
+            token: Some(SecretString::from("11".repeat(32))),
             channels_csv: Some("wss://relay.example.com".into()),
             ..Default::default()
         };

@@ -44,6 +44,18 @@ fn action_cmd(name: &str, description: &str, action: SlashAction, help: &str) ->
 /// `/reload`, `/autonomy`, `/quit`. Each pairs with a GUI settings-
 /// panel entry — operators get parity on both surfaces.
 pub fn built_in_commands() -> Vec<SlashCommand> {
+    let channel_ids = crate::channels::registry::channel_descriptors()
+        .iter()
+        .map(|descriptor| descriptor.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let connect_description = format!("Connect a channel adapter ({channel_ids}).");
+    let connect_help = format!(
+        "Usage: /connect <channel>\nAvailable canonical channel IDs: {channel_ids}\n\
+         Collects a replacement candidate, verifies it without persistence, and commits only if the tested snapshot is still current."
+    );
+    let disconnect_help =
+        format!("Usage: /disconnect <channel>\nAvailable canonical channel IDs: {channel_ids}");
     vec![
         SlashCommand {
             name: "help".into(),
@@ -156,17 +168,15 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
         ),
         action_cmd(
             "connect",
-            "Connect a channel adapter (whatsapp / telegram / slack / discord).",
+            &connect_description,
             SlashAction::ConnectChannel,
-            "Usage: /connect <channel>\n\
-             Walks credential entry + token verification before the \
-             adapter goes live.",
+            &connect_help,
         ),
         action_cmd(
             "disconnect",
             "Disconnect a channel adapter + revoke its credentials.",
             SlashAction::DisconnectChannel,
-            "Usage: /disconnect <channel>",
+            &disconnect_help,
         ),
         action_cmd(
             "skill",
@@ -378,6 +388,25 @@ mod tests {
                 cmd.action.is_some(),
                 "{name} must carry an action — empty prompt would silently do nothing"
             );
+        }
+    }
+
+    #[test]
+    fn channel_help_is_derived_from_the_complete_registry() {
+        let commands = built_in_commands();
+        for command_name in ["connect", "disconnect"] {
+            let command = commands
+                .iter()
+                .find(|command| command.name == command_name)
+                .unwrap();
+            let help = command.help.as_deref().unwrap();
+            for descriptor in crate::channels::registry::channel_descriptors() {
+                assert!(
+                    help.contains(descriptor.id.as_str()),
+                    "/{command_name} help omitted {}",
+                    descriptor.id.as_str()
+                );
+            }
         }
     }
 

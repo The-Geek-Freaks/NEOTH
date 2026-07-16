@@ -13,6 +13,8 @@
 //! depended-on, keeping the GUI crate decoupled from the daemon — the same
 //! pattern as the `MinimalFreedomYaml` / `CodingSessionJson` mirrors in main.rs.
 
+use zeroize::Zeroizing;
+
 /// Mirror of `neothd::wizard::recommend::ComplexityLevel`.
 /// Serde/string wire form: `"minimal"` | `"standard"` | `"full"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1160,6 +1162,390 @@ pub fn parse_memory_size(json: &str) -> MemorySnapshot {
 
 // ── GU-01 / GOLD-R3-04 channels panel (canonical CLI probe contract) ─────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GuiSetupRequirement {
+    Required,
+    Optional,
+    OneOf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GuiSetupField {
+    key: &'static str,
+    requirement: GuiSetupRequirement,
+    one_of_group: Option<&'static str>,
+}
+
+const fn gui_required(key: &'static str) -> GuiSetupField {
+    GuiSetupField {
+        key,
+        requirement: GuiSetupRequirement::Required,
+        one_of_group: None,
+    }
+}
+
+const fn gui_optional(key: &'static str) -> GuiSetupField {
+    GuiSetupField {
+        key,
+        requirement: GuiSetupRequirement::Optional,
+        one_of_group: None,
+    }
+}
+
+const fn gui_one_of(key: &'static str, group: &'static str) -> GuiSetupField {
+    GuiSetupField {
+        key,
+        requirement: GuiSetupRequirement::OneOf,
+        one_of_group: Some(group),
+    }
+}
+
+const GUI_TELEGRAM_SETUP: &[GuiSetupField] = &[
+    gui_required("telegram_token"),
+    gui_required("telegram_user_id"),
+];
+const GUI_SLACK_SETUP: &[GuiSetupField] = &[
+    gui_required("slack_bot_token"),
+    gui_required("slack_app_token"),
+];
+const GUI_WHATSAPP_BUSINESS_SETUP: &[GuiSetupField] = &[
+    gui_required("whatsapp_token"),
+    gui_required("whatsapp_phone_id"),
+    gui_required("whatsapp_verify_token"),
+    gui_required("whatsapp_app_secret"),
+];
+const GUI_WHATSAPP_BAILEYS_SETUP: &[GuiSetupField] = &[
+    gui_required("whatsapp_baileys_url"),
+    gui_required("whatsapp_baileys_token"),
+    gui_required("whatsapp_baileys_allowed_senders"),
+    gui_optional("whatsapp_baileys_allowed_groups"),
+];
+const GUI_KEET_SETUP: &[GuiSetupField] = &[
+    gui_required("keet_bridge_url"),
+    gui_required("keet_bridge_bearer_token"),
+    gui_required("keet_topic"),
+    gui_required("keet_allowed_senders"),
+];
+const GUI_DISCORD_SETUP: &[GuiSetupField] = &[gui_required("discord_bot_token")];
+const GUI_SIGNAL_SETUP: &[GuiSetupField] = &[
+    gui_required("signal_cli_url"),
+    gui_required("signal_phone_number"),
+];
+const GUI_LINE_SETUP: &[GuiSetupField] = &[
+    gui_required("line_channel_access_token"),
+    gui_optional("line_channel_secret"),
+];
+const GUI_IRC_SETUP: &[GuiSetupField] = &[
+    gui_required("irc_server"),
+    gui_required("irc_nick"),
+    gui_optional("irc_password"),
+    gui_optional("irc_channels"),
+    gui_required("irc_allowed_account"),
+];
+const GUI_BLUEBUBBLES_SETUP: &[GuiSetupField] = &[
+    gui_required("bluebubbles_url"),
+    gui_required("bluebubbles_password"),
+    gui_required("imessage_allowed_sender"),
+    gui_optional("bluebubbles_chat_guid"),
+];
+const GUI_MATTERMOST_SETUP: &[GuiSetupField] = &[
+    gui_required("mattermost_url"),
+    gui_required("mattermost_token"),
+    gui_required("mattermost_allowed_user_id"),
+];
+const GUI_GCHAT_SETUP: &[GuiSetupField] = &[
+    gui_required("gchat_service_account_json"),
+    gui_required("gchat_subscription"),
+    gui_required("gchat_allowed_sender"),
+];
+const GUI_MATRIX_SETUP: &[GuiSetupField] = &[
+    gui_required("matrix_homeserver"),
+    gui_required("matrix_user_id"),
+    gui_one_of("matrix_access_token", "matrix_auth"),
+    gui_one_of("matrix_password", "matrix_auth"),
+    gui_one_of("matrix_allowed_user_id", "matrix_inbound_policy"),
+    gui_one_of("matrix_allowed_room_ids", "matrix_inbound_policy"),
+    gui_optional("matrix_require_encryption"),
+];
+const GUI_TWITCH_SETUP: &[GuiSetupField] = &[
+    gui_required("twitch_username"),
+    gui_required("twitch_oauth_token"),
+    gui_required("twitch_channels"),
+];
+const GUI_NOSTR_SETUP: &[GuiSetupField] = &[
+    gui_required("nostr_secret_key"),
+    gui_required("nostr_relays"),
+    gui_required("nostr_allowed_pubkey"),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GuiChannelForm {
+    Telegram,
+    Slack,
+    WhatsAppBusiness,
+    WhatsAppBaileys,
+    Keet,
+    Discord,
+    Signal,
+    Line,
+    Irc,
+    BlueBubbles,
+    Mattermost,
+    GoogleChat,
+    Matrix,
+    Twitch,
+    Nostr,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GuiChannelContract {
+    form: GuiChannelForm,
+    setup_fields: &'static [GuiSetupField],
+}
+
+/// The GUI has behavior-specific form/flag wiring, but not an independent
+/// inventory. The daemon's serialized registry is iterated at runtime and every
+/// descriptor must resolve here with an identical setup schema or the panel
+/// fails closed instead of presenting a broken Add action.
+fn gui_channel_contract(channel_id: &str) -> Option<GuiChannelContract> {
+    let (form, setup_fields) = match channel_id {
+        "telegram" => (GuiChannelForm::Telegram, GUI_TELEGRAM_SETUP),
+        "slack" => (GuiChannelForm::Slack, GUI_SLACK_SETUP),
+        "whatsapp_business" => (
+            GuiChannelForm::WhatsAppBusiness,
+            GUI_WHATSAPP_BUSINESS_SETUP,
+        ),
+        "whatsapp_baileys" => (GuiChannelForm::WhatsAppBaileys, GUI_WHATSAPP_BAILEYS_SETUP),
+        "keet" => (GuiChannelForm::Keet, GUI_KEET_SETUP),
+        "discord" => (GuiChannelForm::Discord, GUI_DISCORD_SETUP),
+        "signal" => (GuiChannelForm::Signal, GUI_SIGNAL_SETUP),
+        "line" => (GuiChannelForm::Line, GUI_LINE_SETUP),
+        "irc" => (GuiChannelForm::Irc, GUI_IRC_SETUP),
+        "imessage_bluebubbles" => (GuiChannelForm::BlueBubbles, GUI_BLUEBUBBLES_SETUP),
+        "mattermost" => (GuiChannelForm::Mattermost, GUI_MATTERMOST_SETUP),
+        "gchat" => (GuiChannelForm::GoogleChat, GUI_GCHAT_SETUP),
+        "matrix" => (GuiChannelForm::Matrix, GUI_MATRIX_SETUP),
+        "twitch" => (GuiChannelForm::Twitch, GUI_TWITCH_SETUP),
+        "nostr" => (GuiChannelForm::Nostr, GUI_NOSTR_SETUP),
+        _ => return None,
+    };
+    Some(GuiChannelContract { form, setup_fields })
+}
+
+fn zeroize_json_strings(value: &mut serde_json::Value) {
+    use zeroize::Zeroize as _;
+
+    match value {
+        serde_json::Value::String(text) => text.zeroize(),
+        serde_json::Value::Array(values) => {
+            for value in values {
+                zeroize_json_strings(value);
+            }
+        }
+        serde_json::Value::Object(values) => {
+            for value in values.values_mut() {
+                zeroize_json_strings(value);
+            }
+        }
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {}
+    }
+}
+
+/// Build the strict private-stdin credential envelope for one
+/// registry-projected GUI form. This stays pure so every canonical registry ID
+/// is regression-tested without ever translating secret values into argv.
+pub fn build_channel_credential_request(
+    channel_id: &str,
+    fields: [&str; 6],
+    flag: bool,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let [f1, f2, f3, f4, _f5, _f6] = fields;
+    let [n1, n2, n3, n4, n5, n6] = fields.map(str::trim);
+    let secret_present = |value: &str| !value.trim().is_empty();
+    let contract = gui_channel_contract(channel_id)
+        .ok_or_else(|| format!("channel `{channel_id}` has no GUI setup binding"))?;
+
+    let request_fields = match contract.form {
+        GuiChannelForm::Telegram => {
+            if !secret_present(f1) || n2.is_empty() {
+                return Err("telegram needs: --token and --telegram-user-id".into());
+            }
+            let user_id = n2
+                .parse::<u64>()
+                .ok()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| "telegram user ID must be a positive integer".to_string())?;
+            serde_json::json!({
+                "token": f1,
+                "telegram_user_id": user_id,
+            })
+        }
+        GuiChannelForm::Slack => {
+            if !secret_present(f1) || !secret_present(f2) {
+                return Err("slack needs: --bot-token and --app-token".into());
+            }
+            serde_json::json!({
+                "bot_token": f1,
+                "app_token": f2,
+            })
+        }
+        GuiChannelForm::WhatsAppBusiness => {
+            if !secret_present(f1) || n2.is_empty() || !secret_present(f3) || !secret_present(f4) {
+                return Err(
+                    "whatsapp_business needs: --token, --phone-id, --verify-token, and --app-secret"
+                        .into(),
+                );
+            }
+            serde_json::json!({
+                "token": f1,
+                "phone_id": n2,
+                "verify_token": f3,
+                "app_secret": f4,
+            })
+        }
+        GuiChannelForm::WhatsAppBaileys => {
+            if n1.is_empty() || !secret_present(f2) || n3.is_empty() {
+                return Err("whatsapp_baileys needs: --url, --token, and --allowed-sender".into());
+            }
+            serde_json::json!({
+                "url": n1,
+                "token": f2,
+                "allowed_sender": n3,
+                "allowed_rooms_csv": (!n4.is_empty()).then_some(n4),
+            })
+        }
+        GuiChannelForm::Keet => {
+            if n1.is_empty() || !secret_present(f2) || !secret_present(f3) || n4.is_empty() {
+                return Err(
+                    "keet needs: --url, --token, --server (topic), and --allowed-sender".into(),
+                );
+            }
+            serde_json::json!({
+                "url": n1,
+                "token": f2,
+                "server": f3,
+                "allowed_sender": n4,
+            })
+        }
+        GuiChannelForm::Discord => {
+            if !secret_present(f1) {
+                return Err("discord needs: --token".into());
+            }
+            serde_json::json!({ "token": f1 })
+        }
+        GuiChannelForm::Signal => {
+            if n1.is_empty() || n2.is_empty() {
+                return Err("signal needs: --url and --phone".into());
+            }
+            serde_json::json!({ "url": n1, "phone": n2 })
+        }
+        GuiChannelForm::Line => {
+            if !secret_present(f1) {
+                return Err("line needs: --token".into());
+            }
+            serde_json::json!({
+                "token": f1,
+                "password": secret_present(f2).then_some(f2),
+            })
+        }
+        GuiChannelForm::Irc => {
+            if n1.is_empty() || n2.is_empty() || n5.is_empty() {
+                return Err(
+                    "irc needs: --server, --nick, and --allowed-sender (services account)".into(),
+                );
+            }
+            serde_json::json!({
+                "server": n1,
+                "nick": n2,
+                "password": secret_present(f3).then_some(f3),
+                "channels_csv": (!n4.is_empty()).then_some(n4),
+                "allowed_sender": n5,
+            })
+        }
+        GuiChannelForm::BlueBubbles => {
+            if n1.is_empty() || !secret_present(f2) || n3.is_empty() {
+                return Err(
+                    "imessage_bluebubbles needs: --url, --password, and --allowed-sender".into(),
+                );
+            }
+            serde_json::json!({
+                "url": n1,
+                "password": f2,
+                "allowed_sender": n3,
+                "channels_csv": (!n4.is_empty()).then_some(n4),
+            })
+        }
+        GuiChannelForm::Mattermost => {
+            if n1.is_empty() || !secret_present(f2) || n3.is_empty() {
+                return Err(
+                    "mattermost needs: --url, --token, and --allowed-sender (user ID)".into(),
+                );
+            }
+            serde_json::json!({ "url": n1, "token": f2, "allowed_sender": n3 })
+        }
+        GuiChannelForm::GoogleChat => {
+            if n1.is_empty() || n2.is_empty() || n3.is_empty() {
+                return Err(
+                    "gchat needs: --url (service-account JSON path), --server (subscription), and --allowed-sender"
+                        .into(),
+                );
+            }
+            serde_json::json!({ "url": n1, "server": n2, "allowed_sender": n3 })
+        }
+        GuiChannelForm::Matrix => {
+            if n1.is_empty()
+                || n2.is_empty()
+                || (!secret_present(f3) && !secret_present(f4))
+                || (n5.is_empty() && n6.is_empty())
+            {
+                return Err("matrix needs: --url, --nick, either --token or --password, and at least one sender/room allowlist".into());
+            }
+            serde_json::json!({
+                "url": n1,
+                "nick": n2,
+                "token": secret_present(f3).then_some(f3),
+                "password": secret_present(f4).then_some(f4),
+                "allowed_sender": (!n5.is_empty()).then_some(n5),
+                "allowed_rooms_csv": (!n6.is_empty()).then_some(n6),
+                "allow_plaintext": flag,
+            })
+        }
+        GuiChannelForm::Twitch => {
+            if n1.is_empty() || !secret_present(f2) || n3.is_empty() {
+                return Err("twitch needs: --nick, --token, and --channels-csv".into());
+            }
+            serde_json::json!({
+                "nick": n1,
+                "token": f2,
+                "channels_csv": n3,
+            })
+        }
+        GuiChannelForm::Nostr => {
+            if !secret_present(f1) || n2.is_empty() || n3.is_empty() {
+                return Err("nostr needs: --token, --channels-csv (relay URLs), and --allowed-sender (64-char hex pubkey)".into());
+            }
+            serde_json::json!({
+                "token": f1,
+                "channels_csv": n2,
+                "allowed_sender": n3,
+            })
+        }
+    };
+
+    let mut request = serde_json::json!({
+        "schema_version": 1,
+        "channel": channel_id,
+        "fields": request_fields,
+    });
+    let mut body = Zeroizing::new(Vec::new());
+    let encoded = serde_json::to_writer(&mut *body, &request)
+        .map(|()| body)
+        .map_err(|error| format!("encode private channel credential request: {error}"));
+    zeroize_json_strings(&mut request);
+    encoded
+}
+
 /// One channel row from `neoth channel list --output json`.
 ///
 /// The GUI deliberately consumes the daemon's canonical probe result instead
@@ -1172,28 +1558,10 @@ pub struct ChannelStatus {
     pub status: String,
     pub configured: bool,
     pub detail: String,
+    /// Secret flags for the six text-entry slots, projected directly from the
+    /// daemon registry. Slint binds every actual input widget to these flags.
+    pub setup_secret_mask: [bool; 6],
 }
-
-/// Stable daemon registry contract consumed by the GUI. Keeping the complete
-/// set here makes a partial/old CLI inventory fail visibly instead of silently
-/// dropping controls from the desktop surface.
-const CANONICAL_CHANNEL_IDS: [&str; 15] = [
-    "telegram",
-    "slack",
-    "whatsapp_business",
-    "whatsapp_baileys",
-    "keet",
-    "discord",
-    "signal",
-    "imessage_bluebubbles",
-    "matrix",
-    "line",
-    "irc",
-    "mattermost",
-    "twitch",
-    "nostr",
-    "gchat",
-];
 
 /// Parse the authoritative channel inventory. Malformed, empty, duplicated, or
 /// future-unknown status values are explicit errors; silently rendering them as
@@ -1201,8 +1569,30 @@ const CANONICAL_CHANNEL_IDS: [&str; 15] = [
 pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
     #[derive(serde::Deserialize)]
     struct Payload {
+        registry: Registry,
         channels: Vec<Row>,
+        configured: usize,
         total: usize,
+    }
+    #[derive(serde::Deserialize)]
+    struct Registry {
+        schema_version: u32,
+        channels: Vec<RegistryRow>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RegistryRow {
+        id: String,
+        aliases: Vec<String>,
+        migration_aliases: Vec<String>,
+        setup_fields: Vec<RegistrySetupField>,
+    }
+    #[derive(serde::Deserialize)]
+    struct RegistrySetupField {
+        key: String,
+        secret: bool,
+        requirement: GuiSetupRequirement,
+        #[serde(default)]
+        one_of_group: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct Row {
@@ -1214,11 +1604,127 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
 
     let payload: Payload = serde_json::from_str(json)
         .map_err(|error| format!("invalid channel inventory JSON: {error}"))?;
+    if payload.registry.schema_version != 1 {
+        return Err(format!(
+            "unsupported channel registry schema version {} (expected 1)",
+            payload.registry.schema_version
+        ));
+    }
+    if payload.registry.channels.is_empty() {
+        return Err("channel registry projection is empty".to_string());
+    }
     if payload.total != payload.channels.len() {
         return Err(format!(
             "channel inventory total {} does not match {} rows",
             payload.total,
             payload.channels.len()
+        ));
+    }
+    let configured_rows = payload
+        .channels
+        .iter()
+        .filter(|channel| channel.configured)
+        .count();
+    if payload.configured != configured_rows {
+        return Err(format!(
+            "channel inventory configured count {} does not match {} configured rows",
+            payload.configured, configured_rows
+        ));
+    }
+
+    let valid_token = |token: &str| {
+        !token.is_empty()
+            && token
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+    };
+    let mut registry_ids = std::collections::BTreeSet::new();
+    let mut setup_secret_masks = std::collections::BTreeMap::new();
+    for descriptor in &payload.registry.channels {
+        if !valid_token(&descriptor.id) {
+            return Err(format!(
+                "channel registry contains invalid canonical id `{}`",
+                descriptor.id
+            ));
+        }
+        if !registry_ids.insert(descriptor.id.as_str()) {
+            return Err(format!(
+                "channel registry contains duplicate canonical id `{}`",
+                descriptor.id
+            ));
+        }
+        let contract = gui_channel_contract(&descriptor.id).ok_or_else(|| {
+            format!(
+                "channel `{}` has no GUI setup/form binding; refusing a partially wired inventory",
+                descriptor.id
+            )
+        })?;
+        let setup_matches = descriptor.setup_fields.len() == contract.setup_fields.len()
+            && descriptor
+                .setup_fields
+                .iter()
+                .zip(contract.setup_fields)
+                .all(|(actual, expected)| {
+                    actual.key == expected.key
+                        && actual.requirement == expected.requirement
+                        && actual.one_of_group.as_deref() == expected.one_of_group
+                });
+        if !setup_matches {
+            return Err(format!(
+                "channel `{}` GUI setup binding differs from the registry setup schema",
+                descriptor.id
+            ));
+        }
+        if descriptor
+            .setup_fields
+            .iter()
+            .skip(6)
+            .any(|field| field.secret)
+        {
+            return Err(format!(
+                "channel `{}` has a secret setup field without a GUI password slot",
+                descriptor.id
+            ));
+        }
+        let mut secret_mask = [false; 6];
+        for (slot, field) in descriptor.setup_fields.iter().take(6).enumerate() {
+            secret_mask[slot] = field.secret;
+        }
+        setup_secret_masks.insert(descriptor.id.clone(), secret_mask);
+    }
+
+    let mut operator_names = registry_ids.clone();
+    let mut migration_names = registry_ids.clone();
+    for descriptor in &payload.registry.channels {
+        for (namespace, aliases, names) in [
+            ("operator", &descriptor.aliases, &mut operator_names),
+            (
+                "migration",
+                &descriptor.migration_aliases,
+                &mut migration_names,
+            ),
+        ] {
+            for alias in aliases {
+                if !valid_token(alias) {
+                    return Err(format!(
+                        "channel `{}` contains invalid {namespace} alias `{alias}`",
+                        descriptor.id
+                    ));
+                }
+                if !names.insert(alias.as_str()) {
+                    return Err(format!(
+                        "channel registry contains duplicate {namespace} name `{alias}`"
+                    ));
+                }
+            }
+        }
+    }
+
+    if payload.total != payload.registry.channels.len() {
+        return Err(format!(
+            "channel inventory total {} does not match {} registry descriptors",
+            payload.total,
+            payload.registry.channels.len()
         ));
     }
 
@@ -1241,18 +1747,21 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
                 row.status
             ));
         }
+        // Defer an unknown row to the set comparison below so one diagnostic
+        // reports the complete missing/unknown drift instead of stopping at
+        // the first foreign ID. The placeholder is never returned to the UI:
+        // unequal sets fail before `Ok(channels)`.
+        let setup_secret_mask = setup_secret_masks.get(name).copied().unwrap_or([false; 6]);
         channels.push(ChannelStatus {
             name: name.to_string(),
             status: row.status,
             configured: row.configured,
             detail: row.detail,
+            setup_secret_mask,
         });
     }
 
-    let expected = CANONICAL_CHANNEL_IDS
-        .iter()
-        .copied()
-        .collect::<std::collections::BTreeSet<_>>();
+    let expected = registry_ids;
     let actual = seen
         .iter()
         .map(String::as_str)
@@ -1273,6 +1782,19 @@ pub fn parse_channel_status(json: &str) -> Result<Vec<ChannelStatus>, String> {
                 unknown.join(", ")
             },
         ));
+    }
+    let projected_order = payload
+        .registry
+        .channels
+        .iter()
+        .map(|descriptor| descriptor.id.as_str())
+        .collect::<Vec<_>>();
+    let actual_order = channels
+        .iter()
+        .map(|channel| channel.name.as_str())
+        .collect::<Vec<_>>();
+    if actual_order != projected_order {
+        return Err("channel inventory order differs from registry projection".to_string());
     }
     Ok(channels)
 }
@@ -4399,10 +4921,43 @@ mod tests {
 
     // ── GOLD-R3-04 canonical channel status ──────────────────────────────────
 
+    fn registry_row(channel_id: &str, aliases: &[&str]) -> serde_json::Value {
+        let contract = gui_channel_contract(channel_id).expect("test channel has GUI contract");
+        let descriptor = neothd::channels::registry::channel_descriptors()
+            .iter()
+            .find(|descriptor| descriptor.id.as_str() == channel_id)
+            .expect("test channel has core registry descriptor");
+        let setup_fields = contract
+            .setup_fields
+            .iter()
+            .zip(descriptor.setup_fields)
+            .map(|(field, descriptor_field)| {
+                let requirement = match field.requirement {
+                    GuiSetupRequirement::Required => "required",
+                    GuiSetupRequirement::Optional => "optional",
+                    GuiSetupRequirement::OneOf => "one_of",
+                };
+                serde_json::json!({
+                    "key": field.key,
+                    "secret": descriptor_field.secret,
+                    "requirement": requirement,
+                    "one_of_group": field.one_of_group,
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "id": channel_id,
+            "aliases": aliases,
+            "migration_aliases": [],
+            "setup_fields": setup_fields,
+        })
+    }
+
     #[test]
     fn parse_channel_status_preserves_probe_states_and_detail() {
         let states = ["ok", "warn", "error", "unavailable", "not_configured"];
-        let channel_rows = CANONICAL_CHANNEL_IDS
+        let ids = ["telegram", "slack", "discord", "keet", "gchat"];
+        let channel_rows = ids
             .iter()
             .enumerate()
             .map(|(index, name)| {
@@ -4414,20 +4969,256 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
+        let registry_rows = ids
+            .iter()
+            .map(|id| registry_row(id, &[]))
+            .collect::<Vec<_>>();
         let payload = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": registry_rows },
             "channels": channel_rows,
-            "configured": 9,
-            "total": CANONICAL_CHANNEL_IDS.len(),
+            "configured": 3,
+            "total": ids.len(),
         });
         let rows = parse_channel_status(&payload.to_string()).unwrap();
-        assert_eq!(rows.len(), CANONICAL_CHANNEL_IDS.len());
+        assert_eq!(rows.len(), ids.len());
         assert_eq!(rows[0].status, "ok");
         assert_eq!(rows[1].status, "warn");
-        assert_eq!(rows[2].name, "whatsapp_business");
+        assert_eq!(rows[2].name, "discord");
         assert!(rows[2].configured);
         assert_eq!(rows[2].detail, "probe detail 2");
         assert_eq!(rows[3].status, "unavailable");
         assert_eq!(rows[4].status, "not_configured");
+    }
+
+    #[test]
+    fn real_core_registry_has_gui_schema_and_private_builder_for_every_canonical_id() {
+        let descriptors = neothd::channels::registry::channel_descriptors();
+        let channel_rows = descriptors
+            .iter()
+            .map(|descriptor| {
+                serde_json::json!({
+                    "name": descriptor.id.as_str(),
+                    "status": "not_configured",
+                    "configured": false,
+                    "detail": "not configured",
+                })
+            })
+            .collect::<Vec<_>>();
+        let payload = serde_json::json!({
+            "registry": {
+                "schema_version": neothd::channels::registry::CHANNEL_REGISTRY_SCHEMA_VERSION,
+                "channels": descriptors,
+            },
+            "channels": channel_rows,
+            "configured": 0,
+            "total": descriptors.len(),
+        });
+
+        let rows = parse_channel_status(&payload.to_string()).unwrap();
+        assert_eq!(rows.len(), descriptors.len());
+        for (row, descriptor) in rows.iter().zip(descriptors) {
+            let mut expected_secret_mask = [false; 6];
+            for (slot, field) in descriptor.setup_fields.iter().take(6).enumerate() {
+                expected_secret_mask[slot] = field.secret;
+            }
+            assert_eq!(
+                row.setup_secret_mask,
+                expected_secret_mask,
+                "{} secret mask must come from the core descriptor",
+                descriptor.id.as_str()
+            );
+            let request = build_channel_credential_request(descriptor.id.as_str(), ["1"; 6], true)
+                .unwrap_or_else(|error| panic!("{}: {error}", descriptor.id.as_str()));
+            let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+            assert_eq!(envelope["schema_version"], 1);
+            assert_eq!(envelope["channel"], descriptor.id.as_str());
+            assert!(
+                envelope["fields"]
+                    .as_object()
+                    .is_some_and(|fields| !fields.is_empty()),
+                "{} must emit private credential fields",
+                descriptor.id.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn private_channel_builder_preserves_typed_fields_without_cli_flags() {
+        let telegram = build_channel_credential_request(
+            "telegram",
+            ["bot-secret", "123456789", "", "", "", ""],
+            false,
+        )
+        .unwrap();
+        let telegram: serde_json::Value = serde_json::from_slice(telegram.as_slice()).unwrap();
+        assert_eq!(telegram["channel"], "telegram");
+        assert_eq!(telegram["fields"]["token"], "bot-secret");
+        assert_eq!(telegram["fields"]["telegram_user_id"], 123_456_789);
+
+        let matrix = build_channel_credential_request(
+            "matrix",
+            [
+                "https://matrix.example.org",
+                "@neoth:example.org",
+                "matrix-secret",
+                "",
+                "@owner:example.org",
+                "!room:example.org",
+            ],
+            true,
+        )
+        .unwrap();
+        let matrix: serde_json::Value = serde_json::from_slice(matrix.as_slice()).unwrap();
+        assert_eq!(matrix["fields"]["token"], "matrix-secret");
+        assert_eq!(matrix["fields"]["password"], serde_json::Value::Null);
+        assert_eq!(matrix["fields"]["allow_plaintext"], true);
+    }
+
+    #[test]
+    fn private_channel_builder_preserves_secret_bytes_and_normalizes_public_fields() {
+        let secret = " \tSëcret value\n ";
+        let request = build_channel_credential_request(
+            "matrix",
+            [
+                "  https://matrix.example.org  ",
+                "  @neoth:example.org  ",
+                secret,
+                "",
+                "  @owner:example.org  ",
+                "  !room:example.org  ",
+            ],
+            false,
+        )
+        .unwrap();
+        let envelope: serde_json::Value = serde_json::from_slice(request.as_slice()).unwrap();
+        let fields = &envelope["fields"];
+        assert_eq!(fields["url"], "https://matrix.example.org");
+        assert_eq!(fields["nick"], "@neoth:example.org");
+        assert_eq!(fields["allowed_sender"], "@owner:example.org");
+        assert_eq!(fields["allowed_rooms_csv"], "!room:example.org");
+        assert_eq!(
+            fields["token"].as_str().unwrap().as_bytes(),
+            secret.as_bytes()
+        );
+
+        let irc = build_channel_credential_request(
+            "irc",
+            [
+                " irc.example.org ",
+                " neoth ",
+                secret,
+                " #neoth ",
+                " operator ",
+                "",
+            ],
+            false,
+        )
+        .unwrap();
+        let irc: serde_json::Value = serde_json::from_slice(irc.as_slice()).unwrap();
+        assert_eq!(
+            irc["fields"]["password"].as_str().unwrap().as_bytes(),
+            secret.as_bytes()
+        );
+        assert_eq!(irc["fields"]["server"], "irc.example.org");
+        assert_eq!(irc["fields"]["channels_csv"], "#neoth");
+    }
+
+    #[test]
+    fn private_channel_builder_rejects_whitespace_only_required_secrets() {
+        assert!(
+            build_channel_credential_request("discord", [" \t\n ", "", "", "", "", ""], false,)
+                .is_err()
+        );
+        assert!(
+            build_channel_credential_request(
+                "matrix",
+                [
+                    "https://matrix.example.org",
+                    "@neoth:example.org",
+                    "  ",
+                    "\t",
+                    "@owner:example.org",
+                    "",
+                ],
+                false,
+            )
+            .is_err()
+        );
+        assert!(
+            build_channel_credential_request(
+                "imessage_bluebubbles",
+                ["https://blue.example.org", "  ", "+491234", "", "", ""],
+                false,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_channel_status_binds_descriptor_secrets_and_rejects_unknown_form() {
+        let mut telegram = registry_row("telegram", &[]);
+        telegram["setup_fields"][1]["secret"] = serde_json::json!(true);
+        let descriptor_secret = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [telegram] },
+            "channels": [{
+                "name": "telegram",
+                "status": "not_configured",
+                "configured": false,
+                "detail": "off",
+            }],
+            "configured": 0,
+            "total": 1,
+        });
+        let rows = parse_channel_status(&descriptor_secret.to_string()).unwrap();
+        assert_eq!(
+            rows[0].setup_secret_mask,
+            [true, true, false, false, false, false]
+        );
+
+        let mut matrix = registry_row("matrix", &[]);
+        matrix["setup_fields"][6]["secret"] = serde_json::json!(true);
+        let unrenderable_secret = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [matrix] },
+            "channels": [{
+                "name": "matrix",
+                "status": "not_configured",
+                "configured": false,
+                "detail": "off",
+            }],
+            "configured": 0,
+            "total": 1,
+        });
+        assert!(
+            parse_channel_status(&unrenderable_secret.to_string())
+                .unwrap_err()
+                .contains("secret setup field without a GUI password slot")
+        );
+
+        let unknown_form = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [{
+                "id": "future_chat",
+                "aliases": [],
+                "migration_aliases": [],
+                "setup_fields": [{
+                    "key": "future_token",
+                    "secret": true,
+                    "requirement": "required",
+                }],
+            }] },
+            "channels": [{
+                "name": "future_chat",
+                "status": "not_configured",
+                "configured": false,
+                "detail": "off",
+            }],
+            "configured": 0,
+            "total": 1,
+        });
+        assert!(
+            parse_channel_status(&unknown_form.to_string())
+                .unwrap_err()
+                .contains("no GUI setup/form binding")
+        );
     }
 
     #[test]
@@ -4436,15 +5227,15 @@ mod tests {
         assert!(parse_channel_status(r#"{"channels":[],"total":0}"#).is_err());
         assert!(
             parse_channel_status(
-                r#"{"channels":[
+                r#"{"registry":{"schema_version":1,"channels":[{"id":"keet","aliases":[],"migration_aliases":[]}]},"channels":[
                 {"name":"keet","status":"ok","configured":true,"detail":"a"},
                 {"name":"keet","status":"warn","configured":true,"detail":"b"}
-            ],"total":2}"#
+            ],"configured":2,"total":2}"#
             )
             .is_err()
         );
         assert!(parse_channel_status(
-            r#"{"channels":[{"name":"telegram","status":"maybe","configured":true,"detail":"?"}],"total":1}"#
+            r#"{"registry":{"schema_version":1,"channels":[{"id":"telegram","aliases":[],"migration_aliases":[]}]},"channels":[{"name":"telegram","status":"maybe","configured":true,"detail":"?"}],"configured":1,"total":1}"#
         )
         .is_err());
     }
@@ -4452,50 +5243,95 @@ mod tests {
     #[test]
     fn parse_channel_status_rejects_partial_unknown_and_mismatched_inventory() {
         let partial = serde_json::json!({
-            "channels": [{
-                "name": "telegram",
-                "status": "ok",
-                "configured": true,
-                "detail": "live",
-            }],
-            "total": 1,
+            "registry": { "schema_version": 1, "channels": [
+                registry_row("telegram", &[]),
+                registry_row("slack", &[]),
+            ]},
+            "channels": [
+                { "name": "telegram", "status": "ok", "configured": true, "detail": "live" },
+                { "name": "future_chat", "status": "not_configured", "configured": false, "detail": "off" },
+            ],
+            "configured": 1,
+            "total": 2,
         });
         let error = parse_channel_status(&partial.to_string()).unwrap_err();
         assert!(error.contains("registry drift"));
         assert!(error.contains("slack"));
-
-        let mut ids = CANONICAL_CHANNEL_IDS.map(|name| name.to_string());
-        ids[14] = "future_chat".to_string();
-        let rows = ids
-            .iter()
-            .map(|name| {
-                serde_json::json!({
-                    "name": name,
-                    "status": "not_configured",
-                    "configured": false,
-                    "detail": "off",
-                })
-            })
-            .collect::<Vec<_>>();
-        let total = rows.len();
-        let unknown = serde_json::json!({ "channels": rows, "total": total });
-        let error = parse_channel_status(&unknown.to_string()).unwrap_err();
         assert!(error.contains("future_chat"));
-        assert!(error.contains("gchat"));
 
         let mismatch = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [
+                registry_row("telegram", &[]),
+                registry_row("slack", &[]),
+            ]},
             "channels": [{
                 "name": "telegram",
                 "status": "ok",
                 "configured": true,
                 "detail": "live",
             }],
-            "total": 15,
+            "configured": 1,
+            "total": 2,
         });
         assert!(
             parse_channel_status(&mismatch.to_string())
                 .unwrap_err()
                 .contains("does not match")
+        );
+    }
+
+    #[test]
+    fn parse_channel_status_rejects_registry_alias_drift_and_order_drift() {
+        let duplicate_alias = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [
+                registry_row("telegram", &["chat"]),
+                registry_row("slack", &["chat"]),
+            ]},
+            "channels": [
+                { "name": "telegram", "status": "not_configured", "configured": false, "detail": "off" },
+                { "name": "slack", "status": "not_configured", "configured": false, "detail": "off" },
+            ],
+            "configured": 0,
+            "total": 2,
+        });
+        assert!(
+            parse_channel_status(&duplicate_alias.to_string())
+                .unwrap_err()
+                .contains("duplicate operator name")
+        );
+
+        let wrong_order = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [
+                registry_row("telegram", &[]),
+                registry_row("slack", &[]),
+            ]},
+            "channels": [
+                { "name": "slack", "status": "not_configured", "configured": false, "detail": "off" },
+                { "name": "telegram", "status": "not_configured", "configured": false, "detail": "off" },
+            ],
+            "configured": 0,
+            "total": 2,
+        });
+        assert!(
+            parse_channel_status(&wrong_order.to_string())
+                .unwrap_err()
+                .contains("order differs")
+        );
+
+        let summary_drift = serde_json::json!({
+            "registry": { "schema_version": 1, "channels": [
+                registry_row("telegram", &[]),
+            ]},
+            "channels": [
+                { "name": "telegram", "status": "ok", "configured": true, "detail": "ready" },
+            ],
+            "configured": 0,
+            "total": 1,
+        });
+        assert!(
+            parse_channel_status(&summary_drift.to_string())
+                .unwrap_err()
+                .contains("configured count")
         );
     }
 

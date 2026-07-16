@@ -573,8 +573,9 @@ pub(crate) async fn rebind_at(
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
     let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{now_unix}.wal"));
-    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment)
-        .context("spawn WAL writer for hemispheres rollback snapshot")?;
+    let (snap_writer, snap_join) =
+        crate::wal::writer::spawn_for_home(snapshot_segment, home.to_path_buf())
+            .context("spawn WAL writer for hemispheres rollback snapshot")?;
     let _ = crate::wal::snapshot::emit_if_policy_allows(
         &snap_writer,
         &snapshot.rollback,
@@ -634,7 +635,8 @@ pub(crate) async fn rebind_at(
     })
     .with_context(|| format!("update {}", path.display()))?;
 
-    let audit_segment = emit_rebind_audit_to(&wal_dir, role, &prior, &new_slot, now_unix).await?;
+    let audit_segment =
+        emit_rebind_audit_to(home, &wal_dir, role, &prior, &new_slot, now_unix).await?;
     Ok(RebindResult {
         role,
         provider,
@@ -660,7 +662,9 @@ async fn emit_rebind_audit(
     new_slot: &crate::config::inference::HemisphereSlot,
     now_unix: i64,
 ) -> Result<std::path::PathBuf> {
+    let home = FreedomConfig::default_neoth_home();
     emit_rebind_audit_to(
+        &home,
         &FreedomConfig::default_wal_dir(),
         role,
         prior,
@@ -674,6 +678,7 @@ async fn emit_rebind_audit(
 /// integration tests can drive the audit path without colliding with the
 /// operator's real `~/.neoth/wal/`.
 async fn emit_rebind_audit_to(
+    home: &std::path::Path,
     wal_dir: &std::path::Path,
     role: HemisphereRole,
     prior: &crate::config::inference::HemisphereSlot,
@@ -697,7 +702,7 @@ async fn emit_rebind_audit_to(
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HEMISPHERE_REBOUND, &payload)
             .build();
 
-    let (writer, join) = crate::wal::writer::spawn(segment.clone())
+    let (writer, join) = crate::wal::writer::spawn_for_home(segment.clone(), home.to_path_buf())
         .context("spawn WAL writer for hemisphere rebind audit")?;
     writer
         .append(header, payload)
@@ -1143,6 +1148,7 @@ mod tests {
         };
         let segment = emit_rebind_audit_to(
             dir.path(),
+            dir.path(),
             HemisphereRole::Right,
             &prior,
             &new_slot,
@@ -1203,6 +1209,7 @@ mod tests {
             voice: None,
         };
         let segment = emit_rebind_audit_to(
+            dir.path(),
             dir.path(),
             HemisphereRole::Cerebellum,
             &prior,

@@ -22,8 +22,9 @@
 //! topic, a pull subscription on it, and a service account holding
 //! `roles/pubsub.subscriber` + Chat-app credentials. `credentials.yaml`:
 //! `gchat_service_account_json` (path), `gchat_subscription`
-//! (`projects/<p>/subscriptions/<s>`), optional `gchat_allowed_sender`
-//! (`users/<id>`, the D2 allowlist).
+//! (`projects/<p>/subscriptions/<s>`) and required `gchat_allowed_sender`
+//! (`users/<id>`, the D2 allowlist). Production serve refuses to start the
+//! adapter without that sender policy.
 
 use std::time::{Duration, Instant};
 
@@ -105,7 +106,8 @@ pub struct GChatChannel {
     http: reqwest::Client,
     /// Cached bearer token + its refresh deadline.
     token: tokio::sync::Mutex<Option<(String, Instant)>>,
-    /// D2 — operator sender allowlist (`users/<id>`). `None` ⇒ open.
+    /// D2 — operator sender allowlist (`users/<id>`). `None` exists for
+    /// construction/tests; production serve never starts an open adapter.
     allowed_sender: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
@@ -148,6 +150,7 @@ impl GChatChannel {
     }
 
     /// D2 — bind the operator sender allowlist + the gate's audit writer.
+    /// Production wiring validates that this value is present before startup.
     pub fn with_allowlist(
         mut self,
         allowed_sender: Option<String>,
@@ -410,7 +413,8 @@ impl Channel for GChatChannel {
                     continue; // bot echo / non-MESSAGE / missing fields
                 };
                 // D2 — drop + audit a sender not on the operator allowlist
-                // before the pipeline sees the message (open when None).
+                // before the pipeline sees the message. Production preflight
+                // rejects None; that shape remains only for construction/tests.
                 if super::sender_blocked_by_allowlist(
                     self.allowed_sender.as_deref(),
                     &inbound.sender_id,

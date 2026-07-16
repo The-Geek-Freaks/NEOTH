@@ -37,11 +37,10 @@
 //!     Show the latest durable migration lifecycle (never started, in
 //!     progress, complete, or failed/rolled back).
 //!
-//! neoth-migrate import-config [--auth-profiles <PATH>] [--models-providers <PATH>] [--json]
-//!     Convert OpenClaw `auth.profiles` + `models.providers` JSON files
-//!     into NEOTH `freedom.yaml` provider stanzas.  API keys are NEVER
-//!     extracted — the output YAML contains a comment instructing the
-//!     operator to add keys to `credentials.yaml` separately.
+//! neoth-migrate import-config --config <PATH> [--json]
+//!     Deprecated compatibility name for `import-openclaw`. It runs the same
+//!     complete, source-bound inspect/plan contract and never emits partial
+//!     provider config.
 //!
 //! neoth-migrate import-openclaw --config <PATH> [--json]
 //!     Strict read-only JSON5/$include inspection of every effective OpenClaw
@@ -60,7 +59,6 @@ use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 mod detect;
-mod import_config;
 mod import_crons;
 mod migration_plan;
 mod openclaw_channels;
@@ -98,11 +96,8 @@ enum Command {
     Apply(ApplyArgs),
     /// Show the latest durable migration lifecycle from the audit sidecar.
     Status(StatusArgs),
-    /// Convert OpenClaw auth.profiles + models.providers JSON files into
-    /// NEOTH freedom.yaml provider stanzas. Keys are NEVER extracted
-    /// from the input — the output instructs the operator to add keys
-    /// to credentials.yaml separately. At least one of --auth-profiles
-    /// or --models-providers is required.
+    /// Deprecated compatibility name for `import-openclaw`. Requires the
+    /// complete openclaw.json and runs the same source-bound inspect/plan.
     ImportConfig(ImportConfigArgs),
     /// Strict read-only OpenClaw JSON5 channel/config migration plan. Resolves
     /// safe in-root $include files, redacts secrets and reports every effective
@@ -175,15 +170,16 @@ struct StatusArgs {
 
 #[derive(clap::Args, Debug)]
 struct ImportConfigArgs {
-    /// Path to your OpenClaw `auth.profiles` JSON file.
-    /// Typically `~/.openclaw/auth.profiles` or `~/.jarvis/auth.profiles`.
+    /// Path to `~/.openclaw/openclaw.json`.
     #[arg(long, value_name = "PATH")]
+    config: Option<std::path::PathBuf>,
+    /// Removed lossy input retained only to produce an actionable error.
+    #[arg(long, value_name = "PATH", hide = true)]
     auth_profiles: Option<std::path::PathBuf>,
-    /// Path to your OpenClaw `models.providers` JSON file.
-    /// Typically `~/.openclaw/models.providers` or similar.
-    #[arg(long, value_name = "PATH")]
+    /// Removed lossy input retained only to produce an actionable error.
+    #[arg(long, value_name = "PATH", hide = true)]
     models_providers: Option<std::path::PathBuf>,
-    /// Emit machine-readable JSON instead of YAML (useful for piping).
+    /// Emit the same machine-readable ledger as `import-openclaw --json`.
     #[arg(long, default_value = "false")]
     json: bool,
 }
@@ -659,46 +655,34 @@ fn check_groundtruth_schema(conn: &rusqlite::Connection) -> Result<()> {
 }
 
 fn run_import_config(args: ImportConfigArgs) -> Result<()> {
-    let auth_path = args.auth_profiles.as_deref();
-    let models_path = args.models_providers.as_deref();
-    tracing::info!(
-        auth_profiles = auth_path
-            .map(|p| p.display().to_string())
-            .as_deref()
-            .unwrap_or("<none>"),
-        models_providers = models_path
-            .map(|p| p.display().to_string())
-            .as_deref()
-            .unwrap_or("<none>"),
-        "neoth-migrate import-config"
+    anyhow::ensure!(
+        args.auth_profiles.is_none() && args.models_providers.is_none(),
+        "provider-only OpenClaw import is disabled because it cannot account for channel, account, and unknown config fields; rerun with `import-config --config <path-to-openclaw.json>` or `import-openclaw --config <path-to-openclaw.json>`"
     );
-    let result = import_config::import_config(auth_path, models_path)?;
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&result)?);
-    } else {
-        println!("{}", import_config::render_yaml(&result));
-        if !result.skipped.is_empty() {
-            eprintln!(
-                "warn: {} OpenClaw kind(s) had no NEOTH mapping and were skipped: {}",
-                result.skipped.len(),
-                result.skipped.join(", ")
-            );
-        }
-        eprintln!(
-            "info: {} sensitive field(s) stripped from input (no key material in output)",
-            result.sensitive_fields_dropped
-        );
-    }
-    Ok(())
+    let config = args.config.as_deref().context(
+        "deprecated `import-config` now requires `--config <path-to-openclaw.json>` so the complete source can be inspected without dropping fields",
+    )?;
+    tracing::info!(
+        config = %config.display(),
+        "neoth-migrate import-config compatibility entry"
+    );
+    eprintln!(
+        "deprecated: `import-config` is an alias of the read-only `import-openclaw` inspect/plan; no provider YAML or target state is produced"
+    );
+    run_openclaw_inspection(config, args.json)
 }
 
 fn run_import_openclaw(args: ImportOpenclawArgs) -> Result<()> {
     tracing::info!(
         config = %args.config.display(),
-        "neoth-migrate import-openclaw dry-run"
+        "neoth-migrate import-openclaw inspect/plan"
     );
-    let report = openclaw_channels::inspect_openclaw_config(&args.config)?;
-    if args.json {
+    run_openclaw_inspection(&args.config, args.json)
+}
+
+fn run_openclaw_inspection(config: &std::path::Path, json: bool) -> Result<()> {
+    let report = openclaw_channels::inspect_openclaw_config(config)?;
+    if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         print!("{}", openclaw_channels::render_human(&report));
@@ -759,6 +743,54 @@ fn default_home() -> std::path::PathBuf {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn legacy_import_config_rejects_provider_only_bypass() {
+        let error = run_import_config(ImportConfigArgs {
+            config: None,
+            auth_profiles: Some(std::path::PathBuf::from("auth.profiles")),
+            models_providers: None,
+            json: true,
+        })
+        .unwrap_err();
+        let rendered = error.to_string();
+        assert!(rendered.contains("provider-only OpenClaw import is disabled"));
+        assert!(rendered.contains("channel, account, and unknown config fields"));
+    }
+
+    #[test]
+    fn legacy_import_config_requires_complete_openclaw_source() {
+        let error = run_import_config(ImportConfigArgs {
+            config: None,
+            auth_profiles: None,
+            models_providers: None,
+            json: true,
+        })
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("requires `--config <path-to-openclaw.json>`")
+        );
+    }
+
+    #[test]
+    fn legacy_import_config_routes_complete_source_to_canonical_inspector() {
+        let temp = tempdir().unwrap();
+        let config = temp.path().join("openclaw.json");
+        std::fs::write(
+            &config,
+            "{ channels: { telegram: { botToken: 'never-print-this-secret' } } }",
+        )
+        .unwrap();
+        run_import_config(ImportConfigArgs {
+            config: Some(config),
+            auth_profiles: None,
+            models_providers: None,
+            json: true,
+        })
+        .unwrap();
+    }
 
     /// Create a minimal views.db at `<dir>/.neoth/views.db` with the
     /// idx_groundtruth table. Returns the db path.

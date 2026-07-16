@@ -32,9 +32,11 @@
 //!
 //! ## Operator prerequisite
 //!
-//! A Nostr secret key (`nsec1…` or hex) + a comma-separated relay list in
-//! `credentials.yaml`. NEOTH dials OUT to the relays, so no public URL is
-//! needed. Text only; media / NIP-17 file attachments are documented follow-ups.
+//! A Nostr secret key (`nsec1…` or hex), a comma-separated relay list and the
+//! required `nostr_allowed_pubkey` sender policy in `credentials.yaml`.
+//! Production serve refuses to start the adapter without that allowlist.
+//! NEOTH dials OUT to the relays, so no public URL is needed. Text only; media /
+//! NIP-17 file attachments are documented follow-ups.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -238,7 +240,8 @@ pub struct NostrChannel {
     secret_key: SecretString,
     relays: Vec<String>,
     client: tokio::sync::OnceCell<Client>,
-    /// D2 — operator sender allowlist (a 64-char hex pubkey). `None` ⇒ open.
+    /// D2 — operator sender allowlist (a 64-char hex pubkey). `None` exists for
+    /// construction/tests; production serve never starts an open adapter.
     allowed_pubkey: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
@@ -269,8 +272,8 @@ impl NostrChannel {
         }
     }
 
-    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
-    /// unset allowlist (`None`) leaves the channel open (any sender).
+    /// D2 — bind the operator sender allowlist + the gate's audit writer.
+    /// Production wiring validates that this value is present before startup.
     pub fn with_allowlist(
         mut self,
         allowed_pubkey: Option<String>,
@@ -412,7 +415,8 @@ impl Channel for NostrChannel {
                 continue; // never answer our own NIP-17 sent-copy
             }
             // D2 — drop + audit a sender not on the operator allowlist before
-            // the pipeline sees the message (open when None).
+            // the pipeline sees the message. Production preflight rejects
+            // None; that shape remains only for construction/tests.
             if super::sender_blocked_by_allowlist(
                 self.allowed_pubkey.as_deref(),
                 &sender.to_hex(),

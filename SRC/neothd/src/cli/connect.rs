@@ -8,7 +8,8 @@
 use anyhow::Result;
 use clap::Args;
 
-use crate::channels::probe::{ALL_CHANNELS, ProbeStatus};
+use crate::channels::probe::ProbeStatus;
+use crate::channels::registry::{ChannelId, resolve_channel_id};
 use crate::cli::OutputFormat;
 
 #[derive(Args, Debug, Clone)]
@@ -84,27 +85,14 @@ fn connect_rows(statuses: &[crate::cli::channel::ChannelStatus]) -> Vec<ChannelR
         .collect()
 }
 
-fn canonical_channel_name(name: &str) -> Option<&'static str> {
-    let normalized = name.trim().to_ascii_lowercase();
-    let normalized = match normalized.as_str() {
-        "whatsapp" => "whatsapp_business",
-        "imessage" | "bluebubbles" => "imessage_bluebubbles",
-        "google_chat" => "gchat",
-        other => other,
-    };
-    ALL_CHANNELS
-        .iter()
-        .find(|kind| kind.as_str() == normalized)
-        .map(|kind| kind.as_str())
-}
-
 /// Detailed on-ramp shown by `neoth connect <channel>`. Membership is resolved
 /// from the canonical registry; the friendly command never maintains its own
 /// supported-channel list.
 pub fn channel_details(name: &str) -> Option<String> {
-    let channel = canonical_channel_name(name)?;
-    Some(match channel {
-        "telegram" => "Telegram on-ramp:\n\
+    let channel_id = resolve_channel_id(name)?;
+    let channel = channel_id.as_str();
+    Some(match channel_id {
+        ChannelId::Telegram => "Telegram on-ramp:\n\
              1. Create a bot with @BotFather and copy its HTTP API token.\n\
              2. Obtain your exact numeric Telegram user ID.\n\
              3. Run `neoth channel add telegram --token <token> \
@@ -112,7 +100,7 @@ pub fn channel_details(name: &str) -> Option<String> {
              4. Run `neoth channel test telegram`; `neoth serve` hot-reloads the \
              complete token + sender policy."
             .to_string(),
-        "keet" => "Keet on-ramp (repository-owned local companion):\n\
+        ChannelId::Keet => "Keet on-ramp (repository-owned local companion):\n\
              1. Run `neoth-keet-bridge setup`, then start it on loopback.\n\
              2. Exchange peer self IDs and join the same private topic.\n\
              3. Run `neoth channel add keet`; supply URL, bearer, topic, and \
@@ -144,13 +132,14 @@ pub fn run_connect(args: ConnectArgs) -> Result<()> {
 
     // Single-channel detail view.
     if let Some(name) = args.channel.as_deref() {
-        let requested = name.to_lowercase();
-        let Some(name) = canonical_channel_name(&requested) else {
+        let requested = name.trim();
+        let Some(channel_id) = resolve_channel_id(requested) else {
             anyhow::bail!(
                 "unknown channel `{requested}` — known: {}",
                 rows.iter().map(|r| r.name).collect::<Vec<_>>().join(", ")
             );
         };
+        let name = channel_id.as_str();
         let row = rows
             .iter()
             .find(|row| row.name == name)
@@ -258,6 +247,7 @@ fn row_json_with_cred_status(r: &ChannelRow, cred_status: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channels::registry::channel_descriptors;
     use crate::config::FreedomConfig;
     use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
@@ -274,14 +264,17 @@ mod tests {
     #[test]
     fn empty_config_uses_the_complete_canonical_registry() {
         let rows = rows(&FreedomConfig::default(), &Credentials::default());
-        assert_eq!(rows.len(), ALL_CHANNELS.len());
+        assert_eq!(rows.len(), channel_descriptors().len());
         assert!(
             rows.iter()
                 .all(|row| row.status == ConnectStatus::NotConnected)
         );
         assert_eq!(find(&rows, "discord").status, ConnectStatus::NotConnected);
         let names: Vec<_> = rows.iter().map(|row| row.name).collect();
-        let canonical: Vec<_> = ALL_CHANNELS.iter().map(|kind| kind.as_str()).collect();
+        let canonical: Vec<_> = channel_descriptors()
+            .iter()
+            .map(|descriptor| descriptor.id.as_str())
+            .collect();
         assert_eq!(names, canonical);
     }
 
@@ -348,7 +341,7 @@ mod tests {
 
     #[test]
     fn channel_details_cover_registry_and_supported_aliases() {
-        for kind in ALL_CHANNELS {
+        for kind in crate::channels::registry::channel_ids() {
             assert!(
                 channel_details(kind.as_str()).is_some(),
                 "missing on-ramp for {}",

@@ -265,7 +265,7 @@ Add, inspect, test, and remove messaging channels
 
 Add a channel non-interactively (pass --token etc.) or interactively (stdin prompts)
 
-- `<CHANNEL>` — Channel name (e.g. telegram, slack, whatsapp, whatsapp_baileys, keet, discord, signal, line, irc, imessage, bluebubbles, mattermost, gchat, matrix, twitch, nostr)
+- `<CHANNEL>` — Canonical channel ID or accepted alias. Run `neoth channel list` for the registry-backed inventory
 - `--telegram-user-id <TELEGRAM_USER_ID>` — Numeric Telegram user ID allowed to drive the bot. Required with Telegram so the inbound adapter never starts with an open sender policy. Stored in freedom.yaml; the token remains in credentials.yaml
 - `--token <TOKEN>` — Bot/access token (telegram, Meta WhatsApp, Baileys/Keet companion, Discord, LINE, Mattermost). Sidecars use dedicated bearer tokens
 - `--bot-token <BOT_TOKEN>` — Slack bot token (xoxb-…)
@@ -293,6 +293,10 @@ List configured channels
 Remove a channel
 
 - `<CHANNEL>`
+
+### `neoth channel set-credentials` _(hidden)_
+
+Read one strict, bounded channel credential envelope from stdin
 
 ### `neoth channel test`
 
@@ -1475,6 +1479,39 @@ Internal terminal readiness handshake that does not change the saved GUI/CLI pre
 
 - `--ready-file <READY_FILE>`
 - `--ready-token <READY_TOKEN>`
+
+## `neoth internal` _(hidden)_
+
+Private authenticated-release helper surface
+
+### `neoth internal bundle-transaction`
+
+Apply an authenticated, exact portable release bundle
+
+#### `neoth internal bundle-transaction apply`
+
+Validate, recover any interrupted predecessor, and durably commit
+
+- `--bundle-root <PATH>` — Verified extracted root containing the exact release file set
+- `--install-root <PATH>` — Portable installation directory. User config lives elsewhere
+- `--expected-version <SEMVER>` — Canonical target SemVer without the release tag's `v` prefix
+
+#### `neoth internal bundle-transaction cleanup-handoff`
+
+Delete a completed Windows handoff after its helper exits
+
+- `--operation-id <OPERATION_ID>`
+- `--request-sha256 <HEX>` — Exact SHA-256 of the committed handoff request
+- `--wait-pid <WAIT_PID>`
+
+#### `neoth internal bundle-transaction handoff`
+
+Complete a portable update after the invoking Windows process exits
+
+- `--bundle-root <PATH>` — Extracted target release root containing the running helper
+- `--request <PATH>` — Strict request at the fixed sibling handoff slot
+- `--request-sha256 <HEX>` — Parent-computed SHA-256 binding for the exact request bytes
+- `--wait-pid <WAIT_PID>` — PID of the old installed CLI process that must exit first
 
 ## `neoth jobs`
 
@@ -3028,7 +3065,7 @@ Show the switch state, SkillOpt availability, and the last improvement
 
 ## `neoth self-knowledge`
 
-Inspect and query the release-signed Graphify self-knowledge snapshot
+Inspect and query the release-signed Graphify self-knowledge snapshot. Pure local read: no Python/Graphify runtime and no silent mutation
 
 ### `neoth self-knowledge query`
 
@@ -3037,25 +3074,15 @@ Search the verified release graph and persistent Markdown overlays
 - `<TEXT>` — Plain-text search. Ranking is deterministic and local-only
 - `--limit <LIMIT>` — Maximum combined graph/overlay results (1..=50)
 
-JSON results distinguish the immutable `release_graph` from
-`operator_overlay`, `reviewed_self_improve`, `self_improve_proposal`, and
-`unclassified_overlay`. Overlay hits also carry machine-readable
-`overlay_kind` and `review_state`; an unreviewed proposal is never presented as
-operator-attested or recalled automatically.
-
 ### `neoth self-knowledge status`
 
 Verify and describe the installed release self-knowledge snapshot
 
 ### `neoth self-knowledge verify`
 
-Verify an extracted release snapshot without materializing it or opening
-`NEOTH_HOME`. In addition to the closed manifest and release identity, this
-runs the exact bounded native graph loader and the real recall-claim parser in
-no-write mode. A signed snapshot that cannot be queried or ingested therefore
-cannot pass the fail-closed bootstrap/release preflight.
+Verify an archive snapshot without materializing it or opening NEOTH_HOME
 
-- `--snapshot <PATH>` — Exact `self-knowledge/` directory from the release archive
+- `--snapshot <PATH>` — Exact self-knowledge directory extracted from a release archive
 
 ## `neoth serve`
 

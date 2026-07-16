@@ -42,6 +42,45 @@
 - **Scope milestone**: v1.0.0 GOLD; no historical v1.1/post-Gold label may defer
   a retained public adoption
 
+### Execution checkpoint (2026-07-15; foundation only, no adoption complete)
+
+- The first typed `CapabilityCatalog`, `IntegrationJob`, durable SQLite job
+  store and bounded event foundation now exists under
+  `SRC/neothd/src/integrations/`. It validates canonical IDs, dependencies,
+  target support, lifecycle transitions, monotone progress, cancellation and
+  retry/restart proof bindings; one active mutating job per capability is
+  enforced transactionally. Recovery validates every typed disposition before
+  one immediate transaction and leaves active rows unchanged when no validator
+  can prove safe recovery; cancellation intent/outcome and process/staging
+  disposition evidence are distinct. The frozen-source foundation is **41/41**.
+  These proof primitives are state-engine contracts, not production-
+  authenticated evidence yet: proof minting, durable receipt/WAL binding and
+  probe adapters remain unwired.
+- This checkpoint does **not** close Step 1 or Step 2. The catalog still lacks
+  the complete checked-in production inventory, acquisition/license/notice/
+  ownership metadata and target release lock. The daemon does not yet own the
+  service; permission plus WAL authorization, artifact acquisition, adapters,
+  retention, IPC/SSE, CLI, GUI, Buddy and Doctor remain unwired.
+- The lifecycle still needs an explicit `AwaitingUser` state before QR scans,
+  OAuth, USB authorization, device pairing or platform signing can be reported
+  truthfully. `Configuring` must not hide a blocked human action.
+- A full runtime/adoption audit found no inspected family complete across
+  acquire -> verify -> configure -> supervise -> authenticated probe -> repair
+  -> update -> safe uninstall. Keet has the strongest shipped artifact and
+  CalDAV the strongest dependency-free runtime core; native model downloads
+  have the strongest reusable security substrate. Those are implementation
+  advantages, not completion claims.
+- The next independent production slices after daemon/API wiring are:
+  (1) Qwen/Ouro/CLIP/Candle-Whisper through the shared job and existing D7/D8
+  download rails; (2) all 181 bundled skills plus every sibling resource and
+  runtime dependency gate; and (3) a pinned managed Node/package closure with
+  WhatsApp Baileys as its first supervised `AwaitingUser` consumer, reusable by
+  n8n, Hex Graph and Mobile MCP.
+- Faster-Whisper, Piper, Ollama, n8n, Paperless, CBM, Mobile MCP/iOS, Graphify/
+  Office skills and every other retained capability remain explicitly
+  unavailable or incomplete on targets where their exact runtime, artifact,
+  license, ownership and authenticated probe contract is not yet closed.
+
 ## Why this matters
 
 NEOTH already contains substantial runtime implementations, but its public
@@ -79,6 +118,7 @@ The durable user-visible states are:
     downloading or running with byte/step progress
     validating
     configuring
+    awaiting_user with exact action/reason and a bound continuation
     ready
     failed
     cancelled
@@ -121,12 +161,13 @@ manually.
 - L6_Vault_Template/preload_manifest.yaml:1-119 is the operator-curated
   manifest. It is a release resource candidate, not a path the installed
   product may assume exists on the developer machine.
-- SRC/neothd/src/channels/mod.rs:205-267 defines ChannelKind, but
-  SRC/neothd/src/channels/probe.rs:218-233, SRC/neothd-gui/src/panel_logic.rs,
-  and SRC/neothd-gui/ui/settings.slint independently enumerate the same public
-  adapters and aliases. Treat this as drift evidence: the Plan 001
-  ChannelDescriptor/capability catalog must generate probes and all surface
-  pickers/forms instead of preserving several handwritten registries.
+- `SRC/neothd/src/channels/registry.rs` now owns the canonical Core/CLI channel
+  IDs, aliases, setup schema and descriptor inventory. The old standalone GUI
+  status-ID array is gone. GUI setup still uses a checked 15-way form/flag map
+  in `SRC/neothd-gui/src/panel_logic.rs`; it fails closed against registry
+  identity/setup drift but is not descriptor-generated yet. Plan 001 therefore
+  still requires generated pickers/forms/actions rather than another parallel
+  handwritten consumer.
 - SRC/neothd/Cargo.toml:46-55 defines release-server and release-desktop
   feature bundles. The current dirty worktree adds Matrix, IRC, Nostr, Google
   Chat, clipboard, and the WASM host to those bundles. Final artifact tests
@@ -151,19 +192,32 @@ manually.
 
 #### [DIRECTION-01] Establish one adoption lifecycle
 
-- **Evidence**: there is no CapabilityDescriptor, IntegrationJob, or equivalent
-  shared lifecycle registry in SRC/neothd. The Road-to-Gold correction at
-  PLAN/ROAD_TO_1_0_GOLD.md:156-193 explicitly requires one completion sequence
-  and progress/cancel/retry parity.
+- **Evidence (updated 2026-07-15)**: typed `CapabilityDescriptor`,
+  `CapabilityCatalog`, `IntegrationJob`, SQLite persistence and bounded events
+  now exist in `SRC/neothd/src/integrations/`, with **41/41** focused tests.
+  Restart recovery now requires exact revision-bound proof that the old process
+  tree was terminated or adopted and staging was reconciled; all interrupted
+  rows recover in one transaction, and `open_fail_closed` leaves active rows
+  untouched when no adapter validator exists. This is still only a state-engine
+  proof boundary: no production adapter can mint the receipts yet, cancellation
+  and recovery receipts are not durably WAL-bound, and the SQLite rows are not
+  authenticated against coherent at-rest rewriting. Those are acceptance
+  blockers, not deferred hardening.
+  They currently have no production consumer outside that module: no daemon
+  owner, adapter, permission/WAL orchestrator, status API, IPC/SSE, CLI, GUI,
+  Buddy or Doctor path uses them. The Road-to-Gold correction at
+  PLAN/ROAD_TO_1_0_GOLD.md:156-193 requires the complete shared lifecycle and
+  progress/cancel/retry parity, not types plus self-tests.
 - **Impact**: each installer, GUI callback, Buddy action, model path, and
   sidecar independently decides what complete means. A download or config write
   can be mistaken for readiness and failures disappear between surfaces.
 - **Effort**: L.
 - **Risk**: HIGH; it becomes the release installation control plane.
 - **Confidence**: HIGH; searched the source registry and all installer modules.
-- **Fix sketch**: add one typed capability catalog, durable job store, state
-  machine, artifact ownership ledger, orchestrator, and read-only event/status
-  API. Adapt existing installers incrementally.
+- **Fix sketch**: finish the canonical production catalog, artifact ownership
+  ledger, permission/WAL orchestrator and read-only event/status API; make the
+  daemon the sole job owner and adapt existing installers incrementally. Add
+  `AwaitingUser` before wiring QR/OAuth/device-pairing consumers.
 
 #### [BUG-01] Replace intent-only wizard choices with real jobs
 
@@ -428,6 +482,10 @@ transactions and monotonically increasing state_revision. On restart:
 
 - queued/running/downloading/validating/configuring jobs become resumable only
   after staging and manifest hashes are revalidated;
+- `awaiting_user` survives restart as a non-terminal state with the exact
+  redacted required action, bound continuation state and cancellation path;
+  completion of QR/OAuth/device/signing resumes automatically only after that
+  same continuation is revalidated;
 - a changed release lock invalidates the old job and creates a retry;
 - completed Ready jobs are re-probed, not blindly trusted;
 - cancellation kills the owned process tree, flushes progress, preserves
@@ -688,6 +746,12 @@ workflow providers, with zero uncatalogued public entries.
 
 ### Step 1: Add and validate the canonical capability catalog
 
+**Current status: IN PROGRESS, acceptance open.** The typed in-memory catalog
+and bounded DAG validation exist, but `packaging/capabilities/catalog.json`,
+the exhaustive production inventory, immutable acquisition metadata,
+source/license/notice decisions, release lock and adjacent signed-copy
+comparison do not. Synthetic descriptor tests are not an inventory proof.
+
 1. Create packaging/capabilities/catalog.json with one entry per matrix row and
    one child entry per grouped capability.
 2. Implement strict parsing in integrations/catalog.rs:
@@ -715,6 +779,18 @@ Expected: all positive/negative fixtures pass; running the generator twice
 produces byte-identical canonical JSON; every catalog source is immutable.
 
 ### Step 2: Build the durable job engine, permission gate, and API
+
+**Current status: IN PROGRESS, acceptance open.** The SQLite lifecycle,
+  revision-CAS, owner lock, cancellation, retry/restart checks, bounded events and
+  domain validation have a 41-test foundation. Restart recovery additionally
+requires adapter-issued process/staging disposition and is atomic across all
+active jobs; without that proof startup fails while preserving the capability-
+blocking rows. There is still no authenticated at-rest/WAL binding for job and
+cleanup receipts, no production receipt issuer, and no production
+daemon owner, cross-process capability lock, retention, process-tree executor,
+artifact/model adapter, `ManageIntegration` permission/WAL gate, command/API,
+IPC/SSE or surface consumer. Do not mark this step complete until those paths
+all use the same persisted job.
 
 1. Add the setup.db schema and migrations. Use one cross-process lock per
    capability mutation and immediate SQLite transactions.
@@ -755,8 +831,8 @@ cross-process locking tests pass.
    - package-manager operations through existing adapters;
    - managed portable Node/runtime packages;
    - OCI runtime/images for Paperless only when required;
-   - mobile/store deep links as explicit AwaitingUser steps represented within
-     Configuring, not fake Ready.
+   - mobile/store deep links as the explicit `AwaitingUser` state, not a hidden
+     `Configuring` stall and never fake Ready.
 3. Add an ownership ledger and versioned current-pointer commit.
 4. Extend the existing service supervisor so owned services expose start/stop,
    log tail, restart policy, authenticated readiness, and graceful rollback.
@@ -1185,8 +1261,9 @@ All must hold:
   tested explicit UnavailableReason for that target.
 - [ ] CLI, GUI, Buddy, wizard, Doctor, first-use consumers, and migrations use
   one durable job API and expose the same state revision/progress/error.
-- [ ] queued, byte/step progress, validating, configuring, ready, failed,
-  cancelled, and retry are durable and restart-safe.
+- [ ] queued, byte/step progress, validating, configuring, awaiting-user action
+  plus bound continuation, ready, failed, cancelled, and retry are durable and
+  restart-safe.
 - [ ] Ready is reachable only after exact artifact/config binding and an
   authenticated capability-specific probe.
 - [ ] The three intent-only wizard flags execute real jobs and fail scripts

@@ -273,21 +273,71 @@ pub fn resolve(home: &Path, name: &str) -> Result<Preset> {
 }
 
 /// ZF-01 — plan an apply WITHOUT writing: returns the report + the
-/// merged YAML body. Callers show the consent diff, then hand the body
-/// to [`commit_planned`]. `apply_preset_to_freedom_yaml` = plan+commit
-/// in one step for non-interactive callers.
+/// merged YAML body. This is an inspection-only API; mutation callers use
+/// [`prepare_apply`] so the eventual commit remains bound to the exact source
+/// that produced the reviewed plan.
 pub fn plan_apply(home: &Path, preset: &Preset) -> Result<(ApplyReport, String)> {
     plan_apply_inner(home, preset)
 }
 
-/// ZF-01 — atomically write a body produced by [`plan_apply`].
-pub fn commit_planned(home: &Path, body: &str) -> Result<()> {
+/// A preset publication bound to the exact freedom.yaml bytes reviewed by the
+/// operator. FULL-AUTO, when requested, is already projected into this one
+/// target body; no authority field is written before [`Self::commit`].
+pub(crate) struct PreparedPresetApply {
+    update: crate::config::PreparedFreedomUpdate,
+    pub(crate) report: ApplyReport,
+    pub(crate) previous_autonomy: crate::permissions::AutonomyLevel,
+    pub(crate) required_audit: bool,
+}
+
+impl PreparedPresetApply {
+    pub(crate) fn source_existed(&self) -> bool {
+        self.update.source_existed()
+    }
+
+    pub(crate) fn source_sha256(&self) -> String {
+        self.update.source_sha256()
+    }
+
+    pub(crate) fn target_sha256(&self) -> String {
+        self.update.target_sha256()
+    }
+
+    pub(crate) fn commit(self) -> Result<()> {
+        self.update.commit()
+    }
+}
+
+/// Build the final preset body under the canonical config locks. The returned
+/// CAS plan is safe to hold while the caller performs asynchronous ceremony
+/// and durable audit-intent delivery.
+pub(crate) fn prepare_apply(
+    home: &Path,
+    preset: &Preset,
+    project_full_auto: bool,
+) -> Result<PreparedPresetApply> {
     let freedom_path = home.join("freedom.yaml");
-    let tmp = freedom_path.with_extension("yaml.tmp");
-    std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &freedom_path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), freedom_path.display()))?;
-    Ok(())
+    let (update, (report, previous_autonomy, required_audit)) =
+        crate::config::prepare_raw_freedom_update(&freedom_path, |source| {
+            let current_yaml = if source.is_empty() { "{}" } else { source };
+            let current: crate::config::FreedomConfig = serde_yaml::from_str(current_yaml)
+                .with_context(|| format!("parse {}", freedom_path.display()))?;
+            let (report, body) = plan_apply_source(source, preset, project_full_auto)?;
+            Ok((
+                body,
+                (
+                    report,
+                    current.autonomy,
+                    current.audit_rpc.required_for_oneshot_permission_events,
+                ),
+            ))
+        })?;
+    Ok(PreparedPresetApply {
+        update,
+        report,
+        previous_autonomy,
+        required_audit,
+    })
 }
 
 /// Same as `apply` but takes an already-resolved `Preset` value.
@@ -295,12 +345,29 @@ pub fn commit_planned(home: &Path, body: &str) -> Result<()> {
 /// + apply", scripted apply paths) that work with a Preset they
 /// constructed in-process.
 pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<ApplyReport> {
-    let (report, body) = plan_apply_inner(home, preset)?;
-    commit_planned(home, &body)?;
+    let prepared = prepare_apply(home, preset, false)?;
+    let report = prepared.report.clone();
+    prepared.commit()?;
     Ok(report)
 }
 
 fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String)> {
+    let freedom_path = home.join("freedom.yaml");
+    let original = match std::fs::read_to_string(&freedom_path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", freedom_path.display()));
+        }
+    };
+    plan_apply_source(&original, preset, false)
+}
+
+fn plan_apply_source(
+    original: &str,
+    preset: &Preset,
+    project_full_auto: bool,
+) -> Result<(ApplyReport, String)> {
     // Guard rails BEFORE any merge work: denylist + inject ceilings.
     for key in preset.overrides.keys() {
         let root = key.split('.').next().unwrap_or(key);
@@ -326,18 +393,10 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
         }
     }
 
-    let freedom_path = home.join("freedom.yaml");
-    let original = if freedom_path.exists() {
-        std::fs::read_to_string(&freedom_path)
-            .with_context(|| format!("read {}", freedom_path.display()))?
-    } else {
-        String::new()
-    };
     let mut root: serde_yaml::Value = if original.is_empty() {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     } else {
-        serde_yaml::from_str(&original)
-            .with_context(|| format!("parse {}", freedom_path.display()))?
+        serde_yaml::from_str(original).context("parse freedom.yaml while planning preset")?
     };
     let mapping = match &mut root {
         serde_yaml::Value::Mapping(m) => m,
@@ -449,6 +508,14 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
     }
     merge_overrides(mapping, &preset.overrides, &mut report)?;
 
+    if project_full_auto {
+        anyhow::ensure!(
+            report.autonomy_requested.as_deref() == Some("full"),
+            "FULL-AUTO projection requested for a preset that does not request autonomy: full"
+        );
+        project_full_auto_into_yaml(mapping)?;
+    }
+
     for (path, old) in PRESET_WARN_PATHS.iter().zip(warn_before) {
         let new = lookup_dotted(mapping, path);
         if new != old && preset_touches(preset, path) {
@@ -465,11 +532,33 @@ fn plan_apply_inner(home: &Path, preset: &Preset) -> Result<(ApplyReport, String
     // unknown keys on load, so without this check a misspelled path is a
     // stealth no-op. Round-trip the merged body through FreedomConfig and
     // assert every override path survived.
-    if !preset.overrides.is_empty() {
-        validate_overrides_known(&body, &preset.overrides)?;
-    }
+    validate_merged_config(&body, &preset.overrides)?;
     report.preset_applied = true;
     Ok((report, body))
+}
+
+fn project_full_auto_into_yaml(mapping: &mut serde_yaml::Mapping) -> Result<()> {
+    mapping.insert(
+        serde_yaml::Value::from("autonomy"),
+        serde_yaml::Value::from("full"),
+    );
+    mapping.insert(
+        serde_yaml::Value::from("sovereign_buddy"),
+        serde_yaml::Value::Bool(false),
+    );
+
+    let skills_key = serde_yaml::Value::from("skills");
+    let skills = mapping
+        .entry(skills_key)
+        .or_insert_with(|| serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let skills = skills
+        .as_mapping_mut()
+        .context("cannot apply FULL-AUTO: freedom.yaml `skills` is not a mapping")?;
+    skills.insert(
+        serde_yaml::Value::from("enable_all_bundled"),
+        serde_yaml::Value::Bool(true),
+    );
+    Ok(())
 }
 
 /// ZF-01 — merge dotted-path overrides into the YAML mapping.
@@ -547,15 +636,19 @@ fn yaml_scalar_display(v: Option<&serde_yaml::Value>) -> String {
     }
 }
 
-/// ZF-01 — assert every override path survives a FreedomConfig
-/// round-trip. Unknown keys are dropped by serde on load; a dropped
-/// path means the preset author misspelled it.
-fn validate_overrides_known(
+/// Validate the complete target as a real FreedomConfig, then assert every
+/// explicit override survives a typed round-trip. Running this for every
+/// preset also rejects invalid typed values such as an unknown autonomy level
+/// before the CAS publication.
+fn validate_merged_config(
     merged_yaml: &str,
     overrides: &BTreeMap<String, serde_yaml::Value>,
 ) -> Result<()> {
     let parsed: crate::config::FreedomConfig = serde_yaml::from_str(merged_yaml)
         .context("merged freedom.yaml no longer parses as FreedomConfig")?;
+    if overrides.is_empty() {
+        return Ok(());
+    }
     let round_tripped =
         serde_yaml::to_value(&parsed).context("re-serialize FreedomConfig for path check")?;
     let rt_map = round_tripped

@@ -333,6 +333,26 @@ Use `neoth channel add whatsapp_baileys` so URL, token, sender, and group policy
 are validated atomically. Configure its proactive destination separately with
 `neoth proactive route --channel whatsapp_baileys --dest <E.164-or-JID>`.
 
+Inbound identity policy is mandatory for adapters whose vendor transport does
+not already bind one closed operator identity. NEOTH refuses to start the
+adapter when these fields are absent or blank:
+
+| Channel | Required identity policy |
+| :-- | :-- |
+| IRC | `irc_allowed_account` (authenticated IRCv3 services account; an optional `irc_allowed_nick` is only a secondary check) |
+| iMessage / BlueBubbles | `imessage_allowed_sender` |
+| Mattermost | `mattermost_allowed_user_id` |
+| Google Chat | `gchat_allowed_sender` |
+| Matrix | At least one of `matrix_allowed_user_id` or `matrix_allowed_room_ids`; when both are set, both must match |
+| Nostr | `nostr_allowed_pubkey` |
+
+`neoth channel add` and the GUI collect these policies through their shared
+channel setup contract. Five advanced settings still require a direct,
+owner-private `credentials.yaml` edit: `line_webhook_port` (default `8444`),
+`irc_port` (default `6697`), `irc_tls` (default `true`), `irc_allowed_nick`,
+and `matrix_store_path` (default `~/.neoth/matrix_store/`). Their missing
+first-class CLI/GUI controls remain v1.0 surface-parity work.
+
 OMI uses dedicated credential fields rather than provider/channel tokens:
 `omi_developer_api_key` for official Developer API import/export and
 `omi_ingest_token` for the authenticated native listener. Keep them in
@@ -360,7 +380,7 @@ Common environment variables:
 | :-- | :-- |
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
 | Provider config | Daemon reload or restart depending on provider. |
-| Channels | Restart `neoth serve` after credential changes. |
+| Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |
 | OMI | `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers; an invalid reload preserves the last valid runtime. |
 | Plugins | Restart after enabling/disabling code plugins. |
 | Policy | Reload where supported; restart for safest behavior. |

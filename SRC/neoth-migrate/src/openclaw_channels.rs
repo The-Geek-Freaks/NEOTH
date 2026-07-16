@@ -10,6 +10,7 @@ use anyhow::{Context as _, Result};
 use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::Read as _;
@@ -19,6 +20,8 @@ const MAX_INCLUDE_DEPTH: usize = 10;
 const MAX_INCLUDE_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FILES: usize = 128;
+const INSPECT_CONTRACT_VERSION: &str = "neoth-openclaw-inspect-v1";
+const AUDITED_OPENCLAW_SCHEMA_COMMIT: &str = "4c667aac8859114bd8f0a589ac6cd1de8bfe1474";
 
 /// OpenClaw keys backed by channel manifests in the audited source contract.
 /// The OpenClaw schema is extension-owned and remains open-ended, so anything
@@ -38,8 +41,11 @@ pub const KNOWN_CHANNEL_KEYS: &[&str] = &[
     "nostr",
     "qa-channel",
     "qqbot",
+    "raft",
+    "reef",
     "signal",
     "slack",
+    "sms",
     "synology-chat",
     "telegram",
     "tlon",
@@ -443,11 +449,27 @@ pub struct ChannelAlias {
     pub neoth: &'static str,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct SourceFileBinding {
+    /// Canonical path relative to the directory containing `openclaw.json`.
+    pub relative_path: String,
+    pub sha256: String,
+    pub byte_len: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct OpenClawImportReport {
+    pub contract_version: &'static str,
+    pub importer_version: &'static str,
+    pub target_neoth_version: &'static str,
+    pub audited_openclaw_schema_commit: &'static str,
+    pub known_channel_inventory_sha256: String,
     pub source: String,
     pub format: &'static str,
     pub dry_run_only: bool,
+    pub apply_available: bool,
+    pub source_set_sha256: String,
+    pub source_files: Vec<SourceFileBinding>,
     pub included_files: Vec<String>,
     pub known_channel_keys: Vec<&'static str>,
     pub channel_aliases: Vec<ChannelAlias>,
@@ -467,6 +489,7 @@ enum PathPart {
 
 struct LoadedConfig {
     source: PathBuf,
+    source_files: Vec<SourceFileBinding>,
     included_files: Vec<PathBuf>,
     value: Value,
 }
@@ -574,6 +597,7 @@ struct IncludeLoader {
     root: PathBuf,
     active: Vec<PathBuf>,
     cache: BTreeMap<PathBuf, Value>,
+    file_bindings: BTreeMap<PathBuf, (String, u64)>,
     loaded_files: BTreeSet<PathBuf>,
     total_bytes: u64,
 }
@@ -591,11 +615,24 @@ pub fn inspect_openclaw_config(path: &Path) -> Result<OpenClawImportReport> {
     }
     let apply_blocked = summary.hard_blockers > 0;
     let activation_blocked = summary.activation_blockers > 0;
+    let known_channel_inventory_sha256 = known_channel_inventory_sha256();
+    let source_set_sha256 = source_set_sha256(
+        &loaded.source_files,
+        known_channel_inventory_sha256.as_str(),
+    );
 
     Ok(OpenClawImportReport {
+        contract_version: INSPECT_CONTRACT_VERSION,
+        importer_version: env!("CARGO_PKG_VERSION"),
+        target_neoth_version: env!("CARGO_PKG_VERSION"),
+        audited_openclaw_schema_commit: AUDITED_OPENCLAW_SCHEMA_COMMIT,
+        known_channel_inventory_sha256,
         source: loaded.source.display().to_string(),
         format: "openclaw-json5",
         dry_run_only: true,
+        apply_available: false,
+        source_set_sha256,
+        source_files: loaded.source_files,
         included_files: loaded
             .included_files
             .into_iter()
@@ -615,8 +652,22 @@ pub fn inspect_openclaw_config(path: &Path) -> Result<OpenClawImportReport> {
 
 pub fn render_human(report: &OpenClawImportReport) -> String {
     let mut output = String::new();
-    output.push_str("OpenClaw migration dry-run (no files changed)\n");
+    output.push_str("OpenClaw migration inspect/plan (read-only; apply unavailable)\n");
+    output.push_str(&format!("contract: {}\n", report.contract_version));
+    output.push_str(&format!(
+        "target NEOTH: {}; audited OpenClaw schema: {}\n",
+        report.target_neoth_version, report.audited_openclaw_schema_commit
+    ));
+    output.push_str(&format!(
+        "known-channel inventory sha256: {}\n",
+        report.known_channel_inventory_sha256
+    ));
     output.push_str(&format!("source: {}\n", report.source));
+    output.push_str(&format!(
+        "source-set sha256: {} ({} file(s))\n",
+        report.source_set_sha256,
+        report.source_files.len()
+    ));
     output.push_str(&format!(
         "fields: {} total, {} mapped, {} need secret, {} hard blocker(s)\n",
         report.summary.total,
@@ -669,10 +720,28 @@ fn load_config(path: &Path) -> Result<LoadedConfig> {
         root,
         active: Vec::new(),
         cache: BTreeMap::new(),
+        file_bindings: BTreeMap::new(),
         loaded_files: BTreeSet::new(),
         total_bytes: 0,
     };
     let value = loader.load_file(&source, 0)?;
+    let source_files = loader
+        .file_bindings
+        .iter()
+        .map(|(path, (sha256, byte_len))| {
+            let relative = path.strip_prefix(&loader.root).with_context(|| {
+                format!(
+                    "loaded OpenClaw source escaped its canonical root: {}",
+                    path.display()
+                )
+            })?;
+            Ok(SourceFileBinding {
+                relative_path: portable_relative_path(relative)?,
+                sha256: sha256.clone(),
+                byte_len: *byte_len,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
     let included_files = loader
         .loaded_files
         .into_iter()
@@ -680,6 +749,7 @@ fn load_config(path: &Path) -> Result<LoadedConfig> {
         .collect();
     Ok(LoadedConfig {
         source,
+        source_files,
         included_files,
         value,
     })
@@ -745,6 +815,10 @@ impl IncludeLoader {
         anyhow::ensure!(
             self.total_bytes <= MAX_TOTAL_BYTES,
             "OpenClaw config exceeds the {MAX_TOTAL_BYTES}-byte total include limit"
+        );
+        self.file_bindings.insert(
+            canonical.clone(),
+            (sha256_bytes(&bytes), bytes.len() as u64),
         );
         let text = std::str::from_utf8(&bytes).map_err(|_| {
             anyhow::anyhow!(
@@ -844,6 +918,61 @@ impl IncludeLoader {
         };
         self.load_file(&candidate, depth)
     }
+}
+
+fn portable_relative_path(path: &Path) -> Result<String> {
+    Ok(path
+        .components()
+        .map(|component| {
+            component
+                .as_os_str()
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "OpenClaw source path is not valid Unicode and cannot be bound losslessly: {}",
+                        path.display()
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("/"))
+}
+
+fn source_set_sha256(files: &[SourceFileBinding], known_channel_inventory_sha256: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(INSPECT_CONTRACT_VERSION.as_bytes());
+    hasher.update([0]);
+    hasher.update(env!("CARGO_PKG_VERSION").as_bytes());
+    hasher.update([0]);
+    hasher.update(AUDITED_OPENCLAW_SCHEMA_COMMIT.as_bytes());
+    hasher.update([0]);
+    hasher.update(known_channel_inventory_sha256.as_bytes());
+    hasher.update([0]);
+    for file in files {
+        hasher.update(file.relative_path.as_bytes());
+        hasher.update([0]);
+        hasher.update(file.byte_len.to_be_bytes());
+        hasher.update([0]);
+        hasher.update(file.sha256.as_bytes());
+        hasher.update([0]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn known_channel_inventory_sha256() -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(AUDITED_OPENCLAW_SCHEMA_COMMIT.as_bytes());
+    hasher.update([0]);
+    for channel in KNOWN_CHANNEL_KEYS {
+        hasher.update(channel.as_bytes());
+        hasher.update([0]);
+    }
+    format!("{:x}", hasher.finalize())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn path_within(path: &Path, root: &Path) -> bool {
@@ -1320,6 +1449,58 @@ mod tests {
     }
 
     #[test]
+    fn source_set_binding_covers_primary_and_included_bytes() {
+        let temp = tempdir().unwrap();
+        let included = temp.path().join("telegram.json5");
+        std::fs::write(&included, "{ telegram: { enabled: true } }").unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { $include: './telegram.json5' } }",
+        );
+
+        let first = inspect_openclaw_config(&path).unwrap();
+        assert_eq!(first.contract_version, INSPECT_CONTRACT_VERSION);
+        assert_eq!(first.target_neoth_version, env!("CARGO_PKG_VERSION"));
+        assert_eq!(
+            first.audited_openclaw_schema_commit,
+            AUDITED_OPENCLAW_SCHEMA_COMMIT
+        );
+        assert_eq!(first.known_channel_inventory_sha256.len(), 64);
+        assert!(!first.apply_available);
+        assert_eq!(
+            first
+                .source_files
+                .iter()
+                .map(|file| file.relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["openclaw.json", "telegram.json5"]
+        );
+        assert!(
+            first
+                .source_files
+                .iter()
+                .all(|file| file.sha256.len() == 64 && file.byte_len > 0)
+        );
+
+        std::fs::write(&included, "{ telegram: { enabled: false } }").unwrap();
+        let second = inspect_openclaw_config(&path).unwrap();
+        assert_ne!(first.source_set_sha256, second.source_set_sha256);
+        assert_eq!(first.source_set_sha256.len(), 64);
+        assert_eq!(second.source_set_sha256.len(), 64);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn source_binding_rejects_non_unicode_relative_paths() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt as _;
+
+        let path = PathBuf::from(OsString::from_vec(b"source-\xff.json5".to_vec()));
+        let error = portable_relative_path(&path).unwrap_err();
+        assert!(error.to_string().contains("cannot be bound losslessly"));
+    }
+
+    #[test]
     fn rejects_include_outside_root() {
         let temp = tempdir().unwrap();
         let config_root = temp.path().join("config");
@@ -1394,6 +1575,7 @@ mod tests {
             root,
             active: Vec::new(),
             cache: BTreeMap::new(),
+            file_bindings: BTreeMap::new(),
             loaded_files: BTreeSet::new(),
             total_bytes: MAX_TOTAL_BYTES,
         };
@@ -1440,6 +1622,51 @@ mod tests {
     }
 
     #[test]
+    fn manifest_evidenced_channel_inventory_includes_raft_reef_and_sms() {
+        assert_eq!(
+            KNOWN_CHANNEL_KEYS,
+            &[
+                "clickclack",
+                "discord",
+                "feishu",
+                "googlechat",
+                "imessage",
+                "irc",
+                "line",
+                "matrix",
+                "mattermost",
+                "msteams",
+                "nextcloud-talk",
+                "nostr",
+                "qa-channel",
+                "qqbot",
+                "raft",
+                "reef",
+                "signal",
+                "slack",
+                "sms",
+                "synology-chat",
+                "telegram",
+                "tlon",
+                "twitch",
+                "whatsapp",
+                "zalo",
+                "zalouser",
+            ]
+        );
+
+        let temp = tempdir().unwrap();
+        let path = write_config(
+            temp.path(),
+            "{ channels: { raft: { enabled: true }, reef: { enabled: true }, sms: { enabled: true } } }",
+        );
+        let report = inspect_openclaw_config(&path).unwrap();
+        assert_eq!(report.summary.unknown, 0);
+        assert_eq!(report.summary.unsupported, 3);
+        assert!(report.apply_blocked);
+    }
+
+    #[test]
     fn runtime_and_multi_account_gaps_are_hard_blockers() {
         let temp = tempdir().unwrap();
         let path = write_config(
@@ -1483,6 +1710,70 @@ mod tests {
             entry.disposition == ImportDisposition::Unknown && entry.sensitive
                 || entry.source_path == "channels.futurechat.enabled"
         }));
+    }
+
+    #[test]
+    fn unknown_account_secret_and_root_blockers_keep_exact_source_paths() {
+        let temp = tempdir().unwrap();
+        let account_secret = "account-secret-never-render";
+        let direct_secret = "direct-secret-never-render";
+        let future_secret = "future-secret-never-render";
+        let path = write_config(
+            temp.path(),
+            &format!(
+                "{{
+                    models: {{ providers: [{{ kind: 'openai' }}] }},
+                    channels: {{
+                        telegram: {{
+                            botToken: '{direct_secret}',
+                            accounts: {{ work: {{ botToken: '{account_secret}' }} }},
+                            unknownTokenPolicy: true
+                        }},
+                        futurechat: {{ accounts: {{ personal: {{ accessToken: '{future_secret}' }} }} }}
+                    }}
+                }}"
+            ),
+        );
+
+        let report = inspect_openclaw_config(&path).unwrap();
+        let dispositions = report
+            .ledger
+            .iter()
+            .map(|entry| (entry.source_path.as_str(), entry.disposition))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(
+            dispositions.get("models.providers[0].kind"),
+            Some(&ImportDisposition::Unsupported)
+        );
+        assert_eq!(
+            dispositions.get("channels.telegram.botToken"),
+            Some(&ImportDisposition::NeedsSecret)
+        );
+        assert_eq!(
+            dispositions.get("channels.telegram.accounts.work.botToken"),
+            Some(&ImportDisposition::Unsupported)
+        );
+        assert_eq!(
+            dispositions.get("channels.telegram.unknownTokenPolicy"),
+            Some(&ImportDisposition::Unknown)
+        );
+        assert_eq!(
+            dispositions.get("channels.futurechat.accounts.personal.accessToken"),
+            Some(&ImportDisposition::Unknown)
+        );
+        assert!(report.apply_blocked);
+        assert!(report.activation_blocked);
+        let rendered = format!(
+            "{}\n{}",
+            serde_json::to_string(&report).unwrap(),
+            render_human(&report)
+        );
+        for secret in [account_secret, direct_secret, future_secret] {
+            assert!(!rendered.contains(secret));
+        }
+        for source_path in dispositions.keys() {
+            assert!(rendered.contains(source_path));
+        }
     }
 
     #[test]

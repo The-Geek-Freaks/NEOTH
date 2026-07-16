@@ -53,6 +53,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 pub mod credentials;
 // D003-KEYCHAIN-01 — OS keychain backend, migration helpers, SecretStore trait.
@@ -67,6 +68,90 @@ fn lock_freedom_update() -> MutexGuard<'static, ()> {
     FREEDOM_UPDATE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn with_freedom_update_lock<T>(path: &Path, action: impl FnOnce() -> Result<T>) -> Result<T> {
+    let _process_guard = lock_freedom_update();
+    let _file_guard = crate::util::locked_file::lock_file_blocking(
+        &path.with_extension("lock"),
+        "freedom config",
+    )?;
+    action()
+}
+
+fn read_optional_config_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+/// A reviewed freedom.yaml publication bound to the exact source bytes from
+/// which it was planned. The final compare-and-swap takes the same process and
+/// OS locks as every other config mutation, so a concurrent operator edit is a
+/// loud retry instead of being overwritten by a stale consent/audit plan.
+pub(crate) struct PreparedFreedomUpdate {
+    path: PathBuf,
+    expected_source: Option<Vec<u8>>,
+    target: Vec<u8>,
+}
+
+impl PreparedFreedomUpdate {
+    pub(crate) fn source_existed(&self) -> bool {
+        self.expected_source.is_some()
+    }
+
+    pub(crate) fn source_sha256(&self) -> String {
+        sha256_bytes(self.expected_source.as_deref().unwrap_or_default())
+    }
+
+    pub(crate) fn target_sha256(&self) -> String {
+        sha256_bytes(&self.target)
+    }
+
+    /// Publish exactly once. Failure before the atomic rename leaves the
+    /// previously observed source untouched; a changed source is never
+    /// overwritten.
+    pub(crate) fn commit(self) -> Result<()> {
+        with_freedom_update_lock(&self.path, || {
+            let current = read_optional_config_bytes(&self.path)?;
+            anyhow::ensure!(
+                current == self.expected_source,
+                "freedom.yaml changed after review; refusing a stale config publication — retry the command"
+            );
+            crate::util::atomic_write::atomic_write_private(&self.path, &self.target)
+                .with_context(|| format!("atomically write {}", self.path.display()))
+        })
+    }
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+/// Plan a raw, lossless freedom.yaml transformation under the canonical
+/// config locks. The locks are deliberately released before callers perform
+/// asynchronous consent/audit work; [`PreparedFreedomUpdate::commit`] then
+/// compare-and-swaps against these exact source bytes.
+pub(crate) fn prepare_raw_freedom_update<T>(
+    path: &Path,
+    planner: impl FnOnce(&str) -> Result<(String, T)>,
+) -> Result<(PreparedFreedomUpdate, T)> {
+    with_freedom_update_lock(path, || {
+        let expected_source = read_optional_config_bytes(path)?;
+        let source = std::str::from_utf8(expected_source.as_deref().unwrap_or_default())
+            .with_context(|| format!("freedom.yaml is not valid UTF-8 at {}", path.display()))?;
+        let (target, value) = planner(source)?;
+        Ok((
+            PreparedFreedomUpdate {
+                path: path.to_path_buf(),
+                expected_source,
+                target: target.into_bytes(),
+            },
+            value,
+        ))
+    })
 }
 // GOLD-ADAPT-DOC-01 (2026-06-23) — Python pip-gate helpers (ppt_master → python-pptx).
 pub mod installer;
@@ -1386,12 +1471,7 @@ impl FreedomConfig {
     /// keys are persisted separately through `Credentials::update_at`.
     pub fn save_public_to_default_path(&self) -> Result<()> {
         let path = Self::default_path();
-        let _process_guard = lock_freedom_update();
-        let _file_guard = crate::util::locked_file::lock_file_blocking(
-            &path.with_extension("lock"),
-            "freedom config",
-        )?;
-        self.write_public_to_path(&path)
+        with_freedom_update_lock(&path, || self.write_public_to_path(&path))
     }
 
     /// Concurrency-safe read-modify-write for `freedom.yaml`.
@@ -1401,15 +1481,27 @@ impl FreedomConfig {
     /// an error before `mutation` runs and before any bytes are replaced. The
     /// resulting public config is secret-stripped and atomically renamed.
     pub fn update_at<T>(path: &Path, mutation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
-        let _process_guard = lock_freedom_update();
-        let _file_guard = crate::util::locked_file::lock_file_blocking(
-            &path.with_extension("lock"),
-            "freedom config",
-        )?;
-        let mut config = Self::load_from_path(path)?;
-        let value = mutation(&mut config)?;
-        config.write_public_to_path(path)?;
-        Ok(value)
+        with_freedom_update_lock(path, || {
+            let mut config = Self::load_from_path(path)?;
+            let value = mutation(&mut config)?;
+            config.write_public_to_path(path)?;
+            Ok(value)
+        })
+    }
+
+    /// Prepare a typed config mutation without publishing it. The returned
+    /// update is CAS-bound to the exact source bytes and is intended for
+    /// permission changes that must durably record an audit intent before the
+    /// single atomic publication.
+    pub(crate) fn prepare_update_at<T>(
+        path: &Path,
+        mutation: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<(PreparedFreedomUpdate, T)> {
+        prepare_raw_freedom_update(path, |_| {
+            let mut config = Self::load_from_path(path)?;
+            let value = mutation(&mut config)?;
+            Ok((config.public_yaml()?, value))
+        })
     }
 
     /// Secret-free YAML rendering used by operator-facing config inspection.

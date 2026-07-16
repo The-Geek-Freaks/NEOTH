@@ -79,6 +79,7 @@ pub mod nostr_api;
 pub mod probe;
 pub mod rate_limit;
 pub(crate) mod readiness;
+pub mod registry;
 pub mod routing;
 pub mod send_gate;
 pub mod signal;
@@ -197,76 +198,78 @@ fn gate_rejected_payload(
     }))
 }
 
-/// Concrete messenger family. SP-5 C-prime: replaces the previous
-/// `&'static str` `channel` field so adapters cannot diverge on naming.
-/// Add a variant when a new adapter ships. `as_str()` returns the stable
-/// snake_case identifier used for log fields + WAL payload "channel" keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChannelKind {
-    Telegram,
-    Keet,
-    Slack,
-    WhatsAppBusiness,
-    WhatsAppBaileys,
-    Discord,
+macro_rules! define_channel_kinds {
+    ($( $(#[$meta:meta])* $variant:ident => $id:literal ),+ $(,)?) => {
+        /// Concrete messenger family. SP-5 C-prime: replaces the previous
+        /// `&'static str` `channel` field so adapters cannot diverge on naming.
+        /// Add a variant when a new adapter ships. `as_str()` returns the stable
+        /// snake_case identifier used for log fields + WAL payload "channel" keys.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum ChannelKind {
+            $(
+                $(#[$meta])*
+                $variant,
+            )+
+        }
+
+        impl ChannelKind {
+            /// Closed inventory generated from the same declaration as the enum
+            /// and canonical wire IDs. Registry validation requires a bijection
+            /// with this set so a new adapter cannot silently disappear from UI.
+            pub const ALL: &'static [Self] = &[$(Self::$variant),+];
+
+            pub const fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $id),+
+                }
+            }
+        }
+    };
+}
+
+define_channel_kinds! {
+    Telegram => "telegram",
+    Keet => "keet",
+    Slack => "slack",
+    WhatsAppBusiness => "whatsapp_business",
+    WhatsAppBaileys => "whatsapp_baileys",
+    Discord => "discord",
     /// GOLD-FEAT-10 — Signal via a local `signal-cli` REST/JSON-RPC daemon.
-    Signal,
+    Signal => "signal",
     /// GOLD-FEAT-10 — Matrix via `matrix-sdk` (the adapter module is behind
     /// the `matrix-channel` feature; this variant is always present so the
     /// formatter/probe/routing handle it even in builds without the feature).
-    Matrix,
+    Matrix => "matrix",
     /// GOLD-FEAT-10 — LINE Messaging API via the shared webhook listener
     /// (inbound) + push REST (outbound). Zero extra deps; always compiled.
-    Line,
+    Line => "line",
     /// GOLD-FEAT-10 — IRC via the `irc` crate (raw TCP; NEOTH dials OUT, so no
     /// public URL). The adapter module is behind the `irc-channel` feature; this
     /// variant + its formatter/probe row stay compiled in every build.
-    Irc,
+    Irc => "irc",
     /// GOLD-FEAT-10 — Mattermost (self-hosted, Slack-style team chat) via the
     /// WebSocket API (NEOTH dials OUT, so no public URL). Always compiled —
     /// reuses `tokio-tungstenite` + `reqwest`, no new crate.
-    Mattermost,
+    Mattermost => "mattermost",
     /// GOLD-FEAT-10 — Twitch chat, which is IRC under the hood. Served by the IRC
     /// adapter (`IrcChannel::for_twitch`) behind the `irc-channel` feature; this
     /// variant + its formatter/probe row stay compiled in every build.
-    Twitch,
+    Twitch => "twitch",
     /// GOLD-FEAT-10 — Nostr (decentralized relays, keypair identity). NIP-17
     /// gift-wrapped encrypted DMs via `nostr-sdk`. The adapter module is behind
     /// the `nostr-channel` feature; this variant + its formatter/probe row + the
     /// pure `nostr_api` mapping stay compiled in every build.
-    Nostr,
+    Nostr => "nostr",
     /// GOLD-FEAT-10b — iMessage via a local BlueBubbles server (REST polling).
     /// The adapter dials OUT to the operator's Mac running BlueBubbles — no
     /// public URL needed. Sender handles are Apple-ID verified (LOW spoof risk).
-    IMessageBlueBubbles,
+    IMessageBlueBubbles => "imessage_bluebubbles",
     /// B9 — Google Chat via a GCP Pub/Sub PULL subscription (no public URL).
     /// The adapter module is behind the `gchat-channel` feature; this variant
     /// + its formatter/probe row + the pure `gchat_api` mapping stay compiled
     /// in every build. Sender ids are Google-asserted `users/<id>` (LOW spoof
     /// risk).
-    GoogleChat,
-}
-
-impl ChannelKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ChannelKind::Telegram => "telegram",
-            ChannelKind::Keet => "keet",
-            ChannelKind::Slack => "slack",
-            ChannelKind::WhatsAppBusiness => "whatsapp_business",
-            ChannelKind::WhatsAppBaileys => "whatsapp_baileys",
-            ChannelKind::Discord => "discord",
-            ChannelKind::Signal => "signal",
-            ChannelKind::Matrix => "matrix",
-            ChannelKind::Line => "line",
-            ChannelKind::Irc => "irc",
-            ChannelKind::Mattermost => "mattermost",
-            ChannelKind::Twitch => "twitch",
-            ChannelKind::Nostr => "nostr",
-            ChannelKind::IMessageBlueBubbles => "imessage_bluebubbles",
-            ChannelKind::GoogleChat => "gchat",
-        }
-    }
+    GoogleChat => "gchat",
 }
 
 impl serde::Serialize for ChannelKind {

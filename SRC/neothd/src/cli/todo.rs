@@ -421,33 +421,70 @@ pub(crate) async fn emit_todo_write(
 /// frame in the warn/debug logs. The caller builds the metadata-only payload
 /// (NEVER credentials).
 pub(crate) async fn emit_oneshot_audit(event_type: u8, payload: Vec<u8>, label: &'static str) {
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
-        Ok(Some(_))
-    );
-    if daemon_live {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        if let Err(e) =
-            crate::daemon::audit_rpc::try_post_audit_frame(&home, event_type, &payload).await
-        {
-            tracing::debug!(error = %e, label, "audit forward skipped (daemon listener unreachable)");
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let _ = emit_oneshot_audit_at(&home, event_type, payload, label, false).await;
+}
+
+/// Instance-home-bound counterpart used by callers that already resolved the
+/// authoritative home. Keeping PID detection, audit RPC and the local WAL on
+/// this exact path prevents Custom-Home actions from being audited elsewhere.
+///
+/// `required=true` means actual delivery, not a reachability proxy: a live
+/// daemon must ACK the fsynced append, while a one-shot owner must successfully
+/// append through the home-bound writer. Optional posture keeps the historical
+/// best-effort behavior but surfaces the gap in logs.
+pub(crate) async fn emit_oneshot_audit_at(
+    home: &std::path::Path,
+    event_type: u8,
+    payload: Vec<u8>,
+    label: &'static str,
+    required: bool,
+) -> Result<()> {
+    let delivery: Result<()> = async {
+        let daemon_live = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
+            .context("inspect daemon ownership before audit delivery")?
+            .is_some();
+        if daemon_live {
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
+                .await
+                .map_err(anyhow::Error::new)
+                .with_context(|| format!("daemon did not durably ACK {label}"))?;
+            return Ok(());
         }
-        return;
-    }
-    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, label, "WAL writer spawn failed; audit not recorded");
-            return;
+
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create audit WAL directory {}", parent.display()))?;
         }
-    };
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, label, "audit frame append failed (audit gap)");
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
+            .with_context(|| format!("spawn home-bound writer for {label}"))?;
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        let append = writer
+            .append(header, payload)
+            .await
+            .with_context(|| format!("durably append {label}"));
+        drop(writer);
+        let joined = join
+            .await
+            .with_context(|| format!("join home-bound writer after {label}"));
+        append?;
+        joined?;
+        Ok(())
+    }
+    .await;
+
+    match delivery {
+        Ok(()) => Ok(()),
+        Err(error) if required => Err(error).with_context(|| {
+            format!(
+                "required audit `{label}` was not durably recorded; refusing the protected mutation"
+            )
+        }),
+        Err(error) => {
+            tracing::warn!(%error, label, "optional audit was not recorded");
+            Ok(())
+        }
     }
 }
 

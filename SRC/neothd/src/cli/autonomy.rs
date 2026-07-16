@@ -235,17 +235,72 @@ fn change_event(previous: AutonomyLevel, next: AutonomyLevel) -> Option<u8> {
     }
 }
 
-/// Record the autonomy change in the WAL — a security-relevant config mutation
-/// must be forensically visible. Best-effort: when the daemon owns the writer
-/// the frame is FORWARDED over audit-RPC (AUDIT-RPC-01); otherwise a one-shot
-/// writer appends it. Payload `{previous, next, source:"cli"}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MutationAuditPhase {
+    Intent,
+    Committed,
+    Aborted,
+}
+
+impl MutationAuditPhase {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Intent => "intent",
+            Self::Committed => "committed",
+            Self::Aborted => "aborted",
+        }
+    }
+}
+
+/// Immutable binding shared by every phase of one config publication. The
+/// target hash makes an intent reviewable without pretending the publication
+/// already happened; only the matching `committed` phase makes that claim.
+#[derive(Clone, Debug)]
+pub(crate) struct ConfigAuditBinding {
+    operation_id: String,
+    source_existed: bool,
+    source_sha256: String,
+    target_sha256: String,
+}
+
+impl ConfigAuditBinding {
+    pub(crate) fn new(source_existed: bool, source_sha256: String, target_sha256: String) -> Self {
+        Self {
+            operation_id: uuid::Uuid::now_v7().to_string(),
+            source_existed,
+            source_sha256,
+            target_sha256,
+        }
+    }
+
+    pub(crate) fn operation_id(&self) -> &str {
+        &self.operation_id
+    }
+
+    pub(crate) fn source_existed(&self) -> bool {
+        self.source_existed
+    }
+
+    pub(crate) fn source_sha256(&self) -> &str {
+        &self.source_sha256
+    }
+
+    pub(crate) fn target_sha256(&self) -> &str {
+        &self.target_sha256
+    }
+}
+
+/// Record one phase of an autonomy config transaction. Required posture is
+/// based on the actual daemon ACK/local fsynced append, never sidecar reachability.
 async fn emit_autonomy_change(
     previous: AutonomyLevel,
     next: AutonomyLevel,
     mode: Option<&str>,
-    daemon_live: bool,
     home: &std::path::Path,
-) {
+    binding: &ConfigAuditBinding,
+    phase: MutationAuditPhase,
+    required: bool,
+) -> Result<()> {
     // Pick the event from the level delta. Special case: a switch INTO full-auto
     // widens authority (the whole skill library goes live + the gate opens to
     // Full) even when the level was already Full — record that as an elevation
@@ -253,37 +308,23 @@ async fn emit_autonomy_change(
     let event_type = match change_event(previous, next) {
         Some(e) => e,
         None if mode == Some("full-auto") => crate::wal::events::EVENT_TYPE_LEVEL_ELEVATED,
-        None => return,
+        None => return Ok(()),
     };
     let payload = serde_json::to_vec(&serde_json::json!({
         "previous": previous.as_str(),
         "next": next.as_str(),
         "mode": mode,
         "source": "cli",
+        "operation_id": binding.operation_id(),
+        "phase": phase.as_str(),
+        "source_existed": binding.source_existed(),
+        "source_config_sha256": binding.source_sha256(),
+        "target_config_sha256": binding.target_sha256(),
+        "ts_unix": crate::time::now_unix_secs(),
     }))
-    .unwrap_or_else(|_| b"{}".to_vec());
-
-    if daemon_live {
-        // Daemon owns the single WAL writer → forward over the loopback
-        // audit-RPC channel (0xA2/0xA3 are allowlisted there).
-        if let Err(e) =
-            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
-        {
-            tracing::debug!(error = %e, "autonomy-change audit forward failed (best-effort)");
-        }
-    } else {
-        // No daemon → open a one-shot writer and append directly.
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok((writer, join)) = crate::wal::spawn(segment) {
-            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-            let _ = writer.append(header, payload).await;
-            drop(writer);
-            let _ = join.await;
-        }
-    }
+    .context("serialize autonomy mutation audit")?;
+    crate::cli::todo::emit_oneshot_audit_at(home, event_type, payload, "AUTONOMY_CHANGE", required)
+        .await
 }
 
 /// GOLD-FEAT-01c — record `0xDD SUDOMODE_PRESET_APPLIED` when the full-auto
@@ -295,33 +336,80 @@ async fn emit_autonomy_change(
 /// ts_unix}`.
 async fn emit_sudomode_preset_applied(
     previous: AutonomyLevel,
-    daemon_live: bool,
     home: &std::path::Path,
-) {
+    binding: &ConfigAuditBinding,
+    phase: MutationAuditPhase,
+    required: bool,
+) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "previous": previous.as_str(),
         "source": "cli",
+        "operation_id": binding.operation_id(),
+        "phase": phase.as_str(),
+        "source_existed": binding.source_existed(),
+        "source_config_sha256": binding.source_sha256(),
+        "target_config_sha256": binding.target_sha256(),
         "ts_unix": crate::time::now_unix_secs(),
     }))
-    .unwrap_or_else(|_| b"{}".to_vec());
+    .context("serialize FULL-AUTO mutation audit")?;
     let event_type = crate::wal::events::EVENT_TYPE_SUDOMODE_PRESET_APPLIED;
-    if daemon_live {
-        if let Err(e) =
-            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
-        {
-            tracing::debug!(error = %e, "sudomode-preset audit forward failed (best-effort)");
-        }
+    crate::cli::todo::emit_oneshot_audit_at(
+        home,
+        event_type,
+        payload,
+        "SUDOMODE_PRESET_APPLIED",
+        required,
+    )
+    .await
+}
+
+/// Emit both forensic facets of a FULL-AUTO publication under one operation
+/// binding. Preset application reuses this instead of independently inventing
+/// an authority audit path.
+pub(crate) async fn emit_full_auto_audit_phase(
+    previous: AutonomyLevel,
+    mode: &str,
+    home: &std::path::Path,
+    binding: &ConfigAuditBinding,
+    phase: MutationAuditPhase,
+    required: bool,
+) -> Result<()> {
+    emit_autonomy_change(
+        previous,
+        AutonomyLevel::Full,
+        Some(mode),
+        home,
+        binding,
+        phase,
+        required,
+    )
+    .await?;
+    emit_sudomode_preset_applied(previous, home, binding, phase, required).await
+}
+
+async fn emit_mode_audit_phase(
+    full_auto: bool,
+    previous: AutonomyLevel,
+    applied: AutonomyLevel,
+    mode: &str,
+    home: &std::path::Path,
+    binding: &ConfigAuditBinding,
+    phase: MutationAuditPhase,
+    required: bool,
+) -> Result<()> {
+    if full_auto {
+        emit_full_auto_audit_phase(previous, mode, home, binding, phase, required).await
     } else {
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok((writer, join)) = crate::wal::spawn(segment) {
-            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-            let _ = writer.append(header, payload).await;
-            drop(writer);
-            let _ = join.await;
-        }
+        emit_autonomy_change(
+            previous,
+            applied,
+            Some(mode),
+            home,
+            binding,
+            phase,
+            required,
+        )
+        .await
     }
 }
 
@@ -416,18 +504,38 @@ async fn run_set_mode(
     gui_token: Option<String>,
     output: OutputFormat,
 ) -> Result<()> {
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
-    let required = cfg.audit_rpc.required_for_oneshot_permission_events;
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
-    crate::daemon::audit_rpc::enforce_required_audit(required, daemon_live, &home)?;
-    let (next, previous) = apply_mode(cfg, full_auto);
-    let applied = next.autonomy;
+    run_set_mode_at(&home, full_auto, gui_confirmed, gui_token, output).await
+}
+
+/// Validate/consume the FULL-AUTO ceremony for one exact instance without
+/// mutating freedom.yaml. Preset application calls this before its single
+/// CAS-bound publication.
+pub(crate) async fn authorize_full_auto_at(
+    home: &std::path::Path,
+    gui_confirmed: bool,
+    gui_token: Option<String>,
+) -> Result<()> {
+    let token_ok = match (gui_confirmed, gui_token.as_deref()) {
+        (true, Some(token)) => crate::daemon::audit_rpc::consume_fullauto_token(home, token).await,
+        _ => false,
+    };
+    confirm_full_auto(gui_confirmed, token_ok)
+}
+
+async fn run_set_mode_at(
+    home: &std::path::Path,
+    full_auto: bool,
+    gui_confirmed: bool,
+    gui_token: Option<String>,
+    output: OutputFormat,
+) -> Result<()> {
+    let path = home.join("freedom.yaml");
+    // Validate the exact instance before consuming a one-time GUI token. This
+    // read has no mutation; the later prepared publication is independently
+    // bound to the exact source bytes it reviews.
+    FreedomConfig::load_from_path(&path)
+        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
     let mode = if full_auto { "full-auto" } else { "gated" };
     // GR-101 / GR-RESID-D34 — FULL-AUTO is the most permissive mode (NEOTH acts
     // WITHOUT asking: shell, channel sends, writes, token spend). Require an
@@ -439,21 +547,62 @@ async fn run_set_mode(
     // bypasses — a stale/absent token fails the gate — so the bypass can't be
     // baked into a script. Switching back to GATED needs no confirmation.
     if full_auto {
-        let token_ok = match (gui_confirmed, gui_token.as_deref()) {
-            (true, Some(t)) => crate::daemon::audit_rpc::consume_fullauto_token(&home, t).await,
-            _ => false,
-        };
-        confirm_full_auto(gui_confirmed, token_ok)?;
+        authorize_full_auto_at(home, gui_confirmed, gui_token).await?;
     }
-    next.save_public_to_default_path()
-        .context("persist the operating mode to freedom.yaml")?;
-    emit_autonomy_change(previous, applied, Some(mode), daemon_live, &home).await;
-    // GOLD-FEAT-01c — a dedicated forensic anchor for the full-auto/sudomode
-    // preset, distinct from the generic LEVEL_ELEVATED above: records that the
-    // operator dropped the gate specifically via the full-auto preset.
-    if full_auto {
-        emit_sudomode_preset_applied(previous, daemon_live, &home).await;
+
+    let (update, (previous, applied, required_audit)) =
+        FreedomConfig::prepare_update_at(&path, |current| {
+            let (next, previous) = apply_mode(current.clone(), full_auto);
+            let applied = next.autonomy;
+            let required = current.audit_rpc.required_for_oneshot_permission_events;
+            *current = next;
+            Ok((previous, applied, required))
+        })
+        .context("prepare the operating-mode publication")?;
+    let binding = ConfigAuditBinding::new(
+        update.source_existed(),
+        update.source_sha256(),
+        update.target_sha256(),
+    );
+
+    emit_mode_audit_phase(
+        full_auto,
+        previous,
+        applied,
+        mode,
+        home,
+        &binding,
+        MutationAuditPhase::Intent,
+        required_audit,
+    )
+    .await
+    .context("FULL-AUTO/GATED audit intent was not durable; config was not changed")?;
+    if let Err(error) = update.commit() {
+        let _ = emit_mode_audit_phase(
+            full_auto,
+            previous,
+            applied,
+            mode,
+            home,
+            &binding,
+            MutationAuditPhase::Aborted,
+            false,
+        )
+        .await;
+        return Err(error).context("operating-mode CAS publication failed; config was not changed");
     }
+    emit_mode_audit_phase(
+        full_auto,
+        previous,
+        applied,
+        mode,
+        home,
+        &binding,
+        MutationAuditPhase::Committed,
+        required_audit,
+    )
+    .await
+    .context("operating mode was published, but its required committed audit failed")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -541,34 +690,62 @@ pub(crate) async fn set_level_at(
         } else {
             false
         };
-    let pidfile = home.join("neothd.pid");
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
+    let (update, (previous, applied, required_audit)) =
+        FreedomConfig::prepare_update_at(path, |cfg| {
+            if parsed == AutonomyLevel::Full
+                && cfg.autonomy != AutonomyLevel::Full
+                && !full_confirmation
+            {
+                anyhow::bail!(
+                    "autonomy changed concurrently before Full confirmation; retry the command"
+                );
+            }
+            let previous = cfg.autonomy;
+            let required = cfg.audit_rpc.required_for_oneshot_permission_events;
+            cfg.autonomy = parsed;
+            Ok((previous, parsed, required))
+        })
+        .context("prepare the new autonomy level")?;
+    let binding = ConfigAuditBinding::new(
+        update.source_existed(),
+        update.source_sha256(),
+        update.target_sha256(),
     );
-    let (previous, applied) = FreedomConfig::update_at(path, |cfg| {
-        crate::daemon::audit_rpc::enforce_required_audit(
-            cfg.audit_rpc.required_for_oneshot_permission_events,
-            daemon_live,
+    emit_autonomy_change(
+        previous,
+        applied,
+        None,
+        home,
+        &binding,
+        MutationAuditPhase::Intent,
+        required_audit,
+    )
+    .await
+    .context("autonomy audit intent was not durable; config was not changed")?;
+    if let Err(error) = update.commit() {
+        let _ = emit_autonomy_change(
+            previous,
+            applied,
+            None,
             home,
-        )?;
-        if parsed == AutonomyLevel::Full
-            && cfg.autonomy != AutonomyLevel::Full
-            && !full_confirmation
-        {
-            anyhow::bail!(
-                "autonomy changed concurrently before Full confirmation; retry the command"
-            );
-        }
-        let previous = cfg.autonomy;
-        cfg.autonomy = parsed;
-        Ok((previous, parsed))
-    })
-    .context("persist the new autonomy level to freedom.yaml")?;
-    // Forensic audit of the security-relevant change (best-effort, after the
-    // persist so a recorded frame always reflects what's on disk). No mode label
-    // — this is the raw level setter, not the headline-mode switch.
-    emit_autonomy_change(previous, applied, None, daemon_live, home).await;
+            &binding,
+            MutationAuditPhase::Aborted,
+            false,
+        )
+        .await;
+        return Err(error).context("autonomy CAS publication failed; target was not published");
+    }
+    emit_autonomy_change(
+        previous,
+        applied,
+        None,
+        home,
+        &binding,
+        MutationAuditPhase::Committed,
+        required_audit,
+    )
+    .await
+    .context("autonomy was published, but its required committed audit failed")?;
     Ok((previous, applied))
 }
 
@@ -719,41 +896,64 @@ async fn run_sovereign(
         return Ok(());
     }
 
-    let cfg = FreedomConfig::load_from_default_path()
-        .context("load freedom.yaml (run `neoth init` first if this is a fresh install)")?;
-    let required = cfg.audit_rpc.required_for_oneshot_permission_events;
     let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    let daemon_live = matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    );
-    crate::daemon::audit_rpc::enforce_required_audit(required, daemon_live, &home)?;
+    let path = FreedomConfig::default_path();
 
     if enable {
         // Consent ceremony — TTY-only, typed phrase, no GUI bypass.
         confirm_sovereign()?;
-        let (previous, applied) = FreedomConfig::update_at(&FreedomConfig::default_path(), |cfg| {
-            let (next, previous) = apply_sovereign_mode(cfg.clone());
-            let applied = next.autonomy;
-            *cfg = next;
-            Ok((previous, applied))
-        })
-        .context("persist sovereign-buddy mode to freedom.yaml")?;
+        let (update, (previous, applied, required_audit)) =
+            FreedomConfig::prepare_update_at(&path, |cfg| {
+                let required = cfg.audit_rpc.required_for_oneshot_permission_events;
+                let (next, previous) = apply_sovereign_mode(cfg.clone());
+                let applied = next.autonomy;
+                *cfg = next;
+                Ok((previous, applied, required))
+            })
+            .context("prepare sovereign-buddy mode")?;
+        let binding = ConfigAuditBinding::new(
+            update.source_existed(),
+            update.source_sha256(),
+            update.target_sha256(),
+        );
+        emit_full_auto_audit_phase(
+            previous,
+            "sovereign-buddy",
+            &home,
+            &binding,
+            MutationAuditPhase::Intent,
+            required_audit,
+        )
+        .await
+        .context("sovereign audit intent was not durable; config was not changed")?;
+        if let Err(error) = update.commit() {
+            let _ = emit_full_auto_audit_phase(
+                previous,
+                "sovereign-buddy",
+                &home,
+                &binding,
+                MutationAuditPhase::Aborted,
+                false,
+            )
+            .await;
+            return Err(error)
+                .context("sovereign CAS publication failed; target was not published");
+        }
         // WAL audit: 0xA2 LEVEL_ELEVATED + 0xDD SUDOMODE_PRESET_APPLIED.
         // The 0xD0 CONFIG_RELOADED fires automatically on next daemon hot-reload
         // when it sees sovereign_buddy in changed_fields. Three-frame sequence
         // provides equivalent forensic coverage to a dedicated event code
         // (byte space is exhausted — no new code possible).
-        emit_autonomy_change(
+        emit_full_auto_audit_phase(
             previous,
-            applied,
-            Some("sovereign-buddy"),
-            daemon_live,
+            "sovereign-buddy",
             &home,
+            &binding,
+            MutationAuditPhase::Committed,
+            required_audit,
         )
-        .await;
-        emit_sudomode_preset_applied(previous, daemon_live, &home).await;
+        .await
+        .context("sovereign mode was published, but its required committed audit failed")?;
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => println!(
                 "{}",
@@ -781,23 +981,16 @@ async fn run_sovereign(
         }
     } else {
         // Disable path — no ceremony.
-        let (previous, applied, mode_after) =
-            FreedomConfig::update_at(&FreedomConfig::default_path(), |cfg| {
-                let (next, previous) = apply_sovereign_disable(cfg.clone());
-                let applied = next.autonomy;
-                let mode_after = operating_mode_label(&next);
-                *cfg = next;
-                Ok((previous, applied, mode_after))
-            })
+        let (update, (previous, mode_after)) = FreedomConfig::prepare_update_at(&path, |cfg| {
+            let (next, previous) = apply_sovereign_disable(cfg.clone());
+            let mode_after = operating_mode_label(&next);
+            *cfg = next;
+            Ok((previous, mode_after))
+        })
+        .context("prepare sovereign-buddy disable")?;
+        update
+            .commit()
             .context("persist sovereign-buddy disable to freedom.yaml")?;
-        emit_autonomy_change(
-            previous,
-            applied,
-            Some("sovereign-buddy-off"),
-            daemon_live,
-            &home,
-        )
-        .await;
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => println!(
                 "{}",
@@ -828,8 +1021,16 @@ mod tests {
     async fn sudomode_preset_emits_0xdd_wal_frame() {
         let tmp = tempfile::TempDir::new().unwrap();
         let segment = tmp.path().join("wal").join("000001.wal");
-        // daemon_live=false → deterministic one-shot writer path.
-        emit_sudomode_preset_applied(AutonomyLevel::Standard, false, tmp.path()).await;
+        let binding = ConfigAuditBinding::new(false, "a".repeat(64), "b".repeat(64));
+        emit_sudomode_preset_applied(
+            AutonomyLevel::Standard,
+            tmp.path(),
+            &binding,
+            MutationAuditPhase::Committed,
+            true,
+        )
+        .await
+        .unwrap();
         let bytes = std::fs::read(&segment).expect("wal segment written");
         let mut found = 0usize;
         let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {

@@ -18,6 +18,12 @@
 //! The pure frame decode + URL/auth builders live in [`super::mattermost_api`]
 //! so they're unit-testable without a live server; the receive→reply dispatch
 //! reuses the channel-agnostic [`super::slack_socket::dispatch_inbound`].
+//!
+//! ## Operator prerequisite
+//!
+//! Configure the Mattermost base URL and bot/personal-access token together
+//! with required `mattermost_allowed_user_id`. Production serve refuses to
+//! start this adapter without that inbound identity policy.
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -43,7 +49,8 @@ const MAX_RECONNECT_BACKOFF_SECS: u64 = 60;
 pub struct MattermostChannel {
     base_url: String,
     token: SecretString,
-    /// D2 — operator sender allowlist (a Mattermost user UUID). `None` ⇒ open.
+    /// D2 — operator sender allowlist (a Mattermost user UUID). `None` exists
+    /// for construction/tests; production serve never starts an open adapter.
     allowed_user_id: Option<String>,
     /// D2 — WAL writer for the `0x3B CHANNEL_GATE_REJECTED` audit frame on a drop.
     gate_writer: Option<crate::wal::writer::WalWriterHandle>,
@@ -59,8 +66,8 @@ impl MattermostChannel {
         }
     }
 
-    /// D2 — bind the operator sender allowlist + the gate's audit writer. An
-    /// unset allowlist (`None`) leaves the channel open (any sender).
+    /// D2 — bind the operator sender allowlist + the gate's audit writer.
+    /// Production wiring validates that this value is present before startup.
     pub fn with_allowlist(
         mut self,
         allowed_user_id: Option<String>,
@@ -178,7 +185,8 @@ async fn run_one_session(
             Ok(Message::Text(frame)) => match decode_frame(&frame, bot_user_id) {
                 MmFrame::Posted(inbound) => {
                     // D2 — drop + audit any sender not on the operator allowlist
-                    // before the pipeline sees the message (open when None).
+                    // before the pipeline sees the message. Production preflight
+                    // rejects None; that shape remains only for construction/tests.
                     if super::sender_blocked_by_allowlist(
                         allowed_user_id,
                         &inbound.sender_id,

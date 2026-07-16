@@ -98,9 +98,7 @@ pub fn classify_event(event_type: u8) -> ReplicationClass {
         // (0x12 INSTALLER_RAN excluded: it carries login_state).
         0x13 => Replicate,
         // PII — gated behind the operator's raw-ingress opt-in (default off).
-        0x01 => RawIngressGated,                      // RAW_TEXT
-        0x20 | 0x21 => RawIngressGated,               // PROVIDER_REQUEST / RESPONSE
-        0x32 | 0x33 | 0x35..=0x38 => RawIngressGated, // channel ingress/egress/quarantine/sanitize/ack/edit
+        raw if crate::wal::events::is_raw_ingress_event(raw) => RawIngressGated,
         // Default-deny everything else: the entire 0xE* cluster band (addr /
         // autonomy / pubkey topology), permissions 0xA*, profile 0xB*, consent
         // 0x65, WAL-structure 0xF*, cron, lifecycle, and unknown codes.
