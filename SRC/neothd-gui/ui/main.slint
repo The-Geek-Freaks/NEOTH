@@ -510,6 +510,9 @@ export component MainWindow inherits Window {
     in property <string> tweaks-output: "";
     in property <bool> tweaks-running: false;
     callback tweaks-run-clicked();
+    in property <string> council-weights-output: "";
+    in property <bool> council-weights-running: false;
+    callback council-weights-run-clicked();
     // Wave 5 — structured agent cards; raw output stays the fallback.
     in property <[AgentRow]> agents-model: [];
 
@@ -872,6 +875,7 @@ export component MainWindow inherits Window {
         : root.nav-active == "catalog"         ? "Model Catalog"
         : root.nav-active == "quota"         ? "Provider Quota"
         : root.nav-active == "tweaks"         ? "Runtime Tweaks"
+        : root.nav-active == "council-weights" ? "Council Weights"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
         : root.nav-active == "n8n"         ? "Automation Bridge"
@@ -3136,6 +3140,7 @@ export component MainWindow inherits Window {
                         && root.nav-active != "groundtruth"
                         && root.nav-active != "catalog" && root.nav-active != "quota"
                         && root.nav-active != "tweaks"
+                        && root.nav-active != "council-weights"
                         && root.nav-active != "resources" && root.nav-active != "doctor"
                         && root.nav-active != "loops"
                         && root.nav-active != "n8n" && root.nav-active != "babel"
@@ -3648,6 +3653,15 @@ export component MainWindow inherits Window {
                     run-clicked => { root.tweaks-run-clicked(); }
                     // Homogeneity: auto-load on first open (matches agents/mesh/overview).
                     init => { if (root.tweaks-output == "") { root.tweaks-run-clicked(); } }
+                }
+                if root.nav-active == "council-weights": ProbeView {
+                    blurb: "Council routing weights — the learned per-(topic, role) Hebbian acceptance signals that steer model selection (neoth council weights, ~/.neoth/routing_weights.json). Read-only.";
+                    action-label: "Refresh";
+                    output: root.council-weights-output;
+                    running: root.council-weights-running;
+                    empty-hint: "Click \"Refresh\" to load the learned routing weights.";
+                    run-clicked => { root.council-weights-run-clicked(); }
+                    init => { if (root.council-weights-output == "") { root.council-weights-run-clicked(); } }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:

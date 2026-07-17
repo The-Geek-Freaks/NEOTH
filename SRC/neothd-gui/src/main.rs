@@ -3927,6 +3927,49 @@ fn main() -> Result<()> {
         });
     });
 
+    // CLI-parity (feature roadmap) — council weights probe:
+    // `neoth council weights --output json` (learned Hebbian routing signals).
+    let weak_council_weights = window.as_weak();
+    window.on_council_weights_run_clicked(move || {
+        let Some(w0) = weak_council_weights.upgrade() else {
+            return;
+        };
+        w0.set_council_weights_running(true);
+        let weak = weak_council_weights.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("council")
+                    .arg("weights")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no routing weights learned yet (fresh install or council unused).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load council weights.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_council_weights_output(output.into());
+                    w.set_council_weights_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {
