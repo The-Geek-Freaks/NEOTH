@@ -12892,6 +12892,7 @@ mod tests {
             action: crate::hooks::schema::HookAction::Allow,
             status_message: None,
             once: true,
+            fail_fast: false,
         };
         let hooks = vec![hook];
         let mut session_fired_once: std::collections::HashSet<String> =
@@ -12993,6 +12994,7 @@ mod tests {
             action: crate::hooks::schema::HookAction::Allow,
             status_message: None,
             once: false, // default behaviour — fires every time
+            fail_fast: false,
         };
         let hooks = vec![hook];
         let mut session_fired_once: std::collections::HashSet<String> =

@@ -73,6 +73,30 @@ pub struct HookDef {
     /// TOML: `once = true`.
     #[serde(default)]
     pub once: bool,
+    /// BUG-W2-P1-HOOK-FAILFAST — per-hook fail-fast policy.
+    ///
+    /// When `true`, **any failure** for this individual hook (regex compile
+    /// error in its matcher, plugin invocation error with `required = false`,
+    /// or missing plugin invoker with `required = false`) escalates
+    /// immediately to `StageOutcome::Block` and halts the rest of that stage.
+    ///
+    /// When `false` (the default), failures follow the existing
+    /// continue-and-log semantics:
+    ///
+    /// - Bad matcher regex → skip the hook + `warn` log (exit-1 analogue).
+    /// - Optional plugin failure (`required = false`) → warn + continue.
+    ///
+    /// This preserves full backward compatibility — every existing hook
+    /// without this field keeps the pre-fix lenient behaviour.
+    ///
+    /// Orthogonal to the **stage-level** `hook_chain.<stage>.fail_fast` flag
+    /// in `freedom.yaml` (which the dispatcher receives as the `fail_fast: bool`
+    /// parameter of `run_stage_with_config`): **either** flag triggers a block.
+    /// Both default to `false`.
+    ///
+    /// TOML: `fail_fast = true`.
+    #[serde(default)]
+    pub fail_fast: bool,
 }
 
 impl HookDef {
@@ -106,6 +130,7 @@ impl HookDef {
     pub fn once(&self) -> bool {
         self.once
     }
+
 }
 
 /// Optional content filter. Anchored at the start of the body. If absent,
@@ -392,6 +417,51 @@ mod tests {
         assert!(
             h.status_message.is_none(),
             "status_message field must be None"
+        );
+    }
+
+    // ── BUG-W2-P1-HOOK-FAILFAST: fail_fast TOML round-trips ────────────
+
+    #[test]
+    fn fail_fast_defaults_to_false_when_absent_from_toml() {
+        // Back-compat: every existing hook TOML without fail_fast must
+        // parse cleanly and behave as fail_fast = false (lenient).
+        let toml_src = r#"
+            name = "audit"
+            stage = "pre_provider_call"
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert!(
+            !h.fail_fast,
+            "fail_fast must be false when omitted (backward-compat)"
+        );
+        assert!(
+            !h.fail_fast,
+            "fail_fast must default to false when the field is absent"
+        );
+    }
+
+    #[test]
+    fn fail_fast_parses_true_from_toml() {
+        // Operators can opt a hook into strict mode via fail_fast = true.
+        // Verify the field round-trips correctly from TOML.
+        let toml_src = r#"
+            name = "strict-safety-gate"
+            stage = "pre_provider_call"
+            fail_fast = true
+            [action]
+            kind = "allow"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        assert!(
+            h.fail_fast,
+            "fail_fast must be true when explicitly set in TOML"
+        );
+        assert!(
+            h.fail_fast,
+            "fail_fast must parse true from TOML"
         );
     }
 }

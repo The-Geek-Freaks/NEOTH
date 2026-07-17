@@ -1605,6 +1605,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // model override from the matched skill's `manifest.model` field.
             // GOLD-CCPARITY-EFFORT-03: expanded to 5-tuple to capture per-skill
             // effort/reasoning-budget from the matched skill's `manifest.effort` field.
+            // BUG-W2-P1-CHANNEL-DELEGATION: expanded to 6-tuple to capture
+            // per-skill `delegate_to` so the channel path honours skill-to-agent
+            // routing (previously dropped between routing and provider dispatch).
             #[allow(clippy::type_complexity)]
             let (
                 mut skill_layer,
@@ -1612,12 +1615,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 channel_skill_allowlist,
                 channel_skill_model,
                 channel_skill_effort,
+                channel_skill_delegate_to,
             ): (
                 Option<String>,
                 Option<String>,
                 Option<Vec<String>>,
                 Option<String>,
                 Option<crate::providers::effort_override::EffortBudget>,
+                Option<String>,
             ) = if let Some(resolved) = mode_hit {
                 let parent = installed_skills
                     .iter()
@@ -1642,7 +1647,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 crate::analytics::babel::signals::emit(
                     crate::analytics::babel::signals::SignalKind::SkillMode,
                 );
-                (layer, None, allowlist, skill_model, skill_effort)
+                // Mode paths never carry delegate_to (mirrors cli/chat.rs comment).
+                (layer, None, allowlist, skill_model, skill_effort, None)
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
                 // now-fully-populated skill library can't false-activate on a
@@ -1708,8 +1714,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .and_then(|m| m.skill.manifest.model.clone());
                 // GOLD-CCPARITY-EFFORT-03: capture per-skill effort override.
                 let skill_effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
+                // BUG-W2-P1-CHANNEL-DELEGATION: capture delegate_to from the matched
+                // skill manifest — mirrors GOLD-ADAPT-OH-13 in cli/chat.rs (~line 1234).
+                let skill_delegate_to =
+                    skill_match.as_ref().and_then(|m| m.skill.manifest.delegate_to.clone());
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
-                (layer, id, allowlist, skill_model, skill_effort)
+                (layer, id, allowlist, skill_model, skill_effort, skill_delegate_to)
             };
 
             let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
@@ -2157,6 +2167,48 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 crate::slash::Invocation::NotACommand => {
                     (sanitized_text.clone(), channel_enriched_system)
                 }
+            };
+
+            // BUG-W2-P1-CHANNEL-DELEGATION: apply the matched skill's delegate_to.
+            // The channel path previously dropped this field between routing and
+            // provider execution. Substitute the sub-agent's system prompt now —
+            // before PreProviderCall hooks so every hook sees the final system.
+            // Mirrors GOLD-ADAPT-OH-13 Part B in cli/chat.rs without the full
+            // enrichment-rebuild path (channel path has no omit-flags layer rebuild).
+            // Fail-safe: unknown agent name → tracing::warn + normal path continues.
+            let system_override = if let Some(ref agent_name) = channel_skill_delegate_to {
+                let agents = crate::sub_agents::load_all(&neoth_home.join("agents"))
+                    .await
+                    .inspect_err(|error| {
+                        // A FS error here silently bypasses delegation — the
+                        // operator must be able to tell "agent misspelled"
+                        // apart from "agents dir unreadable" (review P1).
+                        warn!(
+                            error = %error,
+                            dir = %neoth_home.join("agents").display(),
+                            "channel delegate_to: failed to load agents dir — delegation skipped"
+                        );
+                    })
+                    .unwrap_or_default();
+                if let Some(agent_system) =
+                    find_delegate_system(Some(agent_name.as_str()), &agents)
+                {
+                    info!(
+                        channel = channel_str,
+                        skill_agent = %agent_name,
+                        "channel delegate_to: substituting sub-agent system prompt"
+                    );
+                    Some(agent_system.to_owned())
+                } else {
+                    warn!(
+                        channel = channel_str,
+                        skill_agent = %agent_name,
+                        "channel delegate_to: agent not found — continuing on normal path"
+                    );
+                    system_override
+                }
+            } else {
+                system_override
             };
 
             // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3
@@ -3828,6 +3880,18 @@ pub(crate) async fn handle_media_attachment(
     Ok(synthesised)
 }
 
+/// BUG-W2-P1-CHANNEL-DELEGATION — pure lookup: given an optional delegate-to
+/// target name and a loaded agent set, return the matched agent's system prompt
+/// string slice. No I/O; fully unit-testable. Called by the channel pipeline
+/// when a matched skill carries `delegate_to: <name>` in its manifest.
+fn find_delegate_system<'a>(
+    target: Option<&str>,
+    agents: &'a [crate::sub_agents::SubAgent],
+) -> Option<&'a str> {
+    let name = target?;
+    agents.iter().find(|a| a.name == name).map(|a| a.system.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4466,5 +4530,68 @@ mod tests {
         let (egress, saw_provider) = count_egress_with_provider(&bytes, "mock_provider");
         assert_eq!(egress, 1, "final edit is attested exactly once");
         assert!(saw_provider);
+    }
+
+    // ── BUG-W2-P1-CHANNEL-DELEGATION unit tests ──────────────────────────────
+
+    fn make_agent(name: &str, system: &str) -> crate::sub_agents::SubAgent {
+        crate::sub_agents::schema::SubAgent {
+            name: name.to_string(),
+            description: format!("test agent {name}"),
+            model: None,
+            system: system.to_string(),
+            tools: vec![],
+            disallowed_tools: vec![],
+            enabled: true,
+            omit_operator_context: true,
+            omit_mcp_catalogue: true,
+            omit_moral_core: false,
+            omit_preset: true,
+            omit_recall: true,
+            omit_repo_context: true,
+        }
+    }
+
+    #[test]
+    fn delegate_system_returns_agent_system_when_name_matches() {
+        let agents = vec![
+            make_agent("code-reviewer", "You are a code reviewer."),
+            make_agent("planner", "You are a planner."),
+        ];
+        assert_eq!(
+            find_delegate_system(Some("code-reviewer"), &agents),
+            Some("You are a code reviewer."),
+            "named agent found — system prompt returned"
+        );
+    }
+
+    #[test]
+    fn delegate_system_returns_none_for_unknown_agent() {
+        let agents = vec![make_agent("planner", "You are a planner.")];
+        assert_eq!(
+            find_delegate_system(Some("ghost"), &agents),
+            None,
+            "unknown agent name → None (caller warns + falls back to normal path)"
+        );
+    }
+
+    #[test]
+    fn delegate_system_returns_none_when_target_is_none() {
+        let agents = vec![make_agent("planner", "You are a planner.")];
+        assert_eq!(
+            find_delegate_system(None, &agents),
+            None,
+            "no delegate_to set → None (normal path unchanged)"
+        );
+    }
+
+    #[test]
+    fn delegate_system_returns_none_for_empty_agent_set() {
+        let agents: Vec<crate::sub_agents::SubAgent> = vec![];
+        assert_eq!(
+            find_delegate_system(Some("any-agent"), &agents),
+            None,
+            "empty agent set → None (fail-safe: message is never dropped)"
+        );
     }
 }

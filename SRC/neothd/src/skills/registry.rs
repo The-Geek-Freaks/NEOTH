@@ -37,6 +37,15 @@
 //! never change without a binary rebuild, but re-running the loader is
 //! the simplest path and the cost is sub-millisecond (deserializing N
 //! YAMLs out of memory).
+//!
+//! BUG-W2-P1-SKILL-WATCHER: skill subdirectories created **after** daemon
+//! boot are covered by two complementary mechanisms:
+//! 1. `RecursiveMode::Recursive` on `skills_dir` — the OS backend notifies on
+//!    any descendant change.
+//! 2. Explicit `NonRecursive` watches on each current skill subdir, rebuilt by
+//!    every `reconcile_watches` call.  This closes the inotify race window where
+//!    a `skill.yaml` file is written between directory creation and the OS
+//!    sub-watch being installed.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -350,6 +359,41 @@ mod watcher {
                     );
                 }
                 desired.insert(skills_dir.to_path_buf(), WatchDepth::Recursive);
+
+                // BUG-W2-P1-SKILL-WATCHER: also add an explicit NonRecursive
+                // watch for every current skill subdir so that a `skill.yaml`
+                // written into a freshly-created directory is always observed.
+                // `RecursiveMode::Recursive` on skills_dir covers the parent at
+                // the OS level but on inotify (Linux) there is a race window
+                // between the directory-creation event arriving and notify
+                // internally calling `inotify_add_watch` for the new subdir;
+                // files written during that window emit no events.  Explicit
+                // per-subdir watches close the gap: after any relevant event
+                // fires and `reconcile_watches` runs, the new subdir is added
+                // to `desired` and immediately registered.  `reconcile_watches`
+                // also prunes the set, so deleted skill dirs are unwatched
+                // automatically.
+                match std::fs::read_dir(skills_dir) {
+                    Ok(entries) => {
+                        for entry in entries.flatten() {
+                            if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                                desired.insert(entry.path(), WatchDepth::NonRecursive);
+                            }
+                        }
+                    }
+                    // skills_dir was removed between metadata() and read_dir();
+                    // the Recursive watch handles the remove/recreate cycle.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "enumerate skill subdirs for explicit watch under {}",
+                                skills_dir.display()
+                            )
+                        });
+                    }
+                }
+
                 let parent = skills_dir.parent().ok_or_else(|| {
                     anyhow::anyhow!("skill directory has no parent: {}", skills_dir.display())
                 })?;
@@ -659,6 +703,35 @@ system_prompt: "live"
         let reg = SkillRegistry::load(dir.path()).await.unwrap();
         reg.watch()
             .expect("watcher must bind on an existing dir even when empty");
+    }
+
+    /// BUG-W2-P1-SKILL-WATCHER regression test: skills_dir EXISTS at daemon
+    /// boot (unlike `missing_dir_watcher_publishes_skill_created_after_start`)
+    /// but a brand-new skill subdir is dropped in after the watcher starts.
+    /// The explicit per-subdir watch added by `desired_watches` during the next
+    /// `reconcile_watches` call must ensure the skill is observed.
+    #[tokio::test]
+    async fn skill_dir_created_after_boot_is_observed() {
+        let dir = tempdir().unwrap();
+        // skills_dir already exists when the watcher starts — the key
+        // difference from the missing-dir test.
+        let skills_dir = dir.path().join("skills");
+        tokio::fs::create_dir_all(&skills_dir).await.unwrap();
+        let reg = SkillRegistry::load(&skills_dir).await.unwrap();
+        let _watcher = reg.watch().expect("watcher on existing skills dir");
+
+        write_skill(
+            &skills_dir,
+            "new-after-boot",
+            r#"
+id: new-after-boot
+description: skill subdir added after daemon start
+trigger_keywords: ["new-after-boot"]
+system_prompt: "live"
+"#,
+        )
+        .await;
+        wait_for_skill(&reg, "new-after-boot", true).await;
     }
 
     #[tokio::test]

@@ -279,11 +279,14 @@ pub fn run_stage_with_config_returning_blocks(
             Some(m) => match compile_cached(&m.pattern) {
                 Ok(re) => re.is_match(&current),
                 Err(e) => {
-                    if fail_fast {
-                        // AR-03 — operator opted this stage into
-                        // strict mode. A typo'd matcher escalates to
-                        // Block so a safety hook can't silently fail
-                        // open.
+                    // BUG-W2-P1-HOOK-FAILFAST: block when the stage-level
+                    // `fail_fast` param (from `HookChainConfig`) OR the
+                    // per-hook `hook.fail_fast` field is true. Either flag
+                    // opts into strict mode; both default to `false`.
+                    if fail_fast || hook.fail_fast {
+                        // AR-03 / per-hook fail-fast — a typo'd matcher
+                        // escalates to Block so a safety hook can't
+                        // silently fail open.
                         tracing::error!(
                             hook = %hook.name,
                             pattern = %m.pattern,
@@ -367,6 +370,25 @@ pub fn run_stage_with_config_returning_blocks(
                                     Vec::new(),
                                 ));
                             }
+                            // BUG-W2-P1-HOOK-FAILFAST: per-hook fail-fast
+                            // escalates an optional-plugin failure to Block.
+                            if hook.fail_fast {
+                                tracing::error!(
+                                    hook = %hook.name,
+                                    plugin_id = %plugin_id,
+                                    error = %e,
+                                    "fail_fast: optional plugin invocation failed — blocking stage"
+                                );
+                                return Ok((
+                                    StageOutcome::Block {
+                                        name: hook.name.clone(),
+                                        reason: format!(
+                                            "fail_fast: plugin `{plugin_id}` invocation failed: {e}"
+                                        ),
+                                    },
+                                    Vec::new(),
+                                ));
+                            }
                             tracing::warn!(
                                 hook = %hook.name,
                                 plugin_id = %plugin_id,
@@ -392,6 +414,26 @@ pub fn run_stage_with_config_returning_blocks(
                                     name: hook.name.clone(),
                                     reason: format!(
                                         "required plugin `{plugin_id}` unavailable — no invoker registered"
+                                    ),
+                                },
+                                Vec::new(),
+                            ));
+                        }
+                        // BUG-W2-P1-HOOK-FAILFAST: per-hook fail-fast
+                        // escalates a missing-invoker gap to Block even
+                        // when required = false.
+                        if hook.fail_fast {
+                            tracing::error!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                "fail_fast: optional plugin hook has no PluginInvoker — \
+                                 blocking stage"
+                            );
+                            return Ok((
+                                StageOutcome::Block {
+                                    name: hook.name.clone(),
+                                    reason: format!(
+                                        "fail_fast: plugin `{plugin_id}` unavailable — no invoker registered"
                                     ),
                                 },
                                 Vec::new(),
@@ -504,6 +546,7 @@ mod tests {
             action: HookAction::Allow,
             status_message: None,
             once: false,
+            fail_fast: false,
         }
     }
 
@@ -521,6 +564,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         }
     }
 
@@ -536,6 +580,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         }
     }
 
@@ -552,6 +597,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         }
     }
 
@@ -568,6 +614,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         }
     }
 
@@ -717,6 +764,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         }];
         let out = run_stage(HookStage::PreProviderCall, "anything", &hooks).unwrap();
         match out {
@@ -754,6 +802,7 @@ mod tests {
             action: HookAction::Block { reason: "x".into() },
             status_message: None,
             once: false,
+            fail_fast: false,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage(HookStage::PreProviderCall, "x", &[bad, good]).unwrap();
@@ -917,6 +966,7 @@ mod tests {
             },
             status_message: None,
             once: false,
+            fail_fast: false,
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, good], None, false)
@@ -942,6 +992,7 @@ mod tests {
             action: HookAction::Allow,
             status_message: None,
             once: false,
+            fail_fast: false,
         };
         let later = allow_hook("never-runs", HookStage::PreProviderCall);
         let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, later], None, true)
@@ -1054,6 +1105,177 @@ mod tests {
                      Continue — the tool call must be aborted"
                 );
             }
+        }
+    }
+
+    // ── BUG-W2-P1-HOOK-FAILFAST: per-hook fail_fast stop/continue tests ─
+
+    #[test]
+    fn hook_fail_fast_true_blocks_bad_regex_at_pre_provider_call() {
+        // Per-hook fail_fast=true at PreProviderCall: a regex compile error
+        // on the hook's matcher must immediately Block the stage (no
+        // stage-level fail_fast param needed). The hook after it must not run.
+        let strict = HookDef {
+            name: "strict-safety".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: Some(HookMatcher {
+                pattern: "[bad-regex".into(),
+            }),
+            action: HookAction::Allow,
+            status_message: None,
+            once: false,
+            fail_fast: true,
+        };
+        let later = allow_hook("never-runs", HookStage::PreProviderCall);
+        // stage-level fail_fast=false — only the per-hook flag is active.
+        let out =
+            run_stage_with_config(HookStage::PreProviderCall, "body", &[strict, later], None, false)
+                .unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "strict-safety");
+                assert!(
+                    reason.contains("fail_fast") && reason.contains("strict-safety"),
+                    "block reason must identify fail_fast and the hook: {reason}"
+                );
+            }
+            other => panic!(
+                "per-hook fail_fast=true must Block on bad regex, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn hook_fail_fast_true_blocks_optional_plugin_failure_at_post_provider_call() {
+        // Per-hook fail_fast=true at PostProviderCall: an optional-plugin
+        // failure (required=false) must still escalate to Block when the
+        // hook opts in via fail_fast=true. The stage-level param stays false.
+        let strict = HookDef {
+            name: "strict-plugin".into(),
+            stage: HookStage::PostProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::Plugin {
+                plugin_id: "broken-plugin".into(),
+                required: false,
+            },
+            status_message: None,
+            once: false,
+            fail_fast: true,
+        };
+        let later = allow_hook("never-runs", HookStage::PostProviderCall);
+        let out = run_stage_with_config(
+            HookStage::PostProviderCall,
+            "body",
+            &[strict, later],
+            Some(&FailingInvoker),
+            false,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "strict-plugin");
+                assert!(
+                    reason.contains("fail_fast") && reason.contains("broken-plugin"),
+                    "block reason must surface fail_fast and plugin id: {reason}"
+                );
+            }
+            other => panic!(
+                "fail_fast=true on optional plugin must Block on invoker failure, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn hook_fail_fast_false_continues_on_bad_regex_at_post_provider_call() {
+        // Pin: per-hook fail_fast=false (default) at PostProviderCall keeps
+        // the skip-and-continue behavior for regex errors. The good hook
+        // after it must still run.
+        let lenient = HookDef {
+            name: "lenient-bad-regex".into(),
+            stage: HookStage::PostProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: Some(HookMatcher {
+                pattern: "[bad".into(),
+            }),
+            action: HookAction::Block {
+                reason: "should-not-fire".into(),
+            },
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        };
+        let good = allow_hook("good-after", HookStage::PostProviderCall);
+        let out = run_stage_with_config(
+            HookStage::PostProviderCall,
+            "text",
+            &[lenient, good],
+            None,
+            false,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { hits, .. } => {
+                assert_eq!(
+                    hits,
+                    vec!["good-after".to_string()],
+                    "bad-regex hook with fail_fast=false must skip; good hook must run"
+                );
+            }
+            other => panic!(
+                "fail_fast=false must skip bad regex and continue, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn hook_fail_fast_false_continues_on_optional_plugin_failure_at_pre_provider_call() {
+        // Pin: per-hook fail_fast=false (default) at PreProviderCall keeps
+        // the warn-and-continue path for optional-plugin failures.
+        // The hook after it must still run (exit-1 analogue preserved).
+        let lenient = HookDef {
+            name: "lenient-plugin".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::Plugin {
+                plugin_id: "unreliable".into(),
+                required: false,
+            },
+            status_message: None,
+            once: false,
+            fail_fast: false,
+        };
+        let after = allow_hook("runs-after", HookStage::PreProviderCall);
+        let out = run_stage_with_config(
+            HookStage::PreProviderCall,
+            "body",
+            &[lenient, after],
+            Some(&FailingInvoker),
+            false,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { hits, .. } => {
+                // Both hooks contribute hits: lenient-plugin records a hit
+                // before the invoker is called; runs-after fires normally.
+                assert!(
+                    hits.contains(&"lenient-plugin".to_string()),
+                    "lenient-plugin hit must be recorded even on failure: {hits:?}"
+                );
+                assert!(
+                    hits.contains(&"runs-after".to_string()),
+                    "runs-after hook must run because fail_fast=false continues: {hits:?}"
+                );
+            }
+            other => panic!(
+                "fail_fast=false must continue on optional plugin failure, got {other:?}"
+            ),
         }
     }
 }

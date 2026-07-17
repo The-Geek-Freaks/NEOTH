@@ -710,6 +710,7 @@ kind = "allow"
             action: HookAction::Allow,
             status_message: None,
             once: false,
+            fail_fast: false,
         };
         assert!(h.is_enabled());
     }
