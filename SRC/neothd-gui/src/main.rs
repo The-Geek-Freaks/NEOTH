@@ -14848,6 +14848,23 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         w.set_mesh_listen_port(snap.listen_port.as_str().into());
         w.set_mesh_mdns_enabled(snap.mdns_enabled);
         w.set_mesh_trusted_ssids(snap.trusted_ssids.as_str().into());
+        // Composite fleet health: reachable peers WITH a fresh gossip snapshot
+        // (< 60s). No snapshot ⇒ NOT healthy (a reachable-but-silent peer, e.g.
+        // TCP up but no heartbeat yet, must not count). Computed here because the
+        // per-row `staleness_secs` defaults to 0 for display and can't tell
+        // "no data" from "0s ago". Counted before `peers` is moved into the model.
+        let healthy_peers = snap
+            .peers
+            .iter()
+            .filter(|p| {
+                p.reachable
+                    && swarm_nodes
+                        .iter()
+                        .find(|n| n.node_id == p.id || n.node_id.starts_with(&p.id))
+                        .map(|n| n.age_secs < 60)
+                        .unwrap_or(false)
+            })
+            .count() as i32;
         let peer_rows: Vec<MeshPeerRow> = snap
             .peers
             .into_iter()
@@ -14875,6 +14892,7 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         w.set_mesh_gossip_events(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             gossip_model,
         ))));
+        w.set_mesh_healthy_peer_count(healthy_peers);
         w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             peer_rows,
         ))));

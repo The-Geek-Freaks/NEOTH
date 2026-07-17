@@ -373,6 +373,9 @@ export component MeshView inherits Rectangle {
     // (in-out); the callback only notifies Rust to pause/resume the 30s loop.
     in-out property <bool> mesh-auto-refresh-enabled: true;
     callback mesh-auto-refresh-toggled(bool);
+    // Composite fleet health: count of reachable + non-stale peers (Rust sets
+    // it in refresh_mesh). The bar under the header reads healthy/total.
+    in property <int> mesh-healthy-peer-count: 0;
 
     // ── Per-peer quick action callbacks (Wave 5) ─────────────────────────────
     callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
@@ -437,6 +440,42 @@ export component MeshView inherits Rectangle {
             Rectangle {
                 height: 1px;
                 background: Theme.border-subtle;
+            }
+
+            // ── Composite fleet-health bar ───────────────────────────────────
+            // At-a-glance aggregate: how many peers are reachable + fresh.
+            // Green = all healthy, amber = majority healthy, red = under half.
+            if root.mesh-peers.length > 0 : HorizontalLayout {
+                height: 22px;
+                spacing: 8px;
+                Text {
+                    text: "\{root.mesh-healthy-peer-count}/\{root.mesh-peers.length} healthy";
+                    color: Theme.text-tertiary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Theme.bg-void;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: parent.width * root.mesh-healthy-peer-count / root.mesh-peers.length;
+                        height: parent.height;
+                        border-radius: 3px;
+                        background: root.mesh-healthy-peer-count == root.mesh-peers.length
+                            ? Theme.accent-green
+                            : (root.mesh-healthy-peer-count * 2 >= root.mesh-peers.length
+                                ? Theme.warning
+                                : Theme.consent);
+                    }
+                }
             }
 
             // ── Scrollable content ───────────────────────────────────────────

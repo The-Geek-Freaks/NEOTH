@@ -856,6 +856,7 @@ export component MainWindow inherits Window {
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
     callback mesh-auto-refresh-toggled(bool);
+    in-out property <int> mesh-healthy-peer-count: 0;
     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
     in property <[string]>        mesh-gossip-events: [];
     in-out property <string>      mesh-expanded-peer: "";
@@ -3992,6 +3993,7 @@ export component MainWindow inherits Window {
                     mesh-refreshed-at: root.mesh-refreshed-at;
                     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
                     gossip-events: root.mesh-gossip-events;
+                    mesh-healthy-peer-count: root.mesh-healthy-peer-count;
                     expanded-peer: root.mesh-expanded-peer;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
                     mesh-auto-refresh-toggled(on) => { root.mesh-auto-refresh-toggled(on); }
