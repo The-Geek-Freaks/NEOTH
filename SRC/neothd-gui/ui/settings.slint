@@ -344,14 +344,20 @@ component KanbanColumn inherits Rectangle {
     in property <color> accent: Theme.text-muted;
     in property <[KanbanTaskRow]> tasks: [];
     in property <string> selected-task-id: "";
+    /// WIP limit for this column (0 = unlimited). The count turns amber and
+    /// the column border warns once tasks.length reaches the limit — the core
+    /// kanban discipline mechanism (Lean / Kanban Method).
+    in property <int> wip-limit: 0;
     callback task-clicked(string);
     /// A4 — forwards right-click from a card to the parent view.
     callback task-context(string /*task-id*/, length /*x*/, length /*y*/);
 
+    property <bool> over-wip: root.wip-limit > 0 && root.tasks.length >= root.wip-limit;
+
     background: Theme.bg-base;
     border-radius: Theme.radius-button;
-    border-width: 1px;
-    border-color: Theme.border-subtle;
+    border-width: root.over-wip ? 2px : 1px;
+    border-color: root.over-wip ? Theme.warning : Theme.border-subtle;
 
     VerticalLayout {
         padding: Theme.space-tight;
@@ -370,10 +376,10 @@ component KanbanColumn inherits Rectangle {
                 color: root.accent;
             }
             Text {
-                text: root.tasks.length;
+                text: root.wip-limit > 0 ? "\{root.tasks.length}/\{root.wip-limit}" : "\{root.tasks.length}";
                 font-family: Theme.font-mono;
                 font-size: Theme.font-size-caption;
-                color: Theme.text-dim;
+                color: root.over-wip ? Theme.warning : Theme.text-dim;
             }
         }
         Rectangle {
@@ -4002,6 +4008,7 @@ export component SettingsView inherits Rectangle {
                                 // green "done/safe" + the blue/green backlog columns.
                                 accent: Theme.accent-amber;
                                 horizontal-stretch: 1;
+                                wip-limit: 3;   // dispatcher concurrency default
                                 tasks: root.kanban-in-progress;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
@@ -4011,6 +4018,7 @@ export component SettingsView inherits Rectangle {
                                 label: "REVIEW";
                                 accent: Theme.accent-pink;
                                 horizontal-stretch: 1;
+                                wip-limit: 5;   // review queue soft cap
                                 tasks: root.kanban-review;
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }

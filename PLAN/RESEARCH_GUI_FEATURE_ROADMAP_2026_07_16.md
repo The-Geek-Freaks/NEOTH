@@ -50,7 +50,7 @@
   - now: chat.slint:716-731: slash-active badge (a '/' Rectangle) appears when draft starts with '/' — the pattern exists for symbol-triggered UI. chat.slint:668-698: 📎 attach button fires attach-clicked() for native OS file-pick
   - gap: Cursor Composer @file/@folder/@docs/@web/@codebase; Claude Desktop @-file attachment with type selection. Typing '@' opens a picker with context types that resolve to injected context (file content, memory node text, Obs
   - build: Add `at-active: bool`, `at-query: string`, `at-suggestions: [string]` to Composer (chat.slint:609). Mirror the slash-active dropdown pattern (line 716): when at-active=true, render a PopupWindow below the TextInput listing at-suggestions as clickable chips. In main.rs on `composer-draft-edited(text)`, detect '@' trigger: '@memory' queries
-- [ ] **Architecture: ContextMenu overlay must live in main.slint, never self-contained in a sub-component** `main.slint`
+- [x] **Architecture: ContextMenu overlay must live in main.slint, never self-contained in a sub-component** `main.slint` — ✅ STALE (verify 2026-07-17): 3 production ContextMenus already in main.slint (regen ~4068, kanban ~4083, buddy ~4120). Pattern established.
   - now: Three ContextMenu instances already mounted in main.slint at z-top: regen-menu (line 3987), kanban-ctx (line 4002), buddy-menu (line 4039). All follow the same pattern: `in-out property <bool> xxx-ctx-open` + `in propert
   - gap: ContextMenu CANNOT be self-contained inside a sub-component file. It needs width:100%; height:100% relative to the AppWindow root, because layout-nested components are clipped to their panel bounds. Sub-views fire `callb
   - build: Rollout pattern for every new context target: (1) Add pointer-event handler inside component's TouchArea detecting PointerEventButton.right + PointerEventKind.up, compute absolute-position + mouse-x/y, fire callback context-menu(id, x, y). (2) View layer re-emits as `xxx-ctx(id, x, y)` callback upward. (3) main.slint AppWindow gains `in-o
@@ -125,7 +125,7 @@
 
 ## MED · pure-slint · CODEX-ZONE
 
-- [ ] **No WIP limit visualization or enforcement on columns** `settings.slint:334`
+- [x] **No WIP limit visualization or enforcement on columns** `settings.slint:334` — ✅ DONE 2026-07-17: KanbanColumn gained `wip-limit` (settings.slint:342); count shows N/limit + turns Theme.warning and the column border warns when tasks.length>=limit (`over-wip`). Board defaults IN-PROGRESS:3, REVIEW:5. Pure-slint, GUI gate green.
   - now: KanbanColumn (settings.slint:339-391) shows the task count as 'Text { text: root.tasks.length; }' (line 369) with a 2px accent underline. There is no wip-limit property, no color change when the column is full, and no en
   - gap: WIP limits are the core discipline mechanism of kanban (Lean, Kanban Method). Without them the In-Progress column can accumulate unbounded tasks, which defeats the point of the board and makes the dispatcher's concurrent
   - build: Add 'in property <int> wip-limit: 0' to KanbanColumn (settings.slint:339). Change the count Text color to Theme.warning when wip-limit > 0 && root.tasks.length >= root.wip-limit, else Theme.text-muted. Add a thin amber/red top border on the column when over-limit. Wire sensible defaults in the board (BACKLOG: 0=unlimited, IN-PROGRESS: 3, 
@@ -203,15 +203,15 @@
   - now: WalEventItem (wal_inspector.slint:132) has `callback clicked(int)` (line 135) — single-click selects row for the detail pane. The global `copy-detail-clicked` on WalInspectorView (line 273) copies the currently-selected 
   - gap: No right-click. Per-row copy/export requires two gestures (click to select, then click the copy button). Right-click on any row should offer: Copy seq · Copy detail · Export this frame. `neoth wal export` (wal.rs:78) acc
   - build: Add `pointer-event` to WalEventItem's TouchArea (wal_inspector.slint:242 area) alongside existing `clicked`, detect right-up, fire `callback context-menu(int, length, length)` (seq, x, y). WalInspectorView re-emits as `callback wal-row-ctx(int, length, length)`. AppWindow gains `wal-row-ctx-open/seq/x/y` + `ContextMenu` [Copy seq · Copy d
-- [ ] **ADR browser (Architecture Decision Records)** `adr.rs`
+- [x] **ADR browser (Architecture Decision Records)** `adr.rs` — ✅ STALE: built Wave G1 — NavBtn app_shell.slint:246 (nav=adr-browser), ProbeView main.slint:3696, handler main.rs:3975 (neoth adr list --output json).
   - now: adr.rs has list (JSON: number/title/path) and extract (parse ADRs from file/stdin). ZERO presence in any GUI file: no NavBtn, no panel, no nav-active condition. ADRs live in ~/.neoth/adr/ and represent the operator's own
   - gap: There is no GUI panel for browsing the decision log, viewing ADR titles and their file paths, or running the extract tool against a conversation file to capture a decision automatically.
   - build: Add an 'adr' NavBtn under KNOWLEDGE (complexity >= 1). Create adr.slint with a simple AdrRow {number: int, title: string, path: string} list (rows from neoth adr list --output json), sorted by number descending so newest decisions appear first. Wire refresh_adr() in main.rs following the refresh_wiki pattern: spawn neoth adr list --output
-- [ ] **Council routing weights inspection** `council.rs`
+- [x] **Council routing weights inspection** `council.rs` — ✅ STALE: built — NavBtn app_shell.slint:256 (council-weights), ProbeView main.slint:3687, handler main.rs:3933.
   - now: main.slint:706 wires council tune fields (daily_usd_cap, max_calls, max_depth, selection_mode) to the Config settings tab with write-back callbacks. council.rs weights subcommand reads ~/.neoth/routing_weights.json and e
   - gap: Operators set the council tune parameters but cannot see the learned routing preferences (which topics steer toward which hemisphere) that actually drive model selection. The weights are the outcome of those settings app
   - build: Add a 'council-weights' NavBtn under INTELLIGENCE (complexity >= 2) in app_shell.slint. In main.slint, add an if block after the tweaks ProbeView block (line ~3651): if nav-active == 'council-weights': ProbeView { blurb/output/running/run-clicked wired to council_weights_output/running and on_council_weights_run_clicked }. In main.rs, add
-- [ ] **Background job monitor (ad-hoc detached jobs)** `jobs.rs`
+- [x] **Background job monitor (ad-hoc detached jobs)** `jobs.rs` — ✅ STALE: built Wave G1 — NavBtn app_shell.slint:224 (bg-jobs), ProbeView main.slint:3714, handler main.rs:4059.
   - now: Automation panel (nav 'automation') renders CronView from cron.slint with full CRUD for jobs.yaml scheduled jobs. jobs.rs --bg flag lists detached background jobs from ~/.neoth/bgjobs/ (id, status: running/completed, exi
   - gap: Operators who launch long-running tasks via neoth jobs --run (cargo build, test suites, ingest runs) have no GUI view of running or completed jobs, their exit codes, or log tails — they must poll the CLI or check log fil
   - build: Append a Background Jobs sub-section to the existing CronView (cron.slint) below the scheduled jobs list, or add a BgJobRow {id, label, status, exit_code, log_tail} second tab. Wire refresh_bg_jobs() in main.rs: spawn neoth jobs --bg --output json, parse BgJobRow list, push VecModel. Add a 'Spawn job' form: command LineEdit + label LineEd
