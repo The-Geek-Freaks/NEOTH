@@ -123,6 +123,8 @@ pub mod onboarding_status;
 pub mod os;
 pub mod ouro;
 pub mod paperless;
+#[cfg(test)]
+mod parity_drift;
 pub mod permissions;
 pub mod plugin;
 pub mod preset;
