@@ -9,7 +9,7 @@
 
 import { VerticalBox, HorizontalBox, ScrollView, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, SegBar, Expander, Led } from "components.slint";
+import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit, NeothTextArea, SegBar, Expander, Led } from "components.slint";
 
 export enum SettingsTab {
     chat,
@@ -4332,15 +4332,13 @@ export component SettingsView inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             alignment: stretch;
-                            comment_input := NeothLineEdit {
-                                placeholder-text: "Add a comment to this task — press Enter or click Add";
+                            // Multi-line notes: Enter inserts a newline so
+                            // multi-paragraph steering ("use the auth module,
+                            // avoid X, apply pattern Y") is enterable; the Add
+                            // button is the submit path.
+                            comment_input := NeothTextArea {
+                                placeholder-text: "Add a note to this task — multi-line supported; click Add to save";
                                 horizontal-stretch: 1;
-                                accepted(text) => {
-                                    if (text != "") {
-                                        root.kanban-task-comment(root.kanban-selected-task-id, text);
-                                        self.text = "";
-                                    }
-                                }
                             }
                             NeothButton {
                                 label: "Add";

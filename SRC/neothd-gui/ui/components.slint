@@ -1037,6 +1037,81 @@ export component NeothLineEdit inherits Rectangle {
     }
 }
 
+// ── NeothTextArea ────────────────────────────────────────────────────
+// Multi-line sibling of NeothLineEdit — same recessed bg-base box, focus
+// ring, and stacked placeholder, but a word-wrapping multi-line TextInput
+// for multi-paragraph steering notes. Enter inserts a newline; submit is
+// the caller's Add button (reads `text`, then clears it). `edited` fires
+// on every keystroke.
+export component NeothTextArea inherits Rectangle {
+    in-out property <string> text: "";
+    in property <string> placeholder-text: "";
+    in property <bool> enabled: true;
+    callback edited(string);
+
+    height: 88px;
+    background: Theme.bg-base;
+    border-radius: Theme.radius-button;
+    border-width: 1px;
+    border-color:
+        !root.enabled        ? Theme.border-subtle :
+        input.has-focus      ? Theme.accent-green :
+        touch.has-hover      ? Theme.accent-green.with-alpha(0.6) :
+                                Theme.border-subtle;
+
+    animate border-color {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    HorizontalLayout {
+        padding: Theme.space-base;
+
+        Rectangle {
+            // Stacked placeholder, top-aligned for a textarea.
+            if root.text == "" && !input.has-focus: Text {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                text: root.placeholder-text;
+                wrap: word-wrap;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: Theme.text-dim;
+                horizontal-alignment: left;
+                vertical-alignment: top;
+            }
+
+            input := TextInput {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                text <=> root.text;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: root.enabled ? Theme.text-primary : Theme.text-dim;
+                selection-background-color: Theme.accent-green.with-alpha(0.4);
+                selection-foreground-color: Theme.text-primary;
+                single-line: false;
+                wrap: word-wrap;
+                vertical-alignment: top;
+                horizontal-alignment: left;
+                enabled: root.enabled;
+                accessible-role: AccessibleRole.text;
+                accessible-label: root.placeholder-text;
+                accessible-placeholder-text: root.placeholder-text;
+                accessible-enabled: root.enabled;
+                edited => { root.edited(self.text); }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { input.focus(); }
+    }
+}
+
 // ── Kicker ───────────────────────────────────────────────────────────
 // Mono 11px (font-size-2xs) uppercase card-section eyebrow.
 // Wide letter-spacing, text-disabled colour. Used by every dashboard tab.
