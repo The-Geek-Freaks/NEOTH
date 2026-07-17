@@ -3877,6 +3877,83 @@ fn main() -> Result<()> {
         });
     });
 
+    // L93 — revoke a ground-truth row by id (`neoth groundtruth revoke <id>`),
+    // then refresh. Destructive but audit-preserving (row stays in the table for
+    // audit, just no longer gates recall/council). GUI gates this behind a
+    // ConfirmDialog; here we status-check and refresh.
+    let weak_gt_revoke = window.as_weak();
+    window.on_gt_revoke_clicked(move |id| {
+        let row = id.to_string();
+        if row.trim().is_empty() {
+            return;
+        }
+        let weak = weak_gt_revoke.clone();
+        std::thread::spawn(move || {
+            let revoked = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("revoke")
+                    .arg(row.trim())
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth revoke spawn failed"))
+                    .ok()
+            });
+            let (kind, body): (&str, String) = match revoked {
+                Some(o) if o.status.success() => {
+                    ("success", format!("Ground-truth row {row} revoked."))
+                }
+                Some(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let msg: String = err.trim().chars().take(160).collect();
+                    (
+                        "error",
+                        if msg.is_empty() {
+                            "groundtruth revoke exited non-zero".to_string()
+                        } else {
+                            msg
+                        },
+                    )
+                }
+                None => (
+                    "error",
+                    "neothd binary not on PATH — cannot revoke ground-truth row.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "Ground-truth revoke", &body);
+            let refreshed = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth list refresh spawn failed"))
+                    .ok()
+            });
+            if let Some(o) = refreshed {
+                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                let e = String::from_utf8_lossy(&o.stderr);
+                if !e.trim().is_empty() {
+                    s.push('\n');
+                    s.push_str(&e);
+                }
+                let output = if s.trim().is_empty() {
+                    "Ground-truth store is empty.".to_string()
+                } else {
+                    s
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_gt_output(output.into());
+                        w.set_gt_running(false);
+                    }
+                });
+            }
+        });
+    });
+
     // Research P0 — catalog probe: `neoth catalog list --output json`.
     let weak_catalog = window.as_weak();
     window.on_catalog_run_clicked(move || {

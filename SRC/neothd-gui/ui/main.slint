@@ -503,6 +503,10 @@ export component MainWindow inherits Window {
     callback gt-run-clicked();
     // L93 — add a ground-truth statement (neoth groundtruth add). Non-destructive.
     callback gt-add-clicked(string /*statement*/);
+    // L93 — revoke a ground-truth row by id (destructive → ConfirmDialog-gated).
+    callback gt-revoke-clicked(string /*id*/);
+    in-out property <string> gt-revoke-id: "";
+    in-out property <bool>   gt-revoke-confirm-open: false;
     in property <string> catalog-output: "";
     in property <bool> catalog-running: false;
     callback catalog-run-clicked();
@@ -3695,6 +3699,25 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        height: 44px;
+                        gt_revoke := NeothLineEdit {
+                            placeholder-text: "Revoke a row by its id (destructive)…";
+                            horizontal-stretch: 1;
+                        }
+                        NeothButton {
+                            label: "Revoke";
+                            primary: false;
+                            clicked => {
+                                if (gt_revoke.text != "") {
+                                    root.gt-revoke-id = gt_revoke.text;
+                                    root.gt-revoke-confirm-open = true;
+                                    gt_revoke.text = "";
+                                }
+                            }
+                        }
+                    }
                     ProbeView {
                         blurb: "Ground-truth facts — the verified fact store that gates recall and council weighting (neoth groundtruth list).";
                         action-label: "Refresh";
@@ -4232,6 +4255,21 @@ export component MainWindow inherits Window {
             root.channel-remove(root.channel-ctx-name);
         }
         cancelled => { root.channel-remove-confirm-open = false; }
+    }
+
+    // L93 — confirm gate for the destructive ground-truth revoke.
+    if root.gt-revoke-confirm-open: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Revoke ground-truth row?";
+        body: "Revokes row " + root.gt-revoke-id + ". It stays in the table for audit but no longer gates recall or council weighting.";
+        confirm-label: "Revoke";
+        danger: true;
+        confirmed => {
+            root.gt-revoke-confirm-open = false;
+            root.gt-revoke-clicked(root.gt-revoke-id);
+        }
+        cancelled => { root.gt-revoke-confirm-open = false; }
     }
 
     // B4 — Buddy quick-action menu, anchored above the docked orb.
