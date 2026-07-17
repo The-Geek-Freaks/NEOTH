@@ -126,6 +126,7 @@ component LogRow inherits Rectangle {
         }
         Text {
             text: root.status;
+            overflow: elide;
             color: root.status == "accepted" ? Theme.accent
                 : root.status == "rolled-back" ? Theme.consent
                 : Theme.text-secondary;
@@ -137,6 +138,7 @@ component LogRow inherits Rectangle {
         }
         Text {
             text: root.ts;
+            overflow: elide;
             color: Theme.text-disabled;
             font-family: Theme.font-mono;
             font-size: 9px;

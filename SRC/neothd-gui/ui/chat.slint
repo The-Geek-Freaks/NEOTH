@@ -206,6 +206,7 @@ component ChatBubble inherits Rectangle {
                         animate border-color { duration: Theme.duration-micro; easing: ease-out; }
                         chip-txt := Text {
                             text: root.message.metrics;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs;
                             color: Theme.audit;
@@ -225,6 +226,7 @@ component ChatBubble inherits Rectangle {
                                     padding: 12px;
                                     Text {
                                         text: root.message.metrics-detail;
+                                        overflow: elide;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-2xs;
                                         color: Theme.text-secondary;
@@ -242,6 +244,7 @@ component ChatBubble inherits Rectangle {
                         border-color: Theme.border-accent;
                         model-txt := Text {
                             text: root.message.model;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs;
                             color: Theme.accent;
@@ -566,6 +569,7 @@ component ConversationItem inherits Rectangle {
             spacing: Theme.space-tight;
             Text {
                 text: root.label;
+                overflow: elide;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
                 font-weight: root.active ? Theme.weight-medium : Theme.weight-regular;
@@ -1165,6 +1169,7 @@ export component ChatView inherits Rectangle {
                                 }
                                 Text {
                                     text: g.provider;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-2xs;
                                     color: g.granted ? Theme.text-primary : Theme.text-disabled;
@@ -1490,6 +1495,7 @@ export component ChatView inherits Rectangle {
                     animate border-color { duration: Theme.duration-micro; easing: ease-out; }
                     link-chip-txt := Text {
                         text: chip.label;
+                        overflow: elide;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;
                         color: Theme.audit;

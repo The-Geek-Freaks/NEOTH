@@ -19,6 +19,7 @@ component NavGroup inherits Rectangle {
         padding-left: 10px; padding-top: 12px; padding-bottom: 5px;
         Text {
             text: root.label;
+            overflow: elide;
             color: Theme.text-disabled;
             font-family: Theme.font-mono;
             font-size: Theme.font-size-2xs;
@@ -79,6 +80,7 @@ component NavBtn inherits Rectangle {
         }
         Text {
             text: root.label;
+            overflow: elide;
             color: root.active ? Theme.text-primary : Theme.text-secondary;
             font-size: Theme.font-size-sm; font-family: Theme.font-sans;
             vertical-alignment: center;
@@ -180,6 +182,7 @@ export component Sidebar inherits Rectangle {
                         // Wave-1: design report spec — 8.5px mono, .26em letter-spacing,
                         // text-tertiary, lowercase. letter-spacing-mono-caps is 2.6px ≈ .26em.
                         text: root.version-line;
+                        overflow: elide;
                         color: ver-ta.has-hover ? Theme.text-secondary : Theme.text-tertiary;
                         font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                         letter-spacing: Theme.letter-spacing-mono-caps;
@@ -339,10 +342,12 @@ export component TopBar inherits Rectangle {
             alignment: center; spacing: 2px;
             Text {
                 text: root.kicker; color: Theme.text-tertiary;
+                overflow: elide;
                 font-family: Theme.font-mono; font-size: 10px; letter-spacing: Theme.letter-spacing-extra-wide;
             }
             Text {
                 text: root.title; color: Theme.text-primary;
+                overflow: elide;
                 font-family: Theme.font-display; font-size: 26px;
             }
         }

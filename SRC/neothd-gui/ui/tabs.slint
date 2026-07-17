@@ -20,6 +20,7 @@ component StatRow inherits Rectangle {
             alignment: center; spacing: 3px;
             Text {
                 text: root.label; color: Theme.text-tertiary;
+                overflow: elide;
                 font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                 letter-spacing: Theme.letter-spacing-wide;
             }
@@ -236,6 +237,7 @@ export component DoctorView inherits Rectangle {
                 border-width: 1px; border-color: Theme.border-accent;
                 sbtn := Text {
                     text: root.status-running ? "running…" : "Run";
+                    overflow: elide;
                     color: root.status-running ? Theme.text-tertiary : Theme.accent;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;

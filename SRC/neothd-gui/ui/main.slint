@@ -1506,6 +1506,7 @@ export component MainWindow inherits Window {
                             }
                             Text {
                                 text: p.name;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: ta.has-hover ? Theme.accent-teal : Theme.text-primary;
@@ -1561,6 +1562,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 Text {
                                     text: p.name + (p.recommended ? "  (recommended)" : "");
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: ta2.has-hover ? Theme.accent-teal : Theme.text-primary;
@@ -2421,6 +2423,7 @@ export component MainWindow inherits Window {
                         spacing: Theme.space-tight;
                         Text {
                             text: "Provider key — " + root.provider-choice;
+                            overflow: elide;
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-medium;
@@ -2773,6 +2776,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: root.provider-choice;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;

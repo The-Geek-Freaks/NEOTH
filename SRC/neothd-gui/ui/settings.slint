@@ -210,6 +210,7 @@ component TabButton inherits Rectangle {
     txt := Text {
         x: Theme.space-base;
         text: root.label;
+        overflow: elide;
         font-family: Theme.font-display;
         font-size: Theme.font-size-body;
         font-weight: root.active ? Theme.weight-medium : Theme.weight-regular;
@@ -289,6 +290,7 @@ component KanbanTaskCard inherits Rectangle {
             spacing: Theme.space-tight;
             Text {
                 text: root.task-id;
+                overflow: elide;
                 font-family: Theme.font-mono;
                 font-size: Theme.font-size-caption;
                 color: Theme.text-dim;
@@ -359,6 +361,7 @@ component KanbanColumn inherits Rectangle {
             spacing: Theme.space-tight;
             Text {
                 text: root.label;
+                overflow: elide;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-caption;
                 font-weight: Theme.weight-bold;
@@ -407,6 +410,7 @@ component ActivityFeedEntry inherits HorizontalLayout {
 
     Text {
         text: root.ts;
+        overflow: elide;
         font-family: Theme.font-mono;
         font-size: Theme.font-size-caption;
         color: Theme.text-dim;
@@ -441,6 +445,7 @@ component PanelHeader inherits VerticalLayout {
 
     Text {
         text: root.title;
+        overflow: elide;
         font-family: Theme.font-display;
         font-size: Theme.font-size-h2;
         font-weight: Theme.weight-light;
@@ -1082,6 +1087,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: root.provider-current;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -1201,6 +1207,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: b.provider + (b.model == "" ? "" : " · " + b.model);
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: b.provider == "(unset)" ? Theme.text-muted : Theme.accent-green;
@@ -1622,6 +1629,7 @@ export component SettingsView inherits Rectangle {
                                     : c.status == "error" ? "✗ error"
                                     : c.status == "unavailable" ? "⊘ unavailable"
                                     : "· not configured";
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: c.status == "ok" ? Theme.accent-green
@@ -1636,6 +1644,7 @@ export component SettingsView inherits Rectangle {
                                 spacing: 2px;
                                 Text {
                                     text: c.name;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: Theme.text-primary;
@@ -1681,6 +1690,7 @@ export component SettingsView inherits Rectangle {
                             }
                             if confirming: Text {
                                 text: "Remove " + c.name + " credential?";
+                                overflow: elide;
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.accent-amber;
@@ -1818,6 +1828,7 @@ export component SettingsView inherits Rectangle {
                                     // HH:MM:SS
                                     Text {
                                         text: a.ts;
+                                        overflow: elide;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-caption;
                                         color: Theme.text-disabled;
@@ -1986,6 +1997,7 @@ export component SettingsView inherits Rectangle {
                             // Domain header row (first manifest tag).
                             if s.is-header: Text {
                                 text: s.id;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-2xs;
                                 letter-spacing: Theme.letter-spacing-wide;
@@ -2007,6 +2019,7 @@ export component SettingsView inherits Rectangle {
                                 }
                                 Text {
                                     text: s.id;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: Theme.text-primary;
@@ -2116,6 +2129,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: p.id;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -2224,6 +2238,7 @@ export component SettingsView inherits Rectangle {
                                         // ts
                                         Text {
                                             text: ev.ts;
+                                            overflow: elide;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-caption;
                                             color: Theme.text-muted;
@@ -2283,6 +2298,7 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-base;
                             Text {
                                 text: m.source;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.accent-green;
@@ -3086,6 +3102,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: rail.name;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -3143,6 +3160,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.label;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -3150,6 +3168,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.value;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
@@ -3165,6 +3184,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.label;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -3172,6 +3192,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.value;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: row.value == "present" ? Theme.accent-green : Theme.text-muted;
@@ -3187,6 +3208,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.label;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -3194,6 +3216,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.value;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
@@ -3658,6 +3681,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.label;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -3665,6 +3689,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.value;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: row.value == "cached" ? Theme.accent-green : Theme.text-muted;
@@ -3701,6 +3726,7 @@ export component SettingsView inherits Rectangle {
                                 spacing: Theme.space-base;
                                 Text {
                                     text: peer.label;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: Theme.text-primary;
@@ -3708,6 +3734,7 @@ export component SettingsView inherits Rectangle {
                                 }
                                 Text {
                                     text: peer.status;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: peer.status == "recent" ? Theme.accent-green : (peer.status == "stale" ? Theme.accent-amber : Theme.text-muted);
@@ -4107,6 +4134,7 @@ export component SettingsView inherits Rectangle {
                             padding-bottom: 2px;
                             Text {
                                 text: c.ts;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-dim;
@@ -4413,6 +4441,7 @@ export component SettingsView inherits Rectangle {
                         // Section header sentinel row (is-header=true injected by Rust).
                         if p.is-header: Text {
                             text: p.name;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             letter-spacing: Theme.letter-spacing-wide;
@@ -4434,6 +4463,7 @@ export component SettingsView inherits Rectangle {
                                 horizontal-stretch: 1;
                                 Text {
                                     text: p.name;
+                                    overflow: elide;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-caption;
                                     color: Theme.text-primary;
@@ -4514,6 +4544,7 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-base;
                             Text {
                                 text: row.label;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-primary;
@@ -4521,6 +4552,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: row.value;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;

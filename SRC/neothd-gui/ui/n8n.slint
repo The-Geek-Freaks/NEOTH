@@ -34,12 +34,14 @@ component WorkflowRow inherits Rectangle {
         spacing: 2px;
         Text {
             text: root.name;
+            overflow: elide;
             color: Theme.text-primary;
             font-size: Theme.font-size-sm;
             vertical-alignment: center;
         }
         if root.description != "": Text {
             text: root.description;
+            overflow: elide;
             color: Theme.text-disabled;
             font-size: 10px;
             vertical-alignment: center;

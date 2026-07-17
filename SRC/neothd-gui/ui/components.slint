@@ -71,6 +71,7 @@ export component NeothButton inherits Rectangle {
 
     txt := Text {
         text: root.label;
+        overflow: elide;
         font-family: Theme.font-display;
         font-size: root.size == "md" ? Theme.font-size-body : Theme.font-size-caption;
         font-weight: Theme.weight-medium;
@@ -240,6 +241,7 @@ export component Expander inherits Rectangle {
                 }
                 Text {
                     text: root.title;
+                    overflow: elide;
                     color: Theme.text-primary;
                     font-family: Theme.font-mono;
                     font-size: Theme.font-size-2xs;
@@ -313,6 +315,7 @@ export component ScreenHeader inherits VerticalLayout {
 
     Text {
         text: root.title;
+        overflow: elide;
         font-family: Theme.font-display;
         font-size: Theme.font-size-h1;
         font-weight: Theme.weight-light;
@@ -469,6 +472,7 @@ export component ModeCard inherits Rectangle {
             spacing: Theme.space-tight;
             Text {
                 text: root.title;
+                overflow: elide;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-h2;
                 font-weight: Theme.weight-light;
@@ -1035,6 +1039,7 @@ export component NeothLineEdit inherits Rectangle {
 export component Kicker inherits Text {
     in property <string> label;
     text: root.label;
+    overflow: elide;
     color: Theme.text-disabled;
     font-family: Theme.font-mono;
     font-size: Theme.font-size-2xs;
@@ -1069,6 +1074,7 @@ export component InfoRow inherits Rectangle {
         spacing: Theme.space-3;
         Text {
             text: root.label;
+            overflow: elide;
             color: root.right-align ? Theme.text-secondary : Theme.text-tertiary;
             font-family: Theme.font-mono;
             font-size: root.right-align ? Theme.font-size-sm : Theme.font-size-2xs;
@@ -1095,6 +1101,7 @@ export component InfoRow inherits Rectangle {
 export component RefreshFooter inherits Text {
     in property <string> ts;
     text: root.ts != "" ? "refreshed \{root.ts}" : "";
+    overflow: elide;
     color: Theme.text-tertiary;
     font-family: Theme.font-mono;
     font-size: Theme.font-size-2xs;
@@ -1128,6 +1135,7 @@ export component FooterBar inherits Rectangle {
     Text {
         x: Theme.space-screen;
         text: root.status;
+        overflow: elide;
         font-family: Theme.font-mono;
         font-size: Theme.font-size-caption;
         color: Theme.text-dim;
@@ -1261,12 +1269,14 @@ export component CommandPalette inherits Rectangle {
                             }
                             Text {
                                 text: item.label;
+                                overflow: elide;
                                 color: i == root.selected ? Theme.text-primary : Theme.text-secondary;
                                 font-size: Theme.font-size-sm; font-family: Theme.font-sans;
                                 vertical-alignment: center; horizontal-stretch: 1;
                             }
                             Text {
                                 text: item.hint;
+                                overflow: elide;
                                 color: Theme.text-disabled;
                                 font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                                 letter-spacing: Theme.letter-spacing-wide;
@@ -1344,6 +1354,7 @@ export component TooltipArea inherits Rectangle {
             width: parent.width;
             height: parent.height;
             text: root.text;
+            overflow: elide;
             font-family: Theme.font-mono;
             font-size: Theme.font-size-2xs;
             color: Theme.text-secondary;

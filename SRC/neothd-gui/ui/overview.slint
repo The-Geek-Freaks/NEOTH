@@ -618,6 +618,7 @@ export component OverviewView inherits Rectangle {
                                             // provider + model
                                             Text {
                                                 text: hemi.provider != "" ? "\{hemi.provider} · \{hemi.model}" : "not configured";
+                                                overflow: elide;
                                                 color: hemi.ok ? Theme.audit : Theme.text-tertiary;
                                                 font-family: Theme.font-mono;
                                                 font-size: Theme.font-size-xs;
@@ -845,6 +846,7 @@ export component OverviewView inherits Rectangle {
                                         }
                                         Text {
                                             text: entry.provider;
+                                            overflow: elide;
                                             color: entry.granted ? Theme.consent : Theme.text-tertiary;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-xs;

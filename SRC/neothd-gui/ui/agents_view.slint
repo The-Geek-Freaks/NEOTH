@@ -232,6 +232,7 @@ component AgentCard inherits Card {
 
             Text {
                 text: root.agent.state != "" ? root.agent.state : "idle";
+                overflow: elide;
                 color: root.agent.state == "working" ? Theme.memory
                     : root.agent.state == "error"    ? Theme.consent
                     : Theme.text-disabled;

@@ -63,6 +63,7 @@ component ToggleRow inherits Rectangle {
         spacing: 8px;
         Text {
             text: root.label;
+            overflow: elide;
             color: Theme.text-secondary;
             font-family: Theme.font-sans;
             font-size: Theme.font-size-sm;
@@ -106,6 +107,7 @@ component SkillChip inherits Rectangle {
         alignment: center;
         Text {
             text: root.name;
+            overflow: elide;
             color: Theme.audit;
             font-family: Theme.font-mono;
             font-size: Theme.font-size-2xs;

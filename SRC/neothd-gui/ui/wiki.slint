@@ -161,6 +161,7 @@ component FilterChip inherits Rectangle {
 
     Text {
         text: root.label;
+        overflow: elide;
         color: root.active ? Theme.accent : Theme.text-tertiary;
         font-family: Theme.font-mono;
         font-size: Theme.font-size-xs;

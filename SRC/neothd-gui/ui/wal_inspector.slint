@@ -187,6 +187,7 @@ component WalEventItem inherits Rectangle {
         // timestamp
         Text {
             text: root.data.ts;
+            overflow: elide;
             color: Theme.text-tertiary;
             font-family: Theme.font-mono;
             font-size: Theme.font-size-2xs;
