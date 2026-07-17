@@ -712,6 +712,37 @@ component Composer inherits Rectangle {
             }
         }
 
+        // R4-05 — slash quick-entry: one-tap prefill for built-in slash commands
+        // that otherwise required typing. Sets the draft; the existing slash
+        // dispatch (slash-active cue) runs it on send. Discoverability, not
+        // auto-execute — the operator still presses send.
+        HorizontalLayout {
+            spacing: Theme.space-tight;
+            alignment: start;
+            for cmd in ["/critic", "/background", "/quit"]: Rectangle {
+                height: 24px;
+                border-radius: Theme.radius-pill;
+                background: qa-touch.has-hover ? Theme.accent-green.with-alpha(0.18) : Theme.surface-2;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 10px;
+                    Text {
+                        text: cmd;
+                        color: Theme.text-secondary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        vertical-alignment: center;
+                    }
+                }
+                qa-touch := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.draft = cmd + " "; }
+                }
+            }
+        }
+
         HorizontalLayout {
             spacing: Theme.space-base;
 
