@@ -382,15 +382,70 @@ where
 }
 
 fn diagnostic(output: &Output) -> String {
+    // R4-09 error-UX: pick the first line that is meaningful to a NON-technical
+    // operator after scrubbing internal noise (panic headers, anyhow chain
+    // continuations, absolute file paths, redundant "Error:" prefixes). If
+    // nothing survives, point at Doctor instead of dumping a stack trace.
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     stderr
         .lines()
         .chain(stdout.lines())
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .map(|line| line.chars().take(MAX_DIAGNOSTIC_CHARS).collect())
-        .unwrap_or_else(|| "NEOTH CLI returned no diagnostic".to_string())
+        .filter_map(scrub_diagnostic)
+        .next()
+        .unwrap_or_else(|| "NEOTH reported an error — run neoth doctor for details.".to_string())
+}
+
+/// Turn one raw CLI stderr/stdout line into an operator-safe message, or `None`
+/// if the line is pure internal noise (panic header, anyhow "caused by:" chain
+/// continuation, or empty after scrubbing).
+fn scrub_diagnostic(line: &str) -> Option<String> {
+    let mut s = line.trim();
+    // The caller's format string already names the action → drop the prefix.
+    for p in ["Error: ", "error: ", "ERROR: "] {
+        if let Some(rest) = s.strip_prefix(p) {
+            s = rest.trim();
+        }
+    }
+    // A Rust panic header / anyhow chain continuation is never user-actionable.
+    if (s.starts_with("thread '") && s.contains("panicked"))
+        || s.starts_with("caused by:")
+        || s.is_empty()
+    {
+        return None;
+    }
+    let scrubbed = redact_windows_paths(s);
+    let scrubbed = scrubbed.trim();
+    if scrubbed.is_empty() {
+        None
+    } else {
+        Some(scrubbed.chars().take(MAX_DIAGNOSTIC_CHARS).collect())
+    }
+}
+
+/// Replace absolute Windows paths (`X:\…` / `X:/…`) with `<path>` so the GUI
+/// never leaks internal file layout into a user-facing toast.
+fn redact_windows_paths(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 2 < chars.len()
+            && chars[i].is_ascii_alphabetic()
+            && chars[i + 1] == ':'
+            && (chars[i + 2] == '\\' || chars[i + 2] == '/')
+        {
+            out.push_str("<path>");
+            i += 3;
+            while i < chars.len() && !chars[i].is_whitespace() {
+                i += 1;
+            }
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 fn bounded_text(bytes: &[u8], max_chars: usize) -> Option<String> {
@@ -1796,5 +1851,23 @@ mod tests {
                 "cluster mutation regressed to unchecked boundary: {unchecked}"
             );
         }
+    }
+
+    #[test]
+    fn scrub_diagnostic_strips_noise_and_paths() {
+        // Panic header + anyhow chain continuation + empty → dropped.
+        assert_eq!(super::scrub_diagnostic("thread 'main' panicked at 'boom'"), None);
+        assert_eq!(super::scrub_diagnostic("caused by: io error"), None);
+        assert_eq!(super::scrub_diagnostic("   "), None);
+        // "Error:" prefix dropped; a real message survives.
+        assert_eq!(
+            super::scrub_diagnostic("Error: provider timeout"),
+            Some("provider timeout".to_string())
+        );
+        // Absolute Windows path redacted so internal layout never reaches a toast.
+        assert_eq!(
+            super::scrub_diagnostic("failed to read C:\\Users\\x\\.neoth\\freedom.yaml now"),
+            Some("failed to read <path> now".to_string())
+        );
     }
 }
