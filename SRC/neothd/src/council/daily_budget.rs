@@ -229,7 +229,16 @@ impl DailyBudgetReservation {
             // A reservation admitted on the previous UTC day may finish after
             // the new-day ledger has already been opened. It belongs to its
             // admission day and must not mutate the new day's allowance.
+            // Logged so an operator auditing spend can explain the gap: the
+            // actual cost of a call that straddles midnight lands in NO
+            // ledger (day N's admission stays correct; day N+1 is untouched).
             if ledger.utc_day > self.utc_day {
+                tracing::info!(
+                    reservation = %self.reservation_id,
+                    admitted_day = self.utc_day,
+                    ledger_day = ledger.utc_day,
+                    "council daily-budget settlement crossed UTC midnight — cost not recorded in the new day's ledger"
+                );
                 return Ok(());
             }
             if ledger.utc_day < self.utc_day {

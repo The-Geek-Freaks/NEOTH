@@ -2502,45 +2502,61 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &req,
                 &neoth_home,
             );
-            let council_decision = match council_cost {
-                Ok((estimated_single_call_usd, estimated_council_cost_usd)) => {
-                    crate::cli::chat::evaluate_council_trigger(
-                        &neoth_home,
-                        &req.prompt,
-                        estimated_single_call_usd,
-                        estimated_council_cost_usd,
-                        council_cfg.daily_usd_cap,
-                        council_disabled,
-                        &council_policy,
-                    )
-                }
-                Err(_)
-                    if council_disabled
-                        || std::env::var("NEOTH_COUNCIL_DISABLE").is_ok_and(|value| {
-                            value == "1" || value.eq_ignore_ascii_case("true")
-                        }) =>
-                {
-                    crate::cli::chat::evaluate_council_trigger(
-                        &neoth_home,
-                        &req.prompt,
-                        0.0,
-                        Some(0.0),
-                        council_cfg.daily_usd_cap,
-                        council_disabled,
-                        &council_policy,
-                    )
-                }
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        "channel Council cost bound unavailable under active daily cap; smart trigger skipped fail-closed"
-                    );
-                    crate::council::TriggerDecision::Skip {
-                        reason:
-                            "council cost bound unavailable under active daily cap — fail-closed"
-                                .into(),
+            // spawn_blocking: evaluate_council_trigger performs the advisory
+            // daily-budget ledger read, which takes the cross-process file
+            // lock (sleeping retry loop) — must not park the channel worker.
+            let council_decision = {
+                let trigger_home = neoth_home.clone();
+                let trigger_prompt = req.prompt.clone();
+                let trigger_cap = council_cfg.daily_usd_cap;
+                let trigger_policy = council_policy.clone();
+                tokio::task::spawn_blocking(move || match council_cost {
+                    Ok((estimated_single_call_usd, estimated_council_cost_usd)) => {
+                        crate::cli::chat::evaluate_council_trigger(
+                            &trigger_home,
+                            &trigger_prompt,
+                            estimated_single_call_usd,
+                            estimated_council_cost_usd,
+                            trigger_cap,
+                            council_disabled,
+                            &trigger_policy,
+                        )
                     }
-                }
+                    Err(_)
+                        if council_disabled
+                            || std::env::var("NEOTH_COUNCIL_DISABLE").is_ok_and(|value| {
+                                value == "1" || value.eq_ignore_ascii_case("true")
+                            }) =>
+                    {
+                        crate::cli::chat::evaluate_council_trigger(
+                            &trigger_home,
+                            &trigger_prompt,
+                            0.0,
+                            Some(0.0),
+                            trigger_cap,
+                            council_disabled,
+                            &trigger_policy,
+                        )
+                    }
+                    Err(error) => {
+                        warn!(
+                            error = %error,
+                            "channel Council cost bound unavailable under active daily cap; smart trigger skipped fail-closed"
+                        );
+                        crate::council::TriggerDecision::Skip {
+                            reason:
+                                "council cost bound unavailable under active daily cap — fail-closed"
+                                    .into(),
+                        }
+                    }
+                })
+                .await
+                .unwrap_or_else(|join| {
+                    warn!(error = %join, "council trigger task panicked — fail-closed");
+                    crate::council::TriggerDecision::Skip {
+                        reason: "council trigger evaluation panicked — fail-closed".into(),
+                    }
+                })
             };
             let council_mif_message = council_decision
                 .should_convene()

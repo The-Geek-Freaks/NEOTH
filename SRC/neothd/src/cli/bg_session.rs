@@ -32,7 +32,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
-use tracing::{info, warn};
+use tracing::warn;
 use zeroize::Zeroize as _;
 
 use crate::config::FreedomConfig;

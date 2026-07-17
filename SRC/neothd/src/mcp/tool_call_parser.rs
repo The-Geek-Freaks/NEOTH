@@ -16,7 +16,7 @@
 //! result, letting the model self-correct on the next iteration.
 //!
 //! Pure-function deterministic. No I/O. The chat dispatcher pairs this
-//! with [`super::gate::invoke_with_audit`] to execute the parsed calls.
+//! with the [`super::gate`] preflight/authorize/invoke split to execute the parsed calls.
 
 use serde::{Deserialize, Serialize};
 

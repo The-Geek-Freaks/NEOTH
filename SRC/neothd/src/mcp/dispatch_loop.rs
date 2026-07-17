@@ -225,7 +225,7 @@ where
 /// per-invocation remainder and is enforced before every call in round one and
 /// later rounds; ordinary chat callers keep the iteration-only wrapper above.
 #[allow(clippy::too_many_arguments)]
-pub async fn run_tool_loop_with_budget<D, P>(
+pub(crate) async fn run_tool_loop_with_budget<D, P>(
     driver: &mut D,
     initial_prompt: String,
     servers: &McpServers,
@@ -1951,7 +1951,8 @@ fn smart_approve_error_poisoned_connection(error: &crate::mcp::gate::GateError) 
 
 /// Account for a response that reached the MCP server. `isError:true` is a
 /// failed tool call, not progress, even though its content remains valuable
-/// model feedback and is durably audited by `invoke_with_audit`.
+/// model feedback and is durably audited by the gate split
+/// (preflight_with_audit -> authorize_preflight_with_audit -> invoke_authorized_with_audit).
 ///
 /// Returns true when the caller must thread the error content into another
 /// model turn instead of taking the generic all-dispatches-failed fast exit.
@@ -4298,7 +4299,7 @@ mod tests {
     //
     // We cannot do a true "call succeeded" test without a live MCP server.
     // Instead we prove the wire: run_tool_loop_with_cap → dispatch_one →
-    // invoke_with_audit → Gate::check. The "no server" failure proves the
+    // preflight_with_audit → Gate::check. The "no server" failure proves the
     // lease upgrade ran PAST the Confirm gate (else it would return a
     // ConfirmRequired error before even trying to spawn a server).
 
@@ -4308,7 +4309,7 @@ mod tests {
     async fn mcp_tool_lease_absent_stays_confirm_blocked() {
         // Standard autonomy → McpToolInvocation evaluates to Confirm.
         // No lease written → Gate::check with FailClosed → Denied →
-        // invoke_with_audit returns ConfirmRequired → dispatch_one fails.
+        // preflight_with_audit returns ConfirmRequired → dispatch_one fails.
         use crate::permissions::lease::LeaseStore;
         let dir = tempfile::tempdir().unwrap();
         let _env = crate::test_env::lock();
@@ -4440,7 +4441,7 @@ mod tests {
         // The consent gate was LIFTED (lease covered server:tool).
         // The call then fails at "no enabled MCP server" — still failed_calls==1,
         // but the all-fail early-exit fires at iteration==1 proving the full
-        // path from run_tool_loop_with_cap → dispatch_one → invoke_with_audit
+        // path from run_tool_loop_with_cap → dispatch_one → the gate split
         // → Gate::check → lease upgrade ran end-to-end.
         assert_eq!(
             outcome.iterations, 1,

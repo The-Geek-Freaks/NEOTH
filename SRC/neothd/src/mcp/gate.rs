@@ -44,7 +44,7 @@ use crate::wal::events::{
 };
 use crate::wal::writer::WalWriterHandle;
 
-/// Errors surfaced by [`invoke_with_audit`].
+/// Errors surfaced by the MCP gate (preflight / authorize / invoke).
 ///
 /// The variants split the failure surface so callers can render the
 /// right operator-facing message — an allowlist miss is not the same as
@@ -556,259 +556,6 @@ async fn call_tool_with_success_audit(
     Ok(result)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
-    client: &mut McpClient,
-    cfg: &McpServerConfig,
-    tool: &str,
-    arguments: Value,
-    policy: P,
-    writer: Option<&WalWriterHandle>,
-    rollback_policy: Option<&crate::config::RollbackConfig>,
-    smart_approve: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
-    now_unix: i64,
-    // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
-    // `LeaseScope::McpTool` consent-gate upgrade. MUST be the
-    // channel-verified `sender_id` (or HMAC-verified peer id); NEVER a
-    // value lifted from an LLM response or untrusted tool argument.
-    // `None` = no lease upgrade possible (interactive CLI path).
-    subject: Option<&str>,
-    // Instance root that owns `leases.json`. Never infer this from the
-    // process-global default when a channel/daemon supplied a custom home.
-    instance_home: &std::path::Path,
-) -> Result<ToolCallResult, GateError> {
-    let policy_snapshot = policy.policy_snapshot();
-    let autonomy = policy_snapshot.level();
-    // Layer 1 — allowlist. Reviewer-1 P1-A secure-by-default (2026-05-20):
-    //   Some(list) → tool must appear in list.
-    //   None + trust_all_tools=true → trust the server's full catalogue.
-    //   None + trust_all_tools=false → DENY (was the silent-pass-through
-    //                                  path that let compromised servers
-    //                                  expose arbitrary new tools).
-    if let Some(list) = cfg.allow_tools.as_ref() {
-        if !list.iter().any(|t| t == tool) {
-            if let Some(w) = writer {
-                emit_reject(
-                    w,
-                    &cfg.id,
-                    tool,
-                    "tool not in allow_tools allowlist",
-                    now_unix,
-                )
-                .await
-                .map_err(GateError::Wal)?;
-            }
-            return Err(GateError::NotInAllowlist {
-                server: cfg.id.clone(),
-                tool: tool.to_string(),
-            });
-        }
-    } else if !cfg.trust_all_tools {
-        if let Some(w) = writer {
-            emit_reject(
-                w,
-                &cfg.id,
-                tool,
-                "no allow_tools list AND trust_all_tools=false (secure-by-default)",
-                now_unix,
-            )
-            .await
-            .map_err(GateError::Wal)?;
-        }
-        return Err(GateError::MissingAllowlistSecureDefault {
-            server: cfg.id.clone(),
-            tool: tool.to_string(),
-        });
-    }
-
-    // Layer 1b — per-server autonomy gate (GOLD-ADAPT-CCS-02). A server may
-    // declare a MINIMUM autonomy level (e.g. an SSH/remote-edit server gated at
-    // Elevated). Below it, deny EVERY tool on the server outright — coarser +
-    // earlier than the per-action `evaluate` below, so an elevated-only server
-    // never reaches per-tool resolution under Strict/Standard. `None` (the
-    // default) keeps the pre-CCS-02 behaviour: no per-server floor.
-    if let Some(required) = cfg.autonomy_gate
-        && !autonomy.meets_gate(required)
-    {
-        if let Some(w) = writer {
-            emit_reject(
-                w,
-                &cfg.id,
-                tool,
-                &format!(
-                    "server autonomy_gate requires ≥ {} (current {})",
-                    required.as_str(),
-                    autonomy.as_str()
-                ),
-                now_unix,
-            )
-            .await
-            .map_err(GateError::Wal)?;
-        }
-        return Err(GateError::AutonomyGate {
-            server: cfg.id.clone(),
-            tool: tool.to_string(),
-            required,
-            current: autonomy,
-        });
-    }
-
-    // Layer 2 — autonomy gate.
-    let action = Action::McpToolInvocation {
-        server_id: cfg.id.clone(),
-        tool: tool.to_string(),
-    };
-    match evaluate(&action, policy) {
-        Decision::Allow => {}
-        Decision::Deny(reason) => {
-            if let Some(w) = writer {
-                emit_reject(w, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
-                    .await
-                    .map_err(GateError::Wal)?;
-            }
-            return Err(GateError::PermissionDenied {
-                server: cfg.id.clone(),
-                tool: tool.to_string(),
-                reason,
-            });
-        }
-        Decision::Confirm(reason) => {
-            // GOLD-ADOPT-22 SmartApprove (opt-in): auto-approve this Confirm IFF
-            // the tool's server-DECLARED EFFECT metadata (readOnlyHint, not its
-            // name) marks it read-only. Never lifts a Deny; every auto-approval
-            // is audited. A disabled cache / non-read-only / unknown tool falls
-            // through to the normal confirm path.
-            // GR-018 — per-server gate: only THIS server's own opt-in
-            // (`cfg.smart_approve`) lets a Confirm be auto-approved. The global
-            // master switch (`security.smart_approve`) merely allocates the
-            // lazy session upstream; without the per-server flag we fall through
-            // to the normal confirm path even for a declared read-only tool, so
-            // trusting one server never bypasses confirmation for the others.
-            if cfg.smart_approve && smart_approve_is_readonly(smart_approve, cfg, tool) {
-                if let Some(w) = writer {
-                    emit_readonly_allow(w, &cfg.id, tool, now_unix)
-                        .await
-                        .map_err(GateError::Wal)?;
-                }
-                tracing::info!(
-                    server = %cfg.id, tool = %tool,
-                    "SmartApprove auto-approved a Confirm-gated read-only tool (declared effect)"
-                );
-                // Fall through to dispatch — Confirm upgraded to Allow.
-            } else {
-                // GOLD-ADAPT-AWE-CODE-01 — lease-backed consent gate.
-                // When a pre-authenticated `subject` is present, check for a
-                // covering `LeaseScope::McpTool(server_id:tool)` lease that
-                // upgrades this `Confirm → Allow`. The `Gate` handles the
-                // 0xA0/0xA1 PERMISSION_GRANTED/DENIED WAL audit frames and
-                // the two-clock expiry check (snapshot at load, authoritative
-                // check at decision time). `None` subject or missing/unparseable
-                // lease store = fail-closed to the normal ConfirmRequired path.
-                // Pitfall note: LeaseStore::load is synchronous I/O on the async
-                // path — acceptable here because it is on a block path only
-                // (Confirm decisions are rare); matching the precedent of the
-                // risk-gate lease check in dispatch_loop.rs (check_risk_leases).
-                if let Some(sub) = subject {
-                    if let Some(store) = load_lease_store_for_mcp(instance_home) {
-                        let gate = Gate::for_policy(policy_snapshot.clone())
-                            .with_confirm(ConfirmStrategy::FailClosed)
-                            .with_lease_snapshot(&store, sub, now_unix);
-                        match gate.check(&action, writer).await {
-                            Ok(()) => {
-                                tracing::info!(
-                                    server = %cfg.id, tool = %tool, subject = %sub,
-                                    "GOLD-ADAPT-AWE-CODE-01: McpTool lease upgraded Confirm → Allow"
-                                );
-                                // Lease lifted the Confirm — fall through to dispatch.
-                            }
-                            Err(
-                                crate::permissions::gate::GateError::Denied(_)
-                                | crate::permissions::gate::GateError::Aborted(_)
-                                | crate::permissions::gate::GateError::Unavailable(_),
-                            ) => {
-                                // The lease gate emits its own permission audit frame, but
-                                // the MCP decision must also remain visible as a rejected
-                                // tool call. This keeps subject-backed Confirm denials at
-                                // parity with the no-subject and unreadable-store paths.
-                                emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix)
-                                    .await?;
-                                return Err(GateError::ConfirmRequired {
-                                    server: cfg.id.clone(),
-                                    tool: tool.to_string(),
-                                    reason,
-                                });
-                            }
-                        }
-                    } else {
-                        // Lease store unreadable — fail closed.
-                        emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
-                        return Err(GateError::ConfirmRequired {
-                            server: cfg.id.clone(),
-                            tool: tool.to_string(),
-                            reason,
-                        });
-                    }
-                } else {
-                    emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
-                    return Err(GateError::ConfirmRequired {
-                        server: cfg.id.clone(),
-                        tool: tool.to_string(),
-                        reason,
-                    });
-                }
-            }
-        }
-    }
-
-    // Hash arguments BEFORE moving them into the RPC call. Canonical
-    // serialization (sorted keys would be stricter; serde_json default
-    // is sufficient for the deduplication-audit use-case).
-    let args_bytes = serde_json::to_vec(&arguments)
-        .map_err(|e| GateError::Mcp(McpError::Protocol(cfg.id.clone(), e.to_string())))?;
-    let arguments_hash = format!("{:016x}", xxh3_64(&args_bytes));
-
-    // A3-tail C: optional pre-call snapshot. Emits only when caller
-    // supplied a RollbackConfig + writer AND `mcp_tool_invoke` is in
-    // the operator's capture_kinds allowlist. Snapshot failures are
-    // warned-logged but don't block the tool call.
-    if let (Some(policy), Some(w)) = (rollback_policy, writer)
-        && policy.should_capture("mcp_tool_invoke")
-    {
-        let target = format!("{}:{}", cfg.id, tool);
-        let emit = crate::wal::snapshot::emit_if_policy_allows(
-            w,
-            policy,
-            crate::wal::snapshot::MutationKind::McpToolInvoke,
-            target,
-            &args_bytes,
-            now_unix,
-            Some(format!(
-                "MCP tool invocation snapshot (args xxh3={arguments_hash})"
-            )),
-        )
-        .await;
-        if let Err(e) = emit {
-            tracing::warn!(
-                error = %e,
-                server = %cfg.id,
-                tool = %tool,
-                "MCP pre-call snapshot emit failed — tool call proceeds without rollback coverage"
-            );
-        }
-    }
-
-    call_tool_with_success_audit(
-        client,
-        cfg,
-        tool,
-        arguments,
-        &arguments_hash,
-        writer,
-        now_unix,
-    )
-    .await
-}
-
 #[derive(Serialize)]
 struct McpToolCalledPayload<'a> {
     server_id: &'a str,
@@ -895,7 +642,7 @@ async fn emit_readonly_allow(
 /// SC-11 — enforce the ACTIVE SKILL's `tool_allowlist` at the MCP gate,
 /// in addition to the server-level `allow_tools`. Called from the
 /// dispatch loop (where the matched skill is in scope) BEFORE
-/// [`invoke_with_audit`].
+/// [`invoke_authorized_with_audit`].
 ///
 /// Semantics:
 ///   - `None` (no skill matched this turn) ⇒ `Ok(())` — no skill gate.
@@ -904,7 +651,7 @@ async fn emit_readonly_allow(
 ///   - `Some(non-empty)` ⇒ the tool MUST appear in the list, else
 ///     `SkillAllowlistBlocked`.
 ///
-/// The server-level allowlist in `invoke_with_audit` still runs after
+/// The server-level allowlist in `preflight_with_audit` still runs after
 /// this — both layers must pass. A rejection is audited via the same
 /// `MCP_TOOL_REJECTED` (0xC0) frame as every other gate denial, so the
 /// WAL replay shows skill-scoped blocks alongside server-scoped ones.
@@ -1051,7 +798,7 @@ mod tests {
     }
 
     // ── CCS-02 per-server autonomy gate ────────────────────────────
-    // invoke_with_audit needs a live McpClient (unmockable here), so —
+    // invoke_authorized_with_audit needs a live McpClient (unmockable here), so —
     // like the other gate tests — mirror the Layer-1b predicate exactly.
     #[test]
     fn ccs02_autonomy_gate_predicate_blocks_below_required() {
@@ -1284,7 +1031,7 @@ mod tests {
         // Build a fake McpClient by sidestepping spawn — we cannot
         // construct one without a child process, so this test exercises
         // the public allowlist semantics via direct config inspection.
-        // The actual invoke_with_audit-allowlist path is covered by the
+        // The actual preflight_with_audit-allowlist path is covered by the
         // integration tests once a stub server lands. For now: verify
         // config carries the allowlist.
         assert_eq!(cfg.allow_tools.as_ref().unwrap().len(), 1);
@@ -1430,7 +1177,7 @@ mod tests {
 
     #[test]
     fn allowlist_membership_check_matches_invoke_logic() {
-        // Mirrors the predicate inside invoke_with_audit to keep the
+        // Mirrors the predicate inside the gate split to keep the
         // semantics pinned. If the gate's allowlist check is reworded
         // this test must move in lockstep.
         let allow: Vec<String> = vec!["a".into(), "b".into()];

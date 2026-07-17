@@ -1938,6 +1938,7 @@ fn toggle_desired_cluster_at(home: &Path, enabled: bool) -> Result<ClusterConfig
 /// [`run_status`] so the GOLD-HON-03 honesty fix (read the registry,
 /// never report a hardcoded `0`) is unit-testable without stdout
 /// capture. A malformed `cluster.yaml` propagates as an error.
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 fn status_peer_count(home: &std::path::Path) -> Result<usize> {
     Ok(crate::cluster::registry::load(home)?.peers.len())
 }

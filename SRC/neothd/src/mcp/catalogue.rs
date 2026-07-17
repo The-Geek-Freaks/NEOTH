@@ -9,7 +9,7 @@
 //!
 //! Step 2 — autonomous invocation — adds a parser that scans the LLM's
 //! response text for a structured tool-call marker and dispatches it
-//! via [`super::gate::invoke_with_audit`]. That ships separately so
+//! via the [`super::gate`] preflight/authorize/invoke split. That ships separately so
 //! Step 1 lands first without an LLM-format dependency.
 //!
 //! ## Smart loading (N-04)

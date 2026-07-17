@@ -41,6 +41,7 @@ use crate::wal::{EventFlags, writer::WalWriterHandle};
 
 type HookDispatcher = fn(HookStage, &str, &[HookDef]) -> Result<StageOutcome>;
 
+#[derive(Debug)]
 pub struct RunOutcome {
     pub success: bool,
     pub duration: Duration,

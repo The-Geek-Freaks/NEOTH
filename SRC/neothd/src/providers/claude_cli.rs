@@ -1184,7 +1184,8 @@ async fn complete_tmux_uncached(
                 .begin_retry_attempt()
                 .await
                 .context("authorize exact claude_cli retry attempt")?;
-            retry_authorization_pending = false;
+            // No false-reset needed: the only setter is the transport-retry
+            // arm below, which re-arms it before the next read.
         }
 
         let send_result = {

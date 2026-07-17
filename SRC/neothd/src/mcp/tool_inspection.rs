@@ -18,7 +18,7 @@
 //! stateful authorization side-effects (filesystem leases, the WAL writer),
 //! not a pure inspection, so they stay in the dispatch loop, driven by the
 //! [`BlockKind::Risk`] payload the chain hands back. The allowlist / autonomy
-//! / SmartApprove checks likewise stay in [`crate::mcp::gate::invoke_with_audit`]
+//! / SmartApprove checks likewise stay in the [`crate::mcp::gate`] preflight/authorize/invoke split
 //! (they need the live `McpClient`). A new PURE safety check bolts on by
 //! implementing [`ToolInspector`] and pushing it into the chain.
 //!

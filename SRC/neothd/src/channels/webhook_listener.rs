@@ -2211,6 +2211,7 @@ async fn drain_one_spool_entry(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
     for msg in msgs {
         if crate::channels::sender_blocked_by_allowlist(
@@ -2453,6 +2454,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
 /// dry-run audits without sending), the recipient + body are HASHED in every
 /// WAL frame, and `inbound_dedup` skips a redelivered `webhookEventId` before it
 /// re-runs the pipeline.
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 async fn dispatch_line_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
     let Some(line) = cfg.line.as_ref() else {
         return; // handle_line guards Some; keep the fan-out total for safety

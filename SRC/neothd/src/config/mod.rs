@@ -407,6 +407,7 @@ pub(crate) fn prepare_raw_freedom_update<T>(
 /// atomic rename. This lighter primitive is only for transformations whose
 /// decision does not inspect sibling credentials; use
 /// [`update_raw_freedom_with_effective_credentials_at`] when it does.
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 pub(crate) fn update_raw_freedom_at<T>(
     path: &Path,
     mutation: impl FnOnce(&str) -> Result<(String, T)>,

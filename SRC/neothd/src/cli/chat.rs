@@ -391,6 +391,7 @@ fn include_route_slot_cap(
 /// leaf.  This accounts for both the model window and each exact wire model
 /// name; fallback swaps the model field after finalization, so a longer route
 /// id must reduce content capacity before optional Block-D context is retained.
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 pub(super) fn routing_safe_effective_cap(
     config: &FreedomConfig,
     primary_provider_name: &str,
@@ -2882,12 +2883,23 @@ async fn dispatch_provider(
                 let secs_since = crate::council::last_ts::seconds_since_last(home, now_unix_b3);
                 let remaining_budget_usd = match config.council.daily_usd_cap {
                     None => Ok(None),
-                    Some(cap_usd) => crate::council::daily_budget::remaining_daily_budget_usd(
-                        home,
-                        cap_usd,
-                        now_unix_b3 as i64,
-                    )
-                    .map(Some),
+                    // spawn_blocking: the advisory budget read takes the
+                    // cross-process ledger file lock (sleeping retry loop).
+                    Some(cap_usd) => {
+                        let snapshot_home = home.to_path_buf();
+                        tokio::task::spawn_blocking(move || {
+                            crate::council::daily_budget::remaining_daily_budget_usd(
+                                &snapshot_home,
+                                cap_usd,
+                                now_unix_b3 as i64,
+                            )
+                            .map(Some)
+                        })
+                        .await
+                        .unwrap_or_else(|join| {
+                            Err(anyhow::anyhow!("daily-budget snapshot task panicked: {join}"))
+                        })
+                    }
                 };
                 match remaining_budget_usd {
                     Ok(remaining_budget_usd) => {
@@ -7669,6 +7681,7 @@ async fn emit_council_transcripts(
 /// deployment pricing remains usable and the hard provider authorizer keeps
 /// its existing policy semantics. With a cap, every reachable paid leaf must
 /// have a finite reviewed bound.
+#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
 pub(crate) fn council_trigger_cost_bound(
     config: &FreedomConfig,
     req: &crate::providers::Request,

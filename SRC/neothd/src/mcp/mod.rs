@@ -54,7 +54,7 @@ pub use client::{McpClient, McpError, McpTool, ToolCallResult};
 #[allow(unused_imports)]
 pub use config::{AutorouteDecision, McpLauncherPosture, McpServerConfig, McpServers};
 #[allow(unused_imports)]
-pub use gate::{GateError, SanitizedTool, invoke_with_audit, list_tools_sanitized};
+pub use gate::{GateError, SanitizedTool, list_tools_sanitized};
 #[allow(unused_imports)]
 pub use sanitizer::{
     SanitizerVerdict, sanitize_description, sanitize_schema_descriptions, sanitize_tool_name,

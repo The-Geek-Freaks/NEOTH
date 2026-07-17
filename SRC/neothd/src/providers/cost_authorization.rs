@@ -597,7 +597,13 @@ impl ProviderCallAuditTicket {
             })?;
         }
         if let Some(reservation) = self.daily_budget_reservation.take()
-            && let Err(error) = reservation.settle(settlement_cost_usd)
+            // spawn_blocking: settle takes the cross-process ledger file lock
+            // (sleeping retry loop) — must not park this tokio worker.
+            && let Err(error) = tokio::task::spawn_blocking(move || {
+                reservation.settle(settlement_cost_usd)
+            })
+            .await
+            .unwrap_or_else(|join| Err(anyhow::anyhow!("settlement task panicked: {join}")))
         {
             // The durable pending reservation remains charged at its full
             // bound when settlement fails. Returning an error after a paid
@@ -686,6 +692,18 @@ impl BeforeDispatchReservation {
             .take()
             .expect("before-dispatch reservation already consumed")
             .release_before_dispatch()
+    }
+
+    /// `release` off the tokio worker: the ledger rewrite takes a
+    /// cross-process file lock with a sleeping retry loop. The Drop impl
+    /// below stays synchronous by necessity — it is the cancellation
+    /// safety-net, not the normal path.
+    async fn release_off_thread(self) -> Result<()> {
+        tokio::task::spawn_blocking(move || self.release())
+            .await
+            .unwrap_or_else(|join| {
+                Err(anyhow::anyhow!("daily-budget release task panicked: {join}"))
+            })
     }
 }
 
@@ -872,8 +890,14 @@ impl AuthorizedLeafCall {
     pub(crate) async fn begin_dispatch(mut self) -> Result<ProviderCallAuditGuard> {
         let mut reservation_guard = None;
         if let Some(plan) = self.ticket.daily_budget_plan.take() {
-            let reservation = plan
-                .reserve(crate::time::now_unix_i64())
+            // spawn_blocking: reserve takes the cross-process ledger file
+            // lock (sleeping retry loop) - must not park this tokio worker.
+            let now_unix = crate::time::now_unix_i64();
+            let reservation = tokio::task::spawn_blocking(move || plan.reserve(now_unix))
+                .await
+                .unwrap_or_else(|join| {
+                    Err(anyhow::anyhow!("daily-budget reservation task panicked: {join}"))
+                })
                 .map_err(|error| {
                     anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{} ({}/{}): council daily-budget reservation denied; dispatch blocked: {error}",
@@ -887,7 +911,7 @@ impl AuthorizedLeafCall {
             Ok(intent) => intent,
             Err(intent_error) => {
                 if let Some(reservation) = reservation_guard.take()
-                    && let Err(release_error) = reservation.release()
+                    && let Err(release_error) = reservation.release_off_thread().await
                 {
                     return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "{intent_error}; council daily-budget rollback also failed (reservation remains fail-closed): {release_error}"
@@ -898,7 +922,7 @@ impl AuthorizedLeafCall {
         };
         if let Err(intent_error) = intent.wait_for_durability().await {
             if let Some(reservation) = reservation_guard.take()
-                && let Err(release_error) = reservation.release()
+                && let Err(release_error) = reservation.release_off_thread().await
             {
                 return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
                     "{intent_error}; council daily-budget rollback also failed (reservation remains fail-closed): {release_error}"
@@ -1292,6 +1316,12 @@ impl ProviderCallAuthorizer {
     /// Daemon/cron authorizer whose autonomy is resolved at the instant of
     /// every leaf call. A successful `neoth reload` therefore tightens or
     /// relaxes the next call without rebuilding long-lived provider handles.
+    ///
+    /// NOTE (token cap): unlike the fixed-snapshot constructors this takes no
+    /// `input_token_cap` parameter — the cap is sourced live from
+    /// `ReloadController::latest().tokens.max_per_request` via
+    /// `ProviderPolicySource::Reload.current()` at every leaf call. Do not
+    /// copy this constructor pattern without that reload-backed source.
     pub fn fail_closed_reload(
         reload: Arc<crate::config::reload::ReloadController>,
         writer: Option<WalWriterHandle>,
@@ -1314,6 +1344,8 @@ impl ProviderCallAuthorizer {
 
     /// Channel authorizer with the same per-leaf reload semantics as daemon
     /// cron work, while retaining the live channel approval callback.
+    /// NOTE (token cap): cap sourced live from the reload controller — see
+    /// `fail_closed_reload` above.
     pub fn channel_reload(
         reload: Arc<crate::config::reload::ReloadController>,
         writer: Option<WalWriterHandle>,

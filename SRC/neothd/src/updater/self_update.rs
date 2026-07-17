@@ -2433,6 +2433,17 @@ pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
     serde_json::from_slice(&body).ok()
 }
 
+// TRUST BOUNDARY (review finding): this initial root open resolves an
+// ABSOLUTE path, so ancestor components of the canonicalized trusted root
+// are followed by the kernel without per-component no-follow enforcement.
+// Ancestors of NEOTH_HOME / the staging root (e.g. C:\Users) are treated
+// as part of the system trust domain — replacing them requires privileges
+// beyond the attacker model here. Every component BELOW the root IS opened
+// relative to the preceding directory handle with no-follow semantics.
+// FILE_FLAG_OPEN_REPARSE_POINT ensures the handle points at the reparse
+// point itself; File::metadata() (GetFileInformationByHandle) then reports
+// FILE_ATTRIBUTE_REPARSE_POINT, which metadata_is_link_like checks. Do not
+// replace metadata() with GetFileAttributesExW — that follows the link.
 fn open_directory_nofollow(path: &Path, label: &str) -> Result<std::fs::File> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -2587,8 +2598,13 @@ fn open_relative_nofollow(
             buffer: wide.as_ptr().cast_mut(),
         };
         let attributes = NtObjectAttributes {
-            length: u32::try_from(std::mem::size_of::<NtObjectAttributes>())
-                .expect("NT object attributes size fits u32"),
+            length: {
+                const _: () = assert!(
+                    std::mem::size_of::<NtObjectAttributes>() <= u32::MAX as usize,
+                    "NtObjectAttributes must fit the NT ULONG length field"
+                );
+                std::mem::size_of::<NtObjectAttributes>() as u32
+            },
             root_directory: parent.as_raw_handle(),
             object_name: &name,
             attributes: OBJ_CASE_INSENSITIVE,
@@ -2696,6 +2712,11 @@ fn verify_open_file_identity(
     {
         let opened = windows_open_object_identity(opened, label)?;
         let namespace = windows_open_object_identity(namespace, label)?;
+        // `opened != namespace` also detects an nlink discrepancy between the
+        // two GetFileInformationByHandle calls (hard link added in the race
+        // window) because nNumberOfLinks is part of the compared tuple.
+        // Combined with `opened.1 != 1` this proves BOTH sides read nlink == 1
+        // — do not weaken this condition to identity-only.
         if opened != namespace || opened.1 != 1 {
             anyhow::bail!(
                 "{label} is hard-linked or its path changed while open: {}",

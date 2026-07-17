@@ -21,7 +21,7 @@
 //!
 //! After registration `mcp::catalogue::assemble_catalogue` iterates all enabled
 //! servers and builds the tool catalogue injected into the system prompt on every
-//! `neoth chat` / daemon turn. `mcp::gate::invoke_with_audit` enforces the
+//! `neoth chat` / daemon turn. the `mcp::gate` preflight/authorize/invoke split enforces the
 //! `autonomy_gate: Elevated` floor before any tool reaches the subprocess.
 //!
 //! ## Telemetry
