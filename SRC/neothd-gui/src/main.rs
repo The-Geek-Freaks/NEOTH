@@ -12508,6 +12508,18 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
         .iter()
         .map(|channel| slint::SharedString::from(channel.name.as_str()))
         .collect::<Vec<_>>();
+    // Chat sidebar surface: the always-available local CLI first, then every
+    // CONFIGURED channel by canonical id. Unconfigured channels are excluded —
+    // there is no conversation to hold over a channel with no credentials. The
+    // canonical id (lowercase, e.g. "telegram") is the real channel identity the
+    // right-click Copy Name / Remove Channel context menu then operates on.
+    let mut chat_channels = vec![slint::SharedString::from("cli")];
+    chat_channels.extend(
+        channels
+            .iter()
+            .filter(|channel| channel.configured)
+            .map(|channel| slint::SharedString::from(channel.name.as_str())),
+    );
     let rows = channels
         .into_iter()
         .map(|channel| ChannelRow {
@@ -12526,6 +12538,17 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
     window.set_channel_types(ModelRc::new(VecModel::from(channel_types)));
     window.set_channels(ModelRc::new(VecModel::from(rows)));
     window.set_channel_status_error(error.into());
+
+    // Wire the chat sidebar to real channel state. unread-counts stays
+    // parallel-indexed + length-matched with chat-channels (no real unread
+    // tracking yet → zeros). Clamp the active index in case a removed channel
+    // shrank the list past the current selection, so no stale row stays lit.
+    let unread = vec![0i32; chat_channels.len()];
+    if window.get_chat_active_channel() as usize >= chat_channels.len() {
+        window.set_chat_active_channel(0);
+    }
+    window.set_chat_channels(ModelRc::new(VecModel::from(chat_channels)));
+    window.set_chat_unread_counts(ModelRc::new(VecModel::from(unread)));
 }
 
 /// Fetch `neoth channel list --output json`. A missing binary, non-zero exit,
