@@ -494,6 +494,8 @@ export component MainWindow inherits Window {
     in property <string> mcp-output: "";
     in property <bool> mcp-running: false;
     callback mcp-run-clicked();
+    callback mcp-tools-clicked(string /*server*/);
+    callback mcp-call-clicked(string /*server*/, string /*tool*/, string /*args*/);
     // Research P0 — hooks + groundtruth registry probes.
     in property <string> hooks-output: "";
     in property <bool> hooks-running: false;
@@ -3653,17 +3655,52 @@ export component MainWindow inherits Window {
                     raw-output: root.agents-output;
                     refresh-clicked => { root.agents-refresh-clicked(); }
                 }
-                // C4 — MCP server registry (neoth mcp list: servers +
-                // launcher posture + enabled count). Read-only probe.
-                if root.nav-active == "mcp": ProbeView {
-                    blurb: "MCP servers — configured tool-provider registry (~/.neoth/mcp_servers.yaml), enabled state and launcher posture (neoth mcp list).";
-                    action-label: "Refresh";
-                    output: root.mcp-output;
-                    running: root.mcp-running;
-                    empty-hint: "Click \"Refresh\" to load the MCP server registry.";
-                    run-clicked => { root.mcp-run-clicked(); }
-                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
-                    init => { if (root.mcp-output == "") { root.mcp-run-clicked(); } }
+                // C4 — MCP server registry + interactive tools/call form.
+                if root.nav-active == "mcp": VerticalLayout {
+                    spacing: Theme.space-tight;
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        height: 44px;
+                        mcp_server := NeothLineEdit {
+                            placeholder-text: "Server name (e.g. filesystem)";
+                            horizontal-stretch: 1;
+                        }
+                        mcp_tool := NeothLineEdit {
+                            placeholder-text: "Tool name (for Call tool)";
+                            horizontal-stretch: 1;
+                        }
+                        mcp_args := NeothLineEdit {
+                            placeholder-text: "Args JSON (default: {})";
+                            text: "{}";
+                            horizontal-stretch: 1;
+                        }
+                        NeothButton {
+                            label: "List tools";
+                            clicked => {
+                                if (mcp_server.text != "") {
+                                    root.mcp-tools-clicked(mcp_server.text);
+                                }
+                            }
+                        }
+                        NeothButton {
+                            label: "Call tool";
+                            primary: true;
+                            clicked => {
+                                if (mcp_server.text != "" && mcp_tool.text != "") {
+                                    root.mcp-call-clicked(mcp_server.text, mcp_tool.text, mcp_args.text);
+                                }
+                            }
+                        }
+                    }
+                    ProbeView {
+                        blurb: "MCP servers — configured tool-provider registry (~/.neoth/mcp_servers.yaml), enabled state and launcher posture (neoth mcp list).";
+                        action-label: "Refresh";
+                        output: root.mcp-output;
+                        running: root.mcp-running;
+                        empty-hint: "Click \"Refresh\" to load the MCP server registry.";
+                        run-clicked => { root.mcp-run-clicked(); }
+                        init => { if (root.mcp-output == "") { root.mcp-run-clicked(); } }
+                    }
                 }
                 // Research P0 — lifecycle hooks registry (neoth hooks list).
                 if root.nav-active == "hooks": ProbeView {

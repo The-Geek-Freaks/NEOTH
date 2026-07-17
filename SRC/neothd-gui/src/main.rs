@@ -3717,6 +3717,128 @@ fn main() -> Result<()> {
         });
     });
 
+    // C4 — MCP tools probe: `neoth mcp tools <server> --output json`.
+    let weak_mcp_tools = window.as_weak();
+    window.on_mcp_tools_clicked(move |server| {
+        let srv = server.to_string();
+        if srv.trim().is_empty() {
+            return;
+        }
+        let Some(w0) = weak_mcp_tools.upgrade() else {
+            return;
+        };
+        w0.set_mcp_running(true);
+        let weak = weak_mcp_tools.clone();
+        std::thread::spawn(move || {
+            let result = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("mcp")
+                    .arg("tools")
+                    .arg(srv.trim())
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "mcp tools spawn failed"))
+                    .ok()
+            });
+            let (kind, output) = match result {
+                Some(o) if o.status.success() => {
+                    let s = String::from_utf8_lossy(&o.stdout).to_string();
+                    (
+                        "success",
+                        if s.trim().is_empty() {
+                            "(no tools reported)".to_string()
+                        } else {
+                            s
+                        },
+                    )
+                }
+                Some(o) => {
+                    let err: String =
+                        String::from_utf8_lossy(&o.stderr).trim().chars().take(240).collect();
+                    ("error", err)
+                }
+                None => (
+                    "error",
+                    "neothd unavailable (not on PATH, or the located binary failed to spawn — see logs) — cannot list MCP tools.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "MCP tools", &output);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_mcp_output(output.into());
+                    w.set_mcp_running(false);
+                }
+            });
+        });
+    });
+
+    // C4 — MCP call: `neoth mcp call <server> <tool> --args <args> --output json`.
+    let weak_mcp_call = window.as_weak();
+    window.on_mcp_call_clicked(move |server, tool, args| {
+        let srv = server.to_string();
+        let tl = tool.to_string();
+        let ar = args.to_string();
+        if srv.trim().is_empty() || tl.trim().is_empty() {
+            return;
+        }
+        let Some(w0) = weak_mcp_call.upgrade() else {
+            return;
+        };
+        w0.set_mcp_running(true);
+        let weak = weak_mcp_call.clone();
+        std::thread::spawn(move || {
+            let args_val = if ar.trim().is_empty() {
+                "{}".to_string()
+            } else {
+                ar
+            };
+            let result = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("mcp")
+                    .arg("call")
+                    .arg(srv.trim())
+                    .arg(tl.trim())
+                    .arg("--args")
+                    .arg(&args_val)
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "mcp call spawn failed"))
+                    .ok()
+            });
+            let (kind, output) = match result {
+                Some(o) if o.status.success() => {
+                    let s = String::from_utf8_lossy(&o.stdout).to_string();
+                    (
+                        "success",
+                        if s.trim().is_empty() {
+                            "(empty response)".to_string()
+                        } else {
+                            s
+                        },
+                    )
+                }
+                Some(o) => {
+                    let err: String =
+                        String::from_utf8_lossy(&o.stderr).trim().chars().take(240).collect();
+                    ("error", err)
+                }
+                None => (
+                    "error",
+                    "neothd unavailable (not on PATH, or the located binary failed to spawn — see logs) — cannot call MCP tool.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "MCP call", &output);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_mcp_output(output.into());
+                    w.set_mcp_running(false);
+                }
+            });
+        });
+    });
+
     // Research P0 — hooks probe: `neoth hooks list --output json`.
     let weak_hooks = window.as_weak();
     window.on_hooks_run_clicked(move || {

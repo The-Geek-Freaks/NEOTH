@@ -78,6 +78,13 @@
 14. 14. Add 'Export graph JSON' button to memory_graph.slint that fires neoth memory --graph → triggers file-save dialog with the JSON output (commit 4f598045 feature)
 15. 15. Verify app_shell.slint wires cron.slint / n8n.slint / selfreprog.slint into the nav; if not, add nav entries to app_shell.slint so these existing UI files are reachable; anchor: SRC/neothd-gui/ui/app_shell.slint
 
+### ⚠ VERIFICATION CORRECTION (2026-07-17 — command-checked against cli/*.rs; several steps above over-claim CRUD that does NOT exist → building them as written = the dead buttons R4-05 forbids)
+- **DONE this session (2026-07-17):** groundtruth Add+Revoke (step 3, ConfirmDialog-gated), catalog Rebuild (`catalog refresh` button), memory `--graph` export button (per WS-R4 note), mcp Tools+Call (in progress).
+- **Commands that DO NOT EXIST (drop these steps / build read-only instead):** `neoth stop` (no verb — step 2 Stop-daemon is unbuildable; tray covers it). `neoth mode set` (ModeAction = List/Show/Match only — step 9 mode-picker unbuildable; the interaction mode is matched, not CLI-set). `credential store/delete` (CredentialAction = List/Import/Scan/Migrate — step 11 = read-only list + file Import, NO per-row delete). `slash add/remove` (SlashAction = List/Show only — step 12 = read-only list, slash cmds are file/registry-defined not CLI-CRUD). `hooks add/remove/run` (HooksAction = List/Validate/Trace — step 4 = read-only, hooks are file-defined). `tweaks list/set/unset` (TweaksAction = Show/Snippet — step 10 = read-only Show).
+- **Real writes that DO exist (buildable):** mcp `call <server> <tool> --args <json>` + `tools <server>`; groundtruth `add`/`revoke`/`state`; quota `set-cap --provider X --cap N` (per-provider, NOT global `set <n>`) + `status`; `update check`. auto_update config section exists (AutoUpdateConfig, default off) — a "Check now" button (update check) is buildable; the enabled/channel toggle needs the freedom.yaml config-writer path.
+- **Undo (step 2):** a read-only undo LIST already exists (main.rs `on_doctor_undo_run_clicked` → `neoth undo --limit 10` in Doctor). undo.rs states undo is NOT a frame-replay → execute-semantics need care before an execute button.
+- **REVISED buildable R4-05 remainder:** mcp-call (done), read-only nav tabs for credential-list/slash-list/hooks-list/tweaks-show (ProbeView pattern), quota set-cap editor, update-check button. The rest are stale/already-done/unbuildable-as-written.
+
 ---
 
 ## GOLD-R4-06 Buddy product-grade utility audit
