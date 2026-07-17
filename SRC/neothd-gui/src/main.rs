@@ -3881,6 +3881,90 @@ fn main() -> Result<()> {
         });
     });
 
+    // GOLD-R4-05 — credential vault probe: `neoth credential list --output json`.
+    let weak_creds = window.as_weak();
+    window.on_credentials_run_clicked(move || {
+        let Some(w0) = weak_creds.upgrade() else {
+            return;
+        };
+        w0.set_credentials_running(true);
+        let weak = weak_creds.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("credential")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "credential vault is empty.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list credentials.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_credentials_output(output.into());
+                    w.set_credentials_running(false);
+                }
+            });
+        });
+    });
+
+    // GOLD-R4-05 — slash-command probe: `neoth slash list --output json`.
+    let weak_slash = window.as_weak();
+    window.on_slash_run_clicked(move || {
+        let Some(w0) = weak_slash.upgrade() else {
+            return;
+        };
+        w0.set_slash_running(true);
+        let weak = weak_slash.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("slash")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no slash commands registered.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot list slash commands.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_slash_output(output.into());
+                    w.set_slash_running(false);
+                }
+            });
+        });
+    });
+
     // Research P0 — groundtruth probe: `neoth groundtruth list --output json`.
     let weak_gt = window.as_weak();
     window.on_gt_run_clicked(move || {

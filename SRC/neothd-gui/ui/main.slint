@@ -500,6 +500,13 @@ export component MainWindow inherits Window {
     in property <string> hooks-output: "";
     in property <bool> hooks-running: false;
     callback hooks-run-clicked();
+    // GOLD-R4-05 — credential vault + slash-command probes (read-only).
+    in property <string> credentials-output: "";
+    in property <bool> credentials-running: false;
+    callback credentials-run-clicked();
+    in property <string> slash-output: "";
+    in property <bool> slash-running: false;
+    callback slash-run-clicked();
     in property <string> gt-output: "";
     in property <bool> gt-running: false;
     callback gt-run-clicked();
@@ -901,6 +908,8 @@ export component MainWindow inherits Window {
         : root.nav-active == "catalog"         ? "Model Catalog"
         : root.nav-active == "quota"         ? "Provider Quota"
         : root.nav-active == "tweaks"         ? "Runtime Tweaks"
+        : root.nav-active == "credentials"    ? "Credential Vault"
+        : root.nav-active == "slash"          ? "Slash Commands"
         : root.nav-active == "council-weights" ? "Council Weights"
         : root.nav-active == "doctor"      ? "Doctor"
         : root.nav-active == "loops"       ? "Loops"
@@ -3191,6 +3200,7 @@ export component MainWindow inherits Window {
                         && root.nav-active != "agents" && root.nav-active != "automation"
                         && root.nav-active != "wal" && root.nav-active != "memgraph"
                         && root.nav-active != "mcp" && root.nav-active != "hooks"
+                        && root.nav-active != "credentials" && root.nav-active != "slash"
                         && root.nav-active != "groundtruth"
                         && root.nav-active != "catalog" && root.nav-active != "quota"
                         && root.nav-active != "tweaks"
@@ -3712,6 +3722,26 @@ export component MainWindow inherits Window {
                     run-clicked => { root.hooks-run-clicked(); }
                     // Homogeneity: auto-load on first open (matches agents/mesh/overview).
                     init => { if (root.hooks-output == "") { root.hooks-run-clicked(); } }
+                }
+                // GOLD-R4-05 — credential vault probe (neoth credential list).
+                if root.nav-active == "credentials": ProbeView {
+                    blurb: "Operator credential vault — key names of stored secrets (neoth credential list). Read-only; secret values never shown.";
+                    action-label: "Refresh";
+                    output: root.credentials-output;
+                    running: root.credentials-running;
+                    empty-hint: "Click \"Refresh\" to load credential key names.";
+                    run-clicked => { root.credentials-run-clicked(); }
+                    init => { if (root.credentials-output == "") { root.credentials-run-clicked(); } }
+                }
+                // GOLD-R4-05 — slash-command registry probe (neoth slash list).
+                if root.nav-active == "slash": ProbeView {
+                    blurb: "Registered slash commands (neoth slash list). Read-only.";
+                    action-label: "Refresh";
+                    output: root.slash-output;
+                    running: root.slash-running;
+                    empty-hint: "Click \"Refresh\" to load slash commands.";
+                    run-clicked => { root.slash-run-clicked(); }
+                    init => { if (root.slash-output == "") { root.slash-run-clicked(); } }
                 }
                 // Research P0 — ground-truth fact store (neoth groundtruth list)
                 // + L93 add-statement write action above the read-only list.

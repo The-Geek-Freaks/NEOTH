@@ -253,6 +253,8 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Model Catalog"; glyph: "⊚"; visible: root.complexity >= 2; active: root.active-tab == "catalog"; clicked => { root.nav("catalog"); } }
                 NavBtn { label: "Quota"; glyph: "⊘"; visible: root.complexity >= 2; active: root.active-tab == "quota"; clicked => { root.nav("quota"); } }
                 NavBtn { label: "Tweaks"; glyph: "⚗"; visible: root.complexity >= 2; active: root.active-tab == "tweaks"; clicked => { root.nav("tweaks"); } }
+                NavBtn { label: "Credentials"; glyph: "⊟"; visible: root.complexity >= 2; active: root.active-tab == "credentials"; clicked => { root.nav("credentials"); } }
+                NavBtn { label: "Slash Cmds"; glyph: "⧸"; visible: root.complexity >= 2; active: root.active-tab == "slash"; clicked => { root.nav("slash"); } }
                 NavBtn { label: "Council Weights"; glyph: "⚖"; visible: root.complexity >= 2; active: root.active-tab == "council-weights"; clicked => { root.nav("council-weights"); } }
                 NavBtn { label: "Mode Registry"; glyph: "⊡"; visible: root.complexity >= 2; active: root.active-tab == "mode-registry"; clicked => { root.nav("mode-registry"); } }
                 NavBtn { label: "Cluster"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
