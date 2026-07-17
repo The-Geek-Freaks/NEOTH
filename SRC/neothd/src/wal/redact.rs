@@ -188,91 +188,145 @@ where
         return redact_sealed_compressed_segment(segment_path, header_len as usize, predicate);
     }
 
-    let mut report = RedactReport::default();
-    let mut cursor: u64 = header_len;
+    // Live (uncompressed) segment — crash-consistent whole-segment rewrite.
+    //
+    // The old per-frame in-place approach (zero payload + flip flag + recompute
+    // CRC, three separate seek+write calls per frame, fsync between each pair)
+    // was NOT crash-consistent: a power loss between any two writes left a frame
+    // with an inconsistent CRC / partial payload zero.  With no recovery record
+    // a GDPR "data is gone" claim was false.
+    //
+    // New path mirrors the sealed-compressed path (GOLD-ARCH-03b):
+    //   read entire segment → redact matching frames in an in-memory buffer →
+    //   write unique owner-private tmp → fsync tmp → atomic rename over original
+    //   → fsync parent dir.
+    // A crash before the rename leaves the original untouched; a crash after
+    // rename leaves the fully-redacted file.  The `.redact.tmp` is cleaned up
+    // on any error path.
+    //
+    // Close the r/w handle BEFORE reading: Windows refuses to rename over a file
+    // that still has an open handle, and we must not hold it across the rename.
+    drop(file);
 
-    while cursor + (PREAMBLE_LEN + HEADER_BODY_LEN + CRC_LEN) as u64 <= file_len {
-        // Read the preamble + header so we know the frame layout.
-        file.seek(SeekFrom::Start(cursor))
-            .context("seek to frame start")?;
-        let mut head = [0u8; PREAMBLE_LEN + HEADER_BODY_LEN];
-        file.read_exact(&mut head)
-            .context("read frame preamble+header")?;
-        if head[..PREAMBLE_LEN] != MAGIC {
-            // H2 (2026-06-12) — the while-condition guaranteed a full
-            // PREAMBLE+HEADER+CRC slot here, and a genuinely truncated tail is
-            // handled by the `cursor + total_len > file_len` check below, so a
-            // bad MAGIC at this position is tamper/corruption, NOT a torn tail.
-            // A bare `break` returned Ok(errors=0): `run_physical_redaction`
-            // then reported a confirmed GDPR-grade erasure while every frame
-            // from here on was left UN-redacted (a false privacy guarantee).
-            // Refuse loudly (like the sealed-compressed / unparseable-header
-            // cases) so `forget --physical` surfaces an error (GR-008) instead.
-            anyhow::bail!(
-                "wal::redact: bad frame magic at offset {cursor} in {} — \
-                 tamper-suspect corruption (not a torn tail); refusing to report \
-                 a clean redaction over an unscrubbed segment",
-                segment_path.display()
-            );
-        }
-        let header_bytes: &[u8; HEADER_BODY_LEN] =
-            head[PREAMBLE_LEN..].try_into().expect("96 bytes");
-        let header = EventHeaderV2::from_le_bytes(header_bytes)
-            .with_context(|| format!("parse header at offset {cursor}"))?;
-        let total_len = header.total_len as u64;
-        if cursor + total_len > file_len {
-            // Truncated frame — leave the segment as-is.
-            break;
-        }
+    let file_bytes = std::fs::read(segment_path)
+        .with_context(|| format!("read live WAL segment {}", segment_path.display()))?;
 
-        // Already redacted? Skip.
-        if header.flags.contains(EventFlags::REDACTED) {
-            report.already_redacted += 1;
-            cursor += total_len;
-            continue;
-        }
+    let hlen = header_len as usize;
+    // Defensive: file could have shrunk between the probe and now (very unlikely
+    // but would panic on slice indexing otherwise).
+    if hlen > file_bytes.len() {
+        anyhow::bail!(
+            "live WAL segment {} shrank below its own header length between open and read",
+            segment_path.display()
+        );
+    }
+    let seg_header_bytes = file_bytes[..hlen].to_vec();
+    let mut frames = file_bytes[hlen..].to_vec();
 
-        // Read the payload to feed the predicate.
-        let payload_offset =
-            cursor + (PREAMBLE_LEN + HEADER_BODY_LEN + header.reserved_len as usize) as u64;
-        let payload_len = header.payload_len as usize;
-        let mut payload = vec![0u8; payload_len];
-        file.seek(SeekFrom::Start(payload_offset))
-            .context("seek to payload")?;
-        file.read_exact(&mut payload)
-            .context("read payload for predicate")?;
+    // `allow_torn_tail: true` — a live segment may have a partial last frame
+    // from an unclean shutdown; the buffer walker treats it as end-of-frames
+    // (break) rather than corruption (bail).
+    let report = redact_frames_in_buffer(
+        &mut frames,
+        &mut predicate,
+        header_len,
+        segment_path,
+        /* allow_torn_tail = */ true,
+    )?;
 
-        if !predicate(&payload) {
-            report.frames_skipped += 1;
-            cursor += total_len;
-            continue;
-        }
-
-        // Match — perform the redaction.
-        redact_frame_in_place(&mut file, cursor, &header).with_context(|| {
-            format!(
-                "redact frame at offset {cursor} in {}",
-                segment_path.display()
-            )
-        })?;
-        // The payload, REDACTED flag and CRC form one logical rewrite. Make
-        // that complete frame durable before evaluating the next predicate;
-        // otherwise a power loss between frames could leave an old CRC over a
-        // zeroed payload and make the rest of the segment unreadable.
-        file.sync_data().with_context(|| {
-            format!(
-                "fsync redacted frame at offset {cursor} in {}",
-                segment_path.display()
-            )
-        })?;
-        report.frames_redacted.push(cursor);
-        report.bytes_redacted += payload_len as u64;
-        cursor += total_len;
+    // No match ⇒ leave the file byte-identical; no rewrite needed.
+    if report.frames_redacted.is_empty() {
+        return Ok(report);
     }
 
-    file.sync_all()
-        .with_context(|| format!("fsync redacted segment {}", segment_path.display()))?;
+    // Concurrent-writer guard: if the live WAL writer appended frames between
+    // our snapshot read and this rename, the rename would silently DROP those
+    // frames (on Unix the writer's fd keeps pointing at the orphaned inode).
+    // Windows already fails the rename loudly while the writer holds the
+    // handle; this size check gives Unix the same fail-closed behaviour.
+    // Operational contract: `memory::forget --physical` on the LIVE segment
+    // requires the daemon to be stopped or the segment rotated first.
+    let size_now = std::fs::metadata(segment_path)
+        .with_context(|| format!("re-stat live WAL segment {}", segment_path.display()))?
+        .len();
+    if size_now != file_bytes.len() as u64 {
+        anyhow::bail!(
+            "live WAL segment {} grew during redaction ({} -> {} bytes) — a writer is \
+             appending; stop the daemon or rotate the segment, then re-run forget",
+            segment_path.display(),
+            file_bytes.len(),
+            size_now
+        );
+    }
+
+    // At least one frame was redacted in the buffer.  Atomically replace the
+    // segment: write tmp → fsync → rename → parent fsync.
+    write_tmp_and_rename(segment_path, &seg_header_bytes, &frames)?;
     Ok(report)
+}
+
+/// Atomically replace `segment_path` with `header_bytes ++ body`:
+/// write to a unique owner-private `.redact.tmp`, fsync, rename over the
+/// original, then fsync the parent directory (Unix only — NTFS journals
+/// metadata so the dentry update is already durable there).
+///
+/// Used by both the live-segment and sealed-compressed redaction paths so
+/// the crash-consistency contract is enforced in one place.  A
+/// PER-INVOCATION unique tmp name (`{stem}.{pid}.{seq}.redact.tmp`) stops
+/// a second concurrent redaction of the same segment from clobbering this
+/// one's tmp mid-write.  On any error the temp file is removed so the
+/// original segment is left untouched.
+fn write_tmp_and_rename(segment_path: &Path, header_bytes: &[u8], body: &[u8]) -> Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static REDACT_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = REDACT_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp_name = format!(
+        "{}.{}.{}.redact.tmp",
+        segment_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "segment".to_string()),
+        std::process::id(),
+        seq
+    );
+    let tmp_path = segment_path.with_file_name(tmp_name);
+    {
+        let mut tmp_opts = std::fs::OpenOptions::new();
+        tmp_opts.create(true).write(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            tmp_opts.mode(0o600);
+        }
+        let mut tmp = tmp_opts
+            .open(&tmp_path)
+            .with_context(|| format!("open redact tmp {}", tmp_path.display()))?;
+        tmp.write_all(header_bytes)
+            .context("write preserved segment header to redact tmp")?;
+        tmp.write_all(body)
+            .context("write redacted body to redact tmp")?;
+        tmp.sync_all().context("fsync redact tmp")?;
+    } // handle dropped here — closed before rename (required on Windows)
+    if let Err(e) = std::fs::rename(&tmp_path, segment_path) {
+        // Original is untouched until the rename: clean failure.
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(anyhow::Error::new(e).context(format!(
+            "atomic-rename redacted segment over {}",
+            segment_path.display()
+        )));
+    }
+    // GDPR durability: fsync the parent directory so the rename (dentry now
+    // pointing at scrubbed bytes) survives a crash.  Without it a crash after
+    // rename but before the dir-entry is journalled could resurrect the pre-
+    // redaction file while the caller has already emitted a REDACTION_MARKER.
+    // Unix only — NTFS journals metadata natively.
+    #[cfg(unix)]
+    if let Some(parent) = segment_path.parent()
+        && let Ok(dir) = std::fs::File::open(parent)
+    {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }
 
 /// GOLD-ARCH-03b — redact a *sealed compressed* (v2/zstd) segment.
@@ -328,8 +382,13 @@ where
     let mut frames = decompress_frames(&compressed_blob)
         .with_context(|| format!("decompress sealed WAL segment {}", segment_path.display()))?;
 
-    let report =
-        redact_frames_in_buffer(&mut frames, &mut predicate, header_len as u64, segment_path)?;
+    let report = redact_frames_in_buffer(
+        &mut frames,
+        &mut predicate,
+        header_len as u64,
+        segment_path,
+        /* allow_torn_tail = */ false,
+    )?;
 
     // No predicate match ⇒ leave the file byte-identical (no needless recompress
     // /rename). Frames skipped or already-redacted both land here.
@@ -356,63 +415,9 @@ where
         recompressed
     };
 
-    // Atomic rewrite: preserved header + new blob → unique `.redact.tmp` → fsync
-    // → rename over the original. A PER-INVOCATION unique tmp name (pid + a
-    // process-monotonic counter) stops a second concurrent redaction of the same
-    // segment from clobbering this one's tmp mid-write (the writer's finalize
-    // temp is `.wal.tmp`, also distinct).
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static REDACT_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
-    let seq = REDACT_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
-    let tmp_name = format!(
-        "{}.{}.{}.redact.tmp",
-        segment_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "segment".to_string()),
-        std::process::id(),
-        seq
-    );
-    let tmp_path = segment_path.with_file_name(tmp_name);
-    {
-        let mut tmp_opts = std::fs::OpenOptions::new();
-        tmp_opts.create(true).write(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            tmp_opts.mode(0o600);
-        }
-        let mut tmp = tmp_opts
-            .open(&tmp_path)
-            .with_context(|| format!("open redact tmp {}", tmp_path.display()))?;
-        tmp.write_all(&header_bytes)
-            .context("write preserved segment header to redact tmp")?;
-        tmp.write_all(&body)
-            .context("write recompressed (+re-encrypted) redacted body to redact tmp")?;
-        tmp.sync_all().context("fsync redact tmp")?;
-    }
-    if let Err(e) = std::fs::rename(&tmp_path, segment_path) {
-        // The original is untouched until the rename, so a failed rewrite is a
-        // clean failure — just don't leave the temp behind.
-        let _ = std::fs::remove_file(&tmp_path);
-        return Err(anyhow::Error::new(e).context(format!(
-            "atomic-rename redacted segment over {}",
-            segment_path.display()
-        )));
-    }
-
-    // GDPR durability: fsync the parent directory so the rename (the dentry now
-    // pointing at the scrubbed bytes) survives a crash. Without it, a crash
-    // after rename but before the dir entry is journalled could resurrect the
-    // pre-redaction file while the caller has already emitted a REDACTION_MARKER
-    // claiming erasure. Unix only — NTFS journals metadata, so the rename is
-    // durable without an explicit directory flush.
-    #[cfg(unix)]
-    if let Some(parent) = segment_path.parent()
-        && let Ok(dir) = std::fs::File::open(parent)
-    {
-        let _ = dir.sync_all();
-    }
+    // Atomic rewrite via the shared helper (same contract as the live-segment
+    // path): write tmp → fsync → rename over original → parent fsync.
+    write_tmp_and_rename(segment_path, &header_bytes, &body)?;
     Ok(report)
 }
 
@@ -433,6 +438,7 @@ fn redact_frames_in_buffer<F>(
     predicate: &mut F,
     base_offset: u64,
     segment_path: &Path,
+    allow_torn_tail: bool,
 ) -> Result<RedactReport>
 where
     F: FnMut(&[u8]) -> bool,
@@ -461,15 +467,23 @@ where
             .with_context(|| format!("parse header at logical offset {}", base_offset + cursor))?;
         let total_len = header.total_len as u64;
         let total = total_len as usize;
-        // A SEALED compressed segment is produced from a byte-complete frame
-        // stream (compression happens only at clean finalize), so — unlike the
-        // on-disk live-segment walk where a torn tail is a legitimate unclean-
-        // shutdown artifact — a frame that runs past the decompressed buffer, or
-        // an undersized `total_len`, can only be corruption / a crafted blob.
-        // Bail loudly (same contract as the bad-MAGIC guard) instead of `break`
-        // with a partial walk, which would let `memory::forget` report a clean
-        // redaction while frames past the truncation point stay un-scrubbed.
-        if total < PREAMBLE_LEN + HEADER_BODY_LEN + CRC_LEN || cursor + total_len > buf_len {
+        // An undersized total_len is always corruption (sealed or live).
+        if total < PREAMBLE_LEN + HEADER_BODY_LEN + CRC_LEN {
+            anyhow::bail!(
+                "wal::redact: frame at logical offset {} in {} has an undersized \
+                 total_len ({total_len}) — corrupt/tampered body; refusing",
+                base_offset + cursor,
+                segment_path.display()
+            );
+        }
+        // A frame that runs past the buffer boundary:
+        //  - Sealed segment: byte-complete by construction → corruption, bail.
+        //  - Live segment (`allow_torn_tail`): unclean shutdown may leave a
+        //    partial last frame; treat as end of readable frames (break).
+        if cursor + total_len > buf_len {
+            if allow_torn_tail {
+                break;
+            }
             anyhow::bail!(
                 "wal::redact: frame at logical offset {} in decompressed segment {} has an \
                  out-of-range total_len ({total_len}) — corrupt/tampered sealed body; refusing \
@@ -526,7 +540,10 @@ where
     // full frame are trailing garbage / truncation — corruption for a sealed
     // body. Refuse rather than silently treat them as "nothing left to redact"
     // (which would let `memory::forget` report a clean redaction over them).
-    if cursor < buf_len {
+    // For a live segment (`allow_torn_tail`) the loop already `break`s at a
+    // partial frame, so leftover bytes here are the expected torn-tail remnant —
+    // not an error.
+    if !allow_torn_tail && cursor < buf_len {
         anyhow::bail!(
             "wal::redact: decompressed sealed segment {} has {} undecodable trailing byte(s) at \
              logical offset {} — corrupt/tampered body; refusing to report a clean redaction",
@@ -739,10 +756,15 @@ mod tests {
     }
 
     /// Write a fresh segment file containing N frames with operator-
-    /// supplied payloads. Returns the file path + the offsets where
-    /// each frame lands.
-    fn write_segment_with_frames(payloads: &[&[u8]]) -> (tempfile::NamedTempFile, Vec<u64>) {
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    /// supplied payloads. Returns `(TempDir, path, offsets)` — caller must
+    /// keep `_dir` alive; uses a TempDir (not NamedTempFile) so the atomic
+    /// rename-over in the new crash-consistent path works on Windows (no
+    /// competing open handle).
+    fn write_segment_with_frames(
+        payloads: &[&[u8]],
+    ) -> (tempfile::TempDir, std::path::PathBuf, Vec<u64>) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
         let mut bytes = Vec::new();
         let segment_header = SegmentHeader::new(1, 1, 0, 0, [0u8; 16]);
         bytes.extend_from_slice(&segment_header.to_le_bytes());
@@ -753,18 +775,19 @@ mod tests {
             let frame = encode_frame(&h, p);
             bytes.extend_from_slice(&frame);
         }
-        std::fs::write(tmp.path(), &bytes).unwrap();
-        (tmp, offsets)
+        std::fs::write(&path, &bytes).unwrap();
+        (dir, path, offsets)
     }
 
     /// Write a *live* v2 segment file: 61-byte v2 header (COMPRESSED flag set)
     /// followed by RAW frames — exactly what the writer produces before clean
-    /// finalize. Returns the file path + the raw-file offsets of each frame.
+    /// finalize. Returns `(TempDir, path, offsets)` — caller keeps `_dir` alive.
     fn write_v2_live_segment_with_frames(
         payloads: &[&[u8]],
-    ) -> (tempfile::NamedTempFile, Vec<u64>) {
+    ) -> (tempfile::TempDir, std::path::PathBuf, Vec<u64>) {
         use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
-        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
         let mut bytes = Vec::new();
         let segment_header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
         bytes.extend_from_slice(&segment_header.to_le_bytes());
@@ -775,8 +798,8 @@ mod tests {
             let frame = encode_frame(&h, p);
             bytes.extend_from_slice(&frame);
         }
-        std::fs::write(tmp.path(), &bytes).unwrap();
-        (tmp, offsets)
+        std::fs::write(&path, &bytes).unwrap();
+        (dir, path, offsets)
     }
 
     #[test]
@@ -785,10 +808,10 @@ mod tests {
         // pre-fix hardcoded SEGMENT_HEADER_LEN (60) start offset failed the
         // MAGIC check on frame 1 and SILENTLY redacted nothing — a privacy
         // hole. With the header-length fix the matching frame is scrubbed.
-        let (tmp, offsets) =
+        let (_dir, path, offsets) =
             write_v2_live_segment_with_frames(&[b"hello world", b"AcmeCorp is a secret"]);
         let report =
-            scan_and_redact(tmp.path(), payload_contains_topic("acmecorp")).expect("redact");
+            scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
         assert_eq!(report.frames_redacted_count(), 1, "v2 frame must be found");
         assert_eq!(report.frames_redacted, vec![offsets[1]]);
         assert_eq!(report.frames_skipped, 1);
@@ -992,16 +1015,16 @@ mod tests {
         // GDPR erasure while frames from the corrupt one on were left
         // UN-redacted (a false privacy guarantee). Must now REFUSE (Err) so
         // GR-008 fires. FAILS pre-fix (Ok, frame 2 silently skipped).
-        let (tmp, offsets) =
+        let (_dir, path, offsets) =
             write_segment_with_frames(&[b"first frame is fine", b"AcmeCorp is a secret to scrub"]);
         // Corrupt the 4-byte MAGIC preamble of the SECOND frame.
-        let mut bytes = std::fs::read(tmp.path()).unwrap();
+        let mut bytes = std::fs::read(&path).unwrap();
         let off = offsets[1] as usize;
         for b in bytes[off..off + PREAMBLE_LEN].iter_mut() {
             *b ^= 0xFF;
         }
-        std::fs::write(tmp.path(), &bytes).unwrap();
-        let err = scan_and_redact(tmp.path(), payload_contains_topic("acmecorp"))
+        std::fs::write(&path, &bytes).unwrap();
+        let err = scan_and_redact(&path, payload_contains_topic("acmecorp"))
             .expect_err("must refuse a corrupt mid-segment frame magic");
         assert!(
             err.to_string().contains("bad frame magic"),
@@ -1011,14 +1034,14 @@ mod tests {
 
     #[test]
     fn scan_redacts_only_matching_frames_and_skips_others() {
-        let (tmp, offsets) = write_segment_with_frames(&[
+        let (_dir, path, offsets) = write_segment_with_frames(&[
             b"hello world",
             b"AcmeCorp is a secret",
             b"another unrelated frame",
             b"more AcmeCorp data here",
         ]);
         let predicate = payload_contains_topic("acmecorp");
-        let report = scan_and_redact(tmp.path(), predicate).expect("redact");
+        let report = scan_and_redact(&path, predicate).expect("redact");
         assert_eq!(report.frames_redacted_count(), 2);
         assert_eq!(report.frames_skipped, 2);
         assert_eq!(report.already_redacted, 0);
@@ -1033,13 +1056,13 @@ mod tests {
 
     #[test]
     fn redacted_frame_still_decodes_with_zero_payload_and_redacted_flag() {
-        let (tmp, _) = write_segment_with_frames(&[b"AcmeCorp owns this row"]);
+        let (_dir, path, _) = write_segment_with_frames(&[b"AcmeCorp owns this row"]);
         let predicate = payload_contains_topic("acme");
-        scan_and_redact(tmp.path(), predicate).expect("redact");
+        scan_and_redact(&path, predicate).expect("redact");
 
         // Walk the segment + decode the single frame; payload must
         // now be zeros + flag must carry REDACTED.
-        let bytes = std::fs::read(tmp.path()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
         let frame_slice = &bytes[SEGMENT_HEADER_LEN..];
         let decoded = decode_frame(frame_slice).expect("decode redacted frame");
         assert!(decoded.header.flags.contains(EventFlags::REDACTED));
@@ -1056,24 +1079,24 @@ mod tests {
 
     #[test]
     fn redaction_is_idempotent_already_redacted_frames_are_skipped() {
-        let (tmp, _) = write_segment_with_frames(&[b"AcmeCorp row"]);
+        let (_dir, path, _) = write_segment_with_frames(&[b"AcmeCorp row"]);
         let pred = payload_contains_topic("acme");
-        let first = scan_and_redact(tmp.path(), pred).unwrap();
+        let first = scan_and_redact(&path, pred).unwrap();
         assert_eq!(first.frames_redacted_count(), 1);
         // Second pass: the same predicate would match again on a
         // fresh frame, but the REDACTED flag now blocks the scan
         // from touching it twice.
         let pred2 = payload_contains_topic("acme");
-        let second = scan_and_redact(tmp.path(), pred2).unwrap();
+        let second = scan_and_redact(&path, pred2).unwrap();
         assert_eq!(second.frames_redacted_count(), 0);
         assert_eq!(second.already_redacted, 1);
     }
 
     #[test]
     fn scan_returns_empty_report_on_segment_with_no_matches() {
-        let (tmp, _) = write_segment_with_frames(&[b"alpha", b"beta", b"gamma"]);
+        let (_dir, path, _) = write_segment_with_frames(&[b"alpha", b"beta", b"gamma"]);
         let pred = payload_contains_topic("nothing-matches-this");
-        let report = scan_and_redact(tmp.path(), pred).unwrap();
+        let report = scan_and_redact(&path, pred).unwrap();
         assert_eq!(report.frames_redacted_count(), 0);
         assert_eq!(report.frames_skipped, 3);
         assert_eq!(report.bytes_redacted, 0);
@@ -1101,6 +1124,71 @@ mod tests {
         assert!(!pred(b"no match here"));
     }
 
+    // ── Crash-consistency tests (BUG-W2-P2-WAL-REDACT-CRASH-RECOVERY) ───────
+
+    #[test]
+    fn live_segment_durable_rewrite_leaves_no_tmp_and_is_fully_redacted() {
+        // After a successful live-segment redaction the `.redact.tmp` must be
+        // gone (renamed away on success, or removed on error) and every matched
+        // frame must be fully zeroed with the REDACTED flag set.  The old in-
+        // place per-frame path had no such atomicity guarantee — a crash between
+        // the payload-zero and the CRC rewrite left an inconsistent frame with
+        // no recovery record.
+        let (_dir, path, offsets) = write_segment_with_frames(&[
+            b"keep this one",
+            b"AcmeCorp private data",
+            b"keep this too",
+        ]);
+        let dir_path = path.parent().unwrap().to_owned();
+        let report =
+            scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
+        assert_eq!(report.frames_redacted_count(), 1);
+        assert_eq!(report.frames_redacted, vec![offsets[1]]);
+
+        // No .redact.tmp files must remain — either renamed away on success or
+        // cleaned up on any error path.
+        let leftover_tmps: Vec<_> = std::fs::read_dir(&dir_path)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".redact.tmp"))
+            .collect();
+        assert!(
+            leftover_tmps.is_empty(),
+            "no .redact.tmp must survive a successful redaction, found: {:?}",
+            leftover_tmps.iter().map(|e| e.path()).collect::<Vec<_>>()
+        );
+
+        // Matched frame is fully redacted: zeroed payload + REDACTED flag.
+        let bytes = std::fs::read(&path).unwrap();
+        let decoded_match =
+            decode_frame(&bytes[offsets[1] as usize..]).expect("decode matched frame");
+        assert!(decoded_match.header.flags.contains(EventFlags::REDACTED));
+        assert!(
+            decoded_match.payload.iter().all(|b| *b == 0),
+            "matched payload must be zeroed"
+        );
+        // Non-matched frames are untouched.
+        let decoded0 = decode_frame(&bytes[offsets[0] as usize..]).expect("decode frame 0");
+        assert!(!decoded0.header.flags.contains(EventFlags::REDACTED));
+        assert!(
+            !decoded0.payload.iter().all(|b| *b == 0),
+            "non-matched frame must retain original payload"
+        );
+    }
+
+    #[test]
+    fn live_segment_no_match_leaves_file_byte_identical() {
+        // A no-match redaction of a live segment must not rewrite the file at
+        // all — the bytes on disk must be identical before and after the call.
+        let (_dir, path, _) = write_segment_with_frames(&[b"alpha", b"beta", b"gamma"]);
+        let before = std::fs::read(&path).unwrap();
+        let report = scan_and_redact(&path, payload_contains_topic("nope")).unwrap();
+        assert_eq!(report.frames_redacted_count(), 0);
+        assert_eq!(report.frames_skipped, 3);
+        let after = std::fs::read(&path).unwrap();
+        assert_eq!(before, after, "no-match live segment must not be rewritten");
+    }
+
     #[test]
     fn payload_contains_topic_returns_false_for_non_utf8() {
         // Frames carrying binary payloads (audio, images) MUST NOT
@@ -1117,15 +1205,15 @@ mod tests {
         // The scanner must NOT shift subsequent frame offsets; this
         // is the load-bearing invariant for indexer + recall reading
         // the rotated segment correctly after redaction.
-        let (tmp, offsets) = write_segment_with_frames(&[
+        let (_dir, path, offsets) = write_segment_with_frames(&[
             b"frame-A keep",
             b"frame-B AcmeCorp redact me",
             b"frame-C keep",
         ]);
         let pred = payload_contains_topic("acme");
-        scan_and_redact(tmp.path(), pred).unwrap();
+        scan_and_redact(&path, pred).unwrap();
 
-        let bytes = std::fs::read(tmp.path()).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
         // Walk all three frames + assert each starts at its original
         // offset. If redaction shifted the layout, decode_frame on
         // offset[2] would either fail or read garbage.

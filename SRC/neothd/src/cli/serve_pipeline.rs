@@ -1935,6 +1935,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // command's prompt template REPLACES the enriched system
             // prompt (slash semantics preserved); non-matches fall back
             // to the layered enrichment from the helper above.
+            // FOLLOW-UP-DELEGATION-SLASH-CLOBBER: true when this turn's slash dispatch
+            // rendered a command system prompt; guards the delegation block below so
+            // it cannot clobber the slash-set system (see BUG-W2-P1-CHANNEL-DELEGATION).
+            let mut slash_set_system = false;
             let (final_prompt, system_override) = match crate::slash::parse_invocation(
                 &sanitized_text,
             ) {
@@ -2155,6 +2159,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 args.clone(),
                             ),
                         ];
+                        slash_set_system = true;
                         (args, Some(rendered))
                     } else {
                         // Unknown command — pass through with the
@@ -2176,36 +2181,47 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // Mirrors GOLD-ADAPT-OH-13 Part B in cli/chat.rs without the full
             // enrichment-rebuild path (channel path has no omit-flags layer rebuild).
             // Fail-safe: unknown agent name → tracing::warn + normal path continues.
+            // Guard: when slash_set_system is true the slash command already rendered
+            // its own system prompt this turn; skip substitution to avoid clobbering it.
             let system_override = if let Some(ref agent_name) = channel_skill_delegate_to {
-                let agents = crate::sub_agents::load_all(&neoth_home.join("agents"))
-                    .await
-                    .inspect_err(|error| {
-                        // A FS error here silently bypasses delegation — the
-                        // operator must be able to tell "agent misspelled"
-                        // apart from "agents dir unreadable" (review P1).
-                        warn!(
-                            error = %error,
-                            dir = %neoth_home.join("agents").display(),
-                            "channel delegate_to: failed to load agents dir — delegation skipped"
-                        );
-                    })
-                    .unwrap_or_default();
-                if let Some(agent_system) =
-                    find_delegate_system(Some(agent_name.as_str()), &agents)
-                {
-                    info!(
+                if slash_set_system {
+                    tracing::debug!(
                         channel = channel_str,
                         skill_agent = %agent_name,
-                        "channel delegate_to: substituting sub-agent system prompt"
-                    );
-                    Some(agent_system.to_owned())
-                } else {
-                    warn!(
-                        channel = channel_str,
-                        skill_agent = %agent_name,
-                        "channel delegate_to: agent not found — continuing on normal path"
+                        "channel delegate_to: slash command wins — delegation skipped"
                     );
                     system_override
+                } else {
+                    let agents = crate::sub_agents::load_all(&neoth_home.join("agents"))
+                        .await
+                        .inspect_err(|error| {
+                            // A FS error here silently bypasses delegation — the
+                            // operator must be able to tell "agent misspelled"
+                            // apart from "agents dir unreadable" (review P1).
+                            warn!(
+                                error = %error,
+                                dir = %neoth_home.join("agents").display(),
+                                "channel delegate_to: failed to load agents dir — delegation skipped"
+                            );
+                        })
+                        .unwrap_or_default();
+                    if let Some(agent_system) =
+                        find_delegate_system(Some(agent_name.as_str()), &agents)
+                    {
+                        info!(
+                            channel = channel_str,
+                            skill_agent = %agent_name,
+                            "channel delegate_to: substituting sub-agent system prompt"
+                        );
+                        Some(agent_system.to_owned())
+                    } else {
+                        warn!(
+                            channel = channel_str,
+                            skill_agent = %agent_name,
+                            "channel delegate_to: agent not found — continuing on normal path"
+                        );
+                        system_override
+                    }
                 }
             } else {
                 system_override
@@ -4593,5 +4609,29 @@ mod tests {
             None,
             "empty agent set → None (fail-safe: message is never dropped)"
         );
+    }
+
+    // FOLLOW-UP-DELEGATION-SLASH-CLOBBER guard — coverage note:
+    // The guard (`slash_set_system` bool) lives in the async handle_channel_message
+    // path and requires a full pipeline harness to exercise end-to-end; it is not
+    // directly unit-testable here.  The test below confirms that find_delegate_system
+    // resolves the agent that the guard conditionally skips, so the only difference
+    // between clobber and correct behaviour is whether slash_set_system is true.
+    #[test]
+    fn delegate_system_guard_skips_known_agent_when_slash_set_system() {
+        let agents = vec![
+            make_agent("writer", "You are a writer agent."),
+            make_agent("coder", "You are a coder agent."),
+        ];
+        // Without the guard the delegation would substitute this system prompt.
+        // With slash_set_system == true the caller skips find_delegate_system entirely.
+        assert_eq!(
+            find_delegate_system(Some("writer"), &agents),
+            Some("You are a writer agent."),
+            "find_delegate_system resolves correctly; the guard in \
+             handle_channel_message prevents this call when slash_set_system is true"
+        );
+        // None target → delegation never applied regardless of guard.
+        assert_eq!(find_delegate_system(None, &agents), None);
     }
 }

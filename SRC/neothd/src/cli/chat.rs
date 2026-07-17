@@ -595,23 +595,37 @@ pub(super) async fn finalize_provider_request(
         .saturating_sub(1)
         .saturating_mul(2)
         .min(u32::MAX as usize) as u32;
-    let envelope_reserve = crate::providers::token_cap::request_non_content_token_upper_bound(
+    // Extract the fixed (non-separator) overhead so it can be reused post-degradation.
+    let non_content_overhead = crate::providers::token_cap::request_non_content_token_upper_bound(
         &crate::providers::Request {
             prompt: String::new(),
             system: (system_item_count > 0).then(String::new),
             model: effective_model.map(str::to_owned),
             ..Default::default()
         },
-    )
-    .saturating_add(separator_reserve);
+    );
+    let envelope_reserve = non_content_overhead.saturating_add(separator_reserve);
     let content_cap = cap.saturating_sub(envelope_reserve);
     let hash_before = prompt_bundle_hash_for_items(&items);
     let detail = crate::tokens::budget::enforce_budget_to_fit(&mut items, content_cap);
+    // Recompute separator reserve from the post-degradation item count.  When
+    // enforce_budget_to_fit drops C/D items the rendered system contains only
+    // (post_count − 1) "\n\n" separators; the pre-enforcement count above was
+    // deliberately conservative so content_cap remained a true upper bound during
+    // degradation.  At the ensure boundary below, prompt_token_estimate (computed
+    // from the rendered strings) naturally includes only the post-degradation
+    // separator bytes — making it the tight, correct accounting for this boundary.
+    let post_system_item_count = items.iter().filter(|item| item.block != Block::E).count();
+    let post_separator_reserve = post_system_item_count
+        .saturating_sub(1)
+        .saturating_mul(2)
+        .min(u32::MAX as usize) as u32;
+    let post_envelope_reserve = non_content_overhead.saturating_add(post_separator_reserve);
     if let Some(detail) = detail.as_ref() {
         warn!(
             effective_request_cap = cap,
             content_cap = detail.cap,
-            envelope_reserve,
+            post_envelope_reserve,
             original_total = detail.original_total,
             new_total = detail.new_total,
             dropped_d = detail.dropped_d_count,
@@ -622,7 +636,7 @@ pub(super) async fn finalize_provider_request(
         let budget_payload = serde_json::to_vec(&serde_json::json!({
             "cap": cap,
             "content_cap": detail.cap,
-            "envelope_reserve": envelope_reserve,
+            "envelope_reserve": post_envelope_reserve,
             "original_total": detail.original_total,
             "new_total": detail.new_total,
             "dropped_d_count": detail.dropped_d_count,
@@ -644,8 +658,9 @@ pub(super) async fn finalize_provider_request(
 
     // Validate each stored item estimate, then account the exact rendered
     // system string (including inter-block separators).  The latter is the
-    // authoritative request estimate and can be slightly higher than the sum
-    // used by per-block degradation because of `\n\n` boundaries.
+    // authoritative request estimate; it reflects the post-degradation separator
+    // count (post_separator_reserve above) so the upper bound is tight rather
+    // than over-conservative relative to the pre-enforcement separator_reserve.
     anyhow::ensure!(
         items.iter().all(|item| {
             item.tokens == crate::tokens::budget::count_tokens_upper_bound(&item.content)
@@ -1801,10 +1816,19 @@ async fn enforce_preflight(
             .pop()
             .filter(|item| item.block == crate::tokens::budget::Block::E)
             .ok_or_else(|| anyhow::anyhow!("agent prompt assembler lost Block E"))?;
-        // The agent's own system prompt is always the protected base.
+        // The agent's own system prompt is always the protected base.  Insert
+        // it AFTER the last Block::A item so the identity-lock anchor assembled
+        // by build_enriched_request remains first in the rendered system.
+        // Inserting at index 0 would push Block::A behind this Block::B,
+        // violating the "identity first" invariant when an anchor is present.
         if !d.system.trim().is_empty() {
+            let insert_pos = items
+                .iter()
+                .rposition(|item| item.block == crate::tokens::budget::Block::A)
+                .map(|pos| pos + 1)
+                .unwrap_or(0);
             items.insert(
-                0,
+                insert_pos,
                 crate::tokens::budget::BlockItem::new(
                     crate::tokens::budget::Block::B,
                     d.system.trim(),
@@ -9013,6 +9037,89 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(request.effective_cap, 108_800);
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    /// An active output-preset whose `inject_prefix` is large enough to push a
+    /// fitting request over the cap after wrapping must trigger C/D degradation
+    /// while leaving the protected A/B/E blocks intact.
+    #[tokio::test]
+    async fn final_budget_boundary_preset_wrap_forces_cd_degradation_while_abe_survive() {
+        use crate::config::presets::{Preset, PresetFile};
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(home.path().join("preset-wrap.wal")).unwrap();
+
+        // A large inject_prefix so wrapping "hello" swells the E block by ~1 202 bytes.
+        let inject_prefix = "x".repeat(1_200);
+        let mut presets = std::collections::BTreeMap::new();
+        presets.insert(
+            "big-prefix".to_owned(),
+            Preset {
+                inject_prefix: Some(inject_prefix.clone()),
+                ..Preset::default()
+            },
+        );
+        let preset_file = PresetFile {
+            active: Some("big-prefix".to_owned()),
+            presets,
+        };
+        std::fs::write(
+            home.path().join("presets.yaml"),
+            serde_yaml::to_string(&preset_file).unwrap(),
+        )
+        .unwrap();
+
+        // Cap small enough that C/D must be dropped once the wrapped E is counted,
+        // but large enough that the protected A/B/E blocks always fit.
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 2_000;
+
+        let items = vec![
+            BlockItem::new(Block::A, "protected-a"),
+            BlockItem::new(Block::B, "protected-b"),
+            BlockItem::new(Block::C, "c".repeat(300)),
+            BlockItem::new(Block::D, "d".repeat(300)),
+            BlockItem::new(Block::E, "hello"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+
+        let result = finalize_provider_request(
+            items,
+            "hello",
+            system.as_deref(),
+            &config,
+            home.path(),
+            "test_provider",
+            None,
+            None,
+            &writer,
+        )
+        .await
+        .expect("A/B/E are protected; C/D can absorb the cap hit from the preset wrap");
+
+        // Protected blocks must survive.
+        let sys = result.system.as_deref().unwrap_or("");
+        assert!(sys.contains("protected-a"), "Block A must survive degradation");
+        assert!(sys.contains("protected-b"), "Block B must survive degradation");
+        // Degradable blocks must be dropped.
+        assert!(!sys.contains(&"c".repeat(10)), "Block C must be degraded");
+        assert!(!sys.contains(&"d".repeat(10)), "Block D must be degraded");
+        // The preset inject_prefix must be applied to the user prompt.
+        assert!(
+            result.prompt.starts_with(&inject_prefix),
+            "preset inject_prefix must be prepended to the user prompt"
+        );
+        // The final token estimate must still fit within the effective cap.
+        assert!(
+            result.prompt_token_estimate <= result.effective_cap,
+            "prompt_token_estimate {} must be <= effective_cap {}",
+            result.prompt_token_estimate,
+            result.effective_cap,
+        );
 
         drop(writer);
         writer_join.await.unwrap();

@@ -426,6 +426,41 @@ impl SmartApproveSession {
     pub(crate) fn initialization_attempts(&self) -> usize {
         self.initialization_attempts
     }
+
+    /// Seed the session as if a successful `tools/list` occurred and the
+    /// retained client was subsequently poisoned by a transport error.
+    ///
+    /// Concretely:
+    /// * calls `cache.seed_verdicts` with the supplied map so that
+    ///   `grant_for` returns `Some` for every `true`-valued entry;
+    /// * inserts a `None`-valued slot into `clients.inner` — the exact
+    ///   state `BoundSmartApproveClient::poison()` leaves after calling
+    ///   `self.client.take()`.
+    ///
+    /// Lets `dispatch_loop` integration tests verify the post-transport-error
+    /// behaviour of `bind_or_initialize` → `dispatch_one` without spawning a
+    /// real subprocess.  Test-only.
+    #[cfg(test)]
+    pub(crate) fn seed_and_poison_for_test(
+        &mut self,
+        cfg: &McpServerConfig,
+        verdicts: std::collections::HashMap<String, bool>,
+    ) {
+        let _ = self.cache.seed_verdicts(cfg, verdicts);
+        // Mirror what `BoundSmartApproveClient::poison()` does:
+        // `self.client.take()` sets the Option<McpClient> slot to None while
+        // keeping the map entry present.  `live_slot_mut` treats any
+        // None-valued slot as permanently dead.
+        self.clients.inner.insert(cfg.id.clone(), None);
+    }
+
+    /// Return `true` when the read-only cache holds a valid grant for
+    /// `(cfg, tool)`.  Lets `dispatch_loop` tests inspect cache state
+    /// across the module boundary.  Test-only.
+    #[cfg(test)]
+    pub(crate) fn has_grant_for_test(&self, cfg: &McpServerConfig, tool: &str) -> bool {
+        self.cache.grant_for(cfg, tool).is_some()
+    }
 }
 
 fn duplicate_server_ids(configs: &[&McpServerConfig]) -> HashSet<String> {

@@ -2489,6 +2489,96 @@ mod tests {
         );
     }
 
+    /// FOLLOW-UP-W3-SMARTAPPROVE-POISON-E2E — full poison-sequence integration.
+    ///
+    /// Pins the chain:
+    /// (1) A SmartApprove session holds a valid read-only grant in its
+    ///     immutable cache, as it would after a successful `tools/list`.
+    /// (2) A transport error poisons the retained client slot —
+    ///     represented here by `seed_and_poison_for_test`, which reproduces
+    ///     precisely the `None`-valued slot that
+    ///     `BoundSmartApproveClient::poison()` leaves after dispatch_one
+    ///     calls `self.client.take()` on detecting a
+    ///     `smart_approve_error_poisoned_connection` error.
+    /// (3) The slot is permanently dead: `live_slot_mut` returns `None`
+    ///     for a present-but-None entry, so `bind_or_initialize` returns
+    ///     `None`.
+    /// (4) The *next* `dispatch_one` call for the same (server, tool) pair
+    ///     does NOT reuse the retained client, does NOT issue a fresh
+    ///     `tools/list` query, and does NOT silently Allow — it falls to
+    ///     `authorize_preflight_with_audit(…, grant = None)` which, for
+    ///     Standard autonomy, yields the normal Confirm path.
+    ///
+    /// The transport-error ↦ poison causal link (point 2) is intentionally
+    /// tested independently in
+    /// `smart_approve_keeps_well_formed_rpc_errors_but_poisons_transport_errors`
+    /// so that this test can focus on the session-level fallthrough.
+    #[tokio::test]
+    async fn smart_approve_transport_poison_falls_to_confirm_not_reuses_client() {
+        let instance_home = test_instance_home();
+        let (servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        let cfg = &servers.servers[0];
+
+        // Verdicts matching a successful tools/list where "read_graph" is
+        // declared read-only (readOnlyHint=true, destructiveHint=false).
+        let verdicts =
+            std::collections::HashMap::from([("read_graph".to_string(), true)]);
+
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+
+        // Reproduce the state after a successful initialization followed by a
+        // transport-error poison.  The grant remains in the immutable cache;
+        // only the client slot is cleared (Option<McpClient> → None).
+        session.seed_and_poison_for_test(cfg, verdicts);
+
+        // Pin (1): the read-only grant survives the slot being taken because
+        // the cache and client registry are independent structures.
+        // This confirms a valid grant existed before the client was poisoned.
+        assert!(
+            session.has_grant_for_test(cfg, "read_graph"),
+            "read-only grant must remain in the immutable cache after the slot is poisoned"
+        );
+
+        // Pin (4): the next dispatch_one call for the same (server, tool)
+        // must fall to the normal Confirm path — NOT a silent Allow and NOT
+        // a fresh tools/list / subprocess spawn.
+        //
+        // Proof via error text: the Confirm path produces
+        // "requires operator confirm"; a silent Allow would return Ok(…);
+        // an accidental re-spawn of the non-existent command would produce
+        // "spawn MCP server …".  Only the Confirm text passes.
+        let error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None, // writer — WAL absent in unit tests
+            None, // rollback_policy
+            None, // skill_allowlist
+            Some(&mut session),
+            None, // agent_disallowed_tools
+            None, // subject
+            instance_home.path(),
+        )
+        .await
+        .err()
+        .expect("a poisoned SmartApprove slot must keep the call on the Confirm path");
+
+        assert!(
+            error.contains("requires operator confirm"),
+            "expected Confirm-path error after poisoning; got: {error}"
+        );
+
+        // Pin (3) + anti-refresh: the poisoned slot is treated as permanently
+        // dead.  `bind_or_initialize` sees the cache is already seeded and
+        // skips `initialize_server` entirely; initialization_attempts stays 0.
+        // A non-zero count would mean an illegal re-init was attempted.
+        assert_eq!(
+            session.initialization_attempts(),
+            0,
+            "a poisoned client slot must never trigger re-initialization or a fresh tools/list"
+        );
+    }
+
     /// Test driver — fixed-script responder. Each `complete` call
     /// returns the next item from `responses`. Captures every prompt
     /// it saw so tests can assert what was threaded back.
