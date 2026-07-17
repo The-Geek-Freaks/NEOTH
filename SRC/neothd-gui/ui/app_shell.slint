@@ -221,6 +221,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Agents"; glyph: "⚇"; visible: root.complexity >= 2; active: root.active-tab == "agents"; clicked => { root.nav("agents"); } }
                 NavBtn { label: "Automation"; glyph: "⟳"; visible: root.complexity >= 2; active: root.active-tab == "automation"; clicked => { root.nav("automation"); } }
                 NavBtn { label: "Loops"; glyph: "∞"; visible: root.complexity >= 2 && root.show-loops; active: root.active-tab == "loops"; clicked => { root.nav("loops"); } }
+                NavBtn { label: "BG Jobs"; glyph: "⊛"; visible: root.complexity >= 2; active: root.active-tab == "bg-jobs"; clicked => { root.nav("bg-jobs"); } }
                 // Wave 4a — WORK additions (≥1 gate matches Automation).
                 // Glyph dedup: n8n had Plugins' ⧉, Calendar had Resources' ▦ —
                 // every nav glyph is unique so icons stay meaning-bearing.
@@ -242,6 +243,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Memory"; glyph: "◈"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memory"; clicked => { root.nav("memory"); } }
                 NavBtn { label: "Graph"; glyph: "❋"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "memgraph"; clicked => { root.nav("memgraph"); } }
                 NavBtn { label: "Groundtruth"; glyph: "⊨"; tier: "memory"; visible: root.complexity >= 1; active: root.active-tab == "groundtruth"; clicked => { root.nav("groundtruth"); } }
+                NavBtn { label: "ADR Browser"; glyph: "◆"; visible: root.complexity >= 2; active: root.active-tab == "adr-browser"; clicked => { root.nav("adr-browser"); } }
                 NavBtn { label: "Hemispheres"; glyph: "◐"; visible: root.complexity >= 1; active: root.active-tab == "hemispheres"; clicked => { root.nav("hemispheres"); } }
                 NavBtn { label: "Channels"; glyph: "⇄"; count: root.channels-count; active: root.active-tab == "channels"; clicked => { root.nav("channels"); } }
                 NavBtn { label: "Privacy"; glyph: "⛨"; tier: "consent"; active: root.active-tab == "privacy"; clicked => { root.nav("privacy"); } }
@@ -252,6 +254,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Quota"; glyph: "⊘"; visible: root.complexity >= 2; active: root.active-tab == "quota"; clicked => { root.nav("quota"); } }
                 NavBtn { label: "Tweaks"; glyph: "⚗"; visible: root.complexity >= 2; active: root.active-tab == "tweaks"; clicked => { root.nav("tweaks"); } }
                 NavBtn { label: "Council Weights"; glyph: "⚖"; visible: root.complexity >= 2; active: root.active-tab == "council-weights"; clicked => { root.nav("council-weights"); } }
+                NavBtn { label: "Mode Registry"; glyph: "⊡"; visible: root.complexity >= 2; active: root.active-tab == "mode-registry"; clicked => { root.nav("mode-registry"); } }
                 NavBtn { label: "Cluster"; glyph: "⬡"; visible: root.complexity >= 2; active: root.active-tab == "cluster"; clicked => { root.nav("cluster"); } }
                 NavBtn { label: "Resources"; glyph: "▦"; visible: root.complexity >= 2; active: root.active-tab == "resources"; clicked => { root.nav("resources"); } }
                 // Wave 4a — Babel observer in SYSTEM (≥2, technical observer).
@@ -263,6 +266,7 @@ export component Sidebar inherits Rectangle {
                 NavBtn { label: "Mesh"; glyph: "◇"; visible: root.complexity >= 2; active: root.active-tab == "mesh"; clicked => { root.nav("mesh"); } }
                 NavBtn { label: "WAL"; glyph: "≣"; visible: root.complexity >= 2; active: root.active-tab == "wal"; clicked => { root.nav("wal"); } }
                 NavBtn { label: "Doctor"; glyph: "✚"; active: root.active-tab == "doctor"; clicked => { root.nav("doctor"); } }
+                NavBtn { label: "Migrations"; glyph: "⊸"; visible: root.complexity >= 2; active: root.active-tab == "migrate-history"; clicked => { root.nav("migrate-history"); } }
                 NavBtn { label: "Config"; glyph: "⚙"; active: root.active-tab == "config"; clicked => { root.nav("config"); } }
             }
         }

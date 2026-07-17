@@ -513,6 +513,18 @@ export component MainWindow inherits Window {
     in property <string> council-weights-output: "";
     in property <bool> council-weights-running: false;
     callback council-weights-run-clicked();
+    in property <string> adr-browser-output: "";
+    in property <bool> adr-browser-running: false;
+    callback adr-browser-run-clicked();
+    in property <string> mode-registry-output: "";
+    in property <bool> mode-registry-running: false;
+    callback mode-registry-run-clicked();
+    in property <string> bg-jobs-output: "";
+    in property <bool> bg-jobs-running: false;
+    callback bg-jobs-run-clicked();
+    in property <string> migrate-history-output: "";
+    in property <bool> migrate-history-running: false;
+    callback migrate-history-run-clicked();
     // Wave 5 — structured agent cards; raw output stays the fallback.
     in property <[AgentRow]> agents-model: [];
 
@@ -889,6 +901,10 @@ export component MainWindow inherits Window {
         : root.nav-active == "buddyconfig" ? "Buddy Configuration"
         : root.nav-active == "companion"   ? "Companion - Smartphone Pairing"
         : root.nav-active == "mesh"        ? "Mesh & Cluster"
+        : root.nav-active == "adr-browser"     ? "ADR Browser"
+        : root.nav-active == "mode-registry"   ? "Mode Registry"
+        : root.nav-active == "bg-jobs"         ? "Background Jobs"
+        : root.nav-active == "migrate-history" ? "Migration History"
         : "Config";
 
     /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
@@ -3152,7 +3168,11 @@ export component MainWindow inherits Window {
                         && root.nav-active != "selfdev"
                         && root.nav-active != "obsidian" && root.nav-active != "dreaming"
                         && root.nav-active != "wiki" && root.nav-active != "buddyconfig"
-                        && root.nav-active != "companion" && root.nav-active != "mesh"): SettingsView {
+                        && root.nav-active != "companion" && root.nav-active != "mesh"
+                        && root.nav-active != "adr-browser"
+                        && root.nav-active != "mode-registry"
+                        && root.nav-active != "bg-jobs"
+                        && root.nav-active != "migrate-history"): SettingsView {
                     active: root.nav-active == "memory" ? SettingsTab.memory
                         : root.nav-active == "hemispheres" ? SettingsTab.hemispheres
                         : root.nav-active == "channels" ? SettingsTab.channels
@@ -3666,6 +3686,42 @@ export component MainWindow inherits Window {
                     empty-hint: "Click \"Refresh\" to load the learned routing weights.";
                     run-clicked => { root.council-weights-run-clicked(); }
                     init => { if (root.council-weights-output == "") { root.council-weights-run-clicked(); } }
+                }
+                if root.nav-active == "adr-browser": ProbeView {
+                    blurb: "ADR Browser — the project's Architecture Decision Records logged by neoth adr list (cli/adr.rs). Read-only.";
+                    action-label: "Refresh";
+                    output: root.adr-browser-output;
+                    running: root.adr-browser-running;
+                    empty-hint: "Click \"Refresh\" to load ADR entries.";
+                    run-clicked => { root.adr-browser-run-clicked(); }
+                    init => { if (root.adr-browser-output == "") { root.adr-browser-run-clicked(); } }
+                }
+                if root.nav-active == "mode-registry": ProbeView {
+                    blurb: "Mode Registry — every bundled and user-installed conversation mode with trigger phrases and output contract (neoth mode list, cli/mode.rs). Read-only.";
+                    action-label: "Refresh";
+                    output: root.mode-registry-output;
+                    running: root.mode-registry-running;
+                    empty-hint: "Click \"Refresh\" to load the mode registry.";
+                    run-clicked => { root.mode-registry-run-clicked(); }
+                    init => { if (root.mode-registry-output == "") { root.mode-registry-run-clicked(); } }
+                }
+                if root.nav-active == "bg-jobs": ProbeView {
+                    blurb: "Background Jobs — detached job queue at ~/.neoth/bgjobs/ with running/completed state (neoth jobs --bg, cli/jobs.rs). Read-only.";
+                    action-label: "Refresh";
+                    output: root.bg-jobs-output;
+                    running: root.bg-jobs-running;
+                    empty-hint: "Click \"Refresh\" to load background jobs.";
+                    run-clicked => { root.bg-jobs-run-clicked(); }
+                    init => { if (root.bg-jobs-output == "") { root.bg-jobs-run-clicked(); } }
+                }
+                if root.nav-active == "migrate-history": ProbeView {
+                    blurb: "Migration History — every registered DB schema migration and the current applied version (neoth migrate list, cli/migrate.rs). Read-only.";
+                    action-label: "Refresh";
+                    output: root.migrate-history-output;
+                    running: root.migrate-history-running;
+                    empty-hint: "Click \"Refresh\" to load migration history.";
+                    run-clicked => { root.migrate-history-run-clicked(); }
+                    init => { if (root.migrate-history-output == "") { root.migrate-history-run-clicked(); } }
                 }
                 // WAL Inspector — the audit chain, browsable (Wave 5) with
                 // the timeline scrubber strip above (Wave 6, GUI-only killer:

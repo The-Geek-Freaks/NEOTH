@@ -3970,6 +3970,174 @@ fn main() -> Result<()> {
         });
     });
 
+    // CLI-parity — ADR browser probe: `neoth adr list --output json` (cli/adr.rs).
+    let weak_adr_browser = window.as_weak();
+    window.on_adr_browser_run_clicked(move || {
+        let Some(w0) = weak_adr_browser.upgrade() else {
+            return;
+        };
+        w0.set_adr_browser_running(true);
+        let weak = weak_adr_browser.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("adr")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no ADR entries found.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load ADRs.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_adr_browser_output(output.into());
+                    w.set_adr_browser_running(false);
+                }
+            });
+        });
+    });
+
+    // CLI-parity — Mode Registry probe: `neoth mode list --output json` (cli/mode.rs).
+    let weak_mode_registry = window.as_weak();
+    window.on_mode_registry_run_clicked(move || {
+        let Some(w0) = weak_mode_registry.upgrade() else {
+            return;
+        };
+        w0.set_mode_registry_running(true);
+        let weak = weak_mode_registry.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("mode")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no modes registered yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load mode registry.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_mode_registry_output(output.into());
+                    w.set_mode_registry_running(false);
+                }
+            });
+        });
+    });
+
+    // CLI-parity — Background Jobs probe: `neoth jobs --bg --output json` (cli/jobs.rs).
+    let weak_bg_jobs = window.as_weak();
+    window.on_bg_jobs_run_clicked(move || {
+        let Some(w0) = weak_bg_jobs.upgrade() else {
+            return;
+        };
+        w0.set_bg_jobs_running(true);
+        let weak = weak_bg_jobs.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("jobs")
+                    .arg("--bg")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no background jobs (start one: neoth jobs --run \"<command>\").".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load background jobs.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_bg_jobs_output(output.into());
+                    w.set_bg_jobs_running(false);
+                }
+            });
+        });
+    });
+
+    // CLI-parity — Migration History probe: `neoth migrate list --output json` (cli/migrate.rs).
+    let weak_migrate_history = window.as_weak();
+    window.on_migrate_history_run_clicked(move || {
+        let Some(w0) = weak_migrate_history.upgrade() else {
+            return;
+        };
+        w0.set_migrate_history_running(true);
+        let weak = weak_migrate_history.clone();
+        std::thread::spawn(move || {
+            let output = match which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("migrate")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .ok()
+            }) {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    if !err.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&err);
+                    }
+                    if s.trim().is_empty() {
+                        "no migrations registered yet.".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load migration history.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_migrate_history_output(output.into());
+                    w.set_migrate_history_running(false);
+                }
+            });
+        });
+    });
+
     // Agents tab — `neothd cluster status` (the agent/worker + node topology).
     let weak_agents = window.as_weak();
     window.on_agents_refresh_clicked(move || {
