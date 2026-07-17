@@ -855,6 +855,7 @@ export component MainWindow inherits Window {
     in property <string>          mesh-conflicts-error: "";
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
+    callback mesh-auto-refresh-toggled(bool);
     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
     in property <[string]>        mesh-gossip-events: [];
     in-out property <string>      mesh-expanded-peer: "";
@@ -3993,6 +3994,7 @@ export component MainWindow inherits Window {
                     gossip-events: root.mesh-gossip-events;
                     expanded-peer: root.mesh-expanded-peer;
                     mesh-refresh-clicked => { root.mesh-refresh-clicked(); }
+                    mesh-auto-refresh-toggled(on) => { root.mesh-auto-refresh-toggled(on); }
                     peer-sync-clicked(id) => { root.mesh-peer-sync-clicked(id); }
                     conflict-resolve-clicked(content-id, origin) => {
                         root.mesh-conflict-resolve-clicked(content-id, origin);

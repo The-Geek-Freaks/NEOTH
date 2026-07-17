@@ -369,6 +369,10 @@ export component MeshView inherits Rectangle {
 
     in property <string> mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
+    // Auto-refresh polling toggle (default on). View owns the display state
+    // (in-out); the callback only notifies Rust to pause/resume the 30s loop.
+    in-out property <bool> mesh-auto-refresh-enabled: true;
+    callback mesh-auto-refresh-toggled(bool);
 
     // ── Per-peer quick action callbacks (Wave 5) ─────────────────────────────
     callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
@@ -410,6 +414,16 @@ export component MeshView inherits Rectangle {
                 }
 
                 Rectangle { horizontal-stretch: 1; }
+
+                NeothButton {
+                    label: root.mesh-auto-refresh-enabled ? "⏸ Auto" : "▶ Auto";
+                    size: "sm";
+                    primary: root.mesh-auto-refresh-enabled;
+                    clicked => {
+                        root.mesh-auto-refresh-enabled = !root.mesh-auto-refresh-enabled;
+                        root.mesh-auto-refresh-toggled(root.mesh-auto-refresh-enabled);
+                    }
+                }
 
                 NeothButton {
                     label: "Refresh";

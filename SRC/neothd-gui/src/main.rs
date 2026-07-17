@@ -6051,6 +6051,31 @@ fn main() -> Result<()> {
             refresh_mesh(weak_mesh_init);
         });
 
+        // Auto-refresh: a cluster dashboard that only updates on manual click
+        // can't surface a peer going offline (Grafana/Netdata/Tailscale all
+        // poll). One dedicated thread refreshes every 30s while enabled; the
+        // operator pauses it via the "⏸ Auto" toggle in the mesh header.
+        // Self-terminates when the event loop is gone (window closed).
+        // ponytail: fixed 30s cadence + refresh_mesh's 4 probes/tick — the
+        // toggle is the escape hatch; make it adaptive only if it profiles hot.
+        let mesh_auto = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let mesh_auto_toggle = mesh_auto.clone();
+        window.on_mesh_auto_refresh_toggled(move |on| {
+            mesh_auto_toggle.store(on, std::sync::atomic::Ordering::Relaxed);
+        });
+        let weak_mesh_poll = window.as_weak();
+        let mesh_auto_poll = mesh_auto.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+            // Stop the loop once the UI event loop has shut down.
+            if slint::invoke_from_event_loop(|| {}).is_err() {
+                break;
+            }
+            if mesh_auto_poll.load(std::sync::atomic::Ordering::Relaxed) {
+                refresh_mesh(weak_mesh_poll.clone());
+            }
+        });
+
         // Wave 5 — per-peer sync-state query: vector-clock delta for one
         // authenticated peer, surfaced as a toast (read-only probe).
         let weak_mesh_sync = window.as_weak();
