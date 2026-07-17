@@ -530,6 +530,7 @@ component ConversationItem inherits Rectangle {
     // the active conversation visually owns the sidebar.
     in property <bool> any-active: false;
     callback clicked();
+    callback context-menu(string /*channel*/, length /*x*/, length /*y*/);
 
     accessible-role: list-item;
     accessible-label: root.unread-count > 0
@@ -605,6 +606,13 @@ component ConversationItem inherits Rectangle {
 
     touch := TouchArea {
         clicked => { root.clicked(); }
+        pointer-event(ev) => {
+            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                root.context-menu(root.label,
+                    self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+        }
     }
 }
 
@@ -887,6 +895,7 @@ export component ChatView inherits Rectangle {
 
     callback send-clicked(string);
     callback channel-switched(int);
+    callback channel-ctx(string /*channel*/, length /*x*/, length /*y*/);
     callback open-settings();
     callback session-selected(string);
     callback attach-clicked();
@@ -993,6 +1002,7 @@ export component ChatView inherits Rectangle {
                         root.active-channel-index = idx;
                         root.channel-switched(idx);
                     }
+                    context-menu(name, x, y) => { root.channel-ctx(name, x, y); }
                 }
 
                 // ── ODY-01: recent sessions (hindsight cards) ─────────

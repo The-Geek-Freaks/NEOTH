@@ -19,7 +19,7 @@
 
 import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
 import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
@@ -1043,6 +1043,14 @@ export component MainWindow inherits Window {
     in-out property <string> mesh-peer-ctx-id: "";
     in-out property <length> mesh-peer-ctx-x: 0px;
     in-out property <length> mesh-peer-ctx-y: 0px;
+
+    // L37 — channel sidebar context menu.
+    in-out property <bool>   channel-ctx-open: false;
+    in-out property <string> channel-ctx-name: "";
+    in-out property <length> channel-ctx-x: 0px;
+    in-out property <length> channel-ctx-y: 0px;
+    // Confirm gate for the destructive Remove Channel (deletes credentials).
+    in-out property <bool>   channel-remove-confirm-open: false;
     callback kanban-move-task(string, string);
     callback kanban-copy-task-id(string);
     // H14 — assign a card to a hemisphere worker from the context menu.
@@ -1161,6 +1169,7 @@ export component MainWindow inherits Window {
     callback channels-refresh-clicked;
     callback channel-test(string);
     callback channel-remove(string);
+    callback channel-copy-name(string);
     /// GAP-19 — add a new channel credential from the GUI.
     /// Args: (channel_type, f1, f2, f3, f4) — field mapping per channel type.
     callback channel-add(string, string, string, string, string, string, string, bool);
@@ -3558,6 +3567,13 @@ export component MainWindow inherits Window {
                     // Wave 8 — code panel copy + stop-while-streaming.
                     code-copy(i) => { root.chat-code-copy(i); }
                     stop-stream-clicked => { root.chat-stop-stream(); }
+                    // L37 — channel sidebar right-click context menu.
+                    channel-ctx(name, x, y) => {
+                        root.channel-ctx-name = name;
+                        root.channel-ctx-x = x;
+                        root.channel-ctx-y = y;
+                        root.channel-ctx-open = true;
+                    }
                 } }  // close ChatView + SovereignFade
 
                 // Design Wave 3 — Overview / Mission Control dashboard.
@@ -4093,15 +4109,17 @@ export component MainWindow inherits Window {
         dismissed => { root.regen-menu-open = false; }
     }
 
-    // A4 — kanban card context menu. Coordinates come relative to the
-    // SettingsView; offset by the shell chrome (sidebar + topbar) and
-    // clamp so the menu never clips the window edge.
+    // A4 — kanban card context menu. kanban-ctx-x/y are already
+    // window-relative: Slint's absolute-position is measured from the Window
+    // origin, and the SettingsView sits right-of-sidebar / below-topbar in the
+    // shell HorizontalLayout, so the chrome offset is baked into the callback
+    // coords. The ContextMenu overlays the full window (0,0 origin), so feed
+    // the coords straight through — adding sidebar-w/68px double-counts the
+    // chrome. Clamp only, so the card never clips the window edge.
     if root.kanban-ctx-open: ContextMenu {
         width: 100%; height: 100%;
-        menu-x: min(root.kanban-ctx-x + (Theme.sidebar-collapsed ? 0px : Theme.sidebar-w),
-                    root.width - 250px);
-        menu-y: min(root.kanban-ctx-y + (Theme.header-hidden ? 0px : 68px),
-                    root.height - 320px);
+        menu-x: min(root.kanban-ctx-x, root.width - 250px);
+        menu-y: min(root.kanban-ctx-y, root.height - 320px);
         items: [
             { label: "Move to To-Do", glyph: "◻", danger: false },
             { label: "Move to In Progress", glyph: "◐", danger: false },
@@ -4133,12 +4151,12 @@ export component MainWindow inherits Window {
     }
 
     // L73 — mesh peer context menu (Force Sync / Copy ID / Remove Peer).
+    // mesh-peer-ctx-x/y are already window-relative (see kanban-ctx note);
+    // feed straight through and clamp — no chrome offset (would double-count).
     if root.mesh-peer-ctx-open: ContextMenu {
         width: 100%; height: 100%;
-        menu-x: min(root.mesh-peer-ctx-x + (Theme.sidebar-collapsed ? 0px : Theme.sidebar-w),
-                    root.width - 250px);
-        menu-y: min(root.mesh-peer-ctx-y + (Theme.header-hidden ? 0px : 68px),
-                    root.height - 200px);
+        menu-x: min(root.mesh-peer-ctx-x, root.width - 250px);
+        menu-y: min(root.mesh-peer-ctx-y, root.height - 200px);
         items: [
             { label: "Force Sync", glyph: "⟳", danger: false },
             { label: "Copy ID",    glyph: "⧉", danger: false },
@@ -4151,6 +4169,42 @@ export component MainWindow inherits Window {
             if (i == 2) { root.mesh-peer-revoke(root.mesh-peer-ctx-id); }
         }
         dismissed => { root.mesh-peer-ctx-open = false; }
+    }
+
+    // L37 — channel sidebar context menu (Remove Channel / Copy Name).
+    // channel-ctx-x/y are already window-relative (see kanban-ctx note);
+    // feed straight through and clamp — no chrome offset (would double-count).
+    if root.channel-ctx-open: ContextMenu {
+        width: 100%; height: 100%;
+        menu-x: min(root.channel-ctx-x, root.width - 250px);
+        menu-y: min(root.channel-ctx-y, root.height - 200px);
+        items: [
+            { label: "Remove Channel", glyph: "✕", danger: true },
+            { label: "Copy Name",      glyph: "⧉", danger: false },
+        ];
+        picked(i) => {
+            root.channel-ctx-open = false;
+            // Remove deletes the channel's stored credentials — confirm first
+            // (re-adding requires re-entering them). channel-ctx-name is retained.
+            if (i == 0) { root.channel-remove-confirm-open = true; }
+            if (i == 1) { root.channel-copy-name(root.channel-ctx-name); }
+        }
+        dismissed => { root.channel-ctx-open = false; }
+    }
+
+    // L37 — confirm gate for the destructive channel removal.
+    if root.channel-remove-confirm-open: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Remove channel?";
+        body: "Deletes " + root.channel-ctx-name + " and its stored credentials. Re-adding requires re-entering them.";
+        confirm-label: "Remove";
+        danger: true;
+        confirmed => {
+            root.channel-remove-confirm-open = false;
+            root.channel-remove(root.channel-ctx-name);
+        }
+        cancelled => { root.channel-remove-confirm-open = false; }
     }
 
     // B4 — Buddy quick-action menu, anchored above the docked orb.

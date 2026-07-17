@@ -6110,6 +6110,15 @@ fn main() -> Result<()> {
             }
         });
 
+        // L37 — channel context menu: copy channel name to clipboard.
+        window.on_channel_copy_name(move |name| {
+            if let Err(e) = arboard::Clipboard::new()
+                .and_then(|mut c| c.set_text(name.to_string()))
+            {
+                tracing::warn!(error = %e, "channel name clipboard copy failed");
+            }
+        });
+
         // L73 — mesh peer context menu: revoke (remove) a peer.
         let weak_mesh_revoke = window.as_weak();
         window.on_mesh_peer_revoke(move |peer_id| {
@@ -6536,7 +6545,13 @@ fn main() -> Result<()> {
                             .unwrap_or("unknown error");
                         format!("Channel {name} remove failed: {detail}")
                     }
-                    Ok(output) => match parse_channel_removed(&output.stdout, &name) {
+                    // The daemon echoes the canonical channel id (lowercase);
+                    // `name` may be an operator label like "Telegram", so match
+                    // case-insensitively or the ack check always fails.
+                    Ok(output) => match parse_channel_removed(
+                        &output.stdout,
+                        &name.to_ascii_lowercase(),
+                    ) {
                         Some(true) => format!("Channel {name} credential removed."),
                         Some(false) => format!(
                             "Channel {name} had no removable credential. Effective status refreshed."
