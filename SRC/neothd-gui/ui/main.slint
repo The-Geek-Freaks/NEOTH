@@ -524,6 +524,8 @@ export component MainWindow inherits Window {
     in property <string> quota-output: "";
     in property <bool> quota-running: false;
     callback quota-run-clicked();
+    // R4-05 — set a per-provider daily quota cap (neoth quota set-cap <provider> <cap>).
+    callback quota-setcap-clicked(string /*provider*/, string /*cap*/);
     in property <string> tweaks-output: "";
     in property <bool> tweaks-running: false;
     callback tweaks-run-clicked();
@@ -3819,15 +3821,40 @@ export component MainWindow inherits Window {
                         init => { if (root.catalog-output == "") { root.catalog-run-clicked(); } }
                     }
                 }
-                if root.nav-active == "quota": ProbeView {
-                    blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Read-only.";
-                    action-label: "Refresh";
-                    output: root.quota-output;
-                    running: root.quota-running;
-                    empty-hint: "Click \"Refresh\" to load the provider quota.";
-                    run-clicked => { root.quota-run-clicked(); }
-                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
-                    init => { if (root.quota-output == "") { root.quota-run-clicked(); } }
+                if root.nav-active == "quota": VerticalLayout {
+                    spacing: Theme.space-tight;
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        height: 44px;
+                        q_provider := NeothLineEdit {
+                            placeholder-text: "Provider (e.g. openai, anthropic)";
+                            horizontal-stretch: 1;
+                        }
+                        q_cap := NeothLineEdit {
+                            placeholder-text: "Daily cap (whole number)";
+                            horizontal-stretch: 1;
+                        }
+                        NeothButton {
+                            label: "Set cap";
+                            primary: true;
+                            clicked => {
+                                if (q_provider.text != "" && q_cap.text != "") {
+                                    root.quota-setcap-clicked(q_provider.text, q_cap.text);
+                                    q_cap.text = "";
+                                }
+                            }
+                        }
+                    }
+                    ProbeView {
+                        blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Set a per-provider cap above (neoth quota set-cap).";
+                        action-label: "Refresh";
+                        output: root.quota-output;
+                        running: root.quota-running;
+                        empty-hint: "Click \"Refresh\" to load the provider quota.";
+                        run-clicked => { root.quota-run-clicked(); }
+                        // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                        init => { if (root.quota-output == "") { root.quota-run-clicked(); } }
+                    }
                 }
                 if root.nav-active == "tweaks": ProbeView {
                     blurb: "Runtime tweaks — the appearance/behavior overrides layered over the built-in defaults (neoth tweaks show, ~/.neoth/tweaks.toml). Read-only.";

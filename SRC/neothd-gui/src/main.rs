@@ -4322,6 +4322,85 @@ fn main() -> Result<()> {
         });
     });
 
+    // R4-05 — set a per-provider daily quota cap (`neoth quota set-cap <provider>
+    // <cap>`), then refresh status. Non-destructive (reversible); status-checked.
+    let weak_quota_setcap = window.as_weak();
+    window.on_quota_setcap_clicked(move |provider, cap| {
+        let prov = provider.to_string();
+        let cap_s = cap.to_string();
+        if prov.trim().is_empty() || cap_s.trim().is_empty() {
+            return;
+        }
+        let weak = weak_quota_setcap.clone();
+        std::thread::spawn(move || {
+            let set = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("quota")
+                    .arg("set-cap")
+                    .arg(prov.trim())
+                    .arg(cap_s.trim())
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "quota set-cap spawn failed"))
+                    .ok()
+            });
+            let (kind, body): (&str, String) = match set {
+                Some(o) if o.status.success() => {
+                    ("success", format!("Quota cap set for {prov}: {cap_s}."))
+                }
+                Some(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let msg: String = err.trim().chars().take(160).collect();
+                    (
+                        "error",
+                        if msg.is_empty() {
+                            "quota set-cap exited non-zero (check provider name + numeric cap)"
+                                .to_string()
+                        } else {
+                            msg
+                        },
+                    )
+                }
+                None => (
+                    "error",
+                    "neothd unavailable (not on PATH, or failed to spawn — see logs) — cannot set quota cap.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "Quota set-cap", &body);
+            // Refresh status so the new cap is reflected.
+            let refreshed = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("quota")
+                    .arg("status")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "quota status refresh spawn failed"))
+                    .ok()
+            });
+            if let Some(o) = refreshed {
+                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                let e = String::from_utf8_lossy(&o.stderr);
+                if !e.trim().is_empty() {
+                    s.push('\n');
+                    s.push_str(&e);
+                }
+                let output = if s.trim().is_empty() {
+                    "no provider quota state recorded yet.".to_string()
+                } else {
+                    s
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_quota_output(output.into());
+                        w.set_quota_running(false);
+                    }
+                });
+            }
+        });
+    });
+
     // Research P0 — tweaks probe: `neoth tweaks show --output json`.
     let weak_tweaks = window.as_weak();
     window.on_tweaks_run_clicked(move || {
