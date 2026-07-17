@@ -587,22 +587,23 @@ async fn execute(
 
     let config = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
-    let raw_provider = crate::providers::from_config_for_utility(&config)
+    let raw_provider = crate::providers::from_config_for_utility_at(&config, home)
         .await
         .context("build self-improve QA provider")?;
+    let model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "self-improve-qa");
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment).context("spawn self-improve QA WAL writer")?;
-    let model = crate::providers::utility_model_for_config(&config);
     let provider = std::sync::Arc::new(
         crate::providers::cost_authorization::AuthorizedProvider::from_box(
             raw_provider,
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                 crate::permissions::AutonomyPolicySnapshot::new(autonomy, &config.custom_autonomy),
                 Some(writer.clone()),
+                config.tokens.max_per_request,
             ),
             model.clone(),
             "self_improve.qa",

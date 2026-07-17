@@ -24,6 +24,12 @@ pub enum InternalAction {
     /// Apply an authenticated, exact portable release bundle.
     #[command(name = "bundle-transaction")]
     BundleTransaction(BundleTransactionArgs),
+    /// Execute a private durable `/background` job in a detached process.
+    #[command(name = "background-worker")]
+    BackgroundWorker {
+        #[arg(long, value_name = "PATH")]
+        job: PathBuf,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -170,6 +176,16 @@ pub async fn run_internal(args: InternalArgs, output: OutputFormat) -> Result<()
                 );
             }
         },
+        InternalAction::BackgroundWorker { job } => {
+            let id = crate::cli::bg_session::run_background_worker(&job).await?;
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "completed",
+                    "job_id": id.as_str(),
+                })
+            );
+        }
     }
     Ok(())
 }
@@ -226,11 +242,33 @@ mod tests {
         command.write_long_help(&mut help).unwrap();
         let help = String::from_utf8(help).unwrap();
         assert!(!help.contains("bundle-transaction"));
+        assert!(!help.contains("background-worker"));
         assert!(
             !help
                 .lines()
                 .any(|line| line.trim_start().starts_with("internal"))
         );
+    }
+
+    #[test]
+    fn hidden_background_worker_command_parses_exact_job_path() {
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "--output",
+            "json",
+            "internal",
+            "background-worker",
+            "--job",
+            "instance/bgjobs/0123456789abcdef.job",
+        ])
+        .unwrap();
+        let crate::cli::Commands::Internal(InternalArgs {
+            action: InternalAction::BackgroundWorker { job },
+        }) = cli.command
+        else {
+            panic!("hidden background worker command did not parse");
+        };
+        assert_eq!(job, PathBuf::from("instance/bgjobs/0123456789abcdef.job"));
     }
 
     #[cfg(windows)]

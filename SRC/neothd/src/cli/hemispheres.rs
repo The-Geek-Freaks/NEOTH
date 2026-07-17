@@ -806,19 +806,21 @@ async fn run_test(
 ) -> Result<()> {
     let role = parse_role(role_str)?;
     let started = std::time::Instant::now();
-    let provider = crate::providers::from_config_for_role(cfg, role)
-        .await
-        .with_context(|| format!("build provider for role {}", role.as_str()))?;
+    let provider = crate::providers::from_config_for_role_at(
+        cfg,
+        role,
+        &crate::config::FreedomConfig::default_neoth_home(),
+    )
+    .await
+    .with_context(|| format!("build provider for role {}", role.as_str()))?;
+    let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
             cfg.autonomy_policy(),
+            cfg.tokens.max_per_request,
         )?,
-        cfg.inference
-            .slot_for(role)
-            .model
-            .clone()
-            .or_else(|| cfg.provider_model.clone()),
+        default_model,
         "hemispheres.test",
     );
     let construct_elapsed_ms = started.elapsed().as_millis();
@@ -832,11 +834,9 @@ async fn run_test(
         // specific hemisphere's provider before any live call. The
         // hemispheres test surface is a fresh entry-point, not covered
         // by the chat/serve pre-flight, so it gates explicitly here.
-        let slot = cfg.inference.slot_for(role);
-        if let Some(slot_provider) = slot.provider {
-            let kind = slot_provider.to_provider_kind();
+        if let Some(route) = crate::consent::route_for_role(cfg, role) {
             let home = FreedomConfig::default_neoth_home();
-            crate::consent::ensure_granted_or_prompt(&home, kind)?;
+            crate::consent::ensure_route_granted_or_prompt(&home, &route)?;
         }
         if dry_run {
             Some(LiveResult::dry_run(q))

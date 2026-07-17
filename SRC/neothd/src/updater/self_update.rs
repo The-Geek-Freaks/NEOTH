@@ -1388,10 +1388,7 @@ fn handoff_receipt_path(operation_id: &str) -> Result<PathBuf> {
 fn write_new_synced(path: &Path, bytes: &[u8], label: &str) -> Result<()> {
     use std::io::Write as _;
 
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
+    let mut file = crate::wal::win_native::create_private_file_new(path)
         .with_context(|| format!("create Windows handoff {label} {}", path.display()))?;
     file.write_all(bytes)
         .with_context(|| format!("write Windows handoff {label}"))?;
@@ -1533,24 +1530,13 @@ fn read_windows_handoff_request(
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Windows handoff bundle has no staging parent"))?
         .to_path_buf();
-    let expected_request = std::fs::canonicalize(stage_root.join(WINDOWS_HANDOFF_REQUEST))
-        .context("canonicalize exact Windows handoff request slot")?;
-    let supplied_request = std::fs::canonicalize(request_path).with_context(|| {
-        format!(
-            "canonicalize Windows handoff request {}",
-            request_path.display()
-        )
-    })?;
-    if supplied_request != expected_request {
-        anyhow::bail!("Windows handoff request is outside its exact staging slot");
-    }
-    let metadata =
-        std::fs::symlink_metadata(&supplied_request).context("inspect Windows handoff request")?;
-    if metadata_is_link_like(&metadata) || !metadata.is_file() {
-        anyhow::bail!("Windows handoff request is not a regular non-link file");
-    }
-    let bytes = read_file_bounded(
-        &supplied_request,
+    let namespace_root = stage_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Windows handoff stage has no trusted namespace"))?;
+    let bytes = read_exact_private_windows_file_bounded(
+        namespace_root,
+        request_path,
+        &stage_root.join(WINDOWS_HANDOFF_REQUEST),
         MAX_PENDING_JSON_BYTES,
         "Windows handoff request",
     )?;
@@ -1713,7 +1699,7 @@ fn run_windows_bundle_handoff_inner(
     request: &WindowsHandoffRequest,
     stage_root: &Path,
     wait_pid: u32,
-) -> Result<super::release_bundle::ReleaseBundleCommit> {
+) -> Result<(super::release_bundle::ReleaseBundleCommit, String)> {
     wait_for_windows_process(wait_pid, 300_000, "parent updater")?;
     if let Some(daemon_pid) = request.daemon_pid {
         wait_for_windows_process(daemon_pid, 120_000, "NEOTH daemon")?;
@@ -1727,34 +1713,33 @@ fn run_windows_bundle_handoff_inner(
     let archive_path = stage_root.join(WINDOWS_HANDOFF_ARCHIVE);
     let checksum_path = stage_root.join(WINDOWS_HANDOFF_CHECKSUM);
     let signature_path = stage_root.join(WINDOWS_HANDOFF_SIGNATURE);
-    for (path, label) in [
-        (&archive_path, "archive"),
-        (&checksum_path, "checksum"),
-        (&signature_path, "signature"),
-    ] {
-        let metadata = std::fs::symlink_metadata(path)
-            .with_context(|| format!("inspect Windows handoff {label} {}", path.display()))?;
-        if metadata_is_link_like(&metadata) || !metadata.is_file() {
-            anyhow::bail!("Windows handoff {label} is not a regular non-link file");
-        }
-    }
-    let asset_bytes = read_file_bounded(
+    let namespace_root = stage_root
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Windows handoff stage has no trusted namespace"))?;
+    let asset_bytes = read_private_windows_file_bounded(
+        namespace_root,
         &archive_path,
         MAX_RELEASE_ARCHIVE_BYTES,
         "Windows handoff archive",
     )?;
-    let companion_text = String::from_utf8(read_file_bounded(
+    let companion_text = String::from_utf8(read_private_windows_file_bounded(
+        namespace_root,
         &checksum_path,
         MAX_CHECKSUM_BYTES,
         "Windows handoff checksum",
     )?)
     .context("Windows handoff checksum is not UTF-8")?;
-    let signature_text = String::from_utf8(read_file_bounded(
+    let signature_text = String::from_utf8(read_private_windows_file_bounded(
+        namespace_root,
         &signature_path,
         MAX_SIGNATURE_BYTES,
         "Windows handoff signature",
     )?)
     .context("Windows handoff signature is not UTF-8")?;
+    let archive_sha256 = parse_sha256_companion(&companion_text)
+        .context("parse Windows handoff checksum before commit")?;
+    verify_sha256_bytes(&asset_bytes, &archive_sha256)
+        .context("re-verify Windows handoff checksum after parent exit")?;
     let asset_name = expected_asset_name("neoth", &request.release_tag, &request.target_triple);
     let signature_status = crate::updater::sig_verify::check_signature_for_file(
         &asset_bytes,
@@ -1766,14 +1751,15 @@ fn run_windows_bundle_handoff_inner(
     if signature_status != crate::updater::sig_verify::SigStatus::Verified {
         anyhow::bail!("Windows handoff release signature is not verified");
     }
-    apply_downloaded_bundle(
+    let commit = apply_downloaded_bundle(
         &asset_bytes,
         &companion_text,
         archive_format_for_target(&request.target_triple),
         &request.install_root,
         &request.expected_version,
         &request.target_triple,
-    )
+    )?;
+    Ok((commit, archive_sha256))
 }
 
 #[cfg(windows)]
@@ -1791,7 +1777,7 @@ pub(crate) fn run_windows_bundle_handoff(
     let restore_result = restore_windows_runtime(&request);
 
     match apply_result {
-        Ok(commit) => {
+        Ok((commit, archive_sha256)) => {
             let restore_warning = restore_result.err().map(|error| format!("{error:#}"));
             if let Some(error) = &restore_warning {
                 warn!(%error, "Windows update committed but the previous runtime could not be restarted");
@@ -1811,13 +1797,9 @@ pub(crate) fn run_windows_bundle_handoff(
                     transaction_id: commit.receipt.transaction_id,
                     automatic_crash_recovery: true,
                     restart_required: true,
-                    archive_sha256: parse_sha256_companion(&String::from_utf8(
-                        read_file_bounded(
-                            &stage_root.join(WINDOWS_HANDOFF_CHECKSUM),
-                            MAX_CHECKSUM_BYTES,
-                            "Windows handoff checksum",
-                        )?,
-                    )?)?,
+                    // Bound to the exact bytes verified before the commit.
+                    // Never re-read mutable staging state after installation.
+                    archive_sha256,
                     download_url: request.download_url.clone(),
                     signature_status: "verified".to_string(),
                 },
@@ -1913,14 +1895,13 @@ fn read_committed_windows_handoff_receipt(
     validate_handoff_operation_id(operation_id)?;
     validate_handoff_request_sha256(request_sha256)?;
     let path = handoff_receipt_path(operation_id)?;
-    let metadata = std::fs::symlink_metadata(&path)
-        .with_context(|| format!("inspect Windows handoff receipt {}", path.display()))?;
-    if metadata_is_link_like(&metadata) || !metadata.is_file() {
-        anyhow::bail!("Windows handoff receipt is not a regular non-link file");
-    }
-    crate::wal::win_native::verify_private_dacl(&path)
-        .with_context(|| format!("verify private Windows handoff receipt {}", path.display()))?;
-    let bytes = read_file_bounded(&path, MAX_PENDING_JSON_BYTES, "Windows handoff receipt")?;
+    let trusted_root = windows_handoff_state_home();
+    let bytes = read_private_windows_file_bounded(
+        &trusted_root,
+        &path,
+        MAX_PENDING_JSON_BYTES,
+        "Windows handoff receipt",
+    )?;
     let receipt: WindowsHandoffReceipt =
         serde_json::from_slice(&bytes).context("parse Windows handoff receipt")?;
     validate_committed_windows_handoff_receipt(&receipt, operation_id, request_sha256)?;
@@ -2441,7 +2422,9 @@ pub fn pending_json_path(stage_dir: &Path) -> PathBuf {
 /// Read a staged-pending record, if one exists + parses. `None` when no
 /// update is staged (the common case).
 pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
+    let trusted_root = stage_dir.parent()?;
     let body = read_file_bounded(
+        trusted_root,
         &pending_json_path(stage_dir),
         MAX_PENDING_JSON_BYTES,
         "pending update record",
@@ -2450,64 +2433,572 @@ pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
     serde_json::from_slice(&body).ok()
 }
 
-fn read_file_bounded(path: &Path, max_bytes: usize, label: &str) -> Result<Vec<u8>> {
-    use std::io::Read as _;
+fn open_directory_nofollow(path: &Path, label: &str) -> Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_CLOEXEC | libc::O_DIRECTORY | libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+    }
 
-    let file =
-        std::fs::File::open(path).with_context(|| format!("open {label} {}", path.display()))?;
+    let directory = options.open(path).with_context(|| {
+        format!(
+            "open {label} parent directory without following links {}",
+            path.display()
+        )
+    })?;
+    let metadata = directory
+        .metadata()
+        .with_context(|| format!("inspect opened {label} parent directory {}", path.display()))?;
+    if metadata_is_link_like(&metadata) || !metadata.is_dir() {
+        anyhow::bail!(
+            "opened {label} parent is not a real non-link directory: {}",
+            path.display()
+        );
+    }
+    Ok(directory)
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct NtUnicodeString {
+    length: u16,
+    maximum_length: u16,
+    buffer: *mut u16,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct NtObjectAttributes {
+    length: u32,
+    root_directory: *mut std::ffi::c_void,
+    object_name: *const NtUnicodeString,
+    attributes: u32,
+    security_descriptor: *const std::ffi::c_void,
+    security_quality_of_service: *const std::ffi::c_void,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+union NtIoStatusValue {
+    status: i32,
+    pointer: *mut std::ffi::c_void,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct NtIoStatusBlock {
+    value: NtIoStatusValue,
+    information: usize,
+}
+
+#[cfg(windows)]
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    fn NtCreateFile(
+        file_handle: *mut *mut std::ffi::c_void,
+        desired_access: u32,
+        object_attributes: *const NtObjectAttributes,
+        io_status_block: *mut NtIoStatusBlock,
+        allocation_size: *const i64,
+        file_attributes: u32,
+        share_access: u32,
+        create_disposition: u32,
+        create_options: u32,
+        ea_buffer: *const std::ffi::c_void,
+        ea_length: u32,
+    ) -> i32;
+}
+
+fn open_relative_nofollow(
+    parent: &std::fs::File,
+    component: &std::ffi::OsStr,
+    path: &Path,
+    label: &str,
+    directory: bool,
+) -> Result<std::fs::File> {
+    #[cfg(unix)]
+    let file = {
+        use std::os::unix::ffi::OsStrExt as _;
+        use std::os::unix::io::{AsRawFd as _, FromRawFd as _};
+
+        let component = std::ffi::CString::new(component.as_bytes())
+            .with_context(|| format!("{label} path component contains NUL"))?;
+        let flags = libc::O_RDONLY
+            | libc::O_CLOEXEC
+            | libc::O_NOFOLLOW
+            | if directory {
+                libc::O_DIRECTORY
+            } else {
+                // FIFOs and device-like leaves must not block before the
+                // descriptor-bound regular-file check below can reject them.
+                libc::O_NONBLOCK
+            };
+        // SAFETY: parent owns a live directory descriptor and component is
+        // one NUL-terminated relative path component. No slash or parent
+        // traversal reaches openat.
+        let fd = unsafe { libc::openat(parent.as_raw_fd(), component.as_ptr(), flags) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| {
+                format!(
+                    "open {label} path component without following links {}",
+                    path.display()
+                )
+            });
+        }
+        // SAFETY: successful openat returned a new owned descriptor.
+        unsafe { std::fs::File::from_raw_fd(fd) }
+    };
+
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::ffi::OsStrExt as _;
+        use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _};
+
+        const OBJ_CASE_INSENSITIVE: u32 = 0x40;
+        const FILE_LIST_DIRECTORY: u32 = 0x0000_0001;
+        const FILE_READ_ATTRIBUTES: u32 = 0x0000_0080;
+        const FILE_GENERIC_READ: u32 = 0x0012_0089;
+        const SYNCHRONIZE: u32 = 0x0010_0000;
+        const FILE_SHARE_ALL: u32 = 0x0000_0007;
+        const FILE_OPEN: u32 = 0x0000_0001;
+        const FILE_DIRECTORY_FILE: u32 = 0x0000_0001;
+        const FILE_SYNCHRONOUS_IO_NONALERT: u32 = 0x0000_0020;
+        const FILE_NON_DIRECTORY_FILE: u32 = 0x0000_0040;
+        const FILE_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+        let wide = component.encode_wide().collect::<Vec<_>>();
+        let byte_length = wide
+            .len()
+            .checked_mul(std::mem::size_of::<u16>())
+            .and_then(|length| u16::try_from(length).ok())
+            .ok_or_else(|| anyhow::anyhow!("{label} path component is too long"))?;
+        let name = NtUnicodeString {
+            length: byte_length,
+            maximum_length: byte_length,
+            buffer: wide.as_ptr().cast_mut(),
+        };
+        let attributes = NtObjectAttributes {
+            length: u32::try_from(std::mem::size_of::<NtObjectAttributes>())
+                .expect("NT object attributes size fits u32"),
+            root_directory: parent.as_raw_handle(),
+            object_name: &name,
+            attributes: OBJ_CASE_INSENSITIVE,
+            security_descriptor: std::ptr::null(),
+            security_quality_of_service: std::ptr::null(),
+        };
+        let mut io_status = NtIoStatusBlock {
+            value: NtIoStatusValue {
+                pointer: std::ptr::null_mut(),
+            },
+            information: 0,
+        };
+        let mut handle = std::ptr::null_mut();
+        let desired_access = if directory {
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+        } else {
+            FILE_GENERIC_READ
+        };
+        let create_options = FILE_SYNCHRONOUS_IO_NONALERT
+            | FILE_OPEN_REPARSE_POINT
+            | if directory {
+                FILE_DIRECTORY_FILE
+            } else {
+                FILE_NON_DIRECTORY_FILE
+            };
+        // SAFETY: the FFI structures have the documented NT layout, their
+        // backing buffers remain live for the call, and parent is live.
+        let status = unsafe {
+            NtCreateFile(
+                &mut handle,
+                desired_access,
+                &attributes,
+                &mut io_status,
+                std::ptr::null(),
+                0,
+                FILE_SHARE_ALL,
+                FILE_OPEN,
+                create_options,
+                std::ptr::null(),
+                0,
+            )
+        };
+        if status < 0 || handle.is_null() {
+            anyhow::bail!(
+                "open {label} path component without following reparse points {}: NTSTATUS {status:#010x}",
+                path.display()
+            );
+        }
+        // SAFETY: successful NtCreateFile returned a new owned handle.
+        unsafe { std::fs::File::from_raw_handle(handle) }
+    };
+
+    #[cfg(not(any(unix, windows)))]
+    let file = {
+        let _ = (parent, component, path, directory);
+        anyhow::bail!("{label} descriptor-relative path traversal is unsupported");
+    };
+
     let metadata = file
         .metadata()
-        .with_context(|| format!("inspect {label} {}", path.display()))?;
-    if !metadata.is_file() {
-        anyhow::bail!("{label} {} is not a regular file", path.display());
+        .with_context(|| format!("inspect opened {label} {}", path.display()))?;
+    let valid_kind = if directory {
+        metadata.is_dir()
+    } else {
+        metadata.is_file()
+    };
+    if metadata_is_link_like(&metadata) || !valid_kind {
+        anyhow::bail!(
+            "opened {label} path component is not a real non-link {}: {}",
+            if directory { "directory" } else { "file" },
+            path.display()
+        );
     }
-    if metadata.len() > max_bytes as u64 {
+    Ok(file)
+}
+
+fn verify_open_file_identity(
+    opened: &std::fs::File,
+    namespace: &std::fs::File,
+    path: &Path,
+    label: &str,
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let opened = opened
+            .metadata()
+            .with_context(|| format!("inspect opened {label} {}", path.display()))?;
+        let namespace = namespace
+            .metadata()
+            .with_context(|| format!("inspect current {label} slot {}", path.display()))?;
+        if opened.dev() != namespace.dev()
+            || opened.ino() != namespace.ino()
+            || opened.nlink() != 1
+            || namespace.nlink() != 1
+        {
+            anyhow::bail!(
+                "{label} is hard-linked or its path changed while open: {}",
+                path.display()
+            );
+        }
+    }
+    #[cfg(windows)]
+    {
+        let opened = windows_open_object_identity(opened, label)?;
+        let namespace = windows_open_object_identity(namespace, label)?;
+        if opened != namespace || opened.1 != 1 {
+            anyhow::bail!(
+                "{label} is hard-linked or its path changed while open: {}",
+                path.display()
+            );
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (opened, namespace);
+        anyhow::bail!("{label} opened-handle identity verification is unsupported");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_open_object_identity(file: &std::fs::File, label: &str) -> Result<((u32, u64), u32)> {
+    use std::os::windows::io::AsRawHandle as _;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: `file` owns a valid kernel handle and `information` is writable
+    // storage for the exact Win32 output structure.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle() as _, information.as_mut_ptr()) }
+        == 0
+    {
+        return Err(std::io::Error::last_os_error())
+            .with_context(|| format!("query opened {label} object identity"));
+    }
+    // SAFETY: the successful Win32 call initialized the complete structure.
+    let information = unsafe { information.assume_init() };
+    let index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    Ok((
+        (information.dwVolumeSerialNumber, index),
+        information.nNumberOfLinks,
+    ))
+}
+
+fn verify_open_relative_path_identity(
+    file: &std::fs::File,
+    parent: &std::fs::File,
+    leaf: &std::ffi::OsStr,
+    path: &Path,
+    label: &str,
+) -> Result<()> {
+    let namespace = open_relative_nofollow(parent, leaf, path, label, false)?;
+    verify_open_file_identity(file, &namespace, path, label)
+}
+
+fn read_opened_file_bounded(
+    mut file: std::fs::File,
+    path: &Path,
+    parent: &std::fs::File,
+    leaf: &std::ffi::OsStr,
+    max_bytes: usize,
+    label: &str,
+    require_private_file: bool,
+) -> Result<Vec<u8>> {
+    use std::io::Read as _;
+
+    let max_bytes_u64 = u64::try_from(max_bytes).context("file size cap exceeds u64")?;
+    let read_limit = max_bytes_u64
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("file size cap overflow"))?;
+    let before = file
+        .metadata()
+        .with_context(|| format!("inspect opened {label} {}", path.display()))?;
+    if before.len() > max_bytes_u64 {
         anyhow::bail!("{label} exceeds the {max_bytes}-byte size cap");
     }
-    let mut body = Vec::with_capacity(metadata.len() as usize);
-    file.take(max_bytes as u64 + 1)
+    #[cfg(windows)]
+    if require_private_file {
+        crate::wal::win_native::verify_private_file_handle(&file)
+            .with_context(|| format!("verify private DACL on opened {label} {}", path.display()))?;
+    }
+    #[cfg(unix)]
+    if require_private_file {
+        use std::os::unix::fs::PermissionsExt as _;
+        anyhow::ensure!(
+            before.permissions().mode() & 0o077 == 0,
+            "opened {label} is not private (group/other permission bits are set): {}",
+            path.display()
+        );
+    }
+    #[cfg(not(any(windows, unix)))]
+    let _ = require_private_file;
+    verify_open_relative_path_identity(&file, parent, leaf, path, label)?;
+
+    let capacity = usize::try_from(before.len()).context("opened file length exceeds usize")?;
+    let mut body = Vec::with_capacity(capacity);
+    (&mut file)
+        .take(read_limit)
         .read_to_end(&mut body)
-        .with_context(|| format!("read {label} {}", path.display()))?;
+        .with_context(|| format!("read opened {label} {}", path.display()))?;
     if body.len() > max_bytes {
         anyhow::bail!("{label} exceeds the {max_bytes}-byte size cap");
     }
+
+    let after = file
+        .metadata()
+        .with_context(|| format!("reinspect opened {label} {}", path.display()))?;
+    if after.len() != before.len() || u64::try_from(body.len())? != before.len() {
+        anyhow::bail!("{label} changed size while it was being read");
+    }
+    #[cfg(windows)]
+    if require_private_file {
+        crate::wal::win_native::verify_private_file_handle(&file).with_context(|| {
+            format!("reverify private DACL on opened {label} {}", path.display())
+        })?;
+    }
+    #[cfg(unix)]
+    if require_private_file {
+        use std::os::unix::fs::PermissionsExt as _;
+        anyhow::ensure!(
+            after.permissions().mode() & 0o077 == 0,
+            "opened {label} lost its private permissions while being read: {}",
+            path.display()
+        );
+    }
+    verify_open_relative_path_identity(&file, parent, leaf, path, label)?;
     Ok(body)
 }
 
-fn validated_staged_path(
+fn relative_namespace_components(
+    trusted_root: &Path,
+    canonical_root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<Vec<std::ffi::OsString>> {
+    let relative = path
+        .strip_prefix(trusted_root)
+        .or_else(|_| path.strip_prefix(canonical_root))
+        .with_context(|| {
+            format!(
+                "{label} is outside trusted namespace {}: {}",
+                trusted_root.display(),
+                path.display()
+            )
+        })?;
+    let mut components = Vec::new();
+    for component in relative.components() {
+        let std::path::Component::Normal(component) = component else {
+            anyhow::bail!("{label} contains a non-relative namespace component");
+        };
+        components.push(component.to_os_string());
+    }
+    if components.is_empty() {
+        anyhow::bail!("{label} does not name a file below its trusted namespace");
+    }
+    Ok(components)
+}
+
+fn read_file_bounded_with_policy(
+    trusted_root: &Path,
+    path: &Path,
+    expected_path: Option<&Path>,
+    max_bytes: usize,
+    label: &str,
+    require_private_file: bool,
+) -> Result<Vec<u8>> {
+    // A configured NEOTH_HOME may itself be a deliberate symlink or junction.
+    // Resolve that explicitly trusted boundary once, bind its directory
+    // handle, then traverse every untrusted remainder relative to the prior
+    // handle. No absolute lookup below the root can follow an earlier alias.
+    let canonical_root = std::fs::canonicalize(trusted_root).with_context(|| {
+        format!(
+            "canonicalize trusted {label} namespace {}",
+            trusted_root.display()
+        )
+    })?;
+    let mut components = relative_namespace_components(trusted_root, &canonical_root, path, label)
+        .with_context(|| {
+            expected_path.map_or_else(
+                || format!("{label} is outside its trusted namespace"),
+                |expected_path| {
+                    format!(
+                        "{label} is outside its exact file slot: {}",
+                        expected_path.display()
+                    )
+                },
+            )
+        })?;
+    if let Some(expected_path) = expected_path {
+        let expected_components =
+            relative_namespace_components(trusted_root, &canonical_root, expected_path, label)
+                .with_context(|| {
+                    format!(
+                        "{label} is outside its exact file slot: {}",
+                        expected_path.display()
+                    )
+                })?;
+        if components != expected_components {
+            anyhow::bail!(
+                "{label} is outside its exact file slot: {}",
+                expected_path.display()
+            );
+        }
+    }
+
+    let leaf = components
+        .pop()
+        .expect("relative namespace components are non-empty");
+    let mut parent = open_directory_nofollow(&canonical_root, label)?;
+    let mut display_path = canonical_root;
+    for component in components {
+        display_path.push(&component);
+        parent = open_relative_nofollow(&parent, &component, &display_path, label, true)?;
+    }
+    display_path.push(&leaf);
+    let file = open_relative_nofollow(&parent, &leaf, &display_path, label, false)?;
+    read_opened_file_bounded(
+        file,
+        path,
+        &parent,
+        &leaf,
+        max_bytes,
+        label,
+        require_private_file,
+    )
+}
+
+fn read_file_bounded(
+    trusted_root: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_file_bounded_with_policy(trusted_root, path, None, max_bytes, label, false)
+}
+
+/// Read one private control file below a caller-owned trusted root while
+/// binding every descendant lookup to no-follow directory/file handles. This
+/// is shared with detached background jobs so their prompt-bearing payload is
+/// never read through a symlink/reparse swap or an unbounded special file.
+pub(crate) fn read_private_control_file_bounded(
+    trusted_root: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_file_bounded_with_policy(trusted_root, path, None, max_bytes, label, true)
+}
+
+#[cfg(windows)]
+fn read_private_windows_file_bounded(
+    trusted_root: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_file_bounded_with_policy(trusted_root, path, None, max_bytes, label, true)
+}
+
+#[cfg(windows)]
+fn read_exact_private_windows_file_bounded(
+    trusted_root: &Path,
+    path: &Path,
+    expected_path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_file_bounded_with_policy(
+        trusted_root,
+        path,
+        Some(expected_path),
+        max_bytes,
+        label,
+        true,
+    )
+}
+
+fn read_validated_staged_file_bounded(
     stage_dir: &Path,
     recorded_path: &str,
     expected_name: &str,
     label: &str,
-) -> Result<PathBuf> {
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
     let expected_leaf = Path::new(expected_name);
     if expected_leaf.file_name().and_then(|name| name.to_str()) != Some(expected_name) {
         anyhow::bail!("invalid staged {label} filename {expected_name:?}");
     }
     let recorded = PathBuf::from(recorded_path);
-    if std::fs::symlink_metadata(&recorded)
-        .with_context(|| format!("inspect staged {label} {}", recorded.display()))?
-        .file_type()
-        .is_symlink()
-    {
-        anyhow::bail!("staged {label} must not be a symlink");
-    }
-    let canonical_stage = std::fs::canonicalize(stage_dir)
-        .with_context(|| format!("canonicalize stage dir {}", stage_dir.display()))?;
-    let canonical_recorded = std::fs::canonicalize(&recorded)
-        .with_context(|| format!("canonicalize staged {label} {}", recorded.display()))?;
-    let canonical_expected = std::fs::canonicalize(stage_dir.join(expected_name))
-        .with_context(|| format!("canonicalize expected staged {label} {expected_name}"))?;
-    if canonical_recorded != canonical_expected
-        || canonical_recorded.parent() != Some(canonical_stage.as_path())
-    {
-        anyhow::bail!(
-            "staged {label} path {} is outside the exact stage slot {}",
-            recorded.display(),
+    let trusted_root = stage_dir
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("staged {label} directory has no trusted namespace"))?;
+    read_file_bounded_with_policy(
+        trusted_root,
+        &recorded,
+        Some(&stage_dir.join(expected_name)),
+        max_bytes,
+        &format!("staged {label}"),
+        false,
+    )
+    .with_context(|| {
+        format!(
+            "staged {label} path failed exact stage slot validation: {}",
             stage_dir.join(expected_name).display()
-        );
-    }
-    Ok(canonical_recorded)
+        )
+    })
 }
 
 /// Apply an ALREADY-STAGED update — skips the network entirely. The staging
@@ -2569,15 +3060,14 @@ pub fn apply_from_staged(
         ))
         .into());
     }
-    let archive = validated_staged_path(
+    let bytes = read_validated_staged_file_bounded(
         stage_dir,
         &pending.staged_archive,
         &expected_asset,
         "archive",
+        MAX_RELEASE_ARCHIVE_BYTES,
     )
-    .map_err(|error| IntegrityViolation(format!("staged archive path: {error:#}")))?;
-    let bytes = read_file_bounded(&archive, MAX_RELEASE_ARCHIVE_BYTES, "staged archive")
-        .map_err(|error| IntegrityViolation(format!("staged archive read: {error:#}")))?;
+    .map_err(|error| IntegrityViolation(format!("staged archive read: {error:#}")))?;
     // GR-043 — RE-VERIFY AUTHENTICITY at apply time against the in-binary pinned
     // key. The recorded `signature_status` is attacker-controllable (anyone who
     // can write the stage dir writes pending.json), so trusting it would let a
@@ -2588,15 +3078,14 @@ pub fn apply_from_staged(
     let signature_text = match pending.staged_signature.as_deref() {
         Some(sig_path) => {
             let expected_signature = minisig_companion_name(&expected_asset);
-            let signature_path =
-                validated_staged_path(stage_dir, sig_path, &expected_signature, "minisig")
-                    .map_err(|error| {
-                        IntegrityViolation(format!("staged minisig path: {error:#}"))
-                    })?;
-            let signature_bytes =
-                read_file_bounded(&signature_path, MAX_SIGNATURE_BYTES, "staged minisig").map_err(
-                    |error| IntegrityViolation(format!("staged minisig read: {error:#}")),
-                )?;
+            let signature_bytes = read_validated_staged_file_bounded(
+                stage_dir,
+                sig_path,
+                &expected_signature,
+                "minisig",
+                MAX_SIGNATURE_BYTES,
+            )
+            .map_err(|error| IntegrityViolation(format!("staged minisig read: {error:#}")))?;
             Some(String::from_utf8(signature_bytes).map_err(|error| {
                 IntegrityViolation(format!("staged minisig is not UTF-8: {error}"))
             })?)
@@ -3573,6 +4062,243 @@ mod tests {
         )
         .unwrap();
         assert!(read_pending(dir.path()).is_none());
+    }
+
+    #[test]
+    fn bounded_reader_uses_one_regular_single_link_identity() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("artifact.bin");
+        std::fs::write(&file, b"bound artifact").unwrap();
+        assert_eq!(
+            read_file_bounded(dir.path(), &file, 64, "test artifact").unwrap(),
+            b"bound artifact"
+        );
+
+        let alias = dir.path().join("artifact-hardlink.bin");
+        std::fs::hard_link(&file, &alias).unwrap();
+        let error = read_file_bounded(dir.path(), &file, 64, "test artifact").unwrap_err();
+        assert!(
+            format!("{error:#}").contains("hard-linked"),
+            "a multiply-linked staged input must fail closed: {error:#}"
+        );
+    }
+
+    #[test]
+    fn exact_bounded_reader_does_not_read_an_outside_same_named_file() {
+        let dir = tempdir().unwrap();
+        let stage = dir.path().join("stage");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&stage).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let expected = stage.join("artifact.bin");
+        let supplied = outside.join("artifact.bin");
+        std::fs::write(&expected, b"expected").unwrap();
+        std::fs::write(&supplied, b"outside secret").unwrap();
+
+        let error = read_file_bounded_with_policy(
+            dir.path(),
+            &supplied,
+            Some(&expected),
+            64,
+            "test exact artifact",
+            false,
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("exact file slot"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_refuses_a_symlink_at_open_time() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("target.bin");
+        let link = dir.path().join("artifact.bin");
+        std::fs::write(&target, b"do not follow").unwrap();
+        symlink(&target, &link).unwrap();
+        assert!(read_file_bounded(dir.path(), &link, 64, "test artifact").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_rejects_fifo_without_blocking_before_type_check() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = tempdir().unwrap();
+        let fifo = dir.path().join("artifact.fifo");
+        let fifo_name = std::ffi::CString::new(fifo.as_os_str().as_bytes()).unwrap();
+        // SAFETY: fifo_name is a live NUL-terminated path and mode is valid.
+        assert_eq!(unsafe { libc::mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
+
+        let root = dir.path().to_path_buf();
+        let fifo_for_reader = fifo.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || {
+            let result = read_file_bounded(&root, &fifo_for_reader, 64, "test FIFO artifact");
+            sender.send(result).unwrap();
+        });
+
+        match receiver.recv_timeout(std::time::Duration::from_secs(1)) {
+            Ok(result) => {
+                assert!(result.is_err(), "FIFO must fail the regular-file gate");
+                reader.join().unwrap();
+            }
+            Err(error) => {
+                // Unblock an implementation that regressed to a blocking FIFO
+                // open before failing the test; do not strand a test thread.
+                let writer = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
+                let _ = receiver.recv_timeout(std::time::Duration::from_secs(1));
+                drop(writer);
+                reader.join().unwrap();
+                panic!("FIFO open blocked before the file-type check: {error}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_refuses_a_preexisting_symlinked_parent_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let real_stage = dir.path().join("real-stage");
+        let linked_stage = dir.path().join("linked-stage");
+        std::fs::create_dir(&real_stage).unwrap();
+        std::fs::write(real_stage.join("artifact.bin"), b"do not follow parent").unwrap();
+        symlink(&real_stage, &linked_stage).unwrap();
+
+        assert!(
+            read_file_bounded(
+                dir.path(),
+                &linked_stage.join("artifact.bin"),
+                64,
+                "test staged artifact",
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_refuses_a_symlinked_earlier_ancestor() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let real_ancestor = dir.path().join("real-ancestor");
+        let linked_ancestor = dir.path().join("linked-ancestor");
+        let nested_stage = real_ancestor.join("nested/stage");
+        std::fs::create_dir_all(&nested_stage).unwrap();
+        std::fs::write(nested_stage.join("artifact.bin"), b"do not follow ancestor").unwrap();
+        symlink(&real_ancestor, &linked_ancestor).unwrap();
+
+        assert!(
+            read_file_bounded(
+                dir.path(),
+                &linked_ancestor.join("nested/stage/artifact.bin"),
+                64,
+                "test nested staged artifact",
+            )
+            .is_err()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_reader_binds_a_symlinked_trusted_root_once() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempdir().unwrap();
+        let real_home = dir.path().join("real-home");
+        let linked_home = dir.path().join("linked-home");
+        std::fs::create_dir_all(real_home.join("staged")).unwrap();
+        std::fs::write(real_home.join("staged/artifact.bin"), b"trusted root").unwrap();
+        symlink(&real_home, &linked_home).unwrap();
+
+        assert_eq!(
+            read_file_bounded(
+                &linked_home,
+                &linked_home.join("staged/artifact.bin"),
+                64,
+                "test symlinked home artifact",
+            )
+            .unwrap(),
+            b"trusted root"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_private_bounded_reader_binds_dacl_and_reparse_policy_to_handle() {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+
+        let dir = tempdir().unwrap();
+        crate::wal::win_native::set_private_current_user_directory_dacl(dir.path()).unwrap();
+        let file = dir.path().join("handoff.asset");
+        write_new_synced(&file, b"authenticated archive", "test archive").unwrap();
+        assert_eq!(
+            read_exact_private_windows_file_bounded(
+                dir.path(),
+                &file,
+                &file,
+                64,
+                "Windows test handoff archive",
+            )
+            .unwrap(),
+            b"authenticated archive"
+        );
+
+        let link = dir.path().join("handoff-link.asset");
+        match symlink_file(&file, &link) {
+            Ok(()) => assert!(
+                read_private_windows_file_bounded(
+                    dir.path(),
+                    &link,
+                    64,
+                    "Windows test handoff link",
+                )
+                .is_err()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("create Windows handoff reparse fixture: {error}"),
+        }
+
+        let real_stage = dir.path().join("real-stage");
+        let linked_stage = dir.path().join("linked-stage");
+        std::fs::create_dir(&real_stage).unwrap();
+        std::fs::write(real_stage.join("artifact.bin"), b"do not follow parent").unwrap();
+        match symlink_dir(&real_stage, &linked_stage) {
+            Ok(()) => assert!(
+                read_file_bounded(
+                    dir.path(),
+                    &linked_stage.join("artifact.bin"),
+                    64,
+                    "Windows test staged parent",
+                )
+                .is_err()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("create Windows handoff parent reparse fixture: {error}"),
+        }
+
+        let real_ancestor = dir.path().join("real-ancestor");
+        let linked_ancestor = dir.path().join("linked-ancestor");
+        let nested_stage = real_ancestor.join("nested/stage");
+        std::fs::create_dir_all(&nested_stage).unwrap();
+        std::fs::write(nested_stage.join("artifact.bin"), b"do not follow ancestor").unwrap();
+        match symlink_dir(&real_ancestor, &linked_ancestor) {
+            Ok(()) => assert!(
+                read_file_bounded(
+                    dir.path(),
+                    &linked_ancestor.join("nested/stage/artifact.bin"),
+                    64,
+                    "Windows test nested staged ancestor",
+                )
+                .is_err()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("create Windows handoff ancestor reparse fixture: {error}"),
+        }
     }
 
     #[test]

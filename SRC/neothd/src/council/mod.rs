@@ -15,6 +15,7 @@
 
 pub mod budget;
 pub mod callosum;
+pub(crate) mod daily_budget;
 pub mod day_counter;
 pub mod dissent;
 pub mod diversity;

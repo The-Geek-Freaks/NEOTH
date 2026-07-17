@@ -18,9 +18,9 @@
 //! 7. Renders the [`super::ApiOkResponse`] / [`super::ApiErrorResponse`]
 //!    envelope as the HTTP body.
 //!
-//! Cancellation: the task respects a `tokio_util::sync::CancellationToken`
-//! handed in by `cli::serve::run_serve` so daemon shutdown drains the
-//! socket cleanly.
+//! Cancellation: the task respects the shared [`Notify`] handed in by
+//! `cli::serve::run_serve`; shutdown then aborts and awaits all owned
+//! connection tasks before the server returns.
 
 use std::convert::Infallible;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -161,8 +161,8 @@ fn build_http_response(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes
         })
 }
 
-/// Spawn the hyper server task. Returns a JoinHandle the caller can
-/// abort/await for graceful shutdown.
+/// Spawn the hyper server task. The caller signals `shutdown`, then awaits the
+/// returned handle so every connection releases its state before WAL drain.
 pub fn spawn_server(state: Arc<ApiState>, shutdown: Arc<Notify>) -> tokio::task::JoinHandle<()> {
     let port = state.config.n8n_api.port;
     tokio::spawn(async move {
@@ -179,40 +179,53 @@ pub fn spawn_server(state: Arc<ApiState>, shutdown: Arc<Notify>) -> tokio::task:
             }
         };
         tracing::info!(port = port, "n8n_api hyper task listening on 127.0.0.1");
-        loop {
-            let accept = tokio::select! {
-                biased;
-                _ = shutdown.notified() => {
-                    tracing::info!("n8n_api shutdown signal received; draining");
-                    break;
+        run_server(listener, state, shutdown).await;
+    })
+}
+
+async fn run_server(listener: TcpListener, state: Arc<ApiState>, shutdown: Arc<Notify>) {
+    let mut connections = tokio::task::JoinSet::new();
+    loop {
+        let accept = tokio::select! {
+            biased;
+            _ = shutdown.notified() => {
+                tracing::info!("n8n_api shutdown signal received; stopping connections");
+                break;
+            }
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "n8n_api connection task failed");
                 }
-                res = listener.accept() => res,
-            };
-            let (stream, peer) = match accept {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(error = %e, "n8n_api accept failed");
-                    continue;
-                }
-            };
-            if !peer.ip().is_loopback() {
-                tracing::warn!(peer = %peer, "n8n_api non-loopback peer rejected at accept");
                 continue;
             }
-            let state_for_conn = Arc::clone(&state);
-            tokio::spawn(async move {
-                let io = TokioIo::new(stream);
-                let svc = service_fn(move |req| {
-                    let state = Arc::clone(&state_for_conn);
-                    let peer_str = peer.ip().to_string();
-                    async move { Ok::<_, Infallible>(serve(req, state, peer_str).await) }
-                });
-                if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
-                    tracing::debug!(error = %e, "n8n_api connection error");
-                }
-            });
+            res = listener.accept() => res,
+        };
+        let (stream, peer) = match accept {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "n8n_api accept failed");
+                continue;
+            }
+        };
+        if !peer.ip().is_loopback() {
+            tracing::warn!(peer = %peer, "n8n_api non-loopback peer rejected at accept");
+            continue;
         }
-    })
+        let state_for_conn = Arc::clone(&state);
+        connections.spawn(async move {
+            let io = TokioIo::new(stream);
+            let svc = service_fn(move |req| {
+                let state = Arc::clone(&state_for_conn);
+                let peer_str = peer.ip().to_string();
+                async move { Ok::<_, Infallible>(serve(req, state, peer_str).await) }
+            });
+            if let Err(e) = http1::Builder::new().serve_connection(io, svc).await {
+                tracing::debug!(error = %e, "n8n_api connection error");
+            }
+        });
+    }
+
+    connections.shutdown().await;
 }
 
 /// Per-request top-level: auth, audit, dispatch.
@@ -511,6 +524,64 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn shutdown_aborts_idle_connection_before_wal_drain() {
+        use tokio::io::AsyncWriteExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, wal_join) =
+            crate::wal::writer::spawn(home.path().join("n8n-shutdown.wal")).unwrap();
+        let config = FreedomConfig::default();
+        let state = Arc::new(ApiState {
+            writer: writer.clone(),
+            config: Arc::new(config.clone()),
+            reload_controller: Arc::new(crate::config::reload::ReloadController::new(
+                config,
+                home.path().join("freedom.yaml"),
+            )),
+            home: home.path().to_path_buf(),
+            token: "test-token".to_string(),
+            cooldown: Arc::new(AuthCooldown::new()),
+            boot_instant: Instant::now(),
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shutdown = Arc::new(Notify::new());
+        let server = tokio::spawn(run_server(
+            listener,
+            Arc::clone(&state),
+            Arc::clone(&shutdown),
+        ));
+
+        let mut idle = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        idle.write_all(b"GET /api/health HTTP/1.1\r\nHost: localhost\r\n")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while Arc::strong_count(&state) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("n8n server never accepted the idle connection");
+
+        shutdown.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .expect("n8n server did not stop")
+            .expect("n8n server task panicked");
+        drop(state);
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join)
+            .await
+            .expect("idle n8n connection retained ApiState's WAL sender")
+            .expect("WAL writer task panicked");
+
+        drop(idle);
+    }
 
     #[test]
     fn handler_outcome_ok_serialises_to_envelope() {

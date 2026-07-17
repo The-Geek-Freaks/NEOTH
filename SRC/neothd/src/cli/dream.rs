@@ -93,18 +93,23 @@ async fn run_now(
         // GOLD-ADOPT-21 — theme labels are a low-stakes utility call; route them
         // to the fast/cheap `inference.utility_provider` when configured (else
         // this is identical to the main provider).
-        match crate::providers::from_config_for_utility(&config).await {
-            Ok(provider) => Some(
-                crate::providers::cost_authorization::AuthorizedProvider::from_box(
+        match crate::providers::from_config_for_utility_at(&config, &home).await {
+            Ok(provider) => {
+                let default_model =
+                    crate::providers::provider_default_wire_model(provider.as_ref());
+                Some(
+                    crate::providers::cost_authorization::AuthorizedProvider::from_box(
                     provider,
                     crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                         config.autonomy_policy(),
+                        config.tokens.max_per_request,
                     )
                     .context("open cost-authorization WAL for dream theme summaries")?,
-                    crate::providers::utility_model_for_config(&config),
+                    default_model,
                     "dream.now.theme_summary",
-                ),
-            ),
+                    ),
+                )
+            }
             Err(error) => {
                 tracing::warn!(
                     error = %error,

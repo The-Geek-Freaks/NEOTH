@@ -113,7 +113,7 @@ impl AnthropicAdapter {
         max_tokens: u32,
     ) -> Result<Self> {
         let endpoint = endpoint.trim_end_matches('/').to_string();
-        let http = crate::providers::http_client::build_client()?;
+        let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
             endpoint,
             api_key,

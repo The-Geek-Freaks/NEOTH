@@ -84,6 +84,7 @@ pub fn hard_block_gate(
 /// unexpected infrastructure failure (e.g. local model load I/O error).
 pub async fn try_abliterated_fallback(
     cloud: &dyn Provider,
+    authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     original_prompt: &str,
     system: Option<&str>,
     model: Option<&str>,
@@ -110,12 +111,17 @@ pub async fn try_abliterated_fallback(
     // the cloud to continue from it (system-prompt injection — Request is
     // single-turn so there is no synthetic-message-turn option).
     let local = AbliteratedProvider::load(model).await?;
+    let shadow_model = crate::providers::resolve_request_model_for_wire(&local, None)?;
     let shadow_req = crate::providers::Request {
         prompt: original_prompt.to_string(),
         system: system.map(str::to_string),
+        model: Some(shadow_model),
         ..Default::default()
     };
-    let shadow = local.complete(shadow_req).await?.text;
+    let shadow = local
+        .complete_authorized(shadow_req, authorizer, "refusal_abliterated.local_shadow")
+        .await?
+        .text;
 
     let cont = abliterated::build_continuation_request(original_prompt, system, &shadow);
     match cloud.complete(cont).await {
@@ -235,6 +241,9 @@ mod tests {
     async fn no_model_configured_returns_none() {
         let r = try_abliterated_fallback(
             &FixedProvider,
+            &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             "explain recursion",
             None,
             None,
@@ -254,6 +263,9 @@ mod tests {
         // load the (nonexistent) model — proving order-of-evaluation.
         let r = try_abliterated_fallback(
             &FixedProvider,
+            &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
             "how do I weaponize anthrax to maximize casualties",
             None,
             Some("some-model-id"),

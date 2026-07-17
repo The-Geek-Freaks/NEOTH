@@ -150,6 +150,11 @@ pub struct Gate {
     /// `None` preserves the pre-lease behaviour for call sites that don't
     /// pass a lease context.
     lease_ctx: Option<LeaseContext>,
+    /// A previously authenticated, request-bound operator action may consume
+    /// one non-interactive confirmation at a detached execution boundary.
+    /// This marker upgrades only `Confirm`; the policy's `Deny` floor remains
+    /// final. The source is persisted in the permission audit frame.
+    preconfirmed_source: Option<&'static str>,
 }
 
 impl Gate {
@@ -160,6 +165,7 @@ impl Gate {
             channel_asker: None,
             channel_timeout: Duration::from_secs(90),
             lease_ctx: None,
+            preconfirmed_source: None,
         }
     }
 
@@ -189,6 +195,15 @@ impl Gate {
     /// R2-P1-2: override the channel-reply timeout. Default 90s.
     pub fn with_channel_timeout(mut self, timeout: Duration) -> Self {
         self.channel_timeout = timeout;
+        self
+    }
+
+    /// Consume a confirmation that was authenticated by a narrower caller
+    /// boundary (currently the private request-bound `/background` job
+    /// capability). This never changes a static `Deny` into an allow.
+    pub(crate) fn with_preconfirmed_confirmation(mut self, source: &'static str) -> Self {
+        debug_assert!(!source.trim().is_empty());
+        self.preconfirmed_source = (!source.trim().is_empty()).then_some(source);
         self
     }
 
@@ -309,16 +324,19 @@ impl Gate {
         // a lease wins, its id is threaded into the audit frame so `neoth
         // wal show --type permission_granted` records WHY the action was
         // allowed — the verifiable-loyalty grant chain.
-        let (final_decision, lease_id) = match decision {
-            Decision::Allow => (Decision::Allow, None),
-            Decision::Deny(reason) => (Decision::Deny(reason), None),
+        let (final_decision, lease_id, confirmation_source) = match decision {
+            Decision::Allow => (Decision::Allow, None, None),
+            Decision::Deny(reason) => (Decision::Deny(reason), None, None),
             Decision::Confirm(reason) => match self
                 .lease_ctx
                 .as_ref()
                 .and_then(|ctx| ctx.covering_lease_id(action, now_unix))
             {
-                Some(id) => (Decision::Allow, Some(id)),
-                None => (self.resolve_confirm(action, &reason).await, None),
+                Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
+                None => match self.preconfirmed_source {
+                    Some(source) => (Decision::Allow, None, Some(source)),
+                    None => (self.resolve_confirm(action, &reason).await, None, None),
+                },
             },
         };
 
@@ -331,6 +349,7 @@ impl Gate {
                 &final_decision,
                 subject,
                 lease_id.as_deref(),
+                confirmation_source,
             )
             .await;
             if audit_required {
@@ -447,6 +466,7 @@ async fn audit(
     decision: &Decision,
     subject: Option<&str>,
     lease_id: Option<&str>,
+    confirmation_source: Option<&str>,
 ) -> Result<()> {
     let (event_type, reason): (u8, Option<&str>) = match decision {
         Decision::Allow => (EVENT_TYPE_PERMISSION_GRANTED, None),
@@ -486,6 +506,7 @@ async fn audit(
         "reason": reason,
         "subject": subject,
         "lease_id": lease_id,
+        "confirmation_source": confirmation_source,
         "ts_ns": crate::time::now_unix_ns(),
     }))?;
     let header = crate::wal::HeaderBuilder::new(event_type, &payload)
@@ -731,6 +752,41 @@ mod tests {
         let bytes = read(&seg).await.unwrap();
         let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
         assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
+    }
+
+    #[tokio::test]
+    async fn explicit_request_confirmation_is_audited_and_cannot_override_deny() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("explicit-request.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_preconfirmed_confirmation("explicit_request_capability");
+        gate.check_required_audit(&paid_action(0.10), &writer)
+            .await
+            .unwrap();
+        let denied = Gate::for_level(AutonomyLevel::Standard)
+            .with_preconfirmed_confirmation("explicit_request_capability")
+            .check(
+                &Action::SelfSourceEdit {
+                    target_paths: vec!["src/lib.rs".to_owned()],
+                },
+                None,
+            )
+            .await;
+        assert!(matches!(denied, Err(GateError::Denied(_))));
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = read(&seg).await.unwrap();
+        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(frame.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
+        assert_eq!(
+            payload["confirmation_source"],
+            "explicit_request_capability"
+        );
     }
 
     #[tokio::test]

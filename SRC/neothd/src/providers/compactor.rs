@@ -570,6 +570,10 @@ impl Provider for CompactingProvider {
         self.inner.default_model()
     }
 
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.inner.resolve_model_for_wire(requested_model)
+    }
+
     fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
         self.inner.output_token_ceiling(req)
     }
@@ -656,6 +660,9 @@ pub fn arc_from_config(
         }
         fn default_model(&self) -> Option<&str> {
             self.0.default_model()
+        }
+        fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+            self.0.resolve_model_for_wire(requested_model)
         }
         fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
             self.0.output_token_ceiling(req)
@@ -885,6 +892,7 @@ mod tests {
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
                 Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
             ),
             None,
             "compactor.main",

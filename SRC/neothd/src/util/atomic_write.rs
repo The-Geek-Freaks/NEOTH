@@ -39,6 +39,22 @@ pub fn atomic_write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 /// write, flush, sync, or verification failure closes and removes only the
 /// file created by this call.
 pub(crate) fn write_private_create_new(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_private_create_new_impl(path, bytes, false)
+}
+
+/// [`write_private_create_new`] with a durable directory-entry commit.
+///
+/// Use this for one-shot capabilities, claims, and replay tombstones whose
+/// disappearance after power loss would reopen an already-authorized action.
+pub(crate) fn write_private_create_new_durable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_private_create_new_impl(path, bytes, true)
+}
+
+fn write_private_create_new_impl(
+    path: &Path,
+    bytes: &[u8],
+    sync_parent: bool,
+) -> std::io::Result<()> {
     #[cfg(windows)]
     let file = crate::wal::win_native::create_private_file_new(path)?;
     #[cfg(not(windows))]
@@ -59,9 +75,45 @@ pub(crate) fn write_private_create_new(path: &Path, bytes: &[u8]) -> std::io::Re
     created.file_mut().write_all(bytes)?;
     created.file_mut().flush()?;
     created.file_mut().sync_all()?;
-    created.disarm();
     created.close();
+    if sync_parent {
+        sync_create_new_parent(path)?;
+    }
+    created.disarm();
     Ok(())
+}
+
+/// Durably commit a successful `create_new` directory entry.
+///
+/// File data and metadata are synced by [`write_private_create_new`] before
+/// this runs. POSIX additionally requires the containing directory to be
+/// synced or a power loss may forget the new name, which would reopen a
+/// one-shot control file or replay-tombstone window. Windows journals the
+/// `CREATE_NEW` namespace operation; directory handles cannot be flushed via
+/// `std::fs::File` there.
+fn sync_create_new_parent(path: &Path) -> std::io::Result<()> {
+    #[cfg(test)]
+    CREATE_NEW_PARENT_SYNC_ATTEMPTS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+
+    #[cfg(unix)]
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
+    #[cfg(not(unix))]
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(test)]
+static CREATE_NEW_PARENT_SYNC_ATTEMPTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn create_new_parent_sync_attempts_for_test() -> usize {
+    CREATE_NEW_PARENT_SYNC_ATTEMPTS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// Remove `path` and durably commit the directory-entry change. Absence is

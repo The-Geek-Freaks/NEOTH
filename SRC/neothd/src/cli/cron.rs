@@ -1053,6 +1053,7 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
     let provider = crate::providers::fallback_chain_from_config(&config, &home, None)
         .await
         .context("construct the provider chain for the job")?;
+    let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
 
     // One-shot WAL writer (daemon confirmed not live above, so we hold the
     // segment exclusively). Same segment the daemon scheduler uses.
@@ -1067,13 +1068,18 @@ async fn run_one(id: &str, file: Option<PathBuf>, output: OutputFormat) -> Resul
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
+            config.tokens.max_per_request,
         )
         .with_usage_home(home.clone())
         .with_usage_automated(true),
-        config.provider_model.clone(),
+        default_model,
         "cron.manual_run",
     );
     let result = crate::cron::runner::run_job_at(&home, &job, &provider, &writer).await;
+    // `AuthorizedProvider` owns an authorizer which in turn owns a WAL handle.
+    // Release it before joining the one-shot writer or the channel can never
+    // close after a successful manual run.
+    drop(provider);
     drop(writer);
     let _ = join.await;
     let outcome = result.context("run job")?;

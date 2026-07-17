@@ -129,8 +129,18 @@ pub async fn bind_and_serve(state: AuditRpcState) -> Result<(SocketAddr, JoinHan
 
 async fn run_accept_loop(listener: TcpListener, state: AuditRpcState) -> Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNS));
+    let mut connections = tokio::task::JoinSet::new();
     loop {
-        match listener.accept().await {
+        let accepted = tokio::select! {
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    tracing::warn!(%error, "audit-RPC connection task failed");
+                }
+                continue;
+            }
+            accepted = listener.accept() => accepted,
+        };
+        match accepted {
             Ok((stream, peer)) => {
                 // Drop the connection immediately if we're at the concurrency
                 // cap — never queue (queuing is what a slowloris flood wants).
@@ -139,7 +149,7 @@ async fn run_accept_loop(listener: TcpListener, state: AuditRpcState) -> Result<
                     continue;
                 };
                 let state = state.clone();
-                tokio::spawn(async move {
+                connections.spawn(async move {
                     let _permit = permit; // released when this task ends
                     let _ = tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),

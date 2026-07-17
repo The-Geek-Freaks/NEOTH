@@ -161,6 +161,18 @@ pub fn embed_ground_truth_tag(prompt: &str, assertions: &[FactualAssertion]) -> 
     )
 }
 
+/// Remove the canonical ground-truth suffix produced by
+/// [`embed_ground_truth_tag`]. Only a complete, final tag block is removed;
+/// user text that merely mentions either marker is left untouched. Council
+/// leaf budgeting uses this as the last optional-context degradation step
+/// when a smaller routed model cannot fit the injected facts.
+pub fn strip_ground_truth_suffix(prompt: &str) -> Option<&str> {
+    let suffix_start = prompt.rfind("\n\n[GROUND_TRUTH]\n")?;
+    prompt
+        .ends_with(GROUND_TRUTH_TAG_CLOSE)
+        .then_some(&prompt[..suffix_start])
+}
+
 /// Extract the body bytes between the opening + closing tags, if
 /// present. Used by the council orchestrator to verify hemispheres
 /// received the tag block (a response that strips it suggests

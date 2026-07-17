@@ -2796,12 +2796,15 @@ async fn run_pipeline_cli_batch(
     // operator history — Left hemisphere (analytic/deductive). In Single
     // mode this is identical to `from_config`; in Triplet/Custom modes
     // the operator's per-role Left provider wins.
-    let provider = crate::providers::from_config_for_role(
+    let neoth_home = FreedomConfig::default_neoth_home();
+    let provider = crate::providers::from_config_for_role_at(
         &config,
         crate::config::inference::HemisphereRole::Left,
+        &neoth_home,
     )
     .await
     .context("build provider for profile.extract")?;
+    let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
 
     let wal_dir = FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
@@ -2813,13 +2816,9 @@ async fn run_pipeline_cli_batch(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
+            config.tokens.max_per_request,
         ),
-        config
-            .inference
-            .slot_for(crate::config::inference::HemisphereRole::Left)
-            .model
-            .clone()
-            .or_else(|| config.provider_model.clone()),
+        default_model,
         "profile.cli_batch",
     );
 

@@ -387,10 +387,16 @@ fn build_provider_request(
 fn cloud_egress_gate(
     autonomy: crate::permissions::AutonomyLevel,
     provider_kind: Option<crate::cli::init::ProviderKind>,
+    provider_endpoint: Option<&str>,
     home: &std::path::Path,
 ) -> Option<HandlerOutcome> {
-    // Only cloud providers are gated; a local/none provider proceeds.
-    let kind = provider_kind.filter(|k| crate::consent::is_cloud(*k))?;
+    let kind = provider_kind?;
+    let route = crate::consent::ConsentRoute::new(kind, provider_endpoint);
+    // In-process/loopback providers proceed. Remote Ollama is egress despite
+    // the historical LocalOllama enum name and therefore stays in this gate.
+    if !crate::consent::route_requires_consent(kind, provider_endpoint) {
+        return None;
+    }
     if matches!(autonomy, crate::permissions::AutonomyLevel::Strict) {
         return Some(HandlerOutcome::error(
             ApiErrorCode::PermissionDenied,
@@ -399,7 +405,7 @@ fn cloud_egress_gate(
             "use /api/channel/send for the gated path OR lower autonomy",
         ));
     }
-    if !crate::consent::is_granted(home, kind) {
+    if !crate::consent::is_route_granted(home, &route) {
         return Some(HandlerOutcome::error(
             ApiErrorCode::PermissionDenied,
             format!(
@@ -452,7 +458,12 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // Strict case was gated, so an n8n workflow could drive un-consented cloud
     // LLM calls at the daemon-default Standard autonomy. `consent::is_cloud`
     // (inside the gate) is the compile-enforced EXHAUSTIVE classifier (GR-003).
-    if let Some(refusal) = cloud_egress_gate(live_config.autonomy, provider_kind, &state.home) {
+    if let Some(refusal) = cloud_egress_gate(
+        live_config.autonomy,
+        provider_kind,
+        live_config.provider_endpoint.as_deref(),
+        &state.home,
+    ) {
         tracing::warn!(
             provider_kind = ?provider_kind,
             request_id = %ctx.request_id,
@@ -460,7 +471,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         );
         return refusal;
     }
-    let provider = match crate::providers::from_config(live_config.as_ref()).await {
+    let provider = match crate::providers::from_config_at(live_config.as_ref(), &state.home).await {
         Ok(p) => p,
         Err(e) => {
             return HandlerOutcome::error(
@@ -476,17 +487,30 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // request AND the WAL frame so the logged model always equals the wire
     // model — even when the workflow omits `model` and the provider's
     // configured default takes over.
-    let effective_model: Option<String> = req
-        .model
-        .clone()
-        .or_else(|| live_config.provider_model.clone())
-        .or_else(|| provider.default_model().map(str::to_owned));
     let model_source = if req.model.is_some() {
         "request"
     } else if live_config.provider_model.is_some() {
         "freedom"
     } else {
         "provider_default"
+    };
+    let requested_model = req
+        .model
+        .as_deref()
+        .or(live_config.provider_model.as_deref());
+    let effective_model = match crate::providers::resolve_configured_request_model_for_wire(
+        live_config.as_ref(),
+        provider.as_ref(),
+        requested_model,
+    ) {
+        Ok(model) => Some(model),
+        Err(error) => {
+            return HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("provider model resolution failed: {error:#}"),
+                "set a valid request model or provider_model in freedom.yaml",
+            );
+        }
     };
     // Compose every provider-bound system layer BEFORE constructing the
     // AuthorizedProvider. Its request binding therefore covers the final
@@ -858,6 +882,7 @@ mod tests {
         let out = cloud_egress_gate(
             AutonomyLevel::Standard,
             Some(ProviderKind::OpenaiApi),
+            None,
             home.path(),
         );
         let out = out.expect("must refuse cloud without consent at Standard");
@@ -873,6 +898,7 @@ mod tests {
         let out = cloud_egress_gate(
             AutonomyLevel::Standard,
             Some(ProviderKind::OpenaiApi),
+            None,
             home.path(),
         );
         assert!(
@@ -890,6 +916,7 @@ mod tests {
         let out = cloud_egress_gate(
             AutonomyLevel::Strict,
             Some(ProviderKind::OpenaiApi),
+            None,
             home.path(),
         );
         let out = out.expect("Strict must refuse cloud even with consent");
@@ -905,14 +932,51 @@ mod tests {
             cloud_egress_gate(
                 AutonomyLevel::Standard,
                 Some(ProviderKind::LocalQwen),
+                None,
                 home.path()
             )
             .is_none(),
             "a local provider is not cloud egress"
         );
         assert!(
-            cloud_egress_gate(AutonomyLevel::Full, None, home.path()).is_none(),
+            cloud_egress_gate(AutonomyLevel::Full, None, None, home.path()).is_none(),
             "no provider configured → no cloud gate"
+        );
+    }
+
+    #[test]
+    fn cloud_egress_gate_treats_remote_ollama_as_consent_managed() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let remote = "http://192.168.1.25:11434";
+        assert!(
+            cloud_egress_gate(
+                AutonomyLevel::Standard,
+                Some(ProviderKind::LocalOllama),
+                Some(remote),
+                home.path(),
+            )
+            .is_some(),
+            "remote Ollama must not inherit the loopback consent bypass"
+        );
+        crate::consent::grant(home.path(), ProviderKind::LocalOllama).unwrap();
+        assert!(
+            cloud_egress_gate(
+                AutonomyLevel::Standard,
+                Some(ProviderKind::LocalOllama),
+                Some(remote),
+                home.path(),
+            )
+            .is_none()
+        );
+        assert!(
+            cloud_egress_gate(
+                AutonomyLevel::Standard,
+                Some(ProviderKind::LocalOllama),
+                Some("http://[::1]:11434"),
+                tempfile::tempdir().unwrap().path(),
+            )
+            .is_none(),
+            "loopback Ollama remains zero-friction"
         );
     }
 }

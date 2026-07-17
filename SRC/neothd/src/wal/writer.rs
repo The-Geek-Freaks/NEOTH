@@ -106,6 +106,67 @@ pub struct WriteRequest {
     pub header: EventHeaderV2,
     pub payload: Vec<u8>,
     pub ack: oneshot::Sender<Result<u64, WalError>>,
+    #[cfg(test)]
+    test_ack_gate: Option<TestAckGate>,
+}
+
+/// Deterministic one-shot pause after a matching frame is durable but before
+/// its producer receives the acknowledgement. Provider-lifecycle tests use
+/// this to exercise cancellation in the otherwise tiny fsync/ack window.
+#[cfg(test)]
+#[derive(Clone, Debug)]
+pub(crate) struct TestAckGate {
+    inner: std::sync::Arc<TestAckGateInner>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+struct TestAckGateInner {
+    event_type: u8,
+    armed: std::sync::atomic::AtomicBool,
+    durable: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+impl TestAckGate {
+    pub(crate) fn once(event_type: u8) -> Self {
+        Self {
+            inner: std::sync::Arc::new(TestAckGateInner {
+                event_type,
+                armed: std::sync::atomic::AtomicBool::new(true),
+                durable: tokio::sync::Notify::new(),
+                release: tokio::sync::Notify::new(),
+            }),
+        }
+    }
+
+    pub(crate) async fn wait_until_durable(&self) {
+        self.inner.durable.notified().await;
+    }
+
+    pub(crate) fn release(&self) {
+        self.inner.release.notify_one();
+    }
+
+    async fn pause_before_ack(&self, event_type: u8) {
+        if event_type != self.inner.event_type
+            || self
+                .inner
+                .armed
+                .compare_exchange(
+                    true,
+                    false,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
+                )
+                .is_err()
+        {
+            return;
+        }
+        self.inner.durable.notify_one();
+        self.inner.release.notified().await;
+    }
 }
 
 /// Handle returned to producers. Cheap to clone; producers send WriteRequest
@@ -122,6 +183,8 @@ pub struct WalWriterHandle {
     /// of disk-usage checks (tests + cli one-shots); the daemon sets it
     /// via `with_quota_guard` after `spawn`.
     quota: Option<std::sync::Arc<QuotaGuard>>,
+    #[cfg(test)]
+    test_ack_gate: Option<TestAckGate>,
 }
 
 /// Pre-write disk-quota guard. Tracks bytes admitted since the last disk walk
@@ -382,6 +445,12 @@ impl WalWriterHandle {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_test_ack_gate(mut self, gate: TestAckGate) -> Self {
+        self.test_ack_gate = Some(gate);
+        self
+    }
+
     /// Liveness probe: `true` while the background writer task is still
     /// draining the channel. A crashed/aborted writer task drops the
     /// receiver, flipping `tx.is_closed()` to true — so this is a cheap,
@@ -411,6 +480,8 @@ impl WalWriterHandle {
                 header,
                 payload,
                 ack: ack_tx,
+                #[cfg(test)]
+                test_ack_gate: self.test_ack_gate.clone(),
             })
             .await
             .is_err()
@@ -496,6 +567,8 @@ impl WalWriterHandle {
             header,
             payload,
             ack: ack_tx,
+            #[cfg(test)]
+            test_ack_gate: self.test_ack_gate.clone(),
         }) {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -537,6 +610,8 @@ impl WalWriterHandle {
                 header,
                 payload,
                 ack: ack_tx,
+                #[cfg(test)]
+                test_ack_gate: self.test_ack_gate.clone(),
             })
             .await
             .is_err()
@@ -630,7 +705,15 @@ fn spawn_with_policy_and_compression_at_home(
             error!(error = %e, "WAL writer task exited with error");
         }
     });
-    Ok((WalWriterHandle { tx, quota: None }, join))
+    Ok((
+        WalWriterHandle {
+            tx,
+            quota: None,
+            #[cfg(test)]
+            test_ack_gate: None,
+        },
+        join,
+    ))
 }
 
 /// Result of `open_segment`: the file handle plus a flag that tells the
@@ -1219,6 +1302,10 @@ async fn run_writer(
                     }
                 }
 
+                #[cfg(test)]
+                if let Some(gate) = req.test_ack_gate.as_ref() {
+                    gate.pause_before_ack(req.header.event_type).await;
+                }
                 if req.ack.send(Ok(written_at)).is_err() {
                     tracing::debug!(
                         offset = written_at,
@@ -1517,7 +1604,11 @@ mod tests {
     async fn append_no_ack_after_writer_closed_returns_writer_closed_error() {
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        let handle = WalWriterHandle { tx, quota: None };
+        let handle = WalWriterHandle {
+            tx,
+            quota: None,
+            test_ack_gate: None,
+        };
 
         let payload = b"x".to_vec();
         let h = header_for(payload.len() as u32, 1);
@@ -1541,7 +1632,11 @@ mod tests {
         // required-audit pre-flight refuses rather than sending un-audited.
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
-        let dead = WalWriterHandle { tx, quota: None };
+        let dead = WalWriterHandle {
+            tx,
+            quota: None,
+            test_ack_gate: None,
+        };
         assert!(
             !dead.is_alive(),
             "a crashed-but-Some writer must report not-alive"
@@ -2795,6 +2890,7 @@ mod tests {
         let handle = WalWriterHandle {
             tx,
             quota: Some(Arc::clone(&guard)),
+            test_ack_gate: None,
         };
 
         // try_admit succeeds (0 + 0 + 600 KiB ≤ 1 MiB ceiling), then

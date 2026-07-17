@@ -12,5 +12,6 @@ pub mod compactor;
 pub mod compress;
 
 pub use compaction::{
-    CompactionPolicy, SUMMARY_MARKER, build_compaction_prompt, needs_compaction, wrap_summary,
+    CompactionPolicy, SUMMARY_MARKER, build_bounded_compaction_prompts, build_compaction_prompt,
+    needs_compaction, wrap_summary,
 };

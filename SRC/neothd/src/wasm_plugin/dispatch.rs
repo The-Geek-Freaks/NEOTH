@@ -357,9 +357,10 @@ pub fn invoke_plugin_with_state(
 ///
 /// The approved plugin set is a bootstrap snapshot. Re-discovery (for example,
 /// after an operator installs or re-enables a plugin) requires a daemon
-/// restart because the process-global hook invoker is registered once. Live
-/// reload can only remove authority: every call re-checks revocation and the
-/// exact approval record captured here.
+/// restart because the hook invoker is fixed for that daemon lifetime. Its
+/// registration is released at shutdown so a later in-process daemon can bind
+/// a fresh home. Live reload can only remove authority: every call re-checks
+/// revocation and the exact approval record captured here.
 pub struct CompiledPluginInvoker {
     engine: Arc<NeothEngine>,
     linker: Arc<wasmtime::Linker<PluginStoreState>>,
@@ -1698,8 +1699,8 @@ mod tests {
     fn compiled_invoker_refuses_revoked_plugin_after_config_swap() {
         // Reload gap regression test: a plugin added to
         // `plugins.wasm.revoked_ids` via `neoth reload` must be refused
-        // by the very next invoke — WITHOUT rebuilding the invoker (the
-        // GLOBAL_INVOKER OnceLock is never rebuilt in production).
+        // by the very next invoke — WITHOUT rebuilding the invoker during the
+        // current daemon lifetime.
         use crate::config::reload::{ReloadController, ReloadResult};
         use crate::hooks::dispatcher::PluginInvoker;
 

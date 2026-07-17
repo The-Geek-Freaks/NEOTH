@@ -17,7 +17,9 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::mcp::{GateError, McpClient, McpServers, invoke_with_audit, list_tools_sanitized};
+use crate::mcp::{
+    GateError, McpClient, McpError, McpServers, ToolCallResult, list_tools_sanitized,
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct McpArgs {
@@ -282,22 +284,17 @@ async fn run_call(
         .map_err(|e| anyhow::anyhow!("--args is not valid JSON: {e}"))?;
     let config = FreedomConfig::load_from_default_path_or_default()?;
     let autonomy_policy = config.autonomy_policy();
-    let mut client = McpClient::spawn(cfg).await?;
     let now_unix = crate::time::now_unix_i64();
     // `neoth mcp call` is an explicit operator one-shot — no SmartApprove
-    // (the operator is invoking the tool deliberately), so pass `None`.
-    let result = match invoke_with_audit(
-        &mut client,
+    // (the operator is invoking the tool deliberately). Static policy and
+    // confirmation resolution happen before the spawn closure is touched.
+    let result = match invoke_cli_call_with_spawner(
         cfg,
         tool,
         args,
-        &autonomy_policy,
-        None,
-        None,
-        None,
+        autonomy_policy.clone(),
         now_unix,
-        // GOLD-ADAPT-AWE-CODE-01 — CLI one-shot: no inbound identity.
-        None,
+        |config| async move { McpClient::spawn(&config).await },
     )
     .await
     {
@@ -344,7 +341,7 @@ async fn run_call(
             );
         }
         // SC-11 — `neoth mcp call` invokes a tool directly (no skill
-        // context), so `invoke_with_audit` never produces this; the
+        // context), so the CLI authorization path never produces this; the
         // arm exists only to keep the match exhaustive after the
         // variant was added for the skill-scoped dispatch path.
         Err(GateError::SkillAllowlistBlocked { .. }) => {
@@ -377,11 +374,96 @@ async fn run_call(
     Ok(())
 }
 
+/// CLI one-shot MCP dispatch with the process-start boundary injected for a
+/// regression-testable ordering contract. All static and Confirm policy paths
+/// resolve before `spawn` is invoked; the opaque authorization proof is then
+/// consumed by the exact configured call.
+async fn invoke_cli_call_with_spawner<F, Fut>(
+    cfg: &crate::mcp::McpServerConfig,
+    tool: &str,
+    arguments: serde_json::Value,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    now_unix: i64,
+    spawn: F,
+) -> Result<ToolCallResult, GateError>
+where
+    F: FnOnce(crate::mcp::McpServerConfig) -> Fut,
+    Fut: std::future::Future<Output = Result<McpClient, McpError>>,
+{
+    let preflight =
+        crate::mcp::gate::preflight_with_audit(cfg, tool, &policy, None, now_unix).await?;
+    let instance_home = crate::config::FreedomConfig::default_neoth_home();
+    let authorized = crate::mcp::gate::authorize_preflight_with_audit(
+        preflight,
+        cfg,
+        tool,
+        None,
+        None,
+        now_unix,
+        // GOLD-ADAPT-AWE-CODE-01 — CLI one-shot has no inbound identity.
+        None,
+        &instance_home,
+    )
+    .await?;
+    let mut client = spawn(cfg.clone()).await?;
+    crate::mcp::gate::invoke_authorized_with_audit(
+        &mut client,
+        cfg,
+        tool,
+        arguments,
+        authorized,
+        None,
+        None,
+        now_unix,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::mcp::McpServerConfig;
     use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn callable_server() -> McpServerConfig {
+        McpServerConfig {
+            id: "test".into(),
+            description: None,
+            command: "must-not-spawn".into(),
+            args: vec![],
+            env: HashMap::new(),
+            enabled: true,
+            allow_tools: Some(vec!["read".into()]),
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: None,
+        }
+    }
+
+    async fn rejected_cli_call_spawn_attempts(
+        config: &McpServerConfig,
+        tool: &str,
+        policy: crate::permissions::AutonomyPolicySnapshot,
+    ) -> (GateError, usize) {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let spawn_attempts = Arc::clone(&attempts);
+        let error = invoke_cli_call_with_spawner(
+            config,
+            tool,
+            serde_json::json!({}),
+            policy,
+            1_700_000_000,
+            move |_| {
+                spawn_attempts.fetch_add(1, Ordering::SeqCst);
+                async { panic!("rejected CLI MCP call reached process spawn") }
+            },
+        )
+        .await
+        .expect_err("policy rejection must fail before spawn");
+        (error, attempts.load(Ordering::SeqCst))
+    }
 
     #[test]
     fn built_in_codegraph_registration_is_hardened_and_complete() {
@@ -495,5 +577,48 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not valid JSON"));
+    }
+
+    #[tokio::test]
+    async fn cli_call_allowlist_rejection_never_starts_server() {
+        let config = callable_server();
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Full,
+        )
+        .unwrap();
+        let (error, attempts) = rejected_cli_call_spawn_attempts(&config, "write", policy).await;
+        assert!(matches!(error, GateError::NotInAllowlist { .. }));
+        assert_eq!(attempts, 0);
+    }
+
+    #[tokio::test]
+    async fn cli_call_autonomy_rejection_never_starts_server() {
+        let mut config = callable_server();
+        config.autonomy_gate = Some(crate::permissions::AutonomyLevel::Elevated);
+        let policy = crate::permissions::AutonomyPolicySnapshot::builtin(
+            crate::permissions::AutonomyLevel::Standard,
+        )
+        .unwrap();
+        let (error, attempts) = rejected_cli_call_spawn_attempts(&config, "read", policy).await;
+        assert!(matches!(error, GateError::AutonomyGate { .. }));
+        assert_eq!(attempts, 0);
+    }
+
+    #[tokio::test]
+    async fn cli_call_custom_deny_never_starts_server() {
+        let config = callable_server();
+        let custom = crate::permissions::CustomAutonomyConfig {
+            overrides: std::collections::BTreeMap::from([(
+                crate::permissions::ActionKind::McpToolInvocation,
+                crate::permissions::CustomDecision::Deny,
+            )]),
+        };
+        let policy = crate::permissions::AutonomyPolicySnapshot::new(
+            crate::permissions::AutonomyLevel::Custom,
+            &custom,
+        );
+        let (error, attempts) = rejected_cli_call_spawn_attempts(&config, "read", policy).await;
+        assert!(matches!(error, GateError::PermissionDenied { .. }));
+        assert_eq!(attempts, 0);
     }
 }

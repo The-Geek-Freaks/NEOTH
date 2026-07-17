@@ -241,13 +241,16 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
             )
         })?;
         let config = FreedomConfig::load_from_default_path()?;
-        let provider = crate::providers::from_config(&config).await?;
+        let provider =
+            crate::providers::from_config_at(&config, &FreedomConfig::default_neoth_home()).await?;
+        let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
             provider,
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                 config.autonomy_policy(),
+                config.tokens.max_per_request,
             )?,
-            config.provider_model.clone(),
+            default_model,
             "skills.test_harness",
         );
         let outcomes = crate::skills::test_harness::run_all_scenarios_for(&provider, skill).await?;

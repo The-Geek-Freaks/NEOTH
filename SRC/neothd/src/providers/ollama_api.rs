@@ -100,6 +100,13 @@ impl Provider for OllamaAdapter {
         Some(&self.model)
     }
 
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        Some(crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::LocalOllama,
+            Some(&self.base_url),
+        ))
+    }
+
     fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
         Some(OUTPUT_TOKEN_CEILING)
     }

@@ -28,12 +28,9 @@
 //!   facts that the model "helpfully" hallucinated into the refined
 //!   version.
 //!
-//! ## When to defer to v0.3.1
-//!
-//! BudgetToken integration (cost-cap propagation through recursion)
-//! lives in a parallel sub-pick. For SP-5 minimum-viable, the
-//! function takes a `&dyn HemisphereProvider` directly and trusts
-//! the caller to budget-check before invoking.
+//! Council production callers use [`refine_with_budget`] so every post-debate
+//! refinement shares the same per-message call cap as the hemisphere fan-out.
+//! [`refine`] remains the context-free primitive for isolated consumers/tests.
 
 use crate::council::orchestrator::{CompletionRecord, HemisphereProvider};
 
@@ -117,6 +114,27 @@ pub async fn refine(
     classify_refine_output(original_text, llm_result)
 }
 
+/// Whole-message budget-aware refinement. The charge happens before the leaf
+/// call and the same token is forwarded into recursion-aware providers, so
+/// post-debate quality passes cannot escape `max_calls_per_user_message`.
+pub async fn refine_with_budget(
+    original_prompt: &str,
+    original_text: &str,
+    provider: &dyn HemisphereProvider,
+    budget: &crate::council::BudgetToken,
+) -> RefinedResponse {
+    let reflect_prompt = build_reflect_prompt(original_prompt, original_text);
+    let llm_result = match budget.charge() {
+        Ok(_) => {
+            provider
+                .ask_with_depth_budget(&reflect_prompt, 1, budget.clone())
+                .await
+        }
+        Err(error) => Err(error.to_string()),
+    };
+    classify_refine_output(original_text, llm_result)
+}
+
 fn build_reflect_prompt(original_prompt: &str, original_text: &str) -> String {
     // System instructions land inline because the HemisphereProvider
     // trait's `ask(prompt: &str)` doesn't expose a system-prompt
@@ -196,6 +214,27 @@ mod tests {
     use super::*;
     use crate::config::FreedomConfig;
     use crate::config::inference::CouncilConfig;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl HemisphereProvider for CountingProvider {
+        fn provider_id(&self) -> String {
+            "counting".to_string()
+        }
+
+        async fn ask(&self, _prompt: &str) -> Result<CompletionRecord, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CompletionRecord {
+                text: "Better answer".to_string(),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+            })
+        }
+    }
 
     fn cfg_with(enabled: bool, threshold: f32) -> FreedomConfig {
         let mut cfg = FreedomConfig::default();
@@ -323,6 +362,35 @@ mod tests {
         let r = classify_refine_output(&original, Ok(record));
         assert!(r.did_refine);
         assert_eq!(r.refined, acceptable);
+    }
+
+    #[tokio::test]
+    async fn refine_with_budget_never_calls_provider_after_cap() {
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let budget = crate::council::BudgetToken::new(0);
+
+        let result = refine_with_budget("question", "Original answer", &provider, &budget).await;
+
+        assert_eq!(result.refined, "Original answer");
+        assert!(!result.did_refine);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+        assert!(budget.was_denied());
+    }
+
+    #[tokio::test]
+    async fn refine_with_budget_uses_exactly_one_remaining_slot() {
+        let provider = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let budget = crate::council::BudgetToken::new(1);
+
+        let _ = refine_with_budget("question", "Original answer", &provider, &budget).await;
+
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(budget.used(), 1);
+        assert!(!budget.was_denied());
     }
 
     #[test]

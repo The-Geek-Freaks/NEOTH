@@ -280,10 +280,21 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
             return;
         }
     };
-    let provider = match crate::providers::from_config_for_utility(&config).await {
+    if let Some(route) = crate::consent::route_for_utility(&config)
+        && let Err(error) = crate::consent::ensure_route_granted_or_prompt(home, &route)
+    {
+        eprintln!("diagnose: provider consent refused ({error}); skipping LLM pass.");
+        return;
+    }
+    let provider = match crate::providers::from_config_for_utility_at(&config, home).await {
         Ok(p) => {
+            let default_model = crate::providers::provider_default_wire_model(p.as_ref());
             let wal_dir = home.join("wal");
-            let authorizer = match crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at(config.autonomy_policy(), &wal_dir) {
+            let authorizer = match crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot_at(
+                config.autonomy_policy(),
+                &wal_dir,
+                config.tokens.max_per_request,
+            ) {
                 Ok(authorizer) => authorizer,
                 Err(error) => {
                     eprintln!("diagnose: cannot open provider-call audit WAL ({error}); skipping LLM pass.");
@@ -293,7 +304,7 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
             crate::providers::cost_authorization::AuthorizedProvider::from_box(
                 p,
                 authorizer,
-                crate::providers::utility_model_for_config(&config),
+                default_model,
                 "doctor.diagnose",
             )
         }

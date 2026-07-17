@@ -6,11 +6,11 @@
 //! tool-result blocks, and any subdir hints. On a long chain that string can
 //! approach the model's context window. When it crosses the operator's
 //! threshold this module replaces the bulk of it with a single dense
-//! `[CONTEXT SUMMARY]` produced by one extra LLM call. GR-120: the history
-//! BEFORE the last exchange is collapsed; the last exchange is split off and
-//! re-attached VERBATIM after the summary, so preserving the latest exchange is
-//! a STRUCTURAL guarantee — not merely an instruction the summarizing model
-//! might ignore under degradation.
+//! `[CONTEXT SUMMARY]` produced by one or more bounded LLM calls. GR-120: the
+//! history BEFORE the last exchange is collapsed; the last exchange is split
+//! off and re-attached VERBATIM after the summary, so preserving the latest
+//! exchange is a STRUCTURAL guarantee — not merely an instruction the
+//! summarizing model might ignore under degradation.
 //!
 //! Design notes:
 //! - The summarization call reuses the loop's own `CompletionDriver` (no second
@@ -18,19 +18,26 @@
 //!   live IN the prompt (the driver prepends its own system prompt; the inline
 //!   instruction dominates), so a bad chat system prompt can't silently turn the
 //!   summary into narrative fluff.
-//! - The token estimate reuses [`crate::tokens::budget::count_tokens`]
-//!   (chars/4) — the same heuristic the pre-flight budget gate uses, so the
-//!   threshold is consistent with what the operator already tunes via
-//!   `freedom.yaml::tokens.max_per_request`.
-//! - There is NO per-model context-window value anywhere in the catalog, so the
-//!   threshold is derived from `tokens.max_per_request` (NEOTH's pre-flight cap)
-//!   × a fraction. An operator on a 1M-context model who left the 100k cap will
-//!   compact early; the fix is to raise `tokens.max_per_request` to match their
-//!   real window. This is documented on [`CompactionPolicy`].
+//! - Triggering and summary-input bounds reuse
+//!   [`crate::tokens::budget::count_tokens_upper_bound`] (UTF-8 bytes), the same
+//!   tokenizer-independent enforcement unit as the final provider request cap.
+//!   Oversized history is split at UTF-8 boundaries so every byte is presented
+//!   to a summarizer without any summary request crossing the configured
+//!   threshold.
+//! - The threshold is derived from the request cap supplied by the caller × a
+//!   fraction. Passing the same model-aware effective cap used by the final
+//!   provider boundary keeps compaction ahead of that boundary. This is
+//!   documented on [`CompactionPolicy`].
 
 /// Marker prefixing a compacted prompt so the model (and a human reading the
 /// WAL/transcript) can tell the older history was summarized, not lost.
 pub const SUMMARY_MARKER: &str = "[CONTEXT SUMMARY]";
+
+/// A compaction pass may never fan a single operator turn out into an
+/// unbounded sequence of paid leaves.  The normal 80%-threshold path fits in
+/// one request; oversized tool output is rejected until a separately audited
+/// aggregate-cost authorization contract exists.
+pub const MAX_COMPACTION_CALLS_PER_TURN: usize = 1;
 
 /// In-prompt instruction for the summarization pass. Deliberately demands the
 /// model keep the load-bearing facts a coding/agent loop needs to keep
@@ -47,15 +54,22 @@ objective; and every pending/in-flight task. Drop only resolved chit-chat and \
 superseded intermediate reasoning. Do NOT add new facts, do NOT solve the task \
 further, do NOT editorialize. Output ONLY the summary.";
 
+const COMPACTION_TRANSCRIPT_START: &str = "\n\n--- TRANSCRIPT START ---\n";
+const COMPACTION_TRANSCRIPT_END: &str = "\n--- TRANSCRIPT END ---\n\nDENSE SUMMARY:";
+
 /// Policy controlling whether + when the loop compacts. Built by the caller
 /// from `freedom.yaml::compaction` (+ `tokens.max_per_request`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompactionPolicy {
     /// Master switch. `false` → the loop never compacts (zero extra LLM calls).
     pub enabled: bool,
-    /// Compact when the accumulated prompt's estimated token count reaches this.
+    /// Compact when the accumulated prompt's conservative input bound reaches this.
     /// Derived as `tokens.max_per_request × compaction.threshold_fraction`.
     pub threshold_tokens: u32,
+    /// Hard prompt-only capacity after subtracting the base request's system,
+    /// model, controls, and transport-envelope bound from the effective leaf
+    /// cap. Summary requests and compacted output must fit this value.
+    pub prompt_capacity_tokens: u32,
     /// When `true`, also run a compaction pass after EVERY tool-pair once a
     /// lower (progressive) threshold is crossed — not only at the main
     /// threshold. Opt-in (more LLM calls); default off.
@@ -69,6 +83,7 @@ impl CompactionPolicy {
         Self {
             enabled: false,
             threshold_tokens: u32::MAX,
+            prompt_capacity_tokens: u32::MAX,
             progressive: false,
         }
     }
@@ -99,8 +114,28 @@ impl CompactionPolicy {
         Self {
             enabled: true,
             threshold_tokens: threshold_tokens.max(1),
+            prompt_capacity_tokens: max_per_request,
             progressive,
         }
+    }
+
+    /// Bind this policy to the exact non-prompt bytes cloned by the completion
+    /// driver. A compaction chunk that fits the nominal request cap can still
+    /// be rejected when the unchanged system/model/control envelope is added;
+    /// this derives the actual prompt-only capacity once, at driver creation.
+    pub fn with_request_envelope(mut self, request: &crate::providers::Request) -> Self {
+        if !self.enabled {
+            return self;
+        }
+        let mut envelope = request.clone();
+        envelope.prompt.clear();
+        let non_prompt_bound = crate::providers::token_cap::request_token_upper_bound(&envelope);
+        self.prompt_capacity_tokens = self.prompt_capacity_tokens.saturating_sub(non_prompt_bound);
+        self.threshold_tokens = self.threshold_tokens.min(self.prompt_capacity_tokens);
+        if self.prompt_capacity_tokens == 0 {
+            return Self::disabled();
+        }
+        self
     }
 }
 
@@ -112,6 +147,7 @@ impl Default for CompactionPolicy {
         Self {
             enabled: true,
             threshold_tokens: 80_000,
+            prompt_capacity_tokens: 100_000,
             progressive: false,
         }
     }
@@ -123,15 +159,58 @@ pub fn needs_compaction(prompt: &str, policy: &CompactionPolicy) -> bool {
     if !policy.enabled {
         return false;
     }
-    crate::tokens::budget::count_tokens(prompt) >= policy.threshold_tokens
+    crate::tokens::budget::count_tokens_upper_bound(prompt) >= policy.threshold_tokens
 }
 
 /// Wrap raw history in the summarization instruction. The driver prepends its
 /// own system prompt; the explicit instruction here dominates the request.
 pub fn build_compaction_prompt(history: &str) -> String {
     format!(
-        "{COMPACTION_INSTRUCTION}\n\n--- TRANSCRIPT START ---\n{history}\n--- TRANSCRIPT END ---\n\nDENSE SUMMARY:"
+        "{COMPACTION_INSTRUCTION}{COMPACTION_TRANSCRIPT_START}{history}{COMPACTION_TRANSCRIPT_END}"
     )
+}
+
+/// Build one or more compaction requests whose conservative input bound never
+/// exceeds `max_prompt_tokens`. Every history byte appears in exactly one
+/// request; chunks split only at UTF-8 boundaries. An impossibly small limit
+/// returns an error instead of silently dropping history or issuing an
+/// over-limit summarization call.
+pub fn build_bounded_compaction_prompts(
+    history: &str,
+    max_prompt_tokens: u32,
+) -> Result<Vec<String>, &'static str> {
+    let empty_prompt = build_compaction_prompt("");
+    let framing_tokens = crate::tokens::budget::count_tokens_upper_bound(&empty_prompt);
+    let history_tokens = max_prompt_tokens
+        .checked_sub(framing_tokens)
+        .ok_or("compaction prompt cap is smaller than its required framing")?;
+
+    if history.is_empty() {
+        return Ok(vec![empty_prompt]);
+    }
+    if history_tokens == 0 {
+        return Err("compaction prompt cap leaves no room for history");
+    }
+
+    let history_bytes = usize::try_from(history_tokens).unwrap_or(usize::MAX);
+    let mut prompts = Vec::with_capacity(history.len().div_ceil(history_bytes));
+    let mut start = 0;
+    while start < history.len() {
+        let mut end = start.saturating_add(history_bytes).min(history.len());
+        while end > start && !history.is_char_boundary(end) {
+            end -= 1;
+        }
+        if end == start {
+            return Err("compaction prompt cap cannot fit one UTF-8 scalar");
+        }
+        let prompt = build_compaction_prompt(&history[start..end]);
+        debug_assert!(
+            crate::tokens::budget::count_tokens_upper_bound(&prompt) <= max_prompt_tokens
+        );
+        prompts.push(prompt);
+        start = end;
+    }
+    Ok(prompts)
 }
 
 /// Prefix a model-produced summary with [`SUMMARY_MARKER`] so it slots back in
@@ -182,12 +261,14 @@ mod tests {
         let policy = CompactionPolicy {
             enabled: true,
             threshold_tokens: 100,
+            prompt_capacity_tokens: 100,
             progressive: false,
         };
-        // count_tokens = chars/4 (+1). 200 chars ≈ 50 tokens < 100 → no.
-        assert!(!needs_compaction(&"a".repeat(200), &policy));
-        // 1000 chars ≈ 250 tokens ≥ 100 → yes.
-        assert!(needs_compaction(&"a".repeat(1000), &policy));
+        assert!(!needs_compaction(&"a".repeat(99), &policy));
+        assert!(needs_compaction(&"a".repeat(100), &policy));
+        // Non-ASCII input is measured by the same UTF-8 byte upper bound used
+        // by the provider leaf, not by character count.
+        assert!(needs_compaction(&"🙂".repeat(25), &policy));
     }
 
     #[test]
@@ -223,6 +304,40 @@ mod tests {
             p.contains("DENSE SUMMARY:"),
             "must cue the model to summarize"
         );
+    }
+
+    #[test]
+    fn bounded_compaction_prompts_cover_all_history_within_cap() {
+        let framing = build_compaction_prompt("").len();
+        let cap = u32::try_from(framing + 11).unwrap();
+        let history = "alpha🙂beta🙂gamma";
+        let prompts = build_bounded_compaction_prompts(history, cap).unwrap();
+
+        assert!(prompts.len() > 1, "fixture must exercise chunking");
+        let mut recovered = String::new();
+        for prompt in &prompts {
+            assert!(
+                crate::tokens::budget::count_tokens_upper_bound(prompt) <= cap,
+                "every summarization request stays inside the hard bound"
+            );
+            let chunk = prompt
+                .strip_prefix(&format!(
+                    "{COMPACTION_INSTRUCTION}{COMPACTION_TRANSCRIPT_START}"
+                ))
+                .and_then(|value| value.strip_suffix(COMPACTION_TRANSCRIPT_END))
+                .unwrap();
+            recovered.push_str(chunk);
+        }
+        assert_eq!(
+            recovered, history,
+            "chunking must not drop or duplicate bytes"
+        );
+    }
+
+    #[test]
+    fn bounded_compaction_prompts_reject_impossible_cap() {
+        let framing = build_compaction_prompt("").len();
+        assert!(build_bounded_compaction_prompts("history", (framing - 1) as u32).is_err());
     }
 
     #[test]

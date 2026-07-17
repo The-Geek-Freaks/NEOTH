@@ -86,7 +86,7 @@ impl AwsBedrockAdapter {
                  (or another Bedrock model id) in freedom.yaml"
             );
         }
-        let http = super::http_client::build_client()?;
+        let http = super::http_client::build_client_no_redirect()?;
         Ok(Self {
             region,
             credentials,

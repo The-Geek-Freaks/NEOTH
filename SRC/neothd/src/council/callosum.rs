@@ -102,6 +102,39 @@ pub async fn resolve_with_profile(
     }
 }
 
+/// Whole-message budget-aware callosum synthesis. Split recovery is part of
+/// the same Council turn and must consume the shared recursion budget.
+pub async fn resolve_with_profile_budget(
+    original_prompt: &str,
+    left_text: &str,
+    right_text: &str,
+    profile_block: Option<&str>,
+    cerebellum: &dyn HemisphereProvider,
+    budget: &crate::council::BudgetToken,
+) -> CorticalVerdict {
+    let synthesis_prompt =
+        build_synthesis_prompt_with_profile(original_prompt, left_text, right_text, profile_block);
+    let result = match budget.charge() {
+        Ok(_) => {
+            cerebellum
+                .ask_with_depth_budget(&synthesis_prompt, 1, budget.clone())
+                .await
+        }
+        Err(error) => Err(error.to_string()),
+    };
+    match result {
+        Ok(CompletionRecord { text, .. }) if !text.trim().is_empty() => {
+            CorticalVerdict::Synthesis(text)
+        }
+        Ok(_) => CorticalVerdict::IrreconcilableConflict {
+            reason: "cerebellum returned empty synthesis text".to_string(),
+        },
+        Err(error) => CorticalVerdict::IrreconcilableConflict {
+            reason: format!("cerebellum call failed: {error}"),
+        },
+    }
+}
+
 /// CH-11: synthesis prompt builder with optional operator-profile
 /// context. Pinned format: when a non-empty `profile_block` is supplied,
 /// the OPERATOR PROFILE section appears between the council framing and
@@ -239,6 +272,34 @@ mod tests {
             }
             other => panic!("expected IrreconcilableConflict, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn budgeted_resolve_never_calls_cerebellum_after_cap() {
+        let cere = MockCerebellum::returning("must not be returned");
+        let budget = crate::council::BudgetToken::new(0);
+
+        let verdict = resolve_with_profile_budget("Q", "L", "R", None, &cere, &budget).await;
+
+        assert!(matches!(
+            verdict,
+            CorticalVerdict::IrreconcilableConflict { .. }
+        ));
+        assert_eq!(cere.call_count.load(Ordering::SeqCst), 0);
+        assert!(budget.was_denied());
+    }
+
+    #[tokio::test]
+    async fn budgeted_resolve_uses_exactly_one_remaining_slot() {
+        let cere = MockCerebellum::returning("integrated");
+        let budget = crate::council::BudgetToken::new(1);
+
+        let verdict = resolve_with_profile_budget("Q", "L", "R", None, &cere, &budget).await;
+
+        assert!(matches!(verdict, CorticalVerdict::Synthesis(_)));
+        assert_eq!(cere.call_count.load(Ordering::SeqCst), 1);
+        assert_eq!(budget.used(), 1);
+        assert!(!budget.was_denied());
     }
 
     #[tokio::test]

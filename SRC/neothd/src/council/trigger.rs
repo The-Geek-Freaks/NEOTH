@@ -62,13 +62,17 @@ pub struct TriggerContext {
     /// Seconds since the operator's last council debate. `u64::MAX`
     /// means "no prior debate this session".
     pub seconds_since_last_council: u64,
-    /// Remaining daily provider budget in euros — operator's quota
+    /// Remaining daily provider budget in USD — operator's quota
     /// minus what's been spent. `None` means "no budget tracking"
     /// (single-provider free local-qwen path, or autonomy lifted).
-    pub remaining_budget_eur: Option<f32>,
+    pub remaining_budget_usd: Option<f32>,
     /// Estimated cost of one single-hemisphere call for this prompt
-    /// (€). Council convene needs ~3× this to stay within budget.
-    pub estimated_single_call_eur: f32,
+    /// (USD). Council convene needs ~3× this to stay within budget.
+    pub estimated_single_call_usd: f32,
+    /// Conservative bound for the complete reachable Council tree. Production
+    /// callers populate this from the exact provider/model topology; the
+    /// single-call multiplier remains an operator-controlled additional floor.
+    pub estimated_council_cost_usd: Option<f32>,
 }
 
 /// Policy values for the four gates. Operator overrides land here via
@@ -85,7 +89,7 @@ pub struct TriggerPolicy {
     pub min_complex_prompt_chars: usize,
     /// Minimum seconds between consecutive council convenes. Cooldown.
     pub min_interval: Duration,
-    /// Council needs at least this many EUR of remaining budget to
+    /// Council needs at least this many USD of remaining budget to
     /// fire — pinned as multiplier on the single-call cost so the
     /// policy scales with provider pricing changes.
     pub budget_multiplier: f32,
@@ -195,12 +199,13 @@ pub fn should_convene(
     }
 
     // Gate 3 — budget. Only checked when tracking is enabled.
-    if let Some(remaining) = ctx.remaining_budget_eur {
-        let needed = ctx.estimated_single_call_eur * policy.budget_multiplier;
+    if let Some(remaining) = ctx.remaining_budget_usd {
+        let needed = (ctx.estimated_single_call_usd * policy.budget_multiplier)
+            .max(ctx.estimated_council_cost_usd.unwrap_or(0.0));
         if remaining < needed {
             return TriggerDecision::Skip {
                 reason: format!(
-                    "budget: remaining €{remaining:.2} below council threshold €{needed:.2}",
+                    "budget: remaining ${remaining:.2} below council threshold ${needed:.2}",
                 ),
             };
         }
@@ -269,8 +274,9 @@ mod tests {
     fn ctx_default() -> TriggerContext {
         TriggerContext {
             seconds_since_last_council: u64::MAX,
-            remaining_budget_eur: None,
-            estimated_single_call_eur: 0.10,
+            remaining_budget_usd: None,
+            estimated_single_call_usd: 0.10,
+            estimated_council_cost_usd: None,
         }
     }
 
@@ -357,14 +363,15 @@ mod tests {
 
     #[test]
     fn budget_gate_skips_when_remaining_too_low() {
-        // Single call = €0.10; council multiplier = 3.0 → need €0.30.
-        // Remaining €0.15 → skip.
+        // Single call = $0.10; council multiplier = 3.0 → need $0.30.
+        // Remaining $0.15 → skip.
         let prompt = "Should I switch to a Postgres backend or stay with SQLite given the \
                       cross-platform deployment constraint? Please walk me through the tradeoffs.";
         let ctx = TriggerContext {
             seconds_since_last_council: u64::MAX,
-            remaining_budget_eur: Some(0.15),
-            estimated_single_call_eur: 0.10,
+            remaining_budget_usd: Some(0.15),
+            estimated_single_call_usd: 0.10,
+            estimated_council_cost_usd: None,
         };
         let p = TriggerPolicy::default();
         let r = should_convene(prompt, &ctx, &p);
@@ -380,8 +387,9 @@ mod tests {
                       step by step please.";
         let ctx = TriggerContext {
             seconds_since_last_council: u64::MAX,
-            remaining_budget_eur: Some(5.00),
-            estimated_single_call_eur: 0.10,
+            remaining_budget_usd: Some(5.00),
+            estimated_single_call_usd: 0.10,
+            estimated_council_cost_usd: None,
         };
         let p = TriggerPolicy::default();
         let r = should_convene(prompt, &ctx, &p);
@@ -389,16 +397,37 @@ mod tests {
     }
 
     #[test]
+    fn budget_gate_never_drops_below_complete_tree_bound() {
+        let prompt = "Should I choose this recursive Council architecture? Please walk me through the tradeoffs across every provider and sub-slot.";
+        let ctx = TriggerContext {
+            seconds_since_last_council: u64::MAX,
+            remaining_budget_usd: Some(0.50),
+            estimated_single_call_usd: 0.10,
+            estimated_council_cost_usd: Some(0.75),
+        };
+        let decision = should_convene(prompt, &ctx, &TriggerPolicy::default());
+        assert!(
+            matches!(
+                decision,
+                TriggerDecision::Skip { ref reason }
+                    if reason.contains("budget") && reason.contains("0.75")
+            ),
+            "full tree bound must override the 3x single-leaf floor: {decision:?}"
+        );
+    }
+
+    #[test]
     fn no_budget_tracking_skips_the_budget_gate() {
-        // remaining_budget_eur = None → budget gate skipped entirely.
+        // remaining_budget_usd = None → budget gate skipped entirely.
         // Dissent marker still fires.
         let prompt = "What's better for this particular case — async or sync IO when the \
                       latency budget is sub-millisecond and the workload is bursty? \
                       Walk me through the tradeoffs please.";
         let ctx = TriggerContext {
             seconds_since_last_council: u64::MAX,
-            remaining_budget_eur: None,
-            estimated_single_call_eur: 100.0,
+            remaining_budget_usd: None,
+            estimated_single_call_usd: 100.0,
+            estimated_council_cost_usd: None,
         };
         let p = TriggerPolicy::default();
         let r = should_convene(prompt, &ctx, &p);
@@ -450,8 +479,9 @@ mod tests {
                       please — also covering the long-term maintenance implications.";
         let ctx = TriggerContext {
             seconds_since_last_council: 5,
-            remaining_budget_eur: Some(0.01),
-            estimated_single_call_eur: 0.10,
+            remaining_budget_usd: Some(0.01),
+            estimated_single_call_usd: 0.10,
+            estimated_council_cost_usd: None,
         };
         let p = TriggerPolicy::default();
         let r = should_convene(prompt, &ctx, &p);

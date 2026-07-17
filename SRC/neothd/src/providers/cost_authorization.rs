@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -29,12 +29,58 @@ static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
 
 tokio::task_local! {
     static USAGE_AUTOMATED_OVERRIDE: bool;
+    static COUNCIL_ATTEMPT_BUDGET: CouncilAttemptBudget;
+}
+
+/// One already-charged Council leaf plus the shared budget for every
+/// additional concrete leaf reached by the same logical provider call.  The
+/// first authorization consumes the caller's pre-charge; fallback candidates,
+/// compaction leaves and transport retries must each charge again before they
+/// can mint a new dispatch intent.
+struct CouncilAttemptBudget {
+    budget: crate::council::BudgetToken,
+    initial_precharge_available: AtomicBool,
+}
+
+impl CouncilAttemptBudget {
+    fn precharged(budget: crate::council::BudgetToken) -> Self {
+        Self {
+            budget,
+            initial_precharge_available: AtomicBool::new(true),
+        }
+    }
+
+    fn charge_leaf(&self) -> Result<()> {
+        if self
+            .initial_precharge_available
+            .swap(false, Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        self.budget.charge().map(|_| ()).map_err(|error| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "Council provider attempt {error}"
+            )))
+        })
+    }
 }
 
 /// Attribute nested model-driven work (council leaves, MCP iterations) without
 /// changing provider-wire request fields or weakening the authorization bind.
 pub(crate) async fn automated_usage_scope<F: std::future::Future>(future: F) -> F::Output {
     USAGE_AUTOMATED_OVERRIDE.scope(true, future).await
+}
+
+/// Run one already-charged Council provider call. The task-local follows every
+/// awaited decorator/transport subfuture without changing the wire request or
+/// making a reusable authorizer permanently consume one message's budget.
+pub(crate) async fn precharged_council_attempt_scope<F: std::future::Future>(
+    budget: crate::council::BudgetToken,
+    future: F,
+) -> F::Output {
+    COUNCIL_ATTEMPT_BUDGET
+        .scope(CouncilAttemptBudget::precharged(budget), future)
+        .await
 }
 
 fn current_usage_automated(default: bool) -> bool {
@@ -201,19 +247,35 @@ pub enum CostConfirm {
     FailClosed,
     /// Channel path with the live approve/deny callback.
     Channel(Arc<dyn ChannelAsker>),
+    /// Private detached job whose exact request capability was authenticated
+    /// and consumed by the child process. The live permission matrix still
+    /// decides first: this upgrades `Confirm` only, never `Deny`.
+    ExplicitRequestCapability { expires_unix: i64 },
 }
 
 #[derive(Clone)]
-enum AutonomySource {
-    Fixed(AutonomyPolicySnapshot),
+struct ProviderLeafPolicy {
+    autonomy: AutonomyPolicySnapshot,
+    input_token_cap: u32,
+}
+
+#[derive(Clone)]
+enum ProviderPolicySource {
+    Fixed(ProviderLeafPolicy),
     Reload(Arc<crate::config::reload::ReloadController>),
 }
 
-impl AutonomySource {
-    fn current(&self) -> AutonomyPolicySnapshot {
+impl ProviderPolicySource {
+    fn current(&self) -> ProviderLeafPolicy {
         match self {
             Self::Fixed(policy) => policy.clone(),
-            Self::Reload(controller) => controller.autonomy_policy(),
+            Self::Reload(controller) => {
+                let config = controller.latest();
+                ProviderLeafPolicy {
+                    autonomy: config.autonomy_policy(),
+                    input_token_cap: config.tokens.max_per_request,
+                }
+            }
         }
     }
 }
@@ -346,6 +408,8 @@ struct ProviderCallAuditTicket {
     context: ProviderCallAuditContext,
     usage_home: Option<PathBuf>,
     usage_automated: bool,
+    daily_budget_plan: Option<crate::council::daily_budget::DailyBudgetReservationPlan>,
+    daily_budget_reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
     started: Instant,
 }
 
@@ -445,15 +509,26 @@ impl ProviderCallAuditTicket {
         )
     }
 
-    async fn append_terminal(self, terminal: ProviderCallTerminal) -> Result<()> {
+    async fn append_terminal(mut self, terminal: ProviderCallTerminal) -> Result<()> {
         #[cfg(not(test))]
-        let ProviderCallAuditSink::Wal(writer) = &self.audit_sink;
+        let writer = match &self.audit_sink {
+            ProviderCallAuditSink::Wal(writer) => Some(writer),
+        };
         #[cfg(test)]
         let writer = match &self.audit_sink {
-            ProviderCallAuditSink::Wal(writer) => writer,
-            ProviderCallAuditSink::Disabled => return Ok(()),
+            ProviderCallAuditSink::Wal(writer) => Some(writer),
+            ProviderCallAuditSink::Disabled => None,
         };
         let usage_event = self.usage_event(&terminal);
+        // Only a protocol-complete success is authoritative enough to release
+        // the worst-case Council reservation down to reported actual cost.
+        // Failure, cancellation, stream drop, and truncation may already have
+        // incurred unreported provider-side work, so they retain the full
+        // bound even when partial token counters were observed.
+        let settlement_cost_usd = match &terminal {
+            ProviderCallTerminal::Success { .. } => usage_event.cost_usd,
+            ProviderCallTerminal::Failure { .. } => None,
+        };
         let mut payload = self.base_payload();
         let event_type = match terminal {
             ProviderCallTerminal::Success {
@@ -512,13 +587,31 @@ impl ProviderCallAuditTicket {
                 self.call_scope
             )))
         })?;
-        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
-        writer.append(header, payload).await.map_err(|error| {
-            anyhow::anyhow!(ProviderAuthorizationError(format!(
-                "provider terminal WAL append failed for `{}`: {error}",
-                self.call_scope
-            )))
-        })?;
+        if let Some(writer) = writer {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            writer.append(header, payload).await.map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider terminal WAL append failed for `{}`: {error}",
+                    self.call_scope
+                )))
+            })?;
+        }
+        if let Some(reservation) = self.daily_budget_reservation.take()
+            && let Err(error) = reservation.settle(settlement_cost_usd)
+        {
+            // The durable pending reservation remains charged at its full
+            // bound when settlement fails. Returning an error after a paid
+            // call could provoke a duplicate retry; keep the result while all
+            // subsequent admissions fail closed on the unchanged/invalid
+            // ledger instead.
+            tracing::error!(
+                error = %error,
+                invocation_id = %self.invocation_id,
+                provider = self.provider,
+                model = %self.wire_model,
+                "council daily-budget settlement failed; pending bound retained"
+            );
+        }
         if let Some(home) = self.usage_home
             && let Err(error) = crate::daemon::usage_log::append(&home, &usage_event)
         {
@@ -567,14 +660,77 @@ pub(crate) struct AuthorizedLeafCall {
     ticket: ProviderCallAuditTicket,
 }
 
-impl AuthorizedLeafCall {
-    pub(crate) async fn begin_dispatch(mut self) -> Result<ProviderCallAuditGuard> {
-        match &self.ticket.audit_sink {
+/// Roll back an admitted daily-budget reservation unless ownership is moved
+/// into the post-intent audit ticket. This guard intentionally spans the async
+/// WAL append: cancelling that future must not leave a permanent pending charge
+/// for a provider dispatch that never received its permit.
+struct BeforeDispatchReservation {
+    reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
+}
+
+impl BeforeDispatchReservation {
+    fn new(reservation: crate::council::daily_budget::DailyBudgetReservation) -> Self {
+        Self {
+            reservation: Some(reservation),
+        }
+    }
+
+    fn into_dispatched(mut self) -> crate::council::daily_budget::DailyBudgetReservation {
+        self.reservation
+            .take()
+            .expect("before-dispatch reservation already consumed")
+    }
+
+    fn release(mut self) -> Result<()> {
+        self.reservation
+            .take()
+            .expect("before-dispatch reservation already consumed")
+            .release_before_dispatch()
+    }
+}
+
+impl Drop for BeforeDispatchReservation {
+    fn drop(&mut self) {
+        let Some(reservation) = self.reservation.take() else {
+            return;
+        };
+        if let Err(error) = reservation.release_before_dispatch() {
+            tracing::error!(
+                error = %error,
+                "cancelled provider authorization could not release its pre-dispatch daily-budget reservation; ledger remains fail-closed"
+            );
+        }
+    }
+}
+
+enum ProviderIntentState {
+    /// The append task owns the WAL acknowledgement. Dropping the caller's
+    /// `begin_dispatch` future therefore cannot discard that acknowledgement.
+    Pending(tokio::task::JoinHandle<Result<()>>),
+    Durable,
+    NotDurable,
+    #[cfg(test)]
+    Disabled,
+    Disarmed,
+}
+
+/// Owns the gap between enqueueing `PROVIDER_REQUEST` and returning the raw
+/// dispatch permit. If the caller is cancelled anywhere in that gap, this
+/// lifecycle waits for the fsync acknowledgement and emits exactly one
+/// terminal error iff the request frame became durable.
+struct ProviderIntentLifecycle {
+    ticket: Option<ProviderCallAuditTicket>,
+    state: ProviderIntentState,
+}
+
+impl ProviderIntentLifecycle {
+    fn start(ticket: ProviderCallAuditTicket) -> Result<Self> {
+        let state = match &ticket.audit_sink {
             ProviderCallAuditSink::Wal(writer) => {
-                let payload = serde_json::to_vec(&self.ticket.base_payload()).map_err(|error| {
+                let payload = serde_json::to_vec(&ticket.base_payload()).map_err(|error| {
                     anyhow::anyhow!(ProviderAuthorizationError(format!(
                         "provider intent WAL serialization failed for `{}`: {error}",
-                        self.ticket.call_scope
+                        ticket.call_scope
                     )))
                 })?;
                 let header = crate::wal::HeaderBuilder::new(
@@ -582,24 +738,175 @@ impl AuthorizedLeafCall {
                     &payload,
                 )
                 .build();
-                writer.append(header, payload).await.map_err(|error| {
+                let writer = writer.clone();
+                let call_scope = ticket.call_scope;
+                let runtime = tokio::runtime::Handle::try_current().map_err(|error| {
                     anyhow::anyhow!(ProviderAuthorizationError(format!(
-                        "provider intent WAL append failed for `{}`; dispatch blocked: {error}",
-                        self.ticket.call_scope
+                        "provider intent WAL requires a Tokio runtime for `{call_scope}`: {error}"
                     )))
                 })?;
+                ProviderIntentState::Pending(runtime.spawn(async move {
+                    writer
+                        .append(header, payload)
+                        .await
+                        .map(|_| ())
+                        .map_err(|error| {
+                            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                                "provider intent WAL append failed for `{call_scope}`; dispatch blocked: {error}"
+                            )))
+                        })
+                }))
             }
             #[cfg(test)]
-            ProviderCallAuditSink::Disabled => {}
-        }
-        self.ticket.started = Instant::now();
-        Ok(ProviderCallAuditGuard {
-            ticket: Some(self.ticket),
+            ProviderCallAuditSink::Disabled => ProviderIntentState::Disabled,
+        };
+        Ok(Self {
+            ticket: Some(ticket),
+            state,
+        })
+    }
+
+    async fn wait_for_durability(&mut self) -> Result<()> {
+        let result = match &mut self.state {
+            ProviderIntentState::Pending(task) => match task.await {
+                Ok(result) => result,
+                Err(error) => Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider intent WAL task failed before dispatch: {error}"
+                )))),
+            },
+            #[cfg(test)]
+            ProviderIntentState::Disabled => return Ok(()),
+            ProviderIntentState::Durable
+            | ProviderIntentState::NotDurable
+            | ProviderIntentState::Disarmed => {
+                unreachable!("provider intent durability can be awaited only once")
+            }
+        };
+        self.state = if result.is_ok() {
+            ProviderIntentState::Durable
+        } else {
+            ProviderIntentState::NotDurable
+        };
+        result
+    }
+
+    fn into_guard(
+        mut self,
+        reservation: Option<crate::council::daily_budget::DailyBudgetReservation>,
+    ) -> ProviderCallAuditGuard {
+        debug_assert!(match &self.state {
+            ProviderIntentState::Durable => true,
+            #[cfg(test)]
+            ProviderIntentState::Disabled => true,
+            _ => false,
+        });
+        self.state = ProviderIntentState::Disarmed;
+        let mut ticket = self
+            .ticket
+            .take()
+            .expect("provider intent lifecycle ticket already consumed");
+        ticket.daily_budget_reservation = reservation;
+        ticket.started = Instant::now();
+        ProviderCallAuditGuard {
+            ticket: Some(ticket),
             input_tokens: None,
             output_tokens: None,
             cache_creation_tokens: None,
             cache_read_tokens: None,
-        })
+        }
+    }
+}
+
+impl Drop for ProviderIntentLifecycle {
+    fn drop(&mut self) {
+        let Some(ticket) = self.ticket.take() else {
+            return;
+        };
+        let state = std::mem::replace(&mut self.state, ProviderIntentState::Disarmed);
+        let append_cancelled = async move {
+            let terminal = ProviderCallTerminal::Failure {
+                error_kind: "provider_call_cancelled",
+                latency_ns: u64::try_from(ticket.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            };
+            if let Err(error) = ticket.append_terminal(terminal).await {
+                tracing::error!(error = %error, "pre-dispatch cancellation terminal audit failed");
+            }
+        };
+
+        let cleanup = async move {
+            match state {
+                ProviderIntentState::Pending(task) => match task.await {
+                    Ok(Ok(())) => append_cancelled.await,
+                    Ok(Err(error)) => tracing::error!(
+                        error = %error,
+                        "cancelled provider intent did not become durable; no terminal frame required"
+                    ),
+                    Err(error) => tracing::error!(
+                        error = %error,
+                        "cancelled provider intent task failed; no durable request was acknowledged"
+                    ),
+                },
+                ProviderIntentState::Durable => append_cancelled.await,
+                ProviderIntentState::NotDurable | ProviderIntentState::Disarmed => {}
+                #[cfg(test)]
+                ProviderIntentState::Disabled => {}
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(cleanup);
+            }
+            Err(error) => tracing::error!(
+                error = %error,
+                "provider intent lifecycle dropped outside a Tokio runtime"
+            ),
+        }
+    }
+}
+
+impl AuthorizedLeafCall {
+    pub(crate) async fn begin_dispatch(mut self) -> Result<ProviderCallAuditGuard> {
+        let mut reservation_guard = None;
+        if let Some(plan) = self.ticket.daily_budget_plan.take() {
+            let reservation = plan
+                .reserve(crate::time::now_unix_i64())
+                .map_err(|error| {
+                    anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{} ({}/{}): council daily-budget reservation denied; dispatch blocked: {error}",
+                        self.ticket.call_scope, self.ticket.provider, self.ticket.wire_model
+                    )))
+                })?;
+            reservation_guard = Some(BeforeDispatchReservation::new(reservation));
+        }
+
+        let mut intent = match ProviderIntentLifecycle::start(self.ticket) {
+            Ok(intent) => intent,
+            Err(intent_error) => {
+                if let Some(reservation) = reservation_guard.take()
+                    && let Err(release_error) = reservation.release()
+                {
+                    return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{intent_error}; council daily-budget rollback also failed (reservation remains fail-closed): {release_error}"
+                    ))));
+                }
+                return Err(intent_error);
+            }
+        };
+        if let Err(intent_error) = intent.wait_for_durability().await {
+            if let Some(reservation) = reservation_guard.take()
+                && let Err(release_error) = reservation.release()
+            {
+                return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "{intent_error}; council daily-budget rollback also failed (reservation remains fail-closed): {release_error}"
+                ))));
+            }
+            return Err(intent_error);
+        }
+        Ok(intent.into_guard(reservation_guard.map(BeforeDispatchReservation::into_dispatched)))
     }
 }
 
@@ -738,26 +1045,14 @@ impl ProviderCallAuditGuard {
                 }
             }
 
-            let ticket = audit.ticket.as_ref().expect("unsettled provider stream audit");
-            let terminal = ProviderCallTerminal::Success {
-                response_hash_sha256: finish_sha256(response_hasher),
-                response_hash_xxh3: response_xxh3.digest(),
-                response_bytes,
-                latency_ns: Self::elapsed_ns(ticket),
-                provider_latency_ns: 0,
-                input_tokens: audit.input_tokens,
-                output_tokens: audit.output_tokens,
-                cache_creation_tokens: audit.cache_creation_tokens,
-                cache_read_tokens: audit.cache_read_tokens,
-                terminal_kind: "stream_eof",
-            };
-            audit.finish(terminal).await?;
-            if collect_babel_sample {
-                crate::analytics::babel::khist::submit_response_text(
-                    crate::time::now_unix_i64(),
-                    &babel_response,
-                );
+            if let Err(audit_error) = audit.failure("stream_truncated").await {
+                Err(anyhow::anyhow!(
+                    "provider stream ended before done=true and terminal audit failed: {audit_error}"
+                ))?;
             }
+            Err(anyhow::anyhow!(
+                "provider stream ended before the required done=true terminal chunk"
+            ))?;
         })
     }
 }
@@ -803,12 +1098,13 @@ impl Drop for ProviderCallAuditGuard {
 /// every leaf call.
 #[derive(Clone)]
 pub struct ProviderCallAuthorizer {
-    autonomy: AutonomySource,
+    policy_source: ProviderPolicySource,
     writer: Option<WalWriterHandle>,
     confirm: CostConfirm,
     audit_context: ProviderCallAuditContext,
     usage_home: Option<PathBuf>,
     usage_automated: bool,
+    council_daily_budget: Option<crate::council::daily_budget::DailyBudgetPolicy>,
     #[cfg(test)]
     allow_missing_writer: bool,
     #[cfg(test)]
@@ -816,12 +1112,48 @@ pub struct ProviderCallAuthorizer {
 }
 
 impl ProviderCallAuthorizer {
+    /// Current operator input-token ceiling. Reload-backed authorizers resolve
+    /// this at the call boundary so leaf-side optional-context degradation and
+    /// the final authorization gate use the same live policy generation.
+    pub(crate) fn input_token_cap(&self) -> u32 {
+        self.policy_source.current().input_token_cap
+    }
+
+    /// Re-read the durable marker for the exact concrete provider route. This
+    /// is intentionally separate from startup/preflight consent: a marker
+    /// deleted while a daemon or Claude retry loop is running must block the
+    /// next wire send without prompting or honouring the startup bypass.
+    pub(crate) fn ensure_live_consent(
+        &self,
+        route: Option<&crate::consent::ConsentRoute>,
+    ) -> Result<()> {
+        let Some(route) = route else {
+            return Ok(());
+        };
+        let Some(home) = self.usage_home.as_deref() else {
+            #[cfg(test)]
+            return Ok(());
+            #[cfg(not(test))]
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(
+                "provider live-consent gate has no instance home; dispatch is blocked".into(),
+            )));
+        };
+        crate::consent::ensure_route_still_granted(home, route).map_err(|error| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider live-consent gate blocked dispatch: {error}"
+            )))
+        })
+    }
+
     /// Build an interactive authorizer with its own collision-resistant WAL
     /// segment. Standalone CLI commands cannot borrow the daemon writer, but
     /// they still must durably audit the estimate and permission decision.
-    pub fn interactive_one_shot(policy: impl ProviderPolicyInput) -> Result<Self> {
+    pub fn interactive_one_shot(
+        policy: impl ProviderPolicyInput,
+        configured_input_token_cap: u32,
+    ) -> Result<Self> {
         let wal_dir = crate::config::FreedomConfig::default_wal_dir();
-        Self::interactive_one_shot_at(policy, &wal_dir)
+        Self::interactive_one_shot_at(policy, &wal_dir, configured_input_token_cap)
     }
 
     /// Explicit-home variant for commands such as `neoth doctor --home`.
@@ -830,6 +1162,7 @@ impl ProviderCallAuthorizer {
     pub fn interactive_one_shot_at(
         policy: impl ProviderPolicyInput,
         wal_dir: &Path,
+        configured_input_token_cap: u32,
     ) -> Result<Self> {
         std::fs::create_dir_all(wal_dir).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -846,24 +1179,35 @@ impl ProviderCallAuthorizer {
         // Each append awaits the writer's fsync acknowledgement. Detaching the
         // task is safe: the authorizer owns the sending handle for its lifetime.
         drop(join);
-        Ok(
-            Self::interactive(policy.into_provider_policy(), Some(writer)).with_usage_home(
-                wal_dir
-                    .parent()
-                    .unwrap_or_else(|| Path::new("."))
-                    .to_path_buf(),
-            ),
+        Ok(Self::interactive(
+            policy.into_provider_policy(),
+            Some(writer),
+            configured_input_token_cap,
         )
+        .with_usage_home(
+            wal_dir
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
+        ))
     }
 
-    pub fn interactive(policy: impl ProviderPolicyInput, writer: Option<WalWriterHandle>) -> Self {
+    pub fn interactive(
+        policy: impl ProviderPolicyInput,
+        writer: Option<WalWriterHandle>,
+        configured_input_token_cap: u32,
+    ) -> Self {
         Self {
-            autonomy: AutonomySource::Fixed(policy.into_provider_policy()),
+            policy_source: ProviderPolicySource::Fixed(ProviderLeafPolicy {
+                autonomy: policy.into_provider_policy(),
+                input_token_cap: configured_input_token_cap,
+            }),
             writer,
             confirm: CostConfirm::Interactive,
             audit_context: ProviderCallAuditContext::default(),
             usage_home: default_usage_home(),
             usage_automated: false,
+            council_daily_budget: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -871,14 +1215,49 @@ impl ProviderCallAuthorizer {
         }
     }
 
-    pub fn fail_closed(policy: impl ProviderPolicyInput, writer: Option<WalWriterHandle>) -> Self {
+    pub fn fail_closed(
+        policy: impl ProviderPolicyInput,
+        writer: Option<WalWriterHandle>,
+        configured_input_token_cap: u32,
+    ) -> Self {
         Self {
-            autonomy: AutonomySource::Fixed(policy.into_provider_policy()),
+            policy_source: ProviderPolicySource::Fixed(ProviderLeafPolicy {
+                autonomy: policy.into_provider_policy(),
+                input_token_cap: configured_input_token_cap,
+            }),
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
             usage_home: default_usage_home(),
             usage_automated: true,
+            council_daily_budget: None,
+            #[cfg(test)]
+            allow_missing_writer: false,
+            #[cfg(test)]
+            allow_unproven_ceiling: false,
+        }
+    }
+
+    /// Authorize a detached request whose private one-shot capability was
+    /// validated at the worker boundary. Keeping this constructor crate-local
+    /// prevents public callers from manufacturing a non-interactive confirm.
+    pub(crate) fn explicit_request_capability(
+        policy: impl ProviderPolicyInput,
+        writer: WalWriterHandle,
+        configured_input_token_cap: u32,
+        expires_unix: i64,
+    ) -> Self {
+        Self {
+            policy_source: ProviderPolicySource::Fixed(ProviderLeafPolicy {
+                autonomy: policy.into_provider_policy(),
+                input_token_cap: configured_input_token_cap,
+            }),
+            writer: Some(writer),
+            confirm: CostConfirm::ExplicitRequestCapability { expires_unix },
+            audit_context: ProviderCallAuditContext::default(),
+            usage_home: default_usage_home(),
+            usage_automated: true,
+            council_daily_budget: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -890,14 +1269,19 @@ impl ProviderCallAuthorizer {
         policy: impl ProviderPolicyInput,
         writer: Option<WalWriterHandle>,
         asker: Arc<dyn ChannelAsker>,
+        configured_input_token_cap: u32,
     ) -> Self {
         Self {
-            autonomy: AutonomySource::Fixed(policy.into_provider_policy()),
+            policy_source: ProviderPolicySource::Fixed(ProviderLeafPolicy {
+                autonomy: policy.into_provider_policy(),
+                input_token_cap: configured_input_token_cap,
+            }),
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
             usage_home: default_usage_home(),
             usage_automated: true,
+            council_daily_budget: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -914,12 +1298,13 @@ impl ProviderCallAuthorizer {
         usage_home: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            autonomy: AutonomySource::Reload(reload),
+            policy_source: ProviderPolicySource::Reload(reload),
             writer,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
             usage_home: Some(usage_home.into()),
             usage_automated: true,
+            council_daily_budget: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -936,12 +1321,13 @@ impl ProviderCallAuthorizer {
         usage_home: impl Into<PathBuf>,
     ) -> Self {
         Self {
-            autonomy: AutonomySource::Reload(reload),
+            policy_source: ProviderPolicySource::Reload(reload),
             writer,
             confirm: CostConfirm::Channel(asker),
             audit_context: ProviderCallAuditContext::default(),
             usage_home: Some(usage_home.into()),
             usage_automated: true,
+            council_daily_budget: None,
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -956,12 +1342,16 @@ impl ProviderCallAuthorizer {
     #[cfg(test)]
     pub(crate) fn test_only(autonomy: AutonomyLevel) -> Self {
         Self {
-            autonomy: AutonomySource::Fixed(AutonomyPolicySnapshot::test_level(autonomy)),
+            policy_source: ProviderPolicySource::Fixed(ProviderLeafPolicy {
+                autonomy: AutonomyPolicySnapshot::test_level(autonomy),
+                input_token_cap: crate::config::TokensConfig::default_max_per_request(),
+            }),
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
             usage_home: None,
             usage_automated: false,
+            council_daily_budget: None,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -970,19 +1360,19 @@ impl ProviderCallAuthorizer {
     #[cfg(test)]
     pub(crate) fn test_only_reload(reload: Arc<crate::config::reload::ReloadController>) -> Self {
         Self {
-            autonomy: AutonomySource::Reload(reload),
+            policy_source: ProviderPolicySource::Reload(reload),
             writer: None,
             confirm: CostConfirm::FailClosed,
             audit_context: ProviderCallAuditContext::default(),
             usage_home: None,
             usage_automated: false,
+            council_daily_budget: None,
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
     }
 
-    fn gate(&self) -> Gate {
-        let policy = self.autonomy.current();
+    fn gate(&self, policy: AutonomyPolicySnapshot) -> Gate {
         match &self.confirm {
             CostConfirm::Interactive => Gate::for_policy(policy).with_confirm(Gate::auto_confirm()),
             CostConfirm::FailClosed => {
@@ -991,6 +1381,16 @@ impl ProviderCallAuthorizer {
             CostConfirm::Channel(asker) => Gate::for_policy(policy)
                 .with_confirm(ConfirmStrategy::Channel)
                 .with_channel_asker(Arc::clone(asker)),
+            CostConfirm::ExplicitRequestCapability { expires_unix }
+                if crate::time::now_unix_i64() <= *expires_unix =>
+            {
+                Gate::for_policy(policy)
+                    .with_confirm(ConfirmStrategy::FailClosed)
+                    .with_preconfirmed_confirmation("explicit_request_capability")
+            }
+            CostConfirm::ExplicitRequestCapability { .. } => {
+                Gate::for_policy(policy).with_confirm(ConfirmStrategy::FailClosed)
+            }
         }
     }
 
@@ -1001,11 +1401,41 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    /// Apply the configured input-token ceiling to every concrete provider
+    /// leaf reached through this authorizer.  The effective limit remains
+    /// model-aware and is resolved only after the exact wire model is known,
+    /// so council children, fallback candidates and helper calls cannot inherit
+    /// a stale outer-model cap.
+    #[cfg(test)]
+    pub(crate) fn with_input_token_cap(mut self, configured_cap: u32) -> Self {
+        let autonomy = self.policy_source.current().autonomy;
+        self.policy_source = ProviderPolicySource::Fixed(ProviderLeafPolicy {
+            autonomy,
+            input_token_cap: configured_cap,
+        });
+        self
+    }
+
     /// Bind persistent usage to the same explicit instance home as the caller.
     /// This is also the hermetic test seam for terminal metering.
     pub fn with_usage_home(mut self, home: impl Into<PathBuf>) -> Self {
         self.usage_home = Some(home.into());
         self
+    }
+
+    /// Scope this reusable authorizer to the operator's Council daily USD cap.
+    /// Every concrete child leaf reached through decorators receives the same
+    /// policy; fallback candidates and caller retries therefore reserve their
+    /// own bounds instead of inheriting a stale outer approval.
+    pub(crate) fn with_council_daily_cap(
+        mut self,
+        home: &Path,
+        cap_usd: Option<f32>,
+    ) -> Result<Self> {
+        self.council_daily_budget = cap_usd
+            .map(|cap| crate::council::daily_budget::DailyBudgetPolicy::new(home, cap))
+            .transpose()?;
+        Ok(self)
     }
 
     /// Override caller attribution without weakening the authorization policy.
@@ -1059,6 +1489,10 @@ impl ProviderCallAuthorizer {
         streaming: bool,
         output_token_ceiling: Option<u32>,
     ) -> Result<AuthorizedLeafCall> {
+        // Autonomy and token-cap values are one atomic policy snapshot. A
+        // concurrent hot reload can affect the next leaf, never splice values
+        // from two different FreedomConfig generations into this one.
+        let leaf_policy = self.policy_source.current();
         let model = req
             .model
             .as_deref()
@@ -1068,6 +1502,17 @@ impl ProviderCallAuthorizer {
                     "provider `{provider}` left its final model implicit"
                 )))
             })?;
+        let configured_cap = leaf_policy.input_token_cap;
+        let effective_cap = crate::tokens::budget::effective_cap(provider, model, configured_cap);
+        let input_tokens = super::token_cap::request_token_upper_bound(req);
+        if input_tokens > effective_cap {
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "{call_scope} ({provider}/{model}): exact leaf request has a conservative input-token upper bound of {input_tokens}, above the effective cap {effective_cap}; provider dispatch is blocked"
+            ))));
+        }
+        if let Ok(result) = COUNCIL_ATTEMPT_BUDGET.try_with(CouncilAttemptBudget::charge_leaf) {
+            result?;
+        }
         // Every production leaf, including offline inference, requires the
         // lifecycle writer. Local calls skip the paid gate, never the 0x20/21/22
         // audit contract. The only writerless path is the cfg(test) constructor.
@@ -1113,6 +1558,30 @@ impl ProviderCallAuthorizer {
         let system_hash =
             xxhash_rust::xxh3::xxh3_64(req.system.as_deref().unwrap_or("").as_bytes());
         let prompt_hash = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
+        let daily_budget_plan = match &self.council_daily_budget {
+            None => None,
+            Some(policy) if super::is_local_provider(provider) => {
+                Some(policy.plan(invocation_id.clone(), provider, model.to_owned(), 0.0)?)
+            }
+            Some(policy) => {
+                let Some(output_token_ceiling) = output_token_ceiling else {
+                    return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{call_scope} ({provider}/{model}): active council daily USD cap blocks an unbounded provider invocation"
+                    ))));
+                };
+                let Some(bound_usd) = crate::providers::cost::authorization_bound_usd(
+                    provider,
+                    model,
+                    req,
+                    output_token_ceiling,
+                ) else {
+                    return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                        "{call_scope} ({provider}/{model}): active council daily USD cap blocks unknown provider pricing"
+                    ))));
+                };
+                Some(policy.plan(invocation_id.clone(), provider, model.to_owned(), bound_usd)?)
+            }
+        };
         if super::is_local_provider(provider) {
             return Ok(AuthorizedLeafCall {
                 ticket: ProviderCallAuditTicket {
@@ -1131,6 +1600,8 @@ impl ProviderCallAuthorizer {
                     context: self.audit_context.clone(),
                     usage_home: self.usage_home.clone(),
                     usage_automated: current_usage_automated(self.usage_automated),
+                    daily_budget_plan,
+                    daily_budget_reservation: None,
                     started: Instant::now(),
                 },
             });
@@ -1262,9 +1733,13 @@ impl ProviderCallAuthorizer {
         }
 
         let gate_result = match self.writer.as_ref() {
-            Some(writer) => self.gate().check_required_audit(&action, writer).await,
+            Some(writer) => {
+                self.gate(leaf_policy.autonomy)
+                    .check_required_audit(&action, writer)
+                    .await
+            }
             #[cfg(test)]
-            None => self.gate().check(&action, None).await,
+            None => self.gate(leaf_policy.autonomy).check(&action, None).await,
             #[cfg(not(test))]
             None => {
                 return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
@@ -1294,6 +1769,8 @@ impl ProviderCallAuthorizer {
                 context: self.audit_context.clone(),
                 usage_home: self.usage_home.clone(),
                 usage_automated: current_usage_automated(self.usage_automated),
+                daily_budget_plan,
+                daily_budget_reservation: None,
                 started: Instant::now(),
             },
         })
@@ -1355,6 +1832,10 @@ impl Provider for CostAuthorizingProvider<'_> {
         self.default_model
             .as_deref()
             .or_else(|| self.inner.default_model())
+    }
+
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.inner.resolve_model_for_wire(requested_model)
     }
 
     fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
@@ -1526,6 +2007,10 @@ impl Provider for AuthorizedProvider {
             .or_else(|| self.inner.default_model())
     }
 
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.inner.resolve_model_for_wire(requested_model)
+    }
+
     fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
         self.inner.output_token_ceiling(req)
     }
@@ -1607,14 +2092,334 @@ mod tests {
     use futures_util::StreamExt;
 
     use super::*;
-    use crate::providers::CompletionIdentity;
+    use crate::providers::{CompletionIdentity, ProviderRetryReason};
+
+    fn test_input_token_cap() -> u32 {
+        crate::config::TokensConfig::default_max_per_request()
+    }
+
+    struct ScriptedRetryProvider {
+        reason: ProviderRetryReason,
+        retry_failures: usize,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for ScriptedRetryProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-retry-test")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(128)
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            loop {
+                let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+                if attempt >= self.retry_failures {
+                    return Ok(Completion {
+                        text: "retry succeeded".into(),
+                        ..Completion::default()
+                    });
+                }
+                permit.finish_attempt_for_retry(self.reason).await?;
+                permit.begin_retry_attempt().await?;
+            }
+        }
+    }
+
+    struct BackoffCancellationProvider {
+        attempts: AtomicUsize,
+        attempt_closed: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl Provider for BackoffCancellationProvider {
+        fn name(&self) -> &'static str {
+            "local_ollama"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-retry-cancel-test")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            permit
+                .finish_attempt_for_retry(ProviderRetryReason::Transient)
+                .await?;
+            self.attempt_closed.notify_one();
+            std::future::pending::<()>().await;
+            unreachable!("test backoff future is cancelled")
+        }
+    }
+
+    struct ConsentRevokingRetryProvider {
+        home: PathBuf,
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for ConsentRevokingRetryProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-5")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(128)
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            crate::consent::revoke(&self.home, crate::cli::init::ProviderKind::OpenaiApi)?;
+            permit
+                .finish_attempt_for_retry(ProviderRetryReason::Transient)
+                .await?;
+            permit.begin_retry_attempt().await?;
+            unreachable!("revoked consent must block before a second wire attempt")
+        }
+    }
+
+    async fn run_scripted_retry(
+        reason: ProviderRetryReason,
+        retry_failures: usize,
+        cap: u32,
+    ) -> (
+        Result<Completion>,
+        usize,
+        crate::council::BudgetToken,
+        Vec<(u8, serde_json::Value)>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("scripted-retry.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = ScriptedRetryProvider {
+            reason,
+            retry_failures,
+            attempts: AtomicUsize::new(0),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.retry_attempt",
+        );
+        let budget = crate::council::BudgetToken::new(cap);
+        budget.charge().expect("caller pre-charges the first leaf");
+        let result =
+            precharged_council_attempt_scope(budget.clone(), provider.complete(Request::default()))
+                .await;
+        let attempts = inner.attempts.load(Ordering::SeqCst);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+        (result, attempts, budget, wal_frames(&segment))
+    }
+
+    #[tokio::test]
+    async fn empty_stdout_retry_gets_a_second_authorized_lifecycle() {
+        let (result, attempts, budget, frames) =
+            run_scripted_retry(ProviderRetryReason::EmptyStdout, 1, 2).await;
+        result.unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(budget.used(), 2);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ]
+        );
+        assert_eq!(frames[1].1["error_kind"], "provider_retry_empty_stdout");
+    }
+
+    #[tokio::test]
+    async fn session_collision_retry_gets_a_second_authorized_lifecycle() {
+        let (result, attempts, budget, frames) =
+            run_scripted_retry(ProviderRetryReason::SessionCollision, 1, 2).await;
+        result.unwrap();
+        assert_eq!(attempts, 2);
+        assert_eq!(budget.used(), 2);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ]
+        );
+        assert_eq!(
+            frames[1].1["error_kind"],
+            "provider_retry_session_collision"
+        );
+    }
+
+    #[tokio::test]
+    async fn transient_retry_stops_before_a_wire_send_past_the_council_cap() {
+        let (result, attempts, budget, frames) =
+            run_scripted_retry(ProviderRetryReason::Transient, 3, 2).await;
+        let error = result.expect_err("third transport attempt must be budget-blocked");
+        assert!(error.to_string().contains("budget exhausted"));
+        assert_eq!(attempts, 2, "no third transport send may occur");
+        assert_eq!(budget.used(), 2);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame.1["error_kind"] != "provider_call_failed"),
+            "the outer boundary must not append a duplicate terminal"
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_during_retry_backoff_does_not_mint_a_phantom_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("retry-backoff-cancel.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = BackoffCancellationProvider {
+            attempts: AtomicUsize::new(0),
+            attempt_closed: tokio::sync::Notify::new(),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.retry_backoff_cancel",
+        );
+        let budget = crate::council::BudgetToken::new(2);
+        budget.charge().unwrap();
+        let attempt_closed = inner.attempt_closed.notified();
+        let mut call = Box::pin(precharged_council_attempt_scope(
+            budget.clone(),
+            provider.complete(Request::default()),
+        ));
+        tokio::select! {
+            result = &mut call => panic!("retry backoff unexpectedly completed: {result:?}"),
+            () = attempt_closed => {}
+        }
+        drop(call);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            budget.used(),
+            1,
+            "backoff cancellation must not pre-charge retry"
+        );
+        let frames = wal_frames(&segment);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(frames[1].1["error_kind"], "provider_retry_transient");
+    }
+
+    #[tokio::test]
+    async fn consent_revoked_between_attempts_blocks_before_the_retry_wire() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::consent::grant(dir.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        let segment = dir.path().join("retry-consent-revoked.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = ConsentRevokingRetryProvider {
+            home: dir.path().to_path_buf(),
+            attempts: AtomicUsize::new(0),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(dir.path()),
+            None,
+            "test.retry_consent",
+        );
+        let error = provider.complete(Request::default()).await.unwrap_err();
+        assert!(error.to_string().contains("consent"));
+        assert_eq!(inner.attempts.load(Ordering::SeqCst), 1);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = wal_frames(&segment)
+            .into_iter()
+            .filter(|frame| {
+                matches!(
+                    frame.0,
+                    crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                        | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                        | crate::wal::events::EVENT_TYPE_PROVIDER_ERROR
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(lifecycle[3].1["error_kind"], "provider_consent_revoked");
+    }
 
     #[tokio::test]
     async fn explicit_one_shot_wal_dir_keeps_audit_beside_the_selected_home() {
         let home = tempfile::tempdir().unwrap();
         let wal_dir = home.path().join("wal");
-        let authorizer =
-            ProviderCallAuthorizer::interactive_one_shot_at(AutonomyLevel::Full, &wal_dir).unwrap();
+        let authorizer = ProviderCallAuthorizer::interactive_one_shot_at(
+            AutonomyLevel::Full,
+            &wal_dir,
+            test_input_token_cap(),
+        )
+        .unwrap();
 
         authorizer
             .authorize_leaf(
@@ -1672,6 +2477,39 @@ mod tests {
                 text: req.model.unwrap_or_default(),
                 model: "wire-model".into(),
                 latency: Duration::ZERO,
+                ..Completion::default()
+            })
+        }
+    }
+
+    struct CachedAnthropicProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for CachedAnthropicProvider {
+        fn name(&self) -> &'static str {
+            "anthropic_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("claude-sonnet-4-6")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "cached response".into(),
+                model: "claude-sonnet-4-6".into(),
+                latency: Duration::ZERO,
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                cache_creation_tokens: Some(20_000),
+                cache_read_tokens: Some(5_000),
                 ..Completion::default()
             })
         }
@@ -1784,7 +2622,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(policy, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                policy,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.custom_policy",
         );
@@ -1873,6 +2715,10 @@ mod tests {
         behavior: StreamBehavior,
     }
 
+    struct MeteredFailingStreamProvider {
+        calls: AtomicUsize,
+    }
+
     fn stream_chunk(delta: &str, done: bool) -> crate::providers::CompletionChunk {
         crate::providers::CompletionChunk {
             delta: delta.to_owned(),
@@ -1920,6 +2766,45 @@ mod tests {
                 ),
             };
             Ok(stream)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for MeteredFailingStreamProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-4o")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
+        }
+
+        fn streams_on_wire(&self) -> bool {
+            true
+        }
+
+        async fn stream_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<ChunkStream> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::pin(futures_util::stream::iter([
+                Ok(crate::providers::CompletionChunk {
+                    delta: "partial metered output".into(),
+                    done: false,
+                    input_tokens: Some(100),
+                    output_tokens: Some(50),
+                    ..Default::default()
+                }),
+                Err(anyhow::anyhow!(
+                    "provider stream failed after partial usage"
+                )),
+            ])))
         }
     }
 
@@ -2101,7 +2986,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Standard, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Standard,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.unbounded",
         );
@@ -2144,7 +3033,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Standard, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Standard,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.unknown_price",
         );
@@ -2176,12 +3069,162 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn active_council_cap_blocks_unknown_price_even_under_full_autonomy() {
+        let home = tempfile::tempdir().unwrap();
+        let inner = CountingProvider {
+            name: "future_cloud",
+            calls: AtomicUsize::new(0),
+            default_model: Some("future-model".into()),
+        };
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_council_daily_cap(home.path(), Some(10.0))
+            .unwrap();
+        let provider =
+            CostAuthorizingProvider::new(&inner, authorizer, None, "test.council_unknown_price");
+
+        let error = provider.complete(Request::default()).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("active council daily USD cap blocks unknown provider pricing"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+        assert!(!home.path().join("budget").join("daily.json").exists());
+    }
+
+    #[tokio::test]
+    async fn every_caller_retry_reserves_again_and_cannot_race_past_cap() {
+        let home = tempfile::tempdir().unwrap();
+        let inner = CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        };
+        let req = Request {
+            model: Some("gpt-4o".into()),
+            ..Request::default()
+        };
+        let one_call_bound = crate::providers::cost::authorization_bound_usd(
+            "openai_api",
+            "gpt-4o",
+            &req,
+            crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+        )
+        .unwrap();
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_council_daily_cap(home.path(), Some((one_call_bound * 1.5) as f32))
+            .unwrap();
+        let provider = CostAuthorizingProvider::new(&inner, authorizer, None, "test.council_retry");
+
+        provider.complete(req.clone()).await.unwrap();
+        let error = provider.complete(req).await.unwrap_err();
+        assert!(error.to_string().contains("council daily USD cap exceeded"));
+        assert_eq!(
+            inner.calls.load(Ordering::SeqCst),
+            1,
+            "the retry must reserve before reaching the raw provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn council_settlement_charges_anthropic_cache_usage_before_next_admission() {
+        let home = tempfile::tempdir().unwrap();
+        let inner = CachedAnthropicProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let req = Request {
+            model: Some("claude-sonnet-4-6".into()),
+            prompt: "council prompt".into(),
+            system: Some("s".repeat(20_000)),
+            ..Request::default()
+        };
+        let reserve = crate::providers::cost::authorization_bound_usd(
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            &req,
+            crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+        )
+        .unwrap();
+        let actual_without_cache =
+            crate::providers::cost::actual_cost_usd("anthropic_api", "claude-sonnet-4-6", 100, 50);
+        let actual_with_cache = crate::providers::cost::actual_cost_usd_with_cache(
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            100,
+            50,
+            20_000,
+            5_000,
+        );
+        assert!(actual_with_cache > actual_without_cache);
+        // The midpoint makes the regression discriminating: an uncached-only
+        // settlement would admit the retry, while the real cached cost must
+        // leave too little headroom for a second full reservation.
+        let cap = reserve + (actual_without_cache + actual_with_cache) / 2.0;
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_council_daily_cap(home.path(), Some(cap as f32))
+            .unwrap();
+        let provider =
+            CostAuthorizingProvider::new(&inner, authorizer, None, "test.council_cache_settlement");
+
+        provider.complete(req.clone()).await.unwrap();
+        let error = provider.complete(req).await.unwrap_err();
+        assert!(error.to_string().contains("council daily USD cap exceeded"));
+        assert_eq!(
+            inner.calls.load(Ordering::SeqCst),
+            1,
+            "cached terminal spend must be settled before the retry reserves"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_stream_retains_full_council_reservation_despite_partial_tokens() {
+        let home = tempfile::tempdir().unwrap();
+        let inner = MeteredFailingStreamProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let req = Request {
+            model: Some("gpt-4o".into()),
+            prompt: "bounded council stream".into(),
+            ..Request::default()
+        };
+        let reserve = crate::providers::cost::authorization_bound_usd(
+            "openai_api",
+            "gpt-4o",
+            &req,
+            crate::providers::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING,
+        )
+        .unwrap();
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_council_daily_cap(home.path(), Some((reserve * 1.5) as f32))
+            .unwrap();
+        let provider =
+            CostAuthorizingProvider::new(&inner, authorizer, None, "test.council_failed_stream");
+
+        let mut stream = provider.stream(req.clone()).await.unwrap();
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.unwrap().is_err());
+        assert!(stream.next().await.is_none());
+
+        let error = provider
+            .stream(req)
+            .await
+            .err()
+            .expect("full failed-stream reservation must block the retry");
+        assert!(error.to_string().contains("council daily USD cap exceeded"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn copilot_without_live_billing_context_uses_unbounded_paid_action() {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("copilot-unknown-billing.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()));
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        );
         authorizer
             .authorize_leaf(
                 "copilot_api",
@@ -2229,6 +3272,7 @@ mod tests {
                 AutonomyLevel::Standard,
                 Some(writer.clone()),
                 Arc::new(ApprovingAsker),
+                test_input_token_cap(),
             ),
             None,
             "test.unbounded.channel",
@@ -2269,7 +3313,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.unbounded.full",
         );
@@ -2315,8 +3363,11 @@ mod tests {
             prompt: "bounded input, unknown whole-invocation output".into(),
             ..Request::default()
         };
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()));
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        );
 
         authorizer
             .authorize_leaf(
@@ -2382,6 +3433,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_input_cap_blocks_every_leaf_kind_and_allows_exact_cap() {
+        // These scopes exercise the three call families that previously sat
+        // outside chat's outer TokenCappedProvider.  Authorization sees the
+        // actual child provider/model after council/fallback/helper routing.
+        for (scope, provider_name, wire_model) in [
+            ("council_leaf", "anthropic_api", "claude-sonnet-4-6"),
+            ("fallback_candidate_leaf", "openai_api", "gpt-4o"),
+            ("profile_learning_round", "openai_api", "gpt-5"),
+        ] {
+            let inner = CountingProvider {
+                name: provider_name,
+                calls: AtomicUsize::new(0),
+                default_model: Some(wire_model.to_owned()),
+            };
+            let exact_request = Request {
+                prompt: "1234".into(),
+                system: Some("abcd".into()),
+                model: Some(wire_model.to_owned()),
+                ..Request::default()
+            };
+            let cap = crate::providers::token_cap::request_token_upper_bound(&exact_request);
+            let provider = CostAuthorizingProvider::new(
+                &inner,
+                ProviderCallAuthorizer::test_only(AutonomyLevel::Full).with_input_token_cap(cap),
+                None,
+                scope,
+            );
+
+            let mut over_request = exact_request.clone();
+            over_request.prompt.push('5');
+            let error = provider
+                .complete(over_request)
+                .await
+                .expect_err("an over-cap concrete leaf must never dispatch");
+            let message = error.to_string();
+            assert!(message.contains(scope), "unexpected error: {message}");
+            assert!(message.contains(wire_model), "unexpected error: {message}");
+            assert!(
+                message.contains(&format!(
+                    "conservative input-token upper bound of {}, above the effective cap {cap}",
+                    cap + 1
+                )),
+                "unexpected error: {message}"
+            );
+            assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+
+            let completion = provider
+                .complete(exact_request)
+                .await
+                .expect("the exact effective cap must remain dispatchable");
+            assert_eq!(completion.identity.provider, provider_name);
+            assert_eq!(completion.identity.wire_model, wire_model);
+            assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
     async fn wrapper_materializes_adapter_default_model_before_authorization() {
         let inner = CountingProvider {
             name: "openai_api",
@@ -2435,7 +3543,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer)),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer),
+                test_input_token_cap(),
+            ),
             Some("gpt-5".into()),
             "test_round",
         );
@@ -2470,6 +3582,7 @@ mod tests {
                 Arc::new(AbortWriterAndApprove {
                     abort: join.abort_handle(),
                 }),
+                test_input_token_cap(),
             ),
             None,
             "test.permission_grant_failure",
@@ -2505,7 +3618,7 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None),
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None, test_input_token_cap()),
             None,
             "test.missing_wal",
         );
@@ -2522,7 +3635,7 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None),
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None, test_input_token_cap()),
             None,
             "test.unbounded.missing_wal",
         );
@@ -2539,7 +3652,7 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None),
+            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, None, test_input_token_cap()),
             None,
             "test.local.missing_wal",
         );
@@ -2547,6 +3660,71 @@ mod tests {
         let error = provider.complete(Request::default()).await.unwrap_err();
         assert!(error.to_string().contains("no WAL writer is attached"));
         assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cancellation_after_durable_intent_before_ack_emits_exactly_one_terminal() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("cancel-during-intent-ack.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let ack_gate =
+            crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
+        let writer = writer.with_test_ack_gate(ack_gate.clone());
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Strict,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        );
+        let authorized = authorizer
+            .authorize_leaf(
+                "local_ollama",
+                &Request {
+                    model: Some("qwen-test".into()),
+                    prompt: "content must stay hashed".into(),
+                    ..Request::default()
+                },
+                "test.intent_ack_cancellation",
+                false,
+                Some(128),
+            )
+            .await
+            .unwrap();
+
+        let mut begin_dispatch = Box::pin(authorized.begin_dispatch());
+        tokio::select! {
+            result = &mut begin_dispatch => {
+                let _ = result;
+                panic!("dispatch permit returned before the durable-intent acknowledgement gate");
+            }
+            result = tokio::time::timeout(Duration::from_secs(5), ack_gate.wait_until_durable()) => {
+                result.expect("provider intent did not become durable");
+            }
+        }
+        // This is the original orphan window: 0x20 is fsync'd, its ack has
+        // not reached begin_dispatch, and no ProviderCallAuditGuard exists.
+        drop(begin_dispatch);
+        ack_gate.release();
+        drop(authorizer);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), join)
+            .await
+            .expect("writer did not drain cancellation terminal")
+            .unwrap();
+
+        let frames = wal_frames(&segment);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(frames[0].1["invocation_id"], frames[1].1["invocation_id"]);
+        assert_eq!(
+            frames[0].1["request_binding_sha256"],
+            frames[1].1["request_binding_sha256"]
+        );
+        assert_eq!(frames[1].1["error_kind"], "provider_call_cancelled");
     }
 
     #[tokio::test]
@@ -2560,9 +3738,12 @@ mod tests {
             incognito: true,
             ..Default::default()
         };
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Strict, Some(writer.clone()))
-                .with_audit_context(context);
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Strict,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        )
+        .with_audit_context(context);
 
         let success = SensitiveSuccessProvider {
             calls: AtomicUsize::new(0),
@@ -2634,14 +3815,17 @@ mod tests {
         let segment = wal_dir.join("terminal-usage.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()))
-                .with_usage_home(home.path())
-                .with_audit_context(ProviderCallAuditContext {
-                    source: Some("daemon_test"),
-                    call_type: Some("scheduled_test"),
-                    ..Default::default()
-                });
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        )
+        .with_usage_home(home.path())
+        .with_audit_context(ProviderCallAuditContext {
+            source: Some("daemon_test"),
+            call_type: Some("scheduled_test"),
+            ..Default::default()
+        });
 
         let success = SensitiveSuccessProvider {
             calls: AtomicUsize::new(0),
@@ -2697,23 +3881,40 @@ mod tests {
         let segment = wal_dir.join("stream-lifecycle.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Strict, Some(writer.clone()))
-                .with_usage_home(dir.path());
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Strict,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        )
+        .with_usage_home(dir.path());
 
-        for behavior in [StreamBehavior::Done, StreamBehavior::Eof] {
-            let inner = ScriptedStreamProvider { behavior };
-            let provider = CostAuthorizingProvider::new(
-                &inner,
-                authorizer.clone(),
-                None,
-                "test.stream.success",
-            );
-            let mut stream = provider.stream(Request::default()).await.unwrap();
-            while let Some(item) = stream.next().await {
-                item.unwrap();
-            }
+        let done_inner = ScriptedStreamProvider {
+            behavior: StreamBehavior::Done,
+        };
+        let done_provider = CostAuthorizingProvider::new(
+            &done_inner,
+            authorizer.clone(),
+            None,
+            "test.stream.success",
+        );
+        let mut stream = done_provider.stream(Request::default()).await.unwrap();
+        while let Some(item) = stream.next().await {
+            item.unwrap();
         }
+
+        let eof_inner = ScriptedStreamProvider {
+            behavior: StreamBehavior::Eof,
+        };
+        let eof_provider = CostAuthorizingProvider::new(
+            &eof_inner,
+            authorizer.clone(),
+            None,
+            "test.stream.truncated",
+        );
+        let mut stream = eof_provider.stream(Request::default()).await.unwrap();
+        assert!(stream.next().await.unwrap().is_ok());
+        assert!(stream.next().await.unwrap().is_err());
+        assert!(stream.next().await.is_none());
 
         let error_inner = ScriptedStreamProvider {
             behavior: StreamBehavior::Error,
@@ -2745,7 +3946,7 @@ mod tests {
         let frames = wal_frames(&segment);
         assert_eq!(frames.len(), 8);
         assert_eq!(frames[1].1["terminal_kind"], "stream_done");
-        assert_eq!(frames[3].1["terminal_kind"], "stream_eof");
+        assert_eq!(frames[3].1["error_kind"], "stream_truncated");
         assert_eq!(frames[5].1["error_kind"], "stream_error");
         assert_eq!(frames[7].1["error_kind"], "stream_dropped");
         for pair in frames.chunks_exact(2) {
@@ -2772,7 +3973,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "stream_done",
-                "stream_eof",
+                "stream_truncated",
                 "stream_error",
                 "stream_dropped"
             ]
@@ -2808,8 +4009,12 @@ mod tests {
         };
         let authorized = CostAuthorizingProvider::new(
             &provider,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()))
-                .with_usage_home(home.path()),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(home.path()),
             None,
             "usage.repair",
         );
@@ -2976,8 +4181,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("bound-authorizations.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()));
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        );
         let req = Request {
             model: Some("gpt-5".into()),
             prompt: "same request twice".into(),
@@ -3028,8 +4236,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("wire-streaming-mode.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
-        let authorizer =
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone()));
+        let authorizer = ProviderCallAuthorizer::fail_closed(
+            AutonomyLevel::Full,
+            Some(writer.clone()),
+            test_input_token_cap(),
+        );
 
         let buffered = CountingProvider {
             name: "openai_api",
@@ -3088,7 +4299,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.ceilings",
         );
@@ -3149,13 +4364,21 @@ mod tests {
         });
         let owned = AuthorizedProvider::from_arc(
             leaf.clone(),
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Strict, Some(inner_writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(inner_writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "inner.policy",
         );
         let outer = CostAuthorizingProvider::new(
             &owned,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Full, Some(outer_writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(outer_writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "outer.policy",
         );
@@ -3196,7 +4419,11 @@ mod tests {
         };
         let provider = CostAuthorizingProvider::new(
             &inner,
-            ProviderCallAuthorizer::fail_closed(AutonomyLevel::Standard, Some(writer.clone())),
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Standard,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
             None,
             "test.ceiling_gate",
         );
@@ -3298,6 +4525,59 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn reload_aware_authorizer_reads_current_input_cap_for_each_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let request = Request {
+            prompt: "12345".into(),
+            system: Some("abcd".into()),
+            model: Some("free-model".into()),
+            ..Request::default()
+        };
+        let exact_cap = crate::providers::token_cap::request_token_upper_bound(&request);
+        let mut initial = crate::config::FreedomConfig::default();
+        initial.autonomy = AutonomyLevel::Full;
+        initial.tokens.max_per_request = exact_cap;
+        std::fs::write(&path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            path.clone(),
+        ));
+        let inner = Arc::new(CountingProvider {
+            name: "unknown_zero_price",
+            calls: AtomicUsize::new(0),
+            default_model: Some("free-model".into()),
+        });
+        let provider = AuthorizedProvider::from_arc(
+            inner.clone(),
+            ProviderCallAuthorizer::test_only_reload(controller.clone()),
+            None,
+            "test.reload_cap",
+        );
+        provider.complete(request.clone()).await.unwrap();
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 1);
+
+        let mut reloaded = initial;
+        reloaded.tokens.max_per_request = exact_cap - 1;
+        std::fs::write(&path, serde_yaml::to_string(&reloaded).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        let error = provider.complete(request).await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("effective cap {}", exact_cap - 1))
+        );
+        assert_eq!(
+            inner.calls.load(Ordering::SeqCst),
+            1,
+            "the lower reloaded cap must block before raw provider dispatch"
+        );
+    }
+
     #[test]
     fn reload_authorizers_bind_usage_to_the_explicit_instance_home() {
         let dir = tempfile::tempdir().unwrap();
@@ -3369,7 +4649,8 @@ mod tests {
                     safe_overrides.push(format!("{relative}:stream"));
                 }
                 if !line.trim_start().starts_with("//")
-                    && line.contains("ProviderDispatchPermit { _private: () }")
+                    && (line.contains("ProviderDispatchPermit::authorized(")
+                        || line.contains("ProviderDispatchPermit::transport_only()"))
                 {
                     permit_constructors.push(relative.clone());
                 }
@@ -3595,8 +4876,8 @@ mod tests {
             ),
             (
                 "cli/bg_session.rs",
-                1,
-                "6fe2c5967b5ae77624c95882bc7bc18927b9c952becfa7f779983e032d44e4fe",
+                2,
+                "526f9015048cfa2222f5f23d2dd385a2f71b6a57fc8056a09b926b391db8f335",
             ),
             (
                 "cli/chat.rs",
@@ -3701,7 +4982,7 @@ mod tests {
             (
                 "mcp/dispatch_loop.rs",
                 3,
-                "c2d8915ebf96745dc223a0cf07fc542e66a6e85b524df99a94a88c04ba520529",
+                "818ce1b6eadd9de70ab57e1cf05fcea586caac9aeb67e15902ef2fc0e77c2f38",
             ),
             (
                 "mcp/goal_judge.rs",

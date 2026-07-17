@@ -518,19 +518,22 @@ pub async fn spawn_session_sort_cron(
         return None;
     }
 
-    let provider = match crate::providers::from_config(config).await {
-        Ok(p) => Arc::new(
-            crate::providers::cost_authorization::AuthorizedProvider::from_box(
-                p,
+    let provider = match crate::providers::from_config_at(config, home).await {
+        Ok(p) => {
+            let default_model = crate::providers::provider_default_wire_model(p.as_ref());
+            Arc::new(
+                crate::providers::cost_authorization::AuthorizedProvider::from_box(
+                    p,
                 crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
                     Arc::clone(reload_controller),
                     Some(writer.clone()),
                     home.to_path_buf(),
                 ),
-                config.provider_model.clone(),
-                "session_sort_cron",
-            ),
-        ),
+                    default_model,
+                    "session_sort_cron",
+                ),
+            )
+        }
         Err(e) => {
             warn!(
                 error = %e,

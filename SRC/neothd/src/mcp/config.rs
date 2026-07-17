@@ -450,10 +450,30 @@ fn normalise_command_name(command: &str) -> String {
 }
 
 fn forbidden_launcher_env(command_name: &str, key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    // Loader/interpreter injection is dangerous for every direct executable,
+    // not just Node launchers. `env_clear` prevents ambient inheritance, while
+    // this explicit-config denylist prevents an MCP entry from re-introducing
+    // a preload/search-path hook deliberately.
+    if matches!(
+        upper.as_str(),
+        "LD_PRELOAD"
+            | "LD_LIBRARY_PATH"
+            | "DYLD_INSERT_LIBRARIES"
+            | "DYLD_LIBRARY_PATH"
+            | "PYTHONPATH"
+            | "PYTHONSTARTUP"
+            | "PYTHONEXECUTABLE"
+            | "RUBYLIB"
+            | "RUBYOPT"
+            | "PERL5LIB"
+            | "PERL5OPT"
+    ) {
+        return true;
+    }
     if !matches!(command_name, "npx" | "node") {
         return false;
     }
-    let upper = key.to_ascii_uppercase();
     if matches!(upper.as_str(), "NODE_OPTIONS" | "NODE_PATH") {
         return true;
     }
@@ -1278,6 +1298,22 @@ servers:
         assert!(forbidden_launcher_env("npx", "NPM_CONFIG_REGISTRY"));
         assert!(!forbidden_launcher_env("npx", "NPM_CONFIG_LOGLEVEL"));
         assert!(!forbidden_launcher_env("native-server", "NODE_OPTIONS"));
+        for key in [
+            "LD_PRELOAD",
+            "ld_library_path",
+            "DYLD_INSERT_LIBRARIES",
+            "PYTHONPATH",
+            "PYTHONSTARTUP",
+            "RUBYOPT",
+            "PERL5LIB",
+        ] {
+            let mut cfg = launcher_config("native-server", &["--stdio"]);
+            cfg.env.insert(key.into(), "attacker-controlled".into());
+            assert!(
+                cfg.validate_launcher().is_err(),
+                "universal loader/interpreter environment must fail: {key}"
+            );
+        }
     }
 
     // --- A8 autoroute_decision tests ---

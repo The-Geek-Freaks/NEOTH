@@ -117,6 +117,8 @@ fn build_client_with(redirect_policy: reqwest::redirect::Policy) -> Result<reqwe
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // Tests exercise the pure `parse_proxy_setting` function rather than
     // mutating the process-global `NEOTH_HTTP_PROXY` env var. Avoids the
@@ -157,6 +159,62 @@ mod tests {
         unsafe { std::env::remove_var("NEOTH_HTTP_PROXY") };
         let client = build_client();
         assert!(client.is_ok());
+    }
+
+    #[tokio::test]
+    async fn no_redirect_client_surfaces_3xx_without_contacting_second_origin() {
+        let redirect_target = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/capture"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&redirect_target)
+            .await;
+        let source = MockServer::start().await;
+        let location = format!("{}/capture", redirect_target.uri());
+        Mock::given(method("POST"))
+            .and(path("/provider"))
+            .respond_with(ResponseTemplate::new(307).insert_header("location", location))
+            .mount(&source)
+            .await;
+
+        let response = build_client_no_redirect()
+            .unwrap()
+            .post(format!("{}/provider", source.uri()))
+            .body("must remain on the authorized origin")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
+        assert!(response.error_for_status().is_err(), "3xx must surface");
+        assert!(
+            redirect_target
+                .received_requests()
+                .await
+                .expect("request recording enabled")
+                .is_empty(),
+            "the redirect target must receive no request"
+        );
+    }
+
+    #[test]
+    fn named_cloud_provider_transports_use_the_no_redirect_builder() {
+        for (name, source) in [
+            ("anthropic_api", include_str!("anthropic_api.rs")),
+            ("aws_bedrock", include_str!("aws_bedrock.rs")),
+            ("azure_openai", include_str!("azure_openai.rs")),
+            ("cohere_api", include_str!("cohere_api.rs")),
+            ("gemini_api", include_str!("gemini_api.rs")),
+            ("openai_api", include_str!("openai_api.rs")),
+        ] {
+            assert!(
+                source.contains("build_client_no_redirect()?"),
+                "{name} must disable redirects at client construction"
+            );
+            assert!(
+                !source.contains("http_client::build_client()?"),
+                "{name} must not use the redirect-following provider client"
+            );
+        }
     }
 
     #[test]

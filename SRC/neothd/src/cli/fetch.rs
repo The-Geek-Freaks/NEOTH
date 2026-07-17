@@ -140,16 +140,19 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
         if goal.trim().is_empty() {
             anyhow::bail!("--goal must not be empty");
         }
+        let home = crate::config::FreedomConfig::default_neoth_home();
         let config = crate::config::FreedomConfig::load_from_default_path_or_default()?;
-        let provider = crate::providers::from_config_for_utility(&config)
+        let provider = crate::providers::from_config_for_utility_at(&config, &home)
             .await
             .context("build utility provider for goal extraction")?;
+        let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
             provider,
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                 config.autonomy_policy(),
+                config.tokens.max_per_request,
             )?,
-            crate::providers::utility_model_for_config(&config),
+            default_model,
             "fetch.goal_extract",
         );
         let extraction =

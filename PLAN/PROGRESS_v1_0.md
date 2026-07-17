@@ -9,9 +9,9 @@
 > `fail_fast`, channel PostProviderCall/restoration plus atomic `once`, skill
 > directories created after watcher startup, and lost channel `delegate_to`.
 > A later seven-subsystem report added 17 findings; current-source triage leaves
-> **6 open / 10 closed / 1 mooted**, and folds its Cron `once`
+> **2 open / 14 closed / 1 mooted**, and folds its Cron `once`
 > item into the central hook-parity contract. The unique post-corpus actionable
-> count is therefore **9**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
+> count is therefore **5**, all explicit in `ROAD_TO_1_0_GOLD.md`. The durable
 > cluster authority is now protocol v6 / Iroh ALPN `neoth/cluster/gossip/3`: a
 > node-global SQLite-backed 256-slot frontier ticks and stages in one immediate
 > transaction, retries exact frames, binds the full inbound frontier, never
@@ -48,11 +48,32 @@
 > ownership propagation is covered, and authorized per-hop quota/fallback audit
 > uses the required authorizer-owned WAL writer without a duplicate outer-chat
 > record.
+>
+> **Current Wave-3 runtime closure (2026-07-16; no broad R3/R4 box closed):**
+> Council calls now reserve a reviewed worst-case USD bound atomically before
+> every concrete leaf, retry and fallback, then settle actual metered spend
+> including cache-creation/cache-read tokens; unknown or unbounded calls fail
+> closed under an active daily cap and missing terminal usage keeps the bound.
+> Typed A–E/Conductor blocks now survive CLI and channel assembly through the
+> final rendered request. A conservative UTF-8-byte upper bound plus explicit
+> model/stop/request/message-envelope reserve is wired into every production
+> authorizer at construction (fixed snapshots require it; reload-backed paths
+> derive it live) and rechecked after the exact provider/wire model is
+> known; this is a hard conservative boundary, not a claim of tokenizer-exact
+> counting. Updater reads now bind a trusted root and traverse every untrusted
+> ancestor plus leaf relative/no-follow before opened-handle identity, size,
+> exact-byte and applicable Windows-DACL checks. MCP allowlist/autonomy/deny and
+> Confirm classification run before any process or `tools/list`; CLI one-shots
+> additionally resolve confirmation before spawn. SmartApprove retains the
+> exact metadata-producing client and never
+> turns a cache miss, config drift, duplicate identity or poisoned connection
+> into a live-requery Allow. These source/test closures leave exact-head CI,
+> Security, CodeQL and platform release proof as separate gates.
 > Claude's concurrent GUI lane is integrated: provider model catalog/retry selection, one-shot model
 > override, auto-update controls and read-only MCP/hooks/ground-truth/quota/
 > tweaks probes coexist with the fail-closed cluster transaction and hardened
 > chat subprocess boundary. Read-only probes are observability, not full GUI/CLI
-> mutation parity, so they close no broad R4 box. The 9 open post-corpus contracts,
+> mutation parity, so they close no broad R4 box. The 5 open post-corpus contracts,
 > remaining R4 acceptance boxes, native clean-machine proof and exact-head
 > CI/Security/CodeQL remain release blockers.
 >

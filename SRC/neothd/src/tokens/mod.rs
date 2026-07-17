@@ -39,17 +39,13 @@
 //!
 //! ## Token counting
 //!
-//! [`count_tokens`] uses a coarse `chars / 4` heuristic — matches the
-//! OpenAI tokenizer's average ratio for English+German mixed text.
-//! Precise token counts would require the provider-specific tokeniser
-//! (tiktoken / gemma-tokenizer / etc.) which is too heavy for a
-//! per-turn pre-flight check. The estimator's purpose is "trigger
-//! degradation when the cap is plausibly exceeded"; a small over-
-//! count is benign (slight aggressive degradation), a small under-
-//! count just means the provider truncates instead. The audit chain
-//! captures both `prompt_token_estimate` (this fn) +
-//! `prompt_token_actual` (returned by the provider) so drift is
-//! observable.
+//! [`count_tokens`] remains the coarse `chars / 4` display/compaction
+//! heuristic. Hard-cap enforcement does not trust it: typed A-E items use
+//! [`budget::count_tokens_upper_bound`], and the final provider leaf adds a
+//! conservative UTF-8/model/message-envelope upper bound before dispatch.
+//! This is deliberately stricter than ordinary English tokenisation, but it
+//! also covers CJK, emoji and minified/adversarial input without assuming the
+//! provider will truncate a paid request safely.
 //!
 //! ## Why not the provider's tokeniser
 //!
@@ -59,8 +55,8 @@
 //! - **Cold-path cost** — the prompt-assembly call site runs once
 //!   per turn; a 3 ms estimator beats a 50 ms tokeniser when the
 //!   downstream provider call is going to take 500-5000 ms anyway.
-//! - **No false security** — operators see `prompt_token_estimate`
-//!   in the audit log as a clearly-labelled estimate; they don't
-//!   mistake it for a precise count.
+//! - **No false security** — audit keeps the provider's returned
+//!   `prompt_token_actual`, while the pre-dispatch value is a conservative
+//!   upper bound rather than a tokenizer-precision claim.
 
 pub mod budget;

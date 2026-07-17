@@ -16,7 +16,9 @@
 //!                   per-(topic, role) Hebbian acceptance signals.
 //!   - `show`        Print the current `council` config block.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -1491,7 +1493,7 @@ mod tests {
     fn run_budget_reads_snapshot_when_present() {
         let dir = tempfile::tempdir().unwrap();
         write_freedom_yaml(&dir.path().join("freedom.yaml"), &FreedomConfig::default()).unwrap();
-        crate::council::budget::record_budget_outcome(dir.path(), 15, 15, 1000);
+        crate::council::budget::record_budget_outcome(dir.path(), 15, 15, true, 1000);
         assert!(run_budget(dir.path(), OutputFormat::Json).is_ok());
         let snap = crate::council::budget::load_budget_snapshot(dir.path()).unwrap();
         assert!(snap.exhausted_last_msg);

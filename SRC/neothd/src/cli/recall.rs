@@ -390,15 +390,18 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     if let Some(text) = args.extract.clone() {
         let config = crate::config::FreedomConfig::load_from_default_path()
             .context("load freedom.yaml for entity extraction")?;
-        let provider = crate::providers::from_config(&config)
+        let neoth_home = crate::config::FreedomConfig::default_neoth_home();
+        let provider = crate::providers::from_config_at(&config, &neoth_home)
             .await
             .context("build provider for entity extraction")?;
+        let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
         let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
             provider,
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                 config.autonomy_policy(),
+                config.tokens.max_per_request,
             )?,
-            config.provider_model.clone(),
+            default_model,
             "recall.entity_extract",
         );
         let db_path = args.db.clone().unwrap_or_else(store::default_path);

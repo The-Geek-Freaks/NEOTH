@@ -2,8 +2,9 @@
 //!
 //! Operators get exactly one consent prompt per cloud provider, recorded as
 //! a tag file under `~/.neoth/consent/<provider_kind>.granted`. Subsequent
-//! invocations see the file + skip the prompt. Local providers
-//! (`LocalQwen`, `Skip`) never gate.
+//! invocations see the file + skip the prompt. Providers that are guaranteed
+//! to stay in-process (`LocalQwen`, `LocalOuro`, `Skip`) never gate. Ollama is
+//! endpoint-aware: loopback is local; LAN/DNS/public endpoints require consent.
 //!
 //! Why a file marker instead of `freedom.yaml`: marker files survive
 //! `neoth init` reconfigure passes that rewrite `freedom.yaml`, and they
@@ -110,6 +111,68 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
     }
 }
 
+/// One concrete provider route at the consent boundary. `ProviderKind` alone
+/// is insufficient for Ollama: the same adapter may target loopback or a
+/// remote host configured through `provider_endpoint` / a hemisphere slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConsentRoute {
+    pub kind: ProviderKind,
+    pub endpoint: Option<String>,
+}
+
+impl ConsentRoute {
+    pub fn new(kind: ProviderKind, endpoint: Option<&str>) -> Self {
+        Self {
+            kind,
+            endpoint: endpoint.map(str::to_owned),
+        }
+    }
+}
+
+/// LocalOllama is conditionally consent-managed. Its default endpoint is
+/// loopback, while any malformed, LAN, DNS, or public endpoint is treated as
+/// remote (fail closed). This deliberately shares the provider adapter's
+/// typed-host loopback classifier so IPv4/IPv6/domain handling cannot drift.
+pub fn route_requires_consent(kind: ProviderKind, endpoint: Option<&str>) -> bool {
+    if is_cloud(kind) {
+        return true;
+    }
+    if kind != ProviderKind::LocalOllama {
+        return false;
+    }
+    let endpoint = endpoint.unwrap_or(crate::providers::ollama_api::DEFAULT_BASE_URL);
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return true;
+    };
+    !crate::providers::http_client::url_has_loopback_host(&url)
+}
+
+/// Whether a provider can own a durable consent marker. LocalOllama is
+/// included even though its loopback route does not require one: operators
+/// targeting a remote Ollama server need `neoth consent grant local_ollama`.
+pub fn is_consent_managed_kind(kind: ProviderKind) -> bool {
+    is_cloud(kind) || kind == ProviderKind::LocalOllama
+}
+
+fn marker_exists(home: &Path, kind: ProviderKind) -> bool {
+    marker_path(home, kind).exists()
+}
+
+pub fn is_route_granted(home: &Path, route: &ConsentRoute) -> bool {
+    !route_requires_consent(route.kind, route.endpoint.as_deref())
+        || marker_exists(home, route.kind)
+}
+
+fn route_label(route: &ConsentRoute) -> String {
+    if route.kind == ProviderKind::LocalOllama
+        && route_requires_consent(route.kind, route.endpoint.as_deref())
+    {
+        let endpoint = route.endpoint.as_deref().unwrap_or("<invalid endpoint>");
+        return format!("the configured remote Ollama endpoint ({endpoint})");
+    }
+    cloud_label(route.kind).to_string()
+}
+
 pub fn consent_dir(home: &Path) -> PathBuf {
     home.join("consent")
 }
@@ -131,10 +194,10 @@ pub fn is_granted(home: &Path, kind: ProviderKind) -> bool {
 /// Record consent. Idempotent — overwrites the timestamp on each call so
 /// `neoth consent grant <kind>` after a no-op stays cheap.
 pub fn grant(home: &Path, kind: ProviderKind) -> Result<()> {
-    if !is_cloud(kind) {
+    if !is_consent_managed_kind(kind) {
         anyhow::bail!(
             "consent::grant called with non-cloud kind `{}` — only cloud \
-             providers require consent",
+             or endpoint-conditional providers can own consent markers",
             slug(kind)
         );
     }
@@ -269,14 +332,14 @@ pub fn consent_decision_payload(
 /// `AllowAlways` against a non-existent marker; false otherwise).
 /// Useful for the audit anchor's `marker_written` flag.
 pub fn apply_decision(home: &Path, kind: ProviderKind, decision: ConsentDecision) -> Result<bool> {
-    if !is_cloud(kind) {
+    if !is_consent_managed_kind(kind) {
         // Non-cloud providers don't gate; apply is a no-op. Keep
         // the API symmetric so callers can pipe every kind through.
         return Ok(false);
     }
     match decision {
         ConsentDecision::AllowAlways => {
-            let was_granted = is_granted(home, kind);
+            let was_granted = marker_exists(home, kind);
             grant(home, kind)?;
             Ok(!was_granted)
         }
@@ -290,14 +353,20 @@ pub fn apply_decision(home: &Path, kind: ProviderKind, decision: ConsentDecision
 /// or scripted reinvocations where the operator has reviewed the policy
 /// elsewhere.
 pub fn ensure_granted_or_prompt(home: &Path, kind: ProviderKind) -> Result<()> {
-    if !is_cloud(kind) || is_granted(home, kind) {
+    ensure_route_granted_or_prompt(home, &ConsentRoute::new(kind, None))
+}
+
+/// Endpoint-aware first-run gate. Provider text cannot cross a non-loopback
+/// Ollama route merely because its enum variant historically said `Local`.
+pub fn ensure_route_granted_or_prompt(home: &Path, route: &ConsentRoute) -> Result<()> {
+    if is_route_granted(home, route) {
         return Ok(());
     }
     if std::env::var("NEOTH_CONSENT_BYPASS").as_deref() == Ok("1") {
         return Ok(());
     }
-    let slug_s = slug(kind);
-    let label = cloud_label(kind);
+    let slug_s = slug(route.kind);
+    let label = route_label(route);
     if !std::io::stdin().is_terminal() {
         anyhow::bail!(
             "first-run consent required for provider `{slug_s}` ({label}). \
@@ -316,7 +385,7 @@ pub fn ensure_granted_or_prompt(home: &Path, kind: ProviderKind) -> Result<()> {
     eprintln!("retention/deletion guarantees on the remote side.");
     eprintln!();
     eprintln!("This prompt appears once per provider. Recorded at:");
-    eprintln!("  {}", marker_path(home, kind).display());
+    eprintln!("  {}", marker_path(home, route.kind).display());
     eprintln!();
     eprint!("Type 'yes' to grant + continue (anything else aborts): ");
     std::io::stderr().flush().ok();
@@ -326,7 +395,7 @@ pub fn ensure_granted_or_prompt(home: &Path, kind: ProviderKind) -> Result<()> {
     if input.trim() != "yes" {
         anyhow::bail!("consent declined — exiting without sending any text");
     }
-    grant(home, kind)?;
+    grant(home, route.kind)?;
     eprintln!("✓ consent recorded ({slug_s}).");
     Ok(())
 }
@@ -375,6 +444,144 @@ pub fn cloud_kinds_for_council(
     seen
 }
 
+/// Effective route for a hemisphere provider construction. Mirrors
+/// `providers::from_config_for_role`: an explicit slot owns its endpoint;
+/// an empty slot falls back to the top-level provider and endpoint.
+pub fn route_for_role(
+    config: &crate::config::FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+) -> Option<ConsentRoute> {
+    let slot = config.inference.slot_for(role);
+    match slot.provider {
+        Some(provider) => Some(ConsentRoute::new(
+            provider.to_provider_kind(),
+            slot.endpoint.as_deref(),
+        )),
+        None => config
+            .provider_kind
+            .map(|kind| ConsentRoute::new(kind, config.provider_endpoint.as_deref())),
+    }
+}
+
+fn route_for_explicit_auxiliary(
+    config: &crate::config::FreedomConfig,
+    kind: ProviderKind,
+) -> ConsentRoute {
+    // Auxiliary factories preserve the main endpoint only for the same
+    // provider kind. A different vendor gets an isolated synthetic config and
+    // therefore its adapter default endpoint.
+    let endpoint = (config.provider_kind == Some(kind))
+        .then(|| config.provider_endpoint.as_deref())
+        .flatten();
+    ConsentRoute::new(kind, endpoint)
+}
+
+/// Effective route used by `providers::from_config_for_utility`.
+pub fn route_for_utility(config: &crate::config::FreedomConfig) -> Option<ConsentRoute> {
+    match config.inference.utility_provider {
+        Some(provider) => Some(route_for_explicit_auxiliary(
+            config,
+            provider.to_provider_kind(),
+        )),
+        None => config
+            .provider_kind
+            .map(|kind| ConsentRoute::new(kind, config.provider_endpoint.as_deref())),
+    }
+}
+
+fn route_for_learn(config: &crate::config::FreedomConfig) -> Option<ConsentRoute> {
+    match config.profile.learn_provider.as_deref() {
+        Some(raw) => serde_yaml::from_str::<ProviderKind>(raw)
+            .ok()
+            .map(|kind| route_for_explicit_auxiliary(config, kind)),
+        None => config
+            .provider_kind
+            .map(|kind| ConsentRoute::new(kind, config.provider_endpoint.as_deref())),
+    }
+}
+
+fn route_for_teacher(config: &crate::config::FreedomConfig) -> Option<ConsentRoute> {
+    match config.inference.teacher_provider {
+        Some(provider) => Some(route_for_explicit_auxiliary(
+            config,
+            provider.to_provider_kind(),
+        )),
+        None => config
+            .provider_kind
+            .map(|kind| ConsentRoute::new(kind, config.provider_endpoint.as_deref())),
+    }
+}
+
+/// Canonical consent inventory for every configured provider route that can
+/// receive operator-derived text without an additional opt-in at dispatch,
+/// including fallback candidates that may become active after a 429.
+/// The marker is per provider kind, so routes are deduplicated after filtering
+/// (important for LocalOllama: a loopback occurrence must not hide a later
+/// remote occurrence of the same kind).
+pub fn required_consent_routes(config: &crate::config::FreedomConfig) -> Vec<ConsentRoute> {
+    use crate::config::inference::HemisphereRole;
+
+    let roles = [
+        HemisphereRole::Left,
+        HemisphereRole::Right,
+        HemisphereRole::Cerebellum,
+    ];
+    let mut candidates = Vec::with_capacity(16 + config.fallback.chain.len());
+    if let Some(kind) = config.provider_kind {
+        candidates.push(ConsentRoute::new(kind, config.provider_endpoint.as_deref()));
+    }
+    for role in roles {
+        if let Some(route) = route_for_role(config, role) {
+            candidates.push(route);
+        }
+    }
+    // Recursive councils can override every inner role independently for each
+    // outer hemisphere. These factories use the explicit sub-slot's endpoint
+    // exactly as written, so the consent inventory must mirror those nine
+    // potential leaves instead of stopping at the outer triplet. Empty
+    // sub-slots fall back through `slot_for_sub` to the already-inventoried
+    // outer role and therefore need no duplicate candidate here.
+    for sub_slots in config.inference.hemisphere_sub_slots.values() {
+        for role in roles {
+            let slot = sub_slots.slot_for(role);
+            if let Some(provider) = slot.provider {
+                candidates.push(ConsentRoute::new(
+                    provider.to_provider_kind(),
+                    slot.endpoint.as_deref(),
+                ));
+            }
+        }
+    }
+    candidates.extend(
+        [
+            route_for_learn(config),
+            route_for_utility(config),
+            route_for_teacher(config),
+        ]
+        .into_iter()
+        .flatten(),
+    );
+    candidates.extend(config.fallback.chain.iter().filter_map(|slot| {
+        slot.provider.map(|provider| {
+            ConsentRoute::new(provider.to_provider_kind(), slot.endpoint.as_deref())
+        })
+    }));
+
+    let mut required = Vec::with_capacity(candidates.len());
+    for route in candidates {
+        if !route_requires_consent(route.kind, route.endpoint.as_deref()) {
+            continue;
+        }
+        if !required
+            .iter()
+            .any(|existing: &ConsentRoute| existing.kind == route.kind)
+        {
+            required.push(route);
+        }
+    }
+    required
+}
+
 /// A-2 pre-flight wrapper. Calls `ensure_granted_or_prompt` for each
 /// distinct cloud kind the council will fan out to. Single-mode operators
 /// with only `provider_kind` set (no inference topology) are still gated
@@ -384,15 +591,8 @@ pub fn ensure_all_granted_or_prompt(
     home: &Path,
     config: &crate::config::FreedomConfig,
 ) -> Result<()> {
-    // Primary provider (legacy single-mode + the gate that already existed
-    // pre-A-2). Kept here so a single call covers both pre-R-* operators
-    // and the new per-hemisphere path.
-    if let Some(kind) = config.provider_kind {
-        ensure_granted_or_prompt(home, kind)?;
-    }
-    // Per-hemisphere providers — the bypass A-2 closes.
-    for kind in cloud_kinds_for_council(config) {
-        ensure_granted_or_prompt(home, kind)?;
+    for route in required_consent_routes(config) {
+        ensure_route_granted_or_prompt(home, &route)?;
     }
     Ok(())
 }
@@ -414,28 +614,31 @@ pub fn ensure_all_granted_or_prompt(
 /// 3. Reports the FIRST revoked kind so the operator gets actionable
 ///    output without us iterating every provider after the first miss.
 pub fn ensure_all_still_granted(home: &Path, config: &crate::config::FreedomConfig) -> Result<()> {
-    if let Some(kind) = config.provider_kind
-        && is_cloud(kind)
-        && !is_granted(home, kind)
-    {
+    ensure_routes_still_granted(home, &required_consent_routes(config))
+}
+
+/// Non-interactive live gate for an immutable provider-route inventory.
+/// Long-lived runtimes use this when the provider graph was constructed from
+/// an earlier config generation: the authority check must describe the graph
+/// that can actually dispatch, not an unrelated on-disk edit.
+pub fn ensure_routes_still_granted(home: &Path, routes: &[ConsentRoute]) -> Result<()> {
+    routes
+        .iter()
+        .try_for_each(|route| ensure_route_still_granted(home, route))
+}
+
+/// Non-interactive live gate for a concrete route. It never honours
+/// `NEOTH_CONSENT_BYPASS`: deleting the marker must stop the next dispatch in
+/// a running daemon, including cluster-delegated inference.
+pub fn ensure_route_still_granted(home: &Path, route: &ConsentRoute) -> Result<()> {
+    if !is_route_granted(home, route) {
         anyhow::bail!(
             "consent for provider `{}` was revoked while the daemon was \
              running. Run `neoth consent grant {}` and resend, or restart \
              `neoth serve` after granting.",
-            slug(kind),
-            slug(kind),
+            slug(route.kind),
+            slug(route.kind),
         );
-    }
-    for kind in cloud_kinds_for_council(config) {
-        if !is_granted(home, kind) {
-            anyhow::bail!(
-                "consent for hemisphere provider `{}` was revoked while \
-                 the daemon was running. Run `neoth consent grant {}` and \
-                 resend, or restart `neoth serve` after granting.",
-                slug(kind),
-                slug(kind),
-            );
-        }
     }
     Ok(())
 }
@@ -714,6 +917,201 @@ mod tests {
         assert!(kinds.contains(&crate::cli::init::ProviderKind::ClaudeCli));
         assert!(kinds.contains(&crate::cli::init::ProviderKind::GeminiApi));
         assert!(!kinds.contains(&crate::cli::init::ProviderKind::LocalQwen));
+    }
+
+    #[test]
+    fn ollama_consent_is_endpoint_aware_and_fail_closed() {
+        for endpoint in [
+            None,
+            Some("http://localhost:11434"),
+            Some("http://LOCALHOST.:11434"),
+            Some("http://127.0.0.42:11434"),
+            Some("http://[::1]:11434"),
+        ] {
+            assert!(
+                !route_requires_consent(ProviderKind::LocalOllama, endpoint),
+                "loopback endpoint must remain zero-friction: {endpoint:?}"
+            );
+        }
+        for endpoint in [
+            Some("http://192.168.1.20:11434"),
+            Some("https://ollama.example.com"),
+            Some("http://localhost.evil.example:11434"),
+            Some("not a URL"),
+        ] {
+            assert!(
+                route_requires_consent(ProviderKind::LocalOllama, endpoint),
+                "non-loopback or malformed endpoint must fail closed: {endpoint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_ollama_route_requires_revocable_marker() {
+        let tmp = TempDir::new().unwrap();
+        let route = ConsentRoute::new(ProviderKind::LocalOllama, Some("http://192.168.1.20:11434"));
+        assert!(!is_route_granted(tmp.path(), &route));
+        assert!(ensure_route_still_granted(tmp.path(), &route).is_err());
+        grant(tmp.path(), ProviderKind::LocalOllama).unwrap();
+        assert!(is_route_granted(tmp.path(), &route));
+        ensure_route_still_granted(tmp.path(), &route).unwrap();
+        revoke(tmp.path(), ProviderKind::LocalOllama).unwrap();
+        assert!(!is_route_granted(tmp.path(), &route));
+    }
+
+    #[test]
+    fn required_routes_include_learn_utility_and_teacher_providers() {
+        use crate::config::inference::InferenceProvider;
+        let mut cfg = crate::config::FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalQwen),
+            ..Default::default()
+        };
+        cfg.profile.learn_provider = Some("openai_api".into());
+        cfg.inference.utility_provider = Some(InferenceProvider::Gemini);
+        cfg.inference.teacher_provider = Some(InferenceProvider::AnthropicApi);
+
+        let routes = required_consent_routes(&cfg);
+        let kinds: Vec<_> = routes.iter().map(|route| route.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ProviderKind::OpenaiApi,
+                ProviderKind::GeminiApi,
+                ProviderKind::AnthropicApi,
+            ]
+        );
+    }
+
+    #[test]
+    fn required_routes_include_every_explicit_recursive_sub_slot() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, SubHemisphereSlots,
+        };
+
+        let mut cfg = crate::config::FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalQwen),
+            ..Default::default()
+        };
+        cfg.inference.hemisphere_sub_slots.insert(
+            HemisphereRole::Left,
+            SubHemisphereSlots {
+                left: HemisphereSlot {
+                    provider: Some(InferenceProvider::OpenAi),
+                    ..Default::default()
+                },
+                right: HemisphereSlot {
+                    provider: Some(InferenceProvider::LocalOllama),
+                    endpoint: Some("http://10.0.0.44:11434".into()),
+                    ..Default::default()
+                },
+                cerebellum: HemisphereSlot {
+                    provider: Some(InferenceProvider::Gemini),
+                    ..Default::default()
+                },
+            },
+        );
+        cfg.inference.hemisphere_sub_slots.insert(
+            HemisphereRole::Right,
+            SubHemisphereSlots {
+                left: HemisphereSlot {
+                    provider: Some(InferenceProvider::AnthropicApi),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let routes = required_consent_routes(&cfg);
+        assert_eq!(routes.len(), 4);
+        assert!(
+            routes
+                .iter()
+                .any(|route| route.kind == ProviderKind::OpenaiApi)
+        );
+        assert!(
+            routes
+                .iter()
+                .any(|route| route.kind == ProviderKind::GeminiApi)
+        );
+        assert!(
+            routes
+                .iter()
+                .any(|route| route.kind == ProviderKind::AnthropicApi)
+        );
+        assert!(routes.iter().any(|route| {
+            route.kind == ProviderKind::LocalOllama
+                && route.endpoint.as_deref() == Some("http://10.0.0.44:11434")
+        }));
+    }
+
+    #[test]
+    fn recursive_sub_slot_revocation_blocks_the_live_inventory() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, SubHemisphereSlots,
+        };
+
+        let home = TempDir::new().unwrap();
+        let mut cfg = crate::config::FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalQwen),
+            ..Default::default()
+        };
+        cfg.inference.hemisphere_sub_slots.insert(
+            HemisphereRole::Cerebellum,
+            SubHemisphereSlots {
+                right: HemisphereSlot {
+                    provider: Some(InferenceProvider::OpenAi),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let error = ensure_all_still_granted(home.path(), &cfg)
+            .expect_err("an ungranted recursive leaf must block before council dispatch");
+        assert!(error.to_string().contains("openai_api"));
+    }
+
+    #[test]
+    fn local_ollama_occurrence_cannot_hide_remote_hemisphere_route() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
+        let mut cfg = crate::config::FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalOllama),
+            provider_endpoint: Some("http://localhost:11434".into()),
+            ..Default::default()
+        };
+        cfg.profile.learn_provider = None;
+        cfg.inference.mode = TopologyMode::Custom;
+        cfg.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalOllama),
+            endpoint: Some("http://localhost:11434".into()),
+            ..Default::default()
+        };
+        cfg.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalOllama),
+            endpoint: Some("http://10.0.0.8:11434".into()),
+            ..Default::default()
+        };
+
+        let routes = required_consent_routes(&cfg);
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].kind, ProviderKind::LocalOllama);
+        assert_eq!(routes[0].endpoint.as_deref(), Some("http://10.0.0.8:11434"));
+    }
+
+    #[test]
+    fn single_mode_role_route_falls_back_to_top_level_endpoint() {
+        let cfg = crate::config::FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalOllama),
+            provider_endpoint: Some("http://10.0.0.9:11434".into()),
+            ..Default::default()
+        };
+        let route = route_for_role(&cfg, crate::config::inference::HemisphereRole::Left).unwrap();
+        assert_eq!(route.kind, ProviderKind::LocalOllama);
+        assert_eq!(route.endpoint.as_deref(), Some("http://10.0.0.9:11434"));
+        assert!(route_requires_consent(
+            route.kind,
+            route.endpoint.as_deref()
+        ));
     }
 
     // Note: bypass-env semantics for `ensure_all_granted_or_prompt` are

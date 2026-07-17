@@ -42,12 +42,13 @@
 //! - Per-provider sub-budgets (cap claude_cli at N, OpenAI at M).
 //!   Today's cap is total-LLM-calls; per-provider budgets need
 //!   provider-id-keyed counters, which fits cleanly as a follow-up.
-//! - Daily-USD-cap integration (`CouncilConfig::daily_usd_cap` is
-//!   wired in `providers/cost.rs::DailyBudget` separately).
+//! - The persistent daily USD reserve/settle ledger is intentionally separate
+//!   in `council::daily_budget`; the provider-leaf authorizer wires it into
+//!   every concrete Council dispatch.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +59,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug)]
 pub struct BudgetToken {
     used: Arc<AtomicU32>,
+    denied: Arc<AtomicBool>,
     cap: u32,
 }
 
@@ -94,6 +96,7 @@ impl BudgetToken {
     pub fn new(cap: u32) -> Self {
         Self {
             used: Arc::new(AtomicU32::new(0)),
+            denied: Arc::new(AtomicBool::new(false)),
             cap,
         }
     }
@@ -108,8 +111,8 @@ impl BudgetToken {
     /// Reserve one LLM call against the cap. Returns the 1-indexed
     /// position this call took (so a cap-of-15 token's 15th successful
     /// `charge` returns `Ok(15)` and the 16th returns
-    /// `Err(BudgetExhausted)`). Lock-free: a single relaxed
-    /// `fetch_add`.
+    /// `Err(BudgetExhausted)`). Lock-free: a single atomic
+    /// `fetch_update`.
     ///
     /// On exhaustion the internal counter is NOT decremented — the
     /// over-budget read still cost an atomic op but the token stays
@@ -118,9 +121,14 @@ impl BudgetToken {
     /// `charge` for the same user-message must also fail so the
     /// caller doesn't accidentally race past the limit.
     pub fn charge(&self) -> Result<u32, BudgetExhausted> {
-        let prior = self.used.fetch_add(1, Ordering::SeqCst);
-        let used = prior.saturating_add(1);
-        if used > self.cap {
+        let prior = self
+            .used
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
+                Some(used.saturating_add(1))
+            })
+            .expect("BudgetToken fetch_update closure always returns Some");
+        if prior >= self.cap {
+            self.denied.store(true, Ordering::SeqCst);
             // Report the saturated successful-charge count (== cap once
             // exhausted, 0 for a cap of 0), NOT this over-budget attempt's
             // 1-indexed position, so the message reads "N of M charged".
@@ -129,7 +137,7 @@ impl BudgetToken {
                 cap: self.cap,
             });
         }
-        Ok(used)
+        Ok(prior + 1)
     }
 
     /// Number of charges that have succeeded so far. Reads the atomic
@@ -150,6 +158,12 @@ impl BudgetToken {
     pub fn remaining(&self) -> u32 {
         self.cap.saturating_sub(self.used())
     }
+
+    /// True only after at least one call was actually denied. Merely consuming
+    /// the final allowed slot is not an exhaustion event.
+    pub fn was_denied(&self) -> bool {
+        self.denied.load(Ordering::SeqCst)
+    }
 }
 
 // ── KF-08 — persisted council-budget meter (backend half) ─────────────────
@@ -168,8 +182,8 @@ pub struct CouncilBudgetSnapshot {
     pub cap: u32,
     /// LLM calls the last debate actually consumed.
     pub used_last_msg: u32,
-    /// True when the last debate hit the cap (`used >= cap`, cap > 0) —
-    /// at least one leaf was denied + synthesised as skipped.
+    /// True only when at least one leaf was denied after the allowed calls were
+    /// consumed. Exact-cap success without a denied attempt stays false.
     pub exhausted_last_msg: bool,
     /// Lifetime count of debates that hit the cap. A climbing value is
     /// the operator signal that the cap is too low for their topology.
@@ -206,13 +220,14 @@ pub fn load_budget_snapshot(home: &Path) -> Option<CouncilBudgetSnapshot> {
     serde_json::from_str(&body).ok()
 }
 
-/// Best-effort: fold one completed debate's `(used, cap)` into the
+/// Best-effort: fold one completed debate's `(used, cap, denied)` into the
 /// persisted snapshot (load → update last-msg fields + bump the rolling
-/// exhaustion counter when the cap was hit → save). Never fails the
-/// debate — an I/O error logs `warn!` and drops the update.
-pub fn record_budget_outcome(home: &Path, used: u32, cap: u32, now_unix: i64) {
+/// exhaustion counter only when a call was actually denied → save). Consuming
+/// the final allowed slot is not exhaustion. Never fails the debate — an I/O
+/// error logs `warn!` and drops the update.
+pub fn record_budget_outcome(home: &Path, used: u32, cap: u32, denied: bool, now_unix: i64) {
     let mut snap = load_budget_snapshot(home).unwrap_or_default();
-    let exhausted = cap > 0 && used >= cap;
+    let exhausted = denied;
     snap.cap = cap;
     snap.used_last_msg = used;
     snap.exhausted_last_msg = exhausted;
@@ -235,6 +250,7 @@ mod tests {
         assert_eq!(b.charge().unwrap(), 1);
         assert_eq!(b.charge().unwrap(), 2);
         assert_eq!(b.charge().unwrap(), 3);
+        assert!(!b.was_denied(), "exact-cap success is not exhaustion");
     }
 
     #[test]
@@ -244,6 +260,7 @@ mod tests {
         b.charge().unwrap();
         let err = b.charge().unwrap_err();
         assert_eq!(err.cap, 2);
+        assert!(b.was_denied());
     }
 
     #[test]
@@ -395,7 +412,7 @@ mod tests {
     fn record_budget_outcome_marks_exhausted_and_increments_rolling() {
         let dir = tempfile::tempdir().unwrap();
         // First debate hits the cap → exhausted + rolling = 1.
-        record_budget_outcome(dir.path(), 15, 15, 1000);
+        record_budget_outcome(dir.path(), 15, 15, true, 1000);
         let s = load_budget_snapshot(dir.path()).unwrap();
         assert!(s.exhausted_last_msg);
         assert_eq!(s.exhaustions_rolling, 1);
@@ -403,7 +420,7 @@ mod tests {
         assert_eq!(s.cap, 15);
 
         // Second debate also hits → rolling = 2.
-        record_budget_outcome(dir.path(), 15, 15, 1001);
+        record_budget_outcome(dir.path(), 15, 15, true, 1001);
         assert_eq!(
             load_budget_snapshot(dir.path())
                 .unwrap()
@@ -413,7 +430,7 @@ mod tests {
 
         // A debate under cap → not exhausted, rolling unchanged, last-msg
         // fields updated.
-        record_budget_outcome(dir.path(), 3, 15, 1002);
+        record_budget_outcome(dir.path(), 3, 15, false, 1002);
         let s = load_budget_snapshot(dir.path()).unwrap();
         assert!(!s.exhausted_last_msg);
         assert_eq!(s.exhaustions_rolling, 2);
@@ -422,14 +439,23 @@ mod tests {
     }
 
     #[test]
-    fn record_budget_outcome_zero_cap_never_exhausted() {
+    fn record_budget_outcome_zero_cap_records_an_actual_denial() {
         let dir = tempfile::tempdir().unwrap();
-        record_budget_outcome(dir.path(), 0, 0, 1000);
+        record_budget_outcome(dir.path(), 0, 0, true, 1000);
         let s = load_budget_snapshot(dir.path()).unwrap();
         assert!(
-            !s.exhausted_last_msg,
-            "cap=0 must not register as exhausted"
+            s.exhausted_last_msg,
+            "a denied attempt under cap=0 is a real exhaustion event"
         );
-        assert_eq!(s.exhaustions_rolling, 0);
+        assert_eq!(s.exhaustions_rolling, 1);
+    }
+
+    #[test]
+    fn record_budget_outcome_exact_cap_without_denial_is_not_exhausted() {
+        let dir = tempfile::tempdir().unwrap();
+        record_budget_outcome(dir.path(), 3, 3, false, 1000);
+        let snapshot = load_budget_snapshot(dir.path()).unwrap();
+        assert!(!snapshot.exhausted_last_msg);
+        assert_eq!(snapshot.exhaustions_rolling, 0);
     }
 }

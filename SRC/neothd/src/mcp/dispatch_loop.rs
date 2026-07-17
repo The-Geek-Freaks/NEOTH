@@ -7,9 +7,9 @@
 //!    contains the catalogue from [`super::catalogue::assemble_catalogue`]).
 //! 2. [`run_tool_loop`] scans the LLM response for ```mcp-tool-call
 //!    blocks via [`super::tool_call_parser::extract_tool_calls`].
-//! 3. For each parsed call: lookup the configured server, spawn a
-//!    client, dispatch via [`super::gate::invoke_with_audit`] (allowlist
-//!    + autonomy + WAL audit all enforced).
+//! 3. For each parsed call: lookup the configured server, run the static gate,
+//!    then start the selected client and dispatch (allowlist + autonomy + WAL
+//!    audit all enforced).
 //! 4. Tool results + parse errors are rendered as text and threaded
 //!    back to the LLM as the next user message.
 //! 5. The completion is re-issued. Loop terminates when (a) the LLM
@@ -24,7 +24,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 
 use crate::mcp::config::McpServers;
@@ -123,6 +123,7 @@ pub async fn run_tool_loop<D, P>(
     // gate (security review Finding 4). Pass `&SecurityPolicy::default()` to
     // accept the secure defaults (deny dangerous, warn egress).
     security_policy: &crate::config::SecurityPolicy,
+    instance_home: &std::path::Path,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -160,6 +161,7 @@ where
         // GOLD-ADAPT-HARNESS — all-default harness knobs for the bare wrapper
         // (retry on, default token threshold, skeletonize on at 200 lines).
         &crate::config::tools::McpHarnessConfig::default(),
+        instance_home,
     )
     .await
 }
@@ -186,11 +188,13 @@ pub async fn run_tool_loop_with_cap<D, P>(
     judge_provider: Option<&dyn crate::providers::Provider>,
     elicitation_handler: &crate::cli::elicitation::ElicitationHandler,
     harness_cfg: &crate::config::tools::McpHarnessConfig,
+    instance_home: &std::path::Path,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
     P: PolicyArgument + Copy + Send + Sync,
 {
+    let mut compaction_budget = CompactionBudget::default();
     run_tool_loop_with_budget(
         driver,
         initial_prompt,
@@ -210,7 +214,9 @@ where
         judge_provider,
         elicitation_handler,
         harness_cfg,
+        &mut compaction_budget,
         None,
+        instance_home,
     )
     .await
 }
@@ -239,7 +245,7 @@ pub async fn run_tool_loop_with_budget<D, P>(
     agent_disallowed_tools: Option<&[String]>,
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
     // McpTool lease-backed consent gate. Threaded down to dispatch_one
-    // → invoke_with_audit. `None` = no lease upgrade (CLI/test paths).
+    // → preflight authorization. `None` = no lease upgrade (CLI/test paths).
     // `Some(sender_id)` = channel path (verified by channel adapter).
     subject: Option<String>,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
@@ -267,9 +273,16 @@ pub async fn run_tool_loop_with_budget<D, P>(
     // `freedom.yaml::tools.harness`. Last param so existing call-sites need only
     // a one-line append.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
+    // Aggregate paid-summary budget owned by the complete operator turn. The
+    // outer loop engine reuses one value across every round; single-loop
+    // callers create one value at their turn boundary.
+    compaction_budget: &mut CompactionBudget,
     // Optional hard ceiling on parsed/blocked/dispatched tool calls in this
     // invocation. Checked before every call, including iteration one.
     max_tool_calls: Option<u64>,
+    // Instance root for leases, risk-confirm consumption and harness traces.
+    // This is an authorization namespace, not a cosmetic storage location.
+    instance_home: &std::path::Path,
 ) -> Result<LoopOutcome>
 where
     D: CompletionDriver + Send,
@@ -301,14 +314,15 @@ where
     // one more nudge instead of stopping, until the goal is checked / the grind
     // is bounded by max_iterations.
     let mut goal_tracker = crate::mcp::goal_tracker::GoalTracker::new(goal_context);
-    // GOLD-ADOPT-22 — SmartApprove read-only cache, session-scoped (persists
-    // across loop iterations so a server's tool annotations are seeded once).
-    // `Some` only when the operator opted in via `security.smart_approve`; the
-    // gate auto-approves a Confirm-gated call iff the tool's DECLARED EFFECT
-    // metadata marks it read-only. Discarded when the loop returns.
-    let mut smart_cache = security_policy
-        .smart_approve
-        .then(crate::mcp::smart_approve::ReadOnlyCache::new);
+    // GOLD-ADOPT-22 — lazy immutable SmartApprove sessions. The first actual
+    // dispatch to an opted-in server opens one connection, snapshots tools/list
+    // once, and retains that exact process for the loop. Later cache misses,
+    // config drift or transport failure never live-requery into Allow.
+    let mut smart_session = if security_policy.smart_approve {
+        Some(crate::mcp::smart_approve::SmartApproveSession::new(servers))
+    } else {
+        None
+    };
     // GOLD-ADOPT-18 — subdirectory-hint tracker (session-scoped, like the
     // guards above). As the agent issues tool calls with path args, the first
     // time it enters a dir under cwd we inject that dir's .neothhints/AGENTS.md
@@ -325,14 +339,21 @@ where
     // session. The retry response is parsed and dispatched in the SAME loop
     // iteration; it is never probed and then requested a second time.
     let mut harness_leaked_retry_used = false;
-
     loop {
         iterations += 1;
         // GOLD-ADOPT-19 — compact the accumulated history before the next
         // completion if it crossed the threshold. Iteration 1 is the operator's
         // own prompt (never compact that); only the grown prompt (2+) qualifies.
         if iterations > 1 {
-            prompt = compact_if_needed(driver, prompt, &compaction, writer, iterations).await;
+            prompt = compact_if_needed(
+                driver,
+                prompt,
+                &compaction,
+                writer,
+                iterations,
+                compaction_budget,
+            )
+            .await?;
         }
         // GOLD-ADAPT-HARNESS-04 — per-turn input token guard: if the estimated
         // prompt size exceeds the threshold, inject a one-time stop/compact
@@ -852,7 +873,7 @@ where
                 // (rare), so the lease file isn't read on every call.
                 if gate.is_blocked() {
                     let (dangerous_leased, egress_leased, lease_id, expired_present) =
-                        check_risk_leases(&risk, security_policy.confirm_high);
+                        check_risk_leases(instance_home, &risk, security_policy.confirm_high);
                     if dangerous_leased || egress_leased {
                         let lifted = crate::security::risk_gate::apply_risk_leases(
                             &risk,
@@ -872,7 +893,11 @@ where
                             // blocked tool call proceeds"), not unlimited calls
                             // until the TTL lapses. The audited id is the one
                             // actually consumed.
-                            match consume_risk_leases(dangerous_leased, egress_leased) {
+                            match consume_risk_leases(
+                                instance_home,
+                                dangerous_leased,
+                                egress_leased,
+                            ) {
                                 Ok(consumed) => {
                                     // GOLD-ADOPT-23 point 3 — the confirm window was spent.
                                     emit_risk_gate_wal(
@@ -981,10 +1006,11 @@ where
                 writer,
                 rollback_policy,
                 skill_allowlist,
-                smart_cache.as_mut(),
+                smart_session.as_mut(),
                 agent_disallowed_tools,
                 // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity down.
                 subject.as_deref(),
+                instance_home,
             )
             .await
             {
@@ -1150,8 +1176,7 @@ where
                 verdict: verdict.to_string(),
                 ts_unix: crate::time::now_unix_i64(),
             };
-            let home = crate::config::FreedomConfig::default_neoth_home();
-            crate::mcp::harness::append_trajectory(&home, &harness_session_id, record);
+            crate::mcp::harness::append_trajectory(instance_home, &harness_session_id, record);
         }
     }
 
@@ -1167,73 +1192,519 @@ where
 }
 
 /// GOLD-ADOPT-19 — if `prompt` crossed the compaction threshold, summarize it
-/// via one extra `driver.complete` call and return the compacted replacement;
-/// otherwise return `prompt` unchanged. Best-effort: a failed summarization
-/// keeps the original prompt (the loop proceeds — compaction is an optimization,
-/// never a correctness gate). Emits 0x5B START + 0x5C DONE around a real pass.
+/// via one or more bounded `driver.complete` calls and return the compacted
+/// replacement; otherwise return `prompt` unchanged. A provider-side summary
+/// failure keeps a leaf-safe original prompt, while a required WAL lifecycle
+/// failure is surfaced fail-closed. Emits one paired 0x5B START + 0x5C DONE
+/// lifecycle around every real pass.
+#[derive(Default)]
+pub(crate) struct CompactionBudget {
+    summary_calls_used: usize,
+}
+
+enum CompactionWalState {
+    Ready,
+    StartPending(tokio::task::JoinHandle<anyhow::Result<()>>),
+    Active,
+    TerminalPending(tokio::task::JoinHandle<anyhow::Result<()>>),
+    Finished,
+    Failed,
+}
+
+/// Cancellation-safe ownership of one compaction START -> DONE edge. WAL
+/// writes run in owned tasks so dropping the caller while fsync is pending
+/// cannot discard the acknowledgement. Once START is durable, Drop emits one
+/// `cancelled` terminal; a normal terminal already in flight is only awaited.
+struct CompactionWalLifecycle {
+    writer: Option<WalWriterHandle>,
+    state: CompactionWalState,
+    compaction_id: String,
+    iteration: u32,
+    before_tokens: u32,
+    summary_calls: usize,
+    reduction_rounds: usize,
+}
+
+impl CompactionWalLifecycle {
+    fn new(writer: Option<&WalWriterHandle>, iteration: u32, before_tokens: u32) -> Self {
+        Self {
+            writer: writer.cloned(),
+            state: CompactionWalState::Ready,
+            compaction_id: uuid::Uuid::now_v7().to_string(),
+            iteration,
+            before_tokens,
+            summary_calls: 0,
+            reduction_rounds: 0,
+        }
+    }
+
+    fn append_task(
+        writer: WalWriterHandle,
+        event_type: u8,
+        mut payload: serde_json::Value,
+        compaction_id: &str,
+    ) -> anyhow::Result<tokio::task::JoinHandle<anyhow::Result<()>>> {
+        let object = payload
+            .as_object_mut()
+            .context("compaction WAL payload must be a JSON object")?;
+        object.insert(
+            "compaction_id".into(),
+            serde_json::Value::String(compaction_id.to_owned()),
+        );
+        let bytes = serde_json::to_vec(&payload).context("serialize compaction WAL payload")?;
+        let header = crate::wal::HeaderBuilder::new(event_type, &bytes).build();
+        let runtime = tokio::runtime::Handle::try_current()
+            .context("compaction WAL requires a Tokio runtime")?;
+        Ok(runtime.spawn(async move {
+            writer
+                .append(header, bytes)
+                .await
+                .map(|_| ())
+                .context("append compaction WAL frame")
+        }))
+    }
+
+    async fn start(&mut self, threshold_tokens: u32) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            matches!(&self.state, CompactionWalState::Ready),
+            "compaction WAL lifecycle can start only once"
+        );
+        let Some(writer) = self.writer.clone() else {
+            self.state = CompactionWalState::Active;
+            return Ok(());
+        };
+        let task = match Self::append_task(
+            writer,
+            crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START,
+            serde_json::json!({
+                "iteration": self.iteration,
+                "prompt_tokens": self.before_tokens,
+                "threshold_tokens": threshold_tokens,
+                "ts_unix": now_unix_i64(),
+            }),
+            &self.compaction_id,
+        ) {
+            Ok(task) => task,
+            Err(error) => {
+                self.state = CompactionWalState::Failed;
+                return Err(error);
+            }
+        };
+        self.state = CompactionWalState::StartPending(task);
+        let joined = match &mut self.state {
+            CompactionWalState::StartPending(task) => task.await,
+            _ => unreachable!("compaction START task was just installed"),
+        };
+        let result = match joined {
+            Ok(result) => result,
+            Err(error) => {
+                self.state = CompactionWalState::Failed;
+                return Err(anyhow::Error::new(error).context("join compaction START WAL task"));
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.state = CompactionWalState::Active;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = CompactionWalState::Failed;
+                Err(error)
+            }
+        }
+    }
+
+    fn update_progress(&mut self, summary_calls: usize, reduction_rounds: usize) {
+        self.summary_calls = summary_calls;
+        self.reduction_rounds = reduction_rounds;
+    }
+
+    fn started(&self) -> bool {
+        matches!(
+            &self.state,
+            CompactionWalState::Active
+                | CompactionWalState::TerminalPending(_)
+                | CompactionWalState::Finished
+        )
+    }
+
+    async fn finish(&mut self, mut payload: serde_json::Value) -> anyhow::Result<()> {
+        if matches!(&self.state, CompactionWalState::Ready) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            matches!(&self.state, CompactionWalState::Active),
+            "compaction WAL lifecycle has no active START"
+        );
+        let Some(writer) = self.writer.clone() else {
+            self.state = CompactionWalState::Finished;
+            return Ok(());
+        };
+        let object = payload
+            .as_object_mut()
+            .context("compaction terminal WAL payload must be a JSON object")?;
+        object.insert("iteration".into(), self.iteration.into());
+        object.insert("before_tokens".into(), self.before_tokens.into());
+        object.insert("summary_calls".into(), self.summary_calls.into());
+        object.insert("reduction_rounds".into(), self.reduction_rounds.into());
+        let task = Self::append_task(
+            writer,
+            crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
+            payload,
+            &self.compaction_id,
+        )?;
+        self.state = CompactionWalState::TerminalPending(task);
+        let joined = match &mut self.state {
+            CompactionWalState::TerminalPending(task) => task.await,
+            _ => unreachable!("compaction terminal task was just installed"),
+        };
+        let result = match joined {
+            Ok(result) => result,
+            Err(error) => {
+                self.state = CompactionWalState::Failed;
+                return Err(anyhow::Error::new(error).context("join compaction terminal WAL task"));
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.state = CompactionWalState::Finished;
+                Ok(())
+            }
+            Err(error) => {
+                self.state = CompactionWalState::Failed;
+                Err(error)
+            }
+        }
+    }
+
+    fn cancelled_payload(&self) -> serde_json::Value {
+        serde_json::json!({
+            "iteration": self.iteration,
+            "outcome": "cancelled",
+            "before_tokens": self.before_tokens,
+            "after_tokens": serde_json::Value::Null,
+            "summary_calls": self.summary_calls,
+            "reduction_rounds": self.reduction_rounds,
+            "error": "compaction future cancelled",
+            "ts_unix": now_unix_i64(),
+        })
+    }
+}
+
+impl Drop for CompactionWalLifecycle {
+    fn drop(&mut self) {
+        let state = std::mem::replace(&mut self.state, CompactionWalState::Finished);
+        let writer = self.writer.clone();
+        let compaction_id = self.compaction_id.clone();
+        let cancelled_payload = self.cancelled_payload();
+        let cleanup = async move {
+            let append_cancelled = async move {
+                let Some(writer) = writer else { return };
+                match CompactionWalLifecycle::append_task(
+                    writer,
+                    crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
+                    cancelled_payload,
+                    &compaction_id,
+                ) {
+                    Ok(task) => match task.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            tracing::error!(error = %error, "compaction cancellation terminal append failed")
+                        }
+                        Err(error) => {
+                            tracing::error!(error = %error, "compaction cancellation terminal task failed")
+                        }
+                    },
+                    Err(error) => {
+                        tracing::error!(error = %error, "compaction cancellation terminal could not start")
+                    }
+                }
+            };
+            match state {
+                CompactionWalState::StartPending(task) => match task.await {
+                    Ok(Ok(())) => append_cancelled.await,
+                    Ok(Err(error)) => {
+                        tracing::error!(error = %error, "cancelled compaction START was not durable")
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "cancelled compaction START task failed")
+                    }
+                },
+                CompactionWalState::Active => append_cancelled.await,
+                CompactionWalState::TerminalPending(task) => match task.await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        tracing::error!(error = %error, "compaction terminal append failed after caller cancellation")
+                    }
+                    Err(error) => {
+                        tracing::error!(error = %error, "compaction terminal task failed after caller cancellation")
+                    }
+                },
+                CompactionWalState::Ready
+                | CompactionWalState::Finished
+                | CompactionWalState::Failed => {}
+            }
+        };
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(cleanup);
+            }
+            Err(error) => {
+                tracing::error!(error = %error, "compaction WAL lifecycle dropped outside a Tokio runtime")
+            }
+        }
+    }
+}
+
 async fn compact_if_needed<D: CompletionDriver + Send>(
     driver: &mut D,
     prompt: String,
     policy: &crate::context::compaction::CompactionPolicy,
     writer: Option<&WalWriterHandle>,
     iteration: u32,
-) -> String {
+    budget: &mut CompactionBudget,
+) -> anyhow::Result<String> {
     if !crate::context::compaction::needs_compaction(&prompt, policy) {
-        return prompt;
+        return Ok(prompt);
     }
-    let before_tokens = crate::tokens::budget::count_tokens(&prompt);
-    emit_compaction_wal(
-        writer,
-        crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START,
-        serde_json::json!({
-            "iteration": iteration,
-            "prompt_tokens": before_tokens,
-            "threshold_tokens": policy.threshold_tokens,
-            "ts_unix": now_unix_i64(),
-        }),
+    let before_tokens = crate::tokens::budget::count_tokens_upper_bound(&prompt);
+    let pass_start_calls = budget.summary_calls_used;
+    let mut wal_lifecycle = CompactionWalLifecycle::new(writer, iteration, before_tokens);
+    let mut reduction_rounds = 0usize;
+    let mut failure_reason = None;
+    let result = compact_if_needed_inner(
+        driver,
+        prompt,
+        policy,
+        iteration,
+        budget,
+        before_tokens,
+        pass_start_calls,
+        &mut wal_lifecycle,
+        &mut reduction_rounds,
+        &mut failure_reason,
     )
     .await;
 
+    // START is emitted only after all first-leaf preflight passes. Once it is
+    // present, every ordinary success/failure/no-change path receives exactly
+    // one terminal DONE frame with an explicit outcome.
+    if wal_lifecycle.started() {
+        let (outcome, after_tokens, error) = match &result {
+            Ok(compacted) => {
+                let after = crate::tokens::budget::count_tokens_upper_bound(compacted);
+                (
+                    if failure_reason.is_some() {
+                        "failed"
+                    } else if after < before_tokens {
+                        "compacted"
+                    } else {
+                        "kept_original"
+                    },
+                    Some(after),
+                    failure_reason.clone(),
+                )
+            }
+            Err(error) => ("failed", None, Some(error.to_string())),
+        };
+        wal_lifecycle
+            .finish(serde_json::json!({
+                "outcome": outcome,
+                "after_tokens": after_tokens,
+                "summary_calls_turn": budget.summary_calls_used,
+                "error": error,
+                "ts_unix": now_unix_i64(),
+            }))
+            .await?;
+    }
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn compact_if_needed_inner<D: CompletionDriver + Send>(
+    driver: &mut D,
+    prompt: String,
+    policy: &crate::context::compaction::CompactionPolicy,
+    iteration: u32,
+    budget: &mut CompactionBudget,
+    before_tokens: u32,
+    pass_start_calls: usize,
+    wal_lifecycle: &mut CompactionWalLifecycle,
+    reduction_rounds_out: &mut usize,
+    failure_reason_out: &mut Option<String>,
+) -> anyhow::Result<String> {
     // GR-120: summarize only the OLDER history and re-attach the most recent
     // exchange verbatim, so the last tool result can never be summarized away
     // (the retention instruction alone was a behavioural hint, not a guarantee).
     let (older, last_exchange) = crate::context::compaction::split_last_exchange(&prompt);
-    let summary_prompt = crate::context::compaction::build_compaction_prompt(older);
-    match driver.complete(&summary_prompt).await {
-        Ok(summary) if !summary.trim().is_empty() => {
-            let compacted = crate::context::compaction::wrap_summary_with_last_exchange(
-                &summary,
-                last_exchange,
-            );
-            let after_tokens = crate::tokens::budget::count_tokens(&compacted);
-            info!(
-                iteration,
-                before_tokens, after_tokens, "context compacted (GOLD-ADOPT-19)"
-            );
-            emit_compaction_wal(
-                writer,
-                crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
-                serde_json::json!({
-                    "iteration": iteration,
-                    "before_tokens": before_tokens,
-                    "after_tokens": after_tokens,
-                    "ts_unix": now_unix_i64(),
-                }),
-            )
-            .await;
-            compacted
-        }
-        Ok(_) => {
+    let prompt_capacity = policy.prompt_capacity_tokens;
+    let preserved_floor = crate::tokens::budget::count_tokens_upper_bound(
+        &crate::context::compaction::wrap_summary_with_last_exchange("", last_exchange),
+    );
+    if preserved_floor > prompt_capacity {
+        anyhow::bail!(
+            "context compaction cannot preserve the latest exchange verbatim: required {preserved_floor} prompt tokens, capacity {prompt_capacity}"
+        );
+    }
+
+    // A model can return a near-cap summary for every input chunk. Reduce the
+    // joined summaries again until the postcondition is true instead of
+    // reporting DONE for a prompt that is still larger or cannot hit the leaf.
+    const MAX_REDUCTION_ROUNDS: usize = 4;
+    let mut material = older.to_owned();
+    for reduction_round in 0..MAX_REDUCTION_ROUNDS {
+        let max_summary_calls = crate::context::compaction::MAX_COMPACTION_CALLS_PER_TURN;
+        let framing_tokens = crate::tokens::budget::count_tokens_upper_bound(
+            &crate::context::compaction::build_compaction_prompt(""),
+        );
+        let history_capacity = prompt_capacity.saturating_sub(framing_tokens);
+        let material_tokens = crate::tokens::budget::count_tokens_upper_bound(&material);
+        let required_summary_calls = if material_tokens == 0 {
+            1
+        } else if history_capacity == 0 {
+            usize::MAX
+        } else {
+            usize::try_from(material_tokens.div_ceil(history_capacity)).unwrap_or(usize::MAX)
+        };
+        if budget
+            .summary_calls_used
+            .saturating_add(required_summary_calls)
+            > max_summary_calls
+        {
+            if before_tokens > prompt_capacity {
+                anyhow::bail!(
+                    "context compaction requires at least {} paid summary leaves, above the per-turn cap {}; oversized context is blocked before provider dispatch",
+                    budget
+                        .summary_calls_used
+                        .saturating_add(required_summary_calls),
+                    max_summary_calls
+                );
+            }
             warn!(
                 iteration,
-                "compaction returned empty summary — keeping original prompt"
+                required_summary_calls = budget
+                    .summary_calls_used
+                    .saturating_add(required_summary_calls),
+                max_summary_calls,
+                "compaction fan-out cap reached — keeping the original leaf-safe prompt"
             );
-            prompt
+            return Ok(prompt);
         }
-        Err(e) => {
-            warn!(iteration, error = %e, "compaction LLM call failed — keeping original prompt");
-            prompt
+        let summary_prompts = match crate::context::compaction::build_bounded_compaction_prompts(
+            &material,
+            prompt_capacity,
+        ) {
+            Ok(prompts) => prompts,
+            Err(error) => {
+                if before_tokens > prompt_capacity {
+                    anyhow::bail!(
+                        "context compaction cannot build a leaf-safe summary request: {error}"
+                    );
+                }
+                warn!(
+                    iteration,
+                    error, "compaction input cap is too small — keeping original prompt"
+                );
+                return Ok(prompt);
+            }
+        };
+        let round_calls = summary_prompts.len();
+        // UTF-8 boundary handling can only increase the conservative lower
+        // bound above; keep a second check adjacent to dispatch.
+        if budget.summary_calls_used.saturating_add(round_calls) > max_summary_calls {
+            if before_tokens > prompt_capacity {
+                anyhow::bail!(
+                    "context compaction requires {} paid summary leaves, above the per-turn cap {}; oversized context is blocked before any additional provider dispatch",
+                    budget.summary_calls_used.saturating_add(round_calls),
+                    max_summary_calls
+                );
+            }
+            warn!(
+                iteration,
+                required_summary_calls = budget.summary_calls_used.saturating_add(round_calls),
+                max_summary_calls,
+                "compaction fan-out cap reached — keeping the original leaf-safe prompt"
+            );
+            return Ok(prompt);
         }
+        if !wal_lifecycle.started() {
+            wal_lifecycle.start(policy.threshold_tokens).await?;
+        }
+        *reduction_rounds_out = reduction_round + 1;
+        // Reserve before awaiting the first leaf. Cancellation or a failed
+        // summary must not reopen paid capacity later in the same turn.
+        budget.summary_calls_used = budget.summary_calls_used.saturating_add(round_calls);
+        wal_lifecycle.update_progress(
+            budget.summary_calls_used.saturating_sub(pass_start_calls),
+            *reduction_rounds_out,
+        );
+        let mut summaries = Vec::with_capacity(round_calls);
+        for (chunk_index, summary_prompt) in summary_prompts.into_iter().enumerate() {
+            match driver.complete(&summary_prompt).await {
+                Ok(summary) if !summary.trim().is_empty() => summaries.push(summary),
+                Ok(_) => {
+                    if before_tokens > prompt_capacity {
+                        anyhow::bail!(
+                            "context compaction returned an empty summary while the original prompt exceeds leaf capacity"
+                        );
+                    }
+                    warn!(
+                        iteration,
+                        chunk_index,
+                        round_calls,
+                        "compaction returned empty summary — keeping original prompt"
+                    );
+                    return Ok(prompt);
+                }
+                Err(error) => {
+                    if before_tokens > prompt_capacity {
+                        return Err(error).context(
+                            "context compaction failed while the original prompt exceeds leaf capacity",
+                        );
+                    }
+                    warn!(
+                        iteration,
+                        chunk_index,
+                        round_calls,
+                        %error,
+                        "compaction LLM call failed — keeping original prompt"
+                    );
+                    *failure_reason_out = Some(error.to_string());
+                    return Ok(prompt);
+                }
+            }
+        }
+        let summary = summaries.join("\n\n");
+        let compacted =
+            crate::context::compaction::wrap_summary_with_last_exchange(&summary, last_exchange);
+        let after_tokens = crate::tokens::budget::count_tokens_upper_bound(&compacted);
+        if after_tokens <= prompt_capacity && after_tokens < before_tokens {
+            info!(
+                iteration,
+                before_tokens,
+                after_tokens,
+                summary_calls = budget.summary_calls_used - pass_start_calls,
+                summary_calls_turn = budget.summary_calls_used,
+                reduction_round,
+                "context compacted (GOLD-ADOPT-19)"
+            );
+            return Ok(compacted);
+        }
+        material = summary;
+    }
+
+    if before_tokens <= prompt_capacity {
+        warn!(
+            iteration,
+            before_tokens,
+            prompt_capacity,
+            "compaction did not reduce the prompt after bounded retries — keeping original"
+        );
+        Ok(prompt)
+    } else {
+        anyhow::bail!(
+            "context compaction could not reduce the prompt below leaf capacity {prompt_capacity} after {MAX_REDUCTION_ROUNDS} rounds"
+        )
     }
 }
 
@@ -1317,14 +1788,15 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
-    smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
+    smart_approve: Option<&mut crate::mcp::smart_approve::SmartApproveSession>,
     // GOLD-CCPARITY-SA-DENY-01 — sub-agent denylist. Checked BEFORE the
     // skill allowlist and before the MCP server is spawned. None = no
     // sub-agent active (no denylist check). Some(empty) = no restriction.
     agent_disallowed_tools: Option<&[String]>,
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
-    // McpTool lease-backed consent upgrade. See invoke_with_audit docs.
+    // McpTool lease-backed consent upgrade. See the MCP gate docs.
     subject: Option<&str>,
+    instance_home: &std::path::Path,
 ) -> std::result::Result<DispatchedToolResult, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -1351,8 +1823,8 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     // SC-11 — the active skill's tool_allowlist gates BEFORE we even
     // spawn the server (no point starting an MCP subprocess for a tool
     // the matched skill isn't allowed to call). Empty/None ⇒ no
-    // restriction; the server-level allowlist still runs inside
-    // invoke_with_audit afterwards.
+    // restriction; the server-level allowlist still runs in the static
+    // preflight afterwards.
     if let Err(e) = crate::mcp::gate::enforce_skill_allowlist(
         skill_allowlist,
         &call.server,
@@ -1364,31 +1836,117 @@ async fn dispatch_one<P: PolicyArgument + Copy>(
     {
         return Err(format!("dispatch `{}::{}`: {e}", call.server, call.tool));
     }
+    // Run every static policy layer before starting or querying a process.
+    // Only a genuine Confirm can justify SmartApprove's tools/list snapshot;
+    // Allow uses the ordinary call path and every rejection returns here.
+    let preflight =
+        crate::mcp::gate::preflight_with_audit(cfg, &call.tool, policy, writer, now_unix)
+            .await
+            .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+
+    if preflight.requires_confirmation()
+        && cfg.smart_approve
+        && let Some(session) = smart_approve
+        && let Some(mut bound) = session.bind_or_initialize(cfg, &call.tool).await
+    {
+        // The exact process that supplied tools/list receives an upgraded
+        // Confirm call. Authorization failures do not poison a healthy
+        // process; transport/protocol failures do, with no same-call retry.
+        let result = {
+            let (client, grant) = bound.parts();
+            match crate::mcp::gate::authorize_preflight_with_audit(
+                preflight,
+                cfg,
+                &call.tool,
+                writer,
+                grant,
+                now_unix,
+                subject,
+                instance_home,
+            )
+            .await
+            {
+                Ok(authorized) => {
+                    crate::mcp::gate::invoke_authorized_with_audit(
+                        client,
+                        cfg,
+                        &call.tool,
+                        call.arguments.clone(),
+                        authorized,
+                        writer,
+                        rollback_policy,
+                        now_unix,
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            }
+        };
+        if result
+            .as_ref()
+            .err()
+            .is_some_and(smart_approve_error_poisoned_connection)
+        {
+            bound.poison();
+        }
+        let result = result
+            .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
+        return Ok(DispatchedToolResult {
+            rendered: format_success(call, &result),
+            is_error: result.is_error,
+        });
+    }
+
+    // No SmartApprove client was relevant/available. Resolve Confirm (including
+    // a possible subject lease) before ordinary spawn; a failed initialization,
+    // duplicate id, config drift or poisoned retained client therefore remains
+    // fail-closed and cannot cause a second metadata query.
+    let authorized = crate::mcp::gate::authorize_preflight_with_audit(
+        preflight,
+        cfg,
+        &call.tool,
+        writer,
+        None,
+        now_unix,
+        subject,
+        instance_home,
+    )
+    .await
+    .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
     let mut client = crate::mcp::client::McpClient::spawn_with_timeout(
         cfg,
         Duration::from_secs(crate::mcp::client::DEFAULT_REQUEST_TIMEOUT.as_secs()),
     )
     .await
-    .map_err(|e| format!("spawn MCP server `{}`: {e}", call.server))?;
-    let result = crate::mcp::gate::invoke_with_audit(
+    .map_err(|error| format!("spawn MCP server `{}`: {error}", call.server))?;
+    let result = crate::mcp::gate::invoke_authorized_with_audit(
         &mut client,
         cfg,
         &call.tool,
         call.arguments.clone(),
-        policy,
+        authorized,
         writer,
         rollback_policy,
-        smart_approve,
         now_unix,
-        // GOLD-ADAPT-AWE-CODE-01 — pass the caller identity for lease upgrade.
-        subject,
     )
     .await
-    .map_err(|e| format!("dispatch `{}::{}`: {e}", call.server, call.tool))?;
+    .map_err(|error| format!("dispatch `{}::{}`: {error}", call.server, call.tool))?;
     Ok(DispatchedToolResult {
         rendered: format_success(call, &result),
         is_error: result.is_error,
     })
+}
+
+/// A syntactically valid JSON-RPC error is a completed response and leaves the
+/// stream usable. Every other MCP error may have left a partial frame, stale
+/// response, dead child or corrupted transport and therefore invalidates the
+/// retained SmartApprove process. There is deliberately no same-call retry.
+fn smart_approve_error_poisoned_connection(error: &crate::mcp::gate::GateError) -> bool {
+    matches!(
+        error,
+        crate::mcp::gate::GateError::Mcp(mcp_error)
+            if !matches!(mcp_error, crate::mcp::client::McpError::RpcError { .. })
+    )
 }
 
 /// Account for a response that reached the MCP server. `isError:true` is a
@@ -1540,14 +2098,14 @@ fn risk_needs_dangerous_lease(risk: &crate::security::ToolCallRisk, confirm_high
 }
 
 fn check_risk_leases(
+    home: &std::path::Path,
     risk: &crate::security::ToolCallRisk,
     confirm_high: bool,
 ) -> (bool, bool, Option<String>, bool) {
     use crate::permissions::lease::{LeaseScope, LeaseStore};
     use crate::security::risk_gate::RISK_LEASE_SUBJECT;
 
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    let Ok(store) = LeaseStore::load(&LeaseStore::default_path(&home)) else {
+    let Ok(store) = LeaseStore::load(&LeaseStore::default_path(home)) else {
         return (false, false, None, false);
     };
     let now = crate::time::now_unix_i64();
@@ -1593,11 +2151,11 @@ fn check_risk_leases(
 /// Fail-closed: a load or save failure leaves the in-flight call blocked. The
 /// lease must be durably consumed before the lifted gate can take effect.
 fn consume_risk_leases(
+    home: &std::path::Path,
     consume_dangerous: bool,
     consume_egress: bool,
 ) -> anyhow::Result<Option<String>> {
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    consume_risk_leases_at(&home, consume_dangerous, consume_egress)
+    consume_risk_leases_at(home, consume_dangerous, consume_egress)
 }
 
 /// M3 (2026-06-12) — home-injectable core so the single-use persistence + the
@@ -1747,6 +2305,189 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    #[test]
+    fn smart_approve_keeps_well_formed_rpc_errors_but_poisons_transport_errors() {
+        let rpc = crate::mcp::gate::GateError::Mcp(crate::mcp::client::McpError::RpcError {
+            server: "srv".into(),
+            code: -32601,
+            message: "unknown tool".into(),
+        });
+        assert!(!smart_approve_error_poisoned_connection(&rpc));
+
+        for transport in [
+            crate::mcp::client::McpError::Timeout("srv".into(), Duration::from_secs(1)),
+            crate::mcp::client::McpError::Io("srv".into(), "closed".into()),
+            crate::mcp::client::McpError::Protocol("srv".into(), "bad frame".into()),
+            crate::mcp::client::McpError::FrameTooBig("srv".into()),
+        ] {
+            assert!(smart_approve_error_poisoned_connection(
+                &crate::mcp::gate::GateError::Mcp(transport)
+            ));
+        }
+    }
+
+    fn smart_approve_preflight_fixture(allow_tools: Vec<&str>) -> (McpServers, ParsedToolCall) {
+        let cfg = crate::mcp::config::McpServerConfig {
+            id: "smart-preflight".into(),
+            description: None,
+            command: "neoth-smart-approve-test-command-that-does-not-exist".into(),
+            args: vec![],
+            env: std::collections::HashMap::new(),
+            enabled: true,
+            allow_tools: Some(allow_tools.into_iter().map(String::from).collect()),
+            trust_all_tools: false,
+            smart_approve: true,
+            autonomy_gate: None,
+        };
+        (
+            McpServers {
+                servers: vec![cfg],
+                smart_loading: true,
+            },
+            ParsedToolCall {
+                server: "smart-preflight".into(),
+                tool: "read_graph".into(),
+                arguments: serde_json::json!({}),
+            },
+        )
+    }
+
+    fn test_instance_home() -> tempfile::TempDir {
+        tempfile::tempdir().expect("create isolated NEOTH instance home")
+    }
+
+    #[tokio::test]
+    async fn smart_approve_allow_decision_skips_snapshot_initialization() {
+        let instance_home = test_instance_home();
+        let (servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        let error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Full,
+            None,
+            None,
+            None,
+            Some(&mut session),
+            None,
+            None,
+            instance_home.path(),
+        )
+        .await
+        .err()
+        .expect("ordinary dispatch reaches the deliberately missing command");
+        assert!(
+            error.contains("spawn MCP server"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(session.initialization_attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn smart_approve_static_rejections_skip_snapshot_initialization() {
+        let instance_home = test_instance_home();
+        let (servers, call) = smart_approve_preflight_fixture(vec!["different_tool"]);
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        let allowlist_error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            Some(&mut session),
+            None,
+            None,
+            instance_home.path(),
+        )
+        .await
+        .err()
+        .expect("Layer 1 rejects before initialization");
+        assert!(allowlist_error.contains("blocked by allowlist"));
+        assert_eq!(session.initialization_attempts(), 0);
+
+        let (mut servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        servers.servers[0].autonomy_gate = Some(crate::permissions::AutonomyLevel::Elevated);
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        let server_gate_error = dispatch_one(
+            &call,
+            &servers,
+            crate::permissions::AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            Some(&mut session),
+            None,
+            None,
+            instance_home.path(),
+        )
+        .await
+        .err()
+        .expect("per-server autonomy gate rejects before initialization");
+        assert!(server_gate_error.contains("requires autonomy"));
+        assert_eq!(session.initialization_attempts(), 0);
+
+        let (servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        let custom = crate::permissions::CustomAutonomyConfig {
+            overrides: std::collections::BTreeMap::from([(
+                crate::permissions::ActionKind::McpToolInvocation,
+                crate::permissions::CustomDecision::Deny,
+            )]),
+        };
+        let policy = crate::permissions::AutonomyPolicySnapshot::new(
+            crate::permissions::AutonomyLevel::Custom,
+            &custom,
+        );
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        let deny_error = dispatch_one(
+            &call,
+            &servers,
+            &policy,
+            None,
+            None,
+            None,
+            Some(&mut session),
+            None,
+            None,
+            instance_home.path(),
+        )
+        .await
+        .err()
+        .expect("policy Deny rejects before initialization");
+        assert!(deny_error.contains("denied by autonomy policy"));
+        assert_eq!(session.initialization_attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn smart_approve_confirm_initializes_once_and_seals_failure() {
+        let instance_home = test_instance_home();
+        let (servers, call) = smart_approve_preflight_fixture(vec!["read_graph"]);
+        let mut session = crate::mcp::smart_approve::SmartApproveSession::new(&servers);
+        for _ in 0..2 {
+            let error = dispatch_one(
+                &call,
+                &servers,
+                crate::permissions::AutonomyLevel::Standard,
+                None,
+                None,
+                None,
+                Some(&mut session),
+                None,
+                None,
+                instance_home.path(),
+            )
+            .await
+            .err()
+            .expect("failed snapshot stays on the Confirm path");
+            assert!(error.contains("requires operator confirm"));
+        }
+        assert_eq!(
+            session.initialization_attempts(),
+            1,
+            "a sealed initialization failure must never trigger another process or tools/list"
+        );
+    }
+
     /// Test driver — fixed-script responder. Each `complete` call
     /// returns the next item from `responses`. Captures every prompt
     /// it saw so tests can assert what was threaded back.
@@ -1779,6 +2520,40 @@ mod tests {
                 .cloned()
                 .unwrap_or_else(|| "(no more scripted responses)".to_string());
             Box::pin(async move { Ok(resp) })
+        }
+    }
+
+    struct ErrorDriver {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CompletionDriver for ErrorDriver {
+        fn complete<'a>(
+            &'a mut self,
+            _prompt: &'a str,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { anyhow::bail!("scripted compaction provider failure") })
+        }
+    }
+
+    struct BlockingDriver {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    impl CompletionDriver for BlockingDriver {
+        fn complete<'a>(
+            &'a mut self,
+            _prompt: &'a str,
+        ) -> std::pin::Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>> {
+            let entered = Arc::clone(&self.entered);
+            let release = Arc::clone(&self.release);
+            Box::pin(async move {
+                entered.notify_one();
+                release.notified().await;
+                Ok("summary after release".to_owned())
+            })
         }
     }
 
@@ -1838,6 +2613,7 @@ mod tests {
 
     #[tokio::test]
     async fn hit_cap_set_when_grind_run_is_cut_by_iteration_cap() {
+        let instance_home = test_instance_home();
         // A grind re-nudges on every clean exit (no tool calls) until the cap;
         // at the cap the nudge is gated out (`iterations < max_iterations` is
         // false) and the loop exits via the clean-exit break. GR-128: that path
@@ -1868,6 +2644,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -1879,17 +2656,52 @@ mod tests {
 
     // ── GOLD-ADOPT-19 context compaction ───────────────────────────────────
 
+    fn compaction_lifecycle(path: &std::path::Path) -> Vec<(u8, serde_json::Value)> {
+        let bytes = std::fs::read(path).unwrap();
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut events = Vec::new();
+        while cursor < bytes.len() {
+            let Ok(frame) = crate::wal::frame::decode_frame(&bytes[cursor..]) else {
+                break;
+            };
+            if matches!(
+                frame.header.event_type,
+                crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START
+                    | crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE
+            ) {
+                events.push((
+                    frame.header.event_type,
+                    serde_json::from_slice(frame.payload).unwrap(),
+                ));
+            }
+            let total_len = frame.header.total_len as usize;
+            if total_len == 0 {
+                break;
+            }
+            cursor += total_len;
+        }
+        events
+    }
+
     #[tokio::test]
     async fn compact_if_needed_summarizes_over_threshold() {
-        use crate::context::compaction::{CompactionPolicy, SUMMARY_MARKER};
+        use crate::context::compaction::{
+            CompactionPolicy, SUMMARY_MARKER, build_compaction_prompt,
+        };
         let mut driver = ScriptedDriver::new(vec!["did X; pending: fetch Y"]);
+        let framing = build_compaction_prompt("").len();
+        let threshold_tokens = u32::try_from(framing + 128).unwrap();
         let policy = CompactionPolicy {
             enabled: true,
-            threshold_tokens: 1,
+            threshold_tokens,
+            prompt_capacity_tokens: threshold_tokens.saturating_mul(3),
             progressive: false,
         };
-        let big = "history ".repeat(50);
-        let out = compact_if_needed(&mut driver, big, &policy, None, 2).await;
+        let big = "x".repeat(threshold_tokens as usize + 1);
+        let mut budget = CompactionBudget::default();
+        let out = compact_if_needed(&mut driver, big, &policy, None, 2, &mut budget)
+            .await
+            .unwrap();
         assert!(
             out.starts_with(SUMMARY_MARKER),
             "compacted prompt carries the marker"
@@ -1898,10 +2710,339 @@ mod tests {
             out.contains("pending: fetch Y"),
             "summary content is preserved"
         );
-        // The driver received the retention-instructed compaction prompt.
+        // The normal threshold path is exactly one bounded, retention-
+        // instructed call; paid fan-out is prohibited below.
         let seen = driver.seen_prompts.lock().unwrap();
         assert_eq!(seen.len(), 1);
-        assert!(seen[0].contains("DENSE SUMMARY:"));
+        for prompt in seen.iter() {
+            assert!(prompt.contains("DENSE SUMMARY:"));
+            assert!(
+                crate::tokens::budget::count_tokens_upper_bound(prompt)
+                    <= policy.prompt_capacity_tokens
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_if_needed_blocks_oversized_fanout_before_the_first_call() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-preflight.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let mut driver = ScriptedDriver::new(vec!["MUST NOT BE CALLED"]);
+        let framing = build_compaction_prompt("").len();
+        let prompt_capacity_tokens = u32::try_from(framing + 1_024).unwrap();
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            prompt_capacity_tokens,
+            progressive: false,
+        };
+        // Mirrors the maximum accepted MCP frame class: the runtime must not
+        // translate one 16-MiB tool result into hundreds of separately
+        // authorized paid summary leaves.
+        let oversized = "x".repeat(16 * 1024 * 1024);
+        let mut budget = CompactionBudget::default();
+        let error = compact_if_needed(
+            &mut driver,
+            oversized,
+            &policy,
+            Some(&writer),
+            2,
+            &mut budget,
+        )
+        .await
+        .expect_err("multi-leaf compaction must fail closed before dispatch");
+        assert!(error.to_string().contains("per-turn cap"));
+        assert!(
+            driver.seen_prompts.lock().unwrap().is_empty(),
+            "fan-out must be rejected before the first paid leaf"
+        );
+        drop(writer);
+        join.await.unwrap();
+        assert!(
+            compaction_lifecycle(&wal_path).is_empty(),
+            "pure preflight rejection must not claim a compaction started"
+        );
+    }
+
+    #[tokio::test]
+    async fn compaction_start_wal_failure_blocks_the_provider_leaf() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("dead-compaction-writer.wal")).unwrap();
+        join.abort();
+        let _ = join.await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut driver = ErrorDriver {
+            calls: Arc::clone(&calls),
+        };
+        let framing = build_compaction_prompt("").len();
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+            progressive: false,
+        };
+        let mut budget = CompactionBudget::default();
+        let error = compact_if_needed(
+            &mut driver,
+            "x".repeat(500),
+            &policy,
+            Some(&writer),
+            2,
+            &mut budget,
+        )
+        .await
+        .expect_err("a dead required WAL must block before provider dispatch");
+        assert!(error.to_string().contains("compaction WAL frame"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelling_while_compaction_start_ack_is_pending_writes_one_terminal() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-start-cancel.wal");
+        let gate = crate::wal::writer::TestAckGate::once(
+            crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START,
+        );
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let task_writer = writer.clone();
+        let framing = build_compaction_prompt("").len();
+        let task = tokio::spawn(async move {
+            let mut driver = ScriptedDriver::new(vec!["summary"]);
+            let policy = CompactionPolicy {
+                enabled: true,
+                threshold_tokens: 1,
+                prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+                progressive: false,
+            };
+            let mut budget = CompactionBudget::default();
+            compact_if_needed(
+                &mut driver,
+                "x".repeat(500),
+                &policy,
+                Some(&task_writer),
+                7,
+                &mut budget,
+            )
+            .await
+        });
+
+        gate.wait_until_durable().await;
+        task.abort();
+        let _ = task.await;
+        gate.release();
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = compaction_lifecycle(&wal_path);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[1].1["outcome"], "cancelled");
+        assert_eq!(
+            lifecycle[0].1["compaction_id"],
+            lifecycle[1].1["compaction_id"]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_during_compaction_provider_await_writes_one_terminal() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-provider-cancel.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let task_writer = writer.clone();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let task_entered = Arc::clone(&entered);
+        let task_release = Arc::clone(&release);
+        let framing = build_compaction_prompt("").len();
+        let task = tokio::spawn(async move {
+            let mut driver = BlockingDriver {
+                entered: task_entered,
+                release: task_release,
+            };
+            let policy = CompactionPolicy {
+                enabled: true,
+                threshold_tokens: 1,
+                prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+                progressive: false,
+            };
+            let mut budget = CompactionBudget::default();
+            compact_if_needed(
+                &mut driver,
+                "x".repeat(500),
+                &policy,
+                Some(&task_writer),
+                8,
+                &mut budget,
+            )
+            .await
+        });
+
+        entered.notified().await;
+        task.abort();
+        let _ = task.await;
+        release.notify_waiters();
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = compaction_lifecycle(&wal_path);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[1].1["outcome"], "cancelled");
+        assert_eq!(lifecycle[1].1["summary_calls"], 1);
+    }
+
+    #[tokio::test]
+    async fn compaction_provider_failure_is_a_failed_terminal_but_keeps_safe_original() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-provider-failed.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut driver = ErrorDriver {
+            calls: Arc::clone(&calls),
+        };
+        let framing = build_compaction_prompt("").len();
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+            progressive: false,
+        };
+        let original = "x".repeat(500);
+        let mut budget = CompactionBudget::default();
+        let output = compact_if_needed(
+            &mut driver,
+            original.clone(),
+            &policy,
+            Some(&writer),
+            9,
+            &mut budget,
+        )
+        .await
+        .unwrap();
+        assert_eq!(output, original);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = compaction_lifecycle(&wal_path);
+        assert_eq!(lifecycle.len(), 2);
+        assert_eq!(lifecycle[1].1["outcome"], "failed");
+        assert!(
+            lifecycle[1].1["error"]
+                .as_str()
+                .unwrap()
+                .contains("scripted compaction provider failure")
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_compactions_use_distinct_lifecycle_ids() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-unique-ids.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let framing = build_compaction_prompt("").len();
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+            progressive: false,
+        };
+        let first_writer = writer.clone();
+        let second_writer = writer.clone();
+        let first_policy = policy.clone();
+        let second_policy = policy.clone();
+        let first = tokio::spawn(async move {
+            let mut driver = ScriptedDriver::new(vec!["first summary"]);
+            let mut budget = CompactionBudget::default();
+            compact_if_needed(
+                &mut driver,
+                "a".repeat(500),
+                &first_policy,
+                Some(&first_writer),
+                10,
+                &mut budget,
+            )
+            .await
+        });
+        let second = tokio::spawn(async move {
+            let mut driver = ScriptedDriver::new(vec!["second summary"]);
+            let mut budget = CompactionBudget::default();
+            compact_if_needed(
+                &mut driver,
+                "b".repeat(500),
+                &second_policy,
+                Some(&second_writer),
+                11,
+                &mut budget,
+            )
+            .await
+        });
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = compaction_lifecycle(&wal_path);
+        assert_eq!(lifecycle.len(), 4);
+        let mut ids = lifecycle
+            .iter()
+            .filter(|(event_type, _)| {
+                *event_type == crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START
+            })
+            .map(|(_, payload)| payload["compaction_id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn compaction_call_budget_is_shared_across_the_whole_tool_turn() {
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
+
+        let mut driver = ScriptedDriver::new(vec!["first summary", "MUST NOT BE CALLED"]);
+        let framing = build_compaction_prompt("").len();
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            prompt_capacity_tokens: u32::try_from(framing + 1_024).unwrap(),
+            progressive: false,
+        };
+        let mut budget = CompactionBudget::default();
+        let first = compact_if_needed(&mut driver, "x".repeat(500), &policy, None, 2, &mut budget)
+            .await
+            .unwrap();
+        assert!(first.contains("first summary"));
+
+        let second_original = "y".repeat(500);
+        let second = compact_if_needed(
+            &mut driver,
+            second_original.clone(),
+            &policy,
+            None,
+            3,
+            &mut budget,
+        )
+        .await
+        .unwrap();
+        assert_eq!(second, second_original);
+        assert_eq!(
+            driver.seen_prompts.lock().unwrap().len(),
+            1,
+            "one turn may dispatch at most one paid compaction leaf"
+        );
     }
 
     #[tokio::test]
@@ -1911,10 +3052,14 @@ mod tests {
         let policy = CompactionPolicy {
             enabled: true,
             threshold_tokens: 1_000_000,
+            prompt_capacity_tokens: 1_000_000,
             progressive: false,
         };
         let original = "a short prompt".to_string();
-        let out = compact_if_needed(&mut driver, original.clone(), &policy, None, 2).await;
+        let mut budget = CompactionBudget::default();
+        let out = compact_if_needed(&mut driver, original.clone(), &policy, None, 2, &mut budget)
+            .await
+            .unwrap();
         assert_eq!(out, original, "under threshold the prompt is unchanged");
         assert!(
             driver.seen_prompts.lock().unwrap().is_empty(),
@@ -1924,18 +3069,47 @@ mod tests {
 
     #[tokio::test]
     async fn compact_if_needed_keeps_original_on_empty_summary() {
-        use crate::context::compaction::CompactionPolicy;
+        use crate::context::compaction::{CompactionPolicy, build_compaction_prompt};
         // An empty/whitespace summary is a failed compaction — keep the original
         // prompt rather than replacing the history with nothing.
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("compaction-empty.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
         let mut driver = ScriptedDriver::new(vec!["   \n  "]);
+        let framing = build_compaction_prompt("").len();
+        let threshold_tokens = u32::try_from(framing * 3).unwrap();
         let policy = CompactionPolicy {
             enabled: true,
-            threshold_tokens: 1,
+            threshold_tokens,
+            prompt_capacity_tokens: threshold_tokens.saturating_mul(2),
             progressive: false,
         };
-        let original = "big history ".repeat(50);
-        let out = compact_if_needed(&mut driver, original.clone(), &policy, None, 2).await;
+        let original = "x".repeat(threshold_tokens as usize + 1);
+        let mut budget = CompactionBudget::default();
+        let out = compact_if_needed(
+            &mut driver,
+            original.clone(),
+            &policy,
+            Some(&writer),
+            2,
+            &mut budget,
+        )
+        .await
+        .unwrap();
         assert_eq!(out, original, "empty summary must not discard the prompt");
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = compaction_lifecycle(&wal_path);
+        assert_eq!(lifecycle.len(), 2, "START must have exactly one terminal");
+        assert_eq!(
+            lifecycle[0].0,
+            crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START
+        );
+        assert_eq!(
+            lifecycle[1].0,
+            crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE
+        );
+        assert_eq!(lifecycle[1].1["outcome"], "kept_original");
     }
 
     #[test]
@@ -1968,6 +3142,7 @@ mod tests {
 
     #[tokio::test]
     async fn risk_gate_denies_dangerous_call_before_dispatch() {
+        let instance_home = test_instance_home();
         // GOLD-ADOPT-23 P0: a tool call carrying `rm -rf /` is blocked by the
         // default deny policy — it never reaches dispatch (which would fail on
         // the unknown server anyway), and the all-blocked round terminates.
@@ -1998,6 +3173,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2057,6 +3233,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            dir.path(),
         )
         .await
         .unwrap();
@@ -2176,6 +3353,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            dir.path(),
         )
         .await
         .unwrap();
@@ -2216,6 +3394,7 @@ mod tests {
 
     #[tokio::test]
     async fn active_grind_keeps_loop_going_past_clean_exit() {
+        let instance_home = test_instance_home();
         // GOLD-ADOPT-22: with a grind set, a no-tool-call response does NOT end
         // the loop — a nudge is injected and it runs to the iteration cap.
         let mut driver = ScriptedDriver::new(vec!["done?", "still done?", "really done?"]);
@@ -2243,6 +3422,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2260,6 +3440,7 @@ mod tests {
 
     #[tokio::test]
     async fn no_goal_stops_at_clean_exit() {
+        let instance_home = test_instance_home();
         // The default (no goal/grind) is unchanged: stop at the first clean exit.
         let mut driver = ScriptedDriver::new(vec!["done.", "(unreached)"]);
         let servers = McpServers::default();
@@ -2283,6 +3464,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2291,6 +3473,7 @@ mod tests {
 
     #[tokio::test]
     async fn leaked_call_retry_dispatches_retry_text_without_third_provider_call() {
+        let instance_home = test_instance_home();
         let leaked = r#"<tool_call>{"server":"ghost","tool":"read","arguments":{}}</tool_call>"#;
         let fenced = r#"```mcp-tool-call
 {"server":"ghost","tool":"read","arguments":{}}
@@ -2315,6 +3498,7 @@ mod tests {
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2337,6 +3521,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_terminates_immediately_when_no_tool_calls() {
+        let instance_home = test_instance_home();
         let mut driver = ScriptedDriver::new(vec!["plain text reply, no tool calls"]);
         let servers = McpServers::default();
         let outcome = run_tool_loop(
@@ -2348,6 +3533,7 @@ mod tests {
             None,
             None,
             &crate::config::SecurityPolicy::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2360,6 +3546,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_terminates_early_when_every_call_fails_unknown_server() {
+        let instance_home = test_instance_home();
         // LLM emits a tool call for a server that doesn't exist. The
         // dispatcher logs FAILED, and since no call succeeded, the loop
         // breaks rather than feeding the LLM nothing-but-errors forever.
@@ -2379,6 +3566,7 @@ mod tests {
             None,
             None,
             &crate::config::SecurityPolicy::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2392,6 +3580,7 @@ mod tests {
 
     #[tokio::test]
     async fn tool_budget_caps_calls_inside_first_iteration() {
+        let instance_home = test_instance_home();
         let reply = r#"
 ```mcp-tool-call
 {"server":"ghost","tool":"one","arguments":{}}
@@ -2401,8 +3590,9 @@ mod tests {
 ```
 ```mcp-tool-call
 {"server":"ghost","tool":"three","arguments":{}}
-```"#;
+        ```"#;
         let mut driver = ScriptedDriver::new(vec![reply]);
+        let mut compaction_budget = CompactionBudget::default();
         let outcome = run_tool_loop_with_budget(
             &mut driver,
             "bounded".into(),
@@ -2422,7 +3612,9 @@ mod tests {
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            &mut compaction_budget,
             Some(1),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2490,6 +3682,7 @@ mod tests {
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            dir.path(),
         )
         .await
         .unwrap();
@@ -2512,6 +3705,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_hits_iteration_cap_when_llm_calls_forever() {
+        let instance_home = test_instance_home();
         // LLM stuck in a loop — every response carries an unknown
         // tool call. Cap kicks in even though dispatch_one fails.
         // We set cap = 2 so the cap path is exercised before
@@ -2545,6 +3739,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2556,6 +3751,7 @@ mod tests {
 
     #[tokio::test]
     async fn loop_records_parse_errors_as_failures() {
+        let instance_home = test_instance_home();
         let reply = r#"```mcp-tool-call
 {"server": "filesystem", "tool":   broken json
 ```"#;
@@ -2570,6 +3766,7 @@ mod tests {
             None,
             None,
             &crate::config::SecurityPolicy::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2829,6 +4026,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_denylist_blocks_tool_even_when_server_allowlist_would_permit() {
+        let instance_home = test_instance_home();
         // The LLM emits a call for "dangerous_tool" on server "test_srv".
         // The agent denylist lists "dangerous_tool".
         // Even if the server were configured to allow the tool, the denylist
@@ -2863,6 +4061,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2887,6 +4086,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_denylist_empty_does_not_block() {
+        let instance_home = test_instance_home();
         // With an empty denylist, the call falls through to the "no enabled
         // MCP server" gate (not the denylist gate) — a different error, but
         // still failed_calls == 1 and the loop terminates.
@@ -2917,6 +4117,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -2933,6 +4134,7 @@ mod tests {
 
     #[tokio::test]
     async fn agent_denylist_none_does_not_block() {
+        let instance_home = test_instance_home();
         // No sub-agent active (None denylist) → same behaviour as above, the
         // call fails on "no enabled MCP server", not on denylist.
         let reply = r#"```mcp-tool-call
@@ -2961,6 +4163,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -3000,6 +4203,7 @@ mod tests {
     /// When the judge says YES on a clean exit, `goal_outcome` is `Met`.
     #[tokio::test]
     async fn goal_met_sets_goal_outcome_met() {
+        let instance_home = test_instance_home();
         // Driver: one plain reply (no tool calls) → clean exit → judge fires.
         let mut driver = ScriptedDriver::new(vec!["Task complete."]);
         let servers = McpServers::default();
@@ -3028,6 +4232,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -3043,6 +4248,7 @@ mod tests {
     /// `BudgetExhausted`.
     #[tokio::test]
     async fn goal_budget_exhausted_sets_goal_outcome() {
+        let instance_home = test_instance_home();
         // Driver: two plain replies, both with no tool calls.
         // max_iterations = 1 → the grind nudge tries to continue but cap fires.
         let mut driver = ScriptedDriver::new(vec!["partial work", "partial work 2"]);
@@ -3070,6 +4276,7 @@ mod tests {
             // GOLD-ADOPT-17: elicitation disabled in tests (no TTY).
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            instance_home.path(),
         )
         .await
         .unwrap();
@@ -3138,6 +4345,7 @@ mod tests {
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            dir.path(),
         )
         .await
         .unwrap();
@@ -3218,6 +4426,7 @@ mod tests {
             None,
             &crate::cli::elicitation::ElicitationHandler::Disabled,
             &crate::config::tools::McpHarnessConfig::default(),
+            dir.path(),
         )
         .await
         .unwrap();

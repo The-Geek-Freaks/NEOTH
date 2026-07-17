@@ -17,7 +17,16 @@ pub fn count_tokens(text: &str) -> u32 {
     // Saturating math: a malformed multi-GB input shouldn't panic
     // the assembly path; cap at u32::MAX.
     let chars = text.chars().count();
-    chars.div_ceil(4) as u32
+    u32::try_from(chars.div_ceil(4)).unwrap_or(u32::MAX)
+}
+
+/// Conservative tokenizer-independent upper bound for enforcement. A token
+/// emitted from user-controlled UTF-8 text must consume at least one input
+/// byte; provider/message control overhead is reserved separately at the final
+/// leaf. This intentionally over-counts ordinary prose so `max_per_request`
+/// remains a hard boundary even for CJK, emoji and adversarial byte sequences.
+pub fn count_tokens_upper_bound(text: &str) -> u32 {
+    u32::try_from(text.len()).unwrap_or(u32::MAX)
 }
 
 /// Which named block a `BlockItem` belongs to. Variant order is
@@ -66,13 +75,73 @@ pub struct BlockItem {
     /// block D; the "oldest 50%" cut sorts by this ascending +
     /// drops the bottom half.
     pub ts_ns: i64,
-    /// Token count for this item (caller pre-computes via
-    /// [`count_tokens`] or a more precise tokeniser).
+    /// Conservative token upper bound for this item (caller pre-computes via
+    /// [`count_tokens_upper_bound`] or a reviewed provider tokenizer).
     pub tokens: u32,
     /// Free-form payload. Caller (prompt assembler) owns the
     /// content shape; the budget enforcer only cares about the
     /// `tokens` count.
     pub content: String,
+}
+
+impl BlockItem {
+    /// Construct one typed block and bind its estimate to the exact content.
+    /// Callers should use [`Self::replace_content`] for later prompt rewrites so
+    /// the estimate cannot drift from the bytes that reach the provider.
+    pub fn new(block: Block, content: impl Into<String>) -> Self {
+        let content = content.into();
+        Self {
+            block,
+            importance: 0.5,
+            ts_ns: 0,
+            tokens: count_tokens_upper_bound(&content),
+            content,
+        }
+    }
+
+    /// Replace content and recompute the coarse token estimate atomically.
+    pub fn replace_content(&mut self, content: impl Into<String>) {
+        self.content = content.into();
+        self.tokens = count_tokens_upper_bound(&self.content);
+    }
+}
+
+/// Render the provider-facing `(prompt, system)` pair from typed blocks.
+/// Exactly one E block is required; accepting zero or multiple user-message
+/// blocks would make the budgeted representation disagree with the request.
+pub fn render_request(items: &[BlockItem]) -> Result<(String, Option<String>), &'static str> {
+    let mut prompt = None;
+    let mut system_parts = Vec::with_capacity(items.len().saturating_sub(1));
+    for item in items {
+        if item.block == Block::E {
+            if prompt.replace(item.content.clone()).is_some() {
+                return Err("token-budget bundle contains multiple Block E items");
+            }
+        } else {
+            system_parts.push(item.content.as_str());
+        }
+    }
+    let prompt = prompt.ok_or("token-budget bundle is missing Block E")?;
+    let system = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
+    Ok((prompt, system))
+}
+
+/// Replace the sole E item after hooks/output presets mutate the user prompt.
+/// Fails closed on a malformed typed bundle rather than creating an implicit
+/// second request body outside the accounting surface.
+pub fn replace_user_message(
+    items: &mut [BlockItem],
+    content: impl Into<String>,
+) -> Result<(), &'static str> {
+    let mut matches = items.iter_mut().filter(|item| item.block == Block::E);
+    let item = matches
+        .next()
+        .ok_or("token-budget bundle is missing Block E")?;
+    if matches.next().is_some() {
+        return Err("token-budget bundle contains multiple Block E items");
+    }
+    item.replace_content(content);
+    Ok(())
 }
 
 /// Per-block accounting in [`BudgetReport`]. Tracks pre + post
@@ -101,7 +170,9 @@ pub struct BudgetExceededDetail {
 
 /// Sum tokens across a slice of items.
 pub fn count_total(items: &[BlockItem]) -> u32 {
-    items.iter().map(|i| i.tokens).sum()
+    items
+        .iter()
+        .fold(0u32, |total, item| total.saturating_add(item.tokens))
 }
 
 /// Hard cap applied after the 85 % scaling so a 1M-token model
@@ -216,7 +287,11 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
             // Sort the D-only indices by ts_ns ascending (oldest first).
             let mut sorted = d_indices.clone();
             sorted.sort_by_key(|&i| items[i].ts_ns);
-            let half = sorted.len() / 2;
+            // `div_ceil` is load-bearing for the live assembler, where recall
+            // is commonly one aggregated D item.  Floor division would drop
+            // zero of one and make the documented first degradation step a
+            // permanent no-op on the common path.
+            let half = sorted.len().div_ceil(2);
             // Drop indices in DESCENDING order so we don't shift left.
             let mut to_remove: Vec<usize> = sorted.into_iter().take(half).collect();
             to_remove.sort_unstable();
@@ -243,7 +318,10 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
                     .partial_cmp(&items[b].importance)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
-            let half = sorted.len() / 2;
+            // A live profile/preset commonly arrives as one aggregated C
+            // item. Floor division would drop zero of one and silently skip
+            // the documented second degradation step.
+            let half = sorted.len().div_ceil(2);
             let mut to_remove: Vec<usize> = sorted.into_iter().take(half).collect();
             to_remove.sort_unstable();
             to_remove.reverse();
@@ -258,21 +336,12 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
     if count_total(items) > cap {
         for item in items.iter_mut() {
             if item.block == Block::Conductor && item.tokens > 1 {
-                // Halve, 1-token floor. Re-derive the content
-                // length proportionally so the audit detail's
-                // payload reflects the truncation.
-                let new_tokens = (item.tokens / 2).max(1);
-                let new_content_len =
-                    (item.content.len() * new_tokens as usize) / item.tokens.max(1) as usize;
-                if new_content_len < item.content.len() {
-                    // Truncate on a char boundary, not a byte.
-                    let mut end = new_content_len.min(item.content.len());
-                    while end > 0 && !item.content.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    item.content.truncate(end);
-                }
-                item.tokens = new_tokens;
+                // Halve by Unicode scalar count, then recompute the estimate
+                // from the exact retained content.  Byte-proportional cuts can
+                // leave a stale token count for multi-byte text.
+                let keep_chars = item.content.chars().count().div_ceil(2).max(1);
+                item.content = item.content.chars().take(keep_chars).collect();
+                item.tokens = count_tokens_upper_bound(&item.content);
                 conductor_truncated = true;
             }
         }
@@ -290,6 +359,43 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
         dropped_c_count: dropped_c,
         conductor_truncated,
         per_block,
+    })
+}
+
+/// Reapply the ordered degradation pass until the content budget is met or no
+/// degradable bytes remain. This is the provider-boundary variant: a large
+/// aggregated C/D item or Conductor block must not cause a refusal merely
+/// because one 50% pass still leaves safe-to-remove context above the cap.
+pub fn enforce_budget_to_fit(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExceededDetail> {
+    let original_total = count_total(items);
+    if original_total <= cap {
+        return None;
+    }
+    let pre_per_block = snapshot_per_block(items);
+    let mut dropped_d_count = 0_u32;
+    let mut dropped_c_count = 0_u32;
+    let mut conductor_truncated = false;
+
+    while count_total(items) > cap {
+        let before = count_total(items);
+        let detail = enforce_budget(items, cap).expect("over-cap pass returns detail");
+        dropped_d_count = dropped_d_count.saturating_add(detail.dropped_d_count);
+        dropped_c_count = dropped_c_count.saturating_add(detail.dropped_c_count);
+        conductor_truncated |= detail.conductor_truncated;
+        if count_total(items) >= before {
+            break;
+        }
+    }
+
+    let post_per_block = snapshot_per_block(items);
+    Some(BudgetExceededDetail {
+        cap,
+        original_total,
+        new_total: count_total(items),
+        dropped_d_count,
+        dropped_c_count,
+        conductor_truncated,
+        per_block: build_per_block(&pre_per_block, &post_per_block),
     })
 }
 
@@ -323,7 +429,7 @@ mod tests {
             importance,
             ts_ns,
             tokens,
-            content: "x".repeat(tokens as usize * 4),
+            content: "x".repeat(tokens as usize),
         }
     }
 
@@ -401,6 +507,19 @@ mod tests {
         assert_eq!(survivor_ts, vec![3, 4]);
     }
 
+    #[test]
+    fn one_d_item_is_dropped_via_div_ceil() {
+        let mut items = vec![
+            item(Block::A, 0.5, 0, 10),
+            item(Block::D, 0.5, 1, 100),
+            item(Block::E, 0.5, 0, 10),
+        ];
+        let detail = enforce_budget(&mut items, 20).expect("single D must degrade");
+        assert_eq!(detail.dropped_d_count, 1);
+        assert!(!items.iter().any(|item| item.block == Block::D));
+        assert_eq!(detail.new_total, 20);
+    }
+
     // ── Step 2: C lowest-importance 50% ───────────────────────────
 
     #[test]
@@ -423,6 +542,19 @@ mod tests {
             .map(|i| i.importance)
             .collect();
         assert_eq!(survivor_imp, vec![0.7, 0.9]);
+    }
+
+    #[test]
+    fn one_c_item_is_dropped_via_div_ceil() {
+        let mut items = vec![
+            item(Block::A, 0.5, 0, 10),
+            item(Block::C, 0.2, 0, 100),
+            item(Block::E, 0.5, 0, 10),
+        ];
+        let detail = enforce_budget(&mut items, 20).expect("single C must degrade");
+        assert_eq!(detail.dropped_c_count, 1);
+        assert!(!items.iter().any(|item| item.block == Block::C));
+        assert_eq!(detail.new_total, 20);
     }
 
     // ── Step 3: Conductor truncation ──────────────────────────────
@@ -510,6 +642,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn provider_boundary_repeats_degradation_until_fit() {
+        let mut items = vec![
+            item(Block::A, 0.5, 0, 10),
+            item(Block::D, 0.5, 1, 1_000),
+            item(Block::C, 0.1, 0, 1_000),
+            item(Block::Conductor, 0.5, 0, 1_000),
+            item(Block::E, 0.5, 0, 10),
+        ];
+        let detail = enforce_budget_to_fit(&mut items, 100).expect("must degrade");
+        assert!(detail.new_total <= 100, "{detail:?}");
+        assert_eq!(detail.dropped_d_count, 1);
+        assert_eq!(detail.dropped_c_count, 1);
+        assert!(detail.conductor_truncated);
+        assert!(
+            items
+                .iter()
+                .all(|item| !matches!(item.block, Block::D | Block::C))
+        );
+    }
+
     // ── Per-block accounting ──────────────────────────────────────
 
     #[test]
@@ -550,6 +703,55 @@ mod tests {
     #[test]
     fn count_total_empty_zero() {
         assert_eq!(count_total(&[]), 0);
+    }
+
+    #[test]
+    fn typed_render_and_user_replacement_keep_estimate_bound() {
+        let mut items = vec![
+            BlockItem::new(Block::A, "system"),
+            BlockItem::new(Block::D, "recall"),
+            BlockItem::new(Block::E, "hello"),
+        ];
+        let (prompt, system) = render_request(&items).expect("valid typed bundle");
+        assert_eq!(prompt, "hello");
+        assert_eq!(system.as_deref(), Some("system\n\nrecall"));
+
+        replace_user_message(&mut items, "changed prompt").expect("one E item");
+        let (prompt, _) = render_request(&items).expect("still valid");
+        assert_eq!(prompt, "changed prompt");
+        let user = items.iter().find(|item| item.block == Block::E).unwrap();
+        assert_eq!(user.tokens, count_tokens_upper_bound("changed prompt"));
+    }
+
+    #[test]
+    fn typed_render_rejects_missing_or_duplicate_user_blocks() {
+        assert!(render_request(&[BlockItem::new(Block::A, "system")]).is_err());
+        assert!(
+            render_request(&[
+                BlockItem::new(Block::E, "one"),
+                BlockItem::new(Block::E, "two"),
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unicode_conductor_truncation_recounts_retained_content() {
+        let mut items = vec![
+            BlockItem::new(Block::A, "a"),
+            BlockItem::new(Block::Conductor, "🙂".repeat(40)),
+            BlockItem::new(Block::E, "e"),
+        ];
+        let detail = enforce_budget(&mut items, 5).expect("conductor must truncate");
+        assert!(detail.conductor_truncated);
+        let conductor = items
+            .iter()
+            .find(|item| item.block == Block::Conductor)
+            .unwrap();
+        assert_eq!(
+            conductor.tokens,
+            count_tokens_upper_bound(&conductor.content)
+        );
     }
 
     // ── effective_cap ─────────────────────────────────────────────
