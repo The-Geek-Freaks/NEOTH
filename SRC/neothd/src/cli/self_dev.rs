@@ -358,6 +358,7 @@ async fn run_accept(
 }
 
 async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Result<()> {
+    use crate::cron::schema::{CronRole, JobsFile, classify_role};
     use crate::profile::self_dev::{ProposalKind, ValidatedProposalTarget};
 
     match proposal
@@ -373,14 +374,74 @@ async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Resul
         ValidatedProposalTarget::ExtensionSelector(id) => {
             crate::cli::skills::set_skill_enabled_at(home, &id, true).await?;
         }
-        ValidatedProposalTarget::BriefingTime { .. } => {
-            anyhow::bail!("briefing-schedule apply is not wired yet; proposal remains pending");
+        ValidatedProposalTarget::BriefingTime { hour, minute } => {
+            // Reschedule the operator's briefing cron job to the proposed
+            // HH:MM. The briefing job is identified by its classified role
+            // (JV-PRO-05 keyword classification over name + prompt), and the
+            // rewrite goes through `JobsFile::modify_at_path` — the same
+            // process-and-file-locked atomic RMW every production jobs.yaml
+            // mutation uses, so the live scheduler observes a complete
+            // generation. No enabled briefing job → the accept fails and the
+            // proposal stays pending (fail-closed, actionable message).
+            //
+            // spawn_blocking: modify_at_path takes a cross-process file lock
+            // with a sleeping retry loop (up to 5 s) — must not park a tokio
+            // worker if a daemon path ever calls accept (review finding).
+            let path = home.join("jobs.yaml");
+            let worker_path = path.clone();
+            tokio::task::spawn_blocking(move || {
+                JobsFile::modify_at_path(&worker_path, |jf| {
+                    let job = jf
+                        .jobs
+                        .iter_mut()
+                        .find(|job| job.enabled && classify_role(job) == CronRole::Briefing)
+                        .with_context(|| {
+                            format!(
+                                "no enabled briefing job in {} — add one via `neoth cron add` \
+                                 before accepting a briefing-schedule proposal",
+                                worker_path.display()
+                            )
+                        })?;
+                    // Daily at HH:MM; the schedule invariant allows exactly one
+                    // of cron/every/at, so the interval/one-shot forms are
+                    // cleared. The operator's timezone is preserved.
+                    job.schedule.cron = format!("{minute} {hour} * * *");
+                    job.schedule.every_seconds = None;
+                    job.schedule.anchor_unix = None;
+                    job.schedule.at = None;
+                    Ok(())
+                })
+            })
+            .await
+            .context("join briefing-reschedule task")?
+            .with_context(|| format!("reschedule briefing job in {}", path.display()))?;
         }
         ValidatedProposalTarget::SourceEdit => {
-            if !matches!(proposal.kind, ProposalKind::SourceEdit { .. }) {
+            let ProposalKind::SourceEdit {
+                patch_path,
+                diff_sha256,
+                ..
+            } = &proposal.kind
+            else {
                 anyhow::bail!("source-edit target validation mismatch");
-            }
-            anyhow::bail!("source-edit apply is not wired yet; proposal remains pending");
+            };
+            // Accepting a source-edit proposal records the DECISION only —
+            // the live-tree mutation is deliberately a second explicit step
+            // through the FEAT-05 five-layer gate stack:
+            //   neoth self-edit --diff <patch> --expect-hash <sha256> --yes
+            // (the GUI Apply button spawns exactly this, per
+            // GUI-DES-SELFDEV-APPLY-01). Auto-applying on accept would erode
+            // the Layer-3 policy — "never auto-apply, even at Full" — and
+            // contradict the shipped two-step GUI contract ("Accepted
+            // (pending apply)"). Before this wiring, accept itself bailed,
+            // so a SourceEdit proposal could never even be ACCEPTED.
+            tracing::info!(
+                patch = %patch_path.display(),
+                sha256 = %diff_sha256,
+                "source-edit proposal accepted — apply via `neoth self-edit --diff {} --expect-hash {} --yes`",
+                patch_path.display(),
+                diff_sha256,
+            );
         }
     }
     Ok(())
@@ -736,6 +797,122 @@ mod tests {
         let tmp = real.with_extension("json.tmp");
         assert!(real.exists());
         assert!(!tmp.exists());
+    }
+
+    const BRIEFING_JOBS_YAML: &str = r#"
+version: 1
+jobs:
+  - id: morning-news
+    name: Morning News
+    enabled: true
+    schedule:
+      cron: "0 7 * * *"
+      tz: Europe/Berlin
+    prompt: |
+      Morning briefing please
+    delivery:
+      channel: telegram
+"#;
+
+    fn store_with(proposal: SelfDevProposal) -> ProposalStore {
+        let mut store = ProposalStore::default();
+        store.entries.push(StoredProposal {
+            proposal,
+            status: ProposalStatus::Pending,
+            status_at_unix: 1_700_000_000,
+            decline_reason: String::new(),
+        });
+        store
+    }
+
+    #[tokio::test]
+    async fn accept_briefing_time_reschedules_the_briefing_cron_job() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("jobs.yaml"), BRIEFING_JOBS_YAML).unwrap();
+        let proposal = SelfDevProposal {
+            id: "adjust_briefing_schedule-cafe0001".into(),
+            kind: ProposalKind::AdjustBriefingSchedule,
+            reason: "operator active later".into(),
+            confidence: 0.9,
+            target: "08:30".into(),
+        };
+        save_store(dir.path(), &store_with(proposal)).unwrap();
+
+        run_accept(
+            dir.path(),
+            "adjust_briefing_schedule-cafe0001",
+            None,
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .unwrap();
+
+        // Effect: the briefing job now fires daily at 08:30, tz preserved.
+        let jobs = crate::cron::schema::JobsFile::from_yaml_str(
+            &std::fs::read_to_string(dir.path().join("jobs.yaml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(jobs.jobs[0].schedule.cron, "30 8 * * *");
+        assert_eq!(jobs.jobs[0].schedule.tz.as_deref(), Some("Europe/Berlin"));
+        // Decision recorded.
+        let store = load_store(dir.path()).unwrap();
+        assert_eq!(store.entries[0].status, ProposalStatus::Accepted);
+    }
+
+    #[tokio::test]
+    async fn accept_briefing_time_without_briefing_job_stays_pending() {
+        let dir = tempdir().unwrap();
+        let proposal = SelfDevProposal {
+            id: "adjust_briefing_schedule-cafe0002".into(),
+            kind: ProposalKind::AdjustBriefingSchedule,
+            reason: "test".into(),
+            confidence: 0.9,
+            target: "07:15".into(),
+        };
+        save_store(dir.path(), &store_with(proposal)).unwrap();
+
+        let err = run_accept(
+            dir.path(),
+            "adjust_briefing_schedule-cafe0002",
+            None,
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{err:#}").contains("no enabled briefing job"));
+        // Fail-closed: the proposal was NOT flipped to accepted.
+        let store = load_store(dir.path()).unwrap();
+        assert_eq!(store.entries[0].status, ProposalStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn accept_source_edit_records_decision_without_touching_the_tree() {
+        let dir = tempdir().unwrap();
+        let proposal = SelfDevProposal {
+            id: "source_edit-cafe0003".into(),
+            kind: ProposalKind::SourceEdit {
+                patch_path: std::path::PathBuf::from("/tmp/proposal.patch"),
+                diff_sha256: "a".repeat(64),
+                target_paths: vec!["src/cli/dummy.rs".into()],
+            },
+            reason: "test".into(),
+            confidence: 0.9,
+            target: "src/cli/dummy.rs".into(),
+        };
+        save_store(dir.path(), &store_with(proposal)).unwrap();
+
+        // Accept records the decision; the live-tree apply stays the
+        // explicit second step through the FEAT-05 gate stack.
+        run_accept(
+            dir.path(),
+            "source_edit-cafe0003",
+            None,
+            crate::cli::OutputFormat::Table,
+        )
+        .await
+        .unwrap();
+        let store = load_store(dir.path()).unwrap();
+        assert_eq!(store.entries[0].status, ProposalStatus::Accepted);
     }
 
     #[tokio::test]
