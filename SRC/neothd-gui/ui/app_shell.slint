@@ -40,7 +40,7 @@ component NavBtn inherits Rectangle {
 
     // R4-09 — screen-reader / keyboard support on primary navigation.
     accessible-role: button;
-    accessible-label: root.label + " tab";
+    accessible-label: root.label + (root.active ? " tab, current" : " tab");
     accessible-action-default => { root.clicked(); }
 
     property <color> tier-color: root.tier == "memory" ? Theme.memory
@@ -49,6 +49,8 @@ component NavBtn inherits Rectangle {
 
     height: 38px;
     border-radius: Theme.radius-md;
+    border-width: key-focus.has-focus ? 2px : 0px;
+    border-color: key-focus.has-focus ? Theme.focus-ring : transparent;
     background: root.active ? Theme.surface-2 : transparent;
     animate background { duration: Theme.duration-fast; easing: ease-out; }
 
@@ -100,7 +102,16 @@ component NavBtn inherits Rectangle {
             }
         }
     }
-    TouchArea { clicked => { root.clicked(); } }
+    key-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    TouchArea { clicked => { key-focus.focus(); root.clicked(); } }
 }
 
 // Complexity segment (minimal / standard / full) — mirrors NEOTH's persona
@@ -120,15 +131,24 @@ component ComplexitySeg inherits Rectangle {
             accessible-action-default => { root.set-level(i); }
             border-radius: Theme.radius-sm;
             background: root.level == i ? Theme.accent-tint : transparent;
-            border-width: root.level == i ? 1px : 0px;
-            border-color: Theme.border-accent;
+            border-width: seg-focus.has-focus ? 2px : (root.level == i ? 1px : 0px);
+            border-color: seg-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
             Text {
                 text: seg; color: root.level == i ? Theme.accent : Theme.text-tertiary;
                 font-family: Theme.font-mono; font-size: 10px;
                 letter-spacing: Theme.letter-spacing-tight;
                 horizontal-alignment: center; vertical-alignment: center;
             }
-            TouchArea { clicked => { root.set-level(i); } }
+            seg-focus := FocusScope {
+                key-pressed(event) => {
+                    if event.text == "\n" || event.text == " " {
+                        root.set-level(i);
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+            TouchArea { clicked => { seg-focus.focus(); root.set-level(i); } }
         }
     }
 }

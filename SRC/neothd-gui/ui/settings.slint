@@ -187,11 +187,17 @@ component TabButton inherits Rectangle {
     in property <bool> active: false;
     callback clicked();
 
+    accessible-role: button;
+    accessible-label: root.label + (root.active ? ", selected" : "");
+    accessible-action-default => { root.clicked(); }
+
     height: 36px;
     // GUI-overhaul: tint the active tab with the accent (was a flat bg-card fill)
     // so the selected tab reads clearly and matches its accent indicator bar.
     background: root.active ? Theme.accent-green.with-alpha(0.10) : transparent;
     border-radius: Theme.radius-button;
+    border-width: key-focus.has-focus ? 2px : 0px;
+    border-color: key-focus.has-focus ? Theme.focus-ring : transparent;
 
     animate background {
         duration: Theme.duration-micro;
@@ -220,8 +226,17 @@ component TabButton inherits Rectangle {
         height: parent.height;
     }
 
+    key-focus := FocusScope {
+        key-pressed(event) => {
+            if event.text == "\n" || event.text == " " {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+    }
     touch := TouchArea {
-        clicked => { root.clicked(); }
+        clicked => { key-focus.focus(); root.clicked(); }
     }
 
     // G-25 fix: subtle hover affordance for desktop mouse pointers.

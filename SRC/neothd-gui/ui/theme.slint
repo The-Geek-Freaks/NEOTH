@@ -123,7 +123,9 @@ export global Theme {
     // ══ TEXT HIERARCHY ═════════════════════════════════════════════════
     out property <color> text-primary:   root.foreground-override-enabled ? root.foreground-color-override : (root.dark ? #ffffff : #11140f);
     out property <color> text-secondary: root.dark ? #aaaaaa : #4a4d46;
-    out property <color> text-tertiary:  root.dark ? #8a8a8a : #6f726a;
+    // R4-09 a11y: light-mode text-tertiary raised from #6f726a (~4.17:1, fails
+    // WCAG AA) to #5d6058 (~5.3:1, passes AA for normal text).
+    out property <color> text-tertiary:  root.dark ? #8a8a8a : #5d6058;
     out property <color> text-disabled:  root.dark ? #5a5a5a : #a7a99f;
     out property <color> text-inverse:   root.dark ? #0d0d0d : #f4f2ec;
     out property <color> text-on-accent: #04130b;   // dark-green ink on the green accent (both themes)
@@ -159,7 +161,9 @@ export global Theme {
     out property <color> border-strong:  root.dark ? #ffffff29 : #11141233;
     out property <color> border-accent:  root.accent-override-enabled ? root.accent-color-override.with-alpha(0.45) : (root.dark ? #00ff8066 : #008a4573);
     out property <color> divider:        root.dark ? #ffffff12 : #1114121a;
-    out property <color> focus-ring:     root.accent-override-enabled ? root.accent-color-override.with-alpha(0.55) : (root.dark ? #00ff808c : #008a4580);
+    // R4-09 a11y: light-mode focus-ring alpha raised 0x80→0xcc (#008a4580 was
+    // ~2.1:1 on white, below WCAG 2.2 §3.3.3 3:1 for focus indicators).
+    out property <color> focus-ring:     root.accent-override-enabled ? root.accent-color-override.with-alpha(0.55) : (root.dark ? #00ff808c : #008a45cc);
     out property <color> scrim:          root.dark ? #050505a8 : #14161257;
 
     // ══ CORNER RADII — "Noble Curve", never 0px ════════════════════════

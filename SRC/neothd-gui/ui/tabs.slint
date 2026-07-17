@@ -115,17 +115,29 @@ export component ProbeView inherits Rectangle {
             Rectangle {
                 width: btn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
                 background: root.running ? Theme.surface-2 : Theme.accent-tint;
-                border-width: 1px; border-color: Theme.border-accent;
+                border-width: probe-focus.has-focus ? 2px : 1px;
+                border-color: probe-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
+                accessible-role: button;
+                accessible-label: root.action-label;
+                accessible-enabled: !root.running;
+                accessible-action-default => { if (!root.running) { root.run-clicked(); } }
                 btn := Text {
                     text: root.running ? "running…" : root.action-label;
                     color: root.running ? Theme.text-tertiary : Theme.accent;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm; vertical-alignment: center;
                 }
+                probe-focus := FocusScope {
+                    enabled: !root.running;
+                    key-pressed(event) => {
+                        if event.text == "\n" || event.text == " " {
+                            root.run-clicked();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
                 TouchArea {
-                    clicked => { if (!root.running) { root.run-clicked(); } }
-                    accessible-role: button;
-                    accessible-label: root.action-label;
-                    accessible-action-default => { if (!root.running) { root.run-clicked(); } }
+                    clicked => { if (!root.running) { probe-focus.focus(); root.run-clicked(); } }
                 }
             }
         }
@@ -191,18 +203,30 @@ export component DoctorView inherits Rectangle {
             Rectangle {
                 width: btn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
                 background: root.running ? Theme.surface-2 : Theme.accent-tint;
-                border-width: 1px; border-color: Theme.border-accent;
+                border-width: doc-focus.has-focus ? 2px : 1px;
+                border-color: doc-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
+                accessible-role: button;
+                accessible-label: "Run neoth doctor";
+                accessible-enabled: !root.running;
+                accessible-action-default => { if (!root.running) { root.run-clicked(); } }
                 btn := Text {
                     text: root.running ? "running…" : "Run neoth doctor";
                     color: root.running ? Theme.text-tertiary : Theme.accent;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
+                doc-focus := FocusScope {
+                    enabled: !root.running;
+                    key-pressed(event) => {
+                        if event.text == "\n" || event.text == " " {
+                            root.run-clicked();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
                 TouchArea {
-                    clicked => { if (!root.running) { root.run-clicked(); } }
-                    accessible-role: button;
-                    accessible-label: "run neoth doctor";
-                    accessible-action-default => { if (!root.running) { root.run-clicked(); } }
+                    clicked => { if (!root.running) { doc-focus.focus(); root.run-clicked(); } }
                 }
             }
         }
@@ -237,7 +261,12 @@ export component DoctorView inherits Rectangle {
             Rectangle {
                 width: sbtn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
                 background: root.status-running ? Theme.surface-2 : Theme.accent-tint;
-                border-width: 1px; border-color: Theme.border-accent;
+                border-width: stat-focus.has-focus ? 2px : 1px;
+                border-color: stat-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
+                accessible-role: button;
+                accessible-label: "Run status";
+                accessible-enabled: !root.status-running;
+                accessible-action-default => { if (!root.status-running) { root.status-run-clicked(); } }
                 sbtn := Text {
                     text: root.status-running ? "running…" : "Run";
                     overflow: elide;
@@ -245,11 +274,18 @@ export component DoctorView inherits Rectangle {
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
+                stat-focus := FocusScope {
+                    enabled: !root.status-running;
+                    key-pressed(event) => {
+                        if event.text == "\n" || event.text == " " {
+                            root.status-run-clicked();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
                 TouchArea {
-                    clicked => { if (!root.status-running) { root.status-run-clicked(); } }
-                    accessible-role: button;
-                    accessible-label: "run status probe";
-                    accessible-action-default => { if (!root.status-running) { root.status-run-clicked(); } }
+                    clicked => { if (!root.status-running) { stat-focus.focus(); root.status-run-clicked(); } }
                 }
             }
         }
@@ -284,18 +320,30 @@ export component DoctorView inherits Rectangle {
             Rectangle {
                 width: abtn.width + 32px; height: 38px; border-radius: Theme.radius-pill;
                 background: root.security-running ? Theme.surface-2 : Theme.accent-tint;
-                border-width: 1px; border-color: Theme.border-accent;
+                border-width: audit-focus.has-focus ? 2px : 1px;
+                border-color: audit-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
+                accessible-role: button;
+                accessible-label: "Run audit";
+                accessible-enabled: !root.security-running;
+                accessible-action-default => { if (!root.security-running) { root.security-run-clicked(); } }
                 abtn := Text {
                     text: root.security-running ? "running…" : "Run audit";
                     color: root.security-running ? Theme.text-tertiary : Theme.accent;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center;
                 }
+                audit-focus := FocusScope {
+                    enabled: !root.security-running;
+                    key-pressed(event) => {
+                        if event.text == "\n" || event.text == " " {
+                            root.security-run-clicked();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
                 TouchArea {
-                    clicked => { if (!root.security-running) { root.security-run-clicked(); } }
-                    accessible-role: button;
-                    accessible-label: "run security audit";
-                    accessible-action-default => { if (!root.security-running) { root.security-run-clicked(); } }
+                    clicked => { if (!root.security-running) { audit-focus.focus(); root.security-run-clicked(); } }
                 }
             }
         }
