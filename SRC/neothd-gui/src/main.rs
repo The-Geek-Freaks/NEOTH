@@ -3801,6 +3801,82 @@ fn main() -> Result<()> {
         });
     });
 
+    // L93 — add a ground-truth statement (`neoth groundtruth add`), then refresh
+    // the list. Non-destructive; status-checked so a failure shows an error toast.
+    let weak_gt_add = window.as_weak();
+    window.on_gt_add_clicked(move |statement| {
+        let stmt = statement.to_string();
+        if stmt.trim().is_empty() {
+            return;
+        }
+        let weak = weak_gt_add.clone();
+        std::thread::spawn(move || {
+            let added = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("add")
+                    .arg(stmt.trim())
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth add spawn failed"))
+                    .ok()
+            });
+            let (kind, body): (&str, String) = match added {
+                Some(o) if o.status.success() => {
+                    ("success", "Ground-truth statement added.".to_string())
+                }
+                Some(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let msg: String = err.trim().chars().take(160).collect();
+                    (
+                        "error",
+                        if msg.is_empty() {
+                            "groundtruth add exited non-zero".to_string()
+                        } else {
+                            msg
+                        },
+                    )
+                }
+                None => (
+                    "error",
+                    "neothd binary not on PATH — cannot add ground-truth fact.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "Ground-truth add", &body);
+            // Refresh the list so the new fact (or unchanged state) is reflected.
+            let refreshed = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("groundtruth")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth list refresh spawn failed"))
+                    .ok()
+            });
+            if let Some(o) = refreshed {
+                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                let e = String::from_utf8_lossy(&o.stderr);
+                if !e.trim().is_empty() {
+                    s.push('\n');
+                    s.push_str(&e);
+                }
+                let output = if s.trim().is_empty() {
+                    "Ground-truth store is empty.".to_string()
+                } else {
+                    s
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_gt_output(output.into());
+                        w.set_gt_running(false);
+                    }
+                });
+            }
+        });
+    });
+
     // Research P0 — catalog probe: `neoth catalog list --output json`.
     let weak_catalog = window.as_weak();
     window.on_catalog_run_clicked(move || {

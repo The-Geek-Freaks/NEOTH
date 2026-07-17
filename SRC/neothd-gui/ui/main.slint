@@ -501,6 +501,8 @@ export component MainWindow inherits Window {
     in property <string> gt-output: "";
     in property <bool> gt-running: false;
     callback gt-run-clicked();
+    // L93 — add a ground-truth statement (neoth groundtruth add). Non-destructive.
+    callback gt-add-clicked(string /*statement*/);
     in property <string> catalog-output: "";
     in property <bool> catalog-running: false;
     callback catalog-run-clicked();
@@ -3668,16 +3670,41 @@ export component MainWindow inherits Window {
                     // Homogeneity: auto-load on first open (matches agents/mesh/overview).
                     init => { if (root.hooks-output == "") { root.hooks-run-clicked(); } }
                 }
-                // Research P0 — ground-truth fact store (neoth groundtruth list).
-                if root.nav-active == "groundtruth": ProbeView {
-                    blurb: "Ground-truth facts — the verified fact store that gates recall and council weighting (neoth groundtruth list). Read-only.";
-                    action-label: "Refresh";
-                    output: root.gt-output;
-                    running: root.gt-running;
-                    empty-hint: "Click \"Refresh\" to load the ground-truth store.";
-                    run-clicked => { root.gt-run-clicked(); }
-                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
-                    init => { if (root.gt-output == "") { root.gt-run-clicked(); } }
+                // Research P0 — ground-truth fact store (neoth groundtruth list)
+                // + L93 add-statement write action above the read-only list.
+                if root.nav-active == "groundtruth": VerticalLayout {
+                    spacing: Theme.space-tight;
+                    HorizontalLayout {
+                        spacing: Theme.space-tight;
+                        height: 44px;
+                        gt_add := NeothLineEdit {
+                            placeholder-text: "Add a ground-truth statement — press Enter or click Add";
+                            horizontal-stretch: 1;
+                            accepted(t) => {
+                                if (t != "") { root.gt-add-clicked(t); self.text = ""; }
+                            }
+                        }
+                        NeothButton {
+                            label: "Add";
+                            primary: true;
+                            clicked => {
+                                if (gt_add.text != "") {
+                                    root.gt-add-clicked(gt_add.text);
+                                    gt_add.text = "";
+                                }
+                            }
+                        }
+                    }
+                    ProbeView {
+                        blurb: "Ground-truth facts — the verified fact store that gates recall and council weighting (neoth groundtruth list).";
+                        action-label: "Refresh";
+                        output: root.gt-output;
+                        running: root.gt-running;
+                        empty-hint: "Click \"Refresh\" to load the ground-truth store.";
+                        run-clicked => { root.gt-run-clicked(); }
+                        // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                        init => { if (root.gt-output == "") { root.gt-run-clicked(); } }
+                    }
                 }
                 if root.nav-active == "catalog": ProbeView {
                     blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). Read-only; refresh from the CLI with neoth catalog refresh.";
