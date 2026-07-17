@@ -3996,6 +3996,84 @@ fn main() -> Result<()> {
         });
     });
 
+    // L97 — rebuild the model catalog from providers (`neoth catalog refresh`),
+    // then re-list. Status-checked: a failed rebuild shows an error toast.
+    let weak_catalog_refresh = window.as_weak();
+    window.on_catalog_refresh_clicked(move || {
+        let Some(w0) = weak_catalog_refresh.upgrade() else {
+            return;
+        };
+        w0.set_catalog_running(true);
+        let weak = weak_catalog_refresh.clone();
+        std::thread::spawn(move || {
+            let refreshed = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("catalog")
+                    .arg("refresh")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "catalog refresh spawn failed"))
+                    .ok()
+            });
+            let (kind, body): (&str, String) = match refreshed {
+                Some(o) if o.status.success() => {
+                    ("success", "Model catalog rebuilt from providers.".to_string())
+                }
+                Some(o) => {
+                    let err = String::from_utf8_lossy(&o.stderr);
+                    let msg: String = err.trim().chars().take(160).collect();
+                    (
+                        "error",
+                        if msg.is_empty() {
+                            "catalog refresh exited non-zero".to_string()
+                        } else {
+                            msg
+                        },
+                    )
+                }
+                None => (
+                    "error",
+                    "neothd binary not on PATH — cannot rebuild catalog.".to_string(),
+                ),
+            };
+            push_toast(&weak, kind, "Catalog rebuild", &body);
+            // Re-list so the panel reflects the rebuilt catalog.
+            let listed = which_neothd().and_then(|bin| {
+                spawn_neothd_plain(&bin)
+                    .arg("catalog")
+                    .arg("list")
+                    .arg("--output")
+                    .arg("json")
+                    .output()
+                    .inspect_err(|e| tracing::warn!(error = %e, "catalog list refresh spawn failed"))
+                    .ok()
+            });
+            let output = match listed {
+                Some(o) => {
+                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
+                    let e = String::from_utf8_lossy(&o.stderr);
+                    if !e.trim().is_empty() {
+                        s.push('\n');
+                        s.push_str(&e);
+                    }
+                    if s.trim().is_empty() {
+                        "the model catalog is empty (run `neoth catalog refresh`).".to_string()
+                    } else {
+                        s
+                    }
+                }
+                None => "neothd binary not on PATH — cannot load catalog.".to_string(),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_catalog_output(output.into());
+                    w.set_catalog_running(false);
+                }
+            });
+        });
+    });
+
     // Research P0 — quota probe: `neoth quota status --output json`.
     let weak_quota = window.as_weak();
     window.on_quota_run_clicked(move || {

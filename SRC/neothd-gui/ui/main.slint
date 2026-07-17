@@ -510,6 +510,8 @@ export component MainWindow inherits Window {
     in property <string> catalog-output: "";
     in property <bool> catalog-running: false;
     callback catalog-run-clicked();
+    // Rebuild the model catalog from providers (neoth catalog refresh).
+    callback catalog-refresh-clicked();
     in property <string> quota-output: "";
     in property <bool> quota-running: false;
     callback quota-run-clicked();
@@ -3729,15 +3731,26 @@ export component MainWindow inherits Window {
                         init => { if (root.gt-output == "") { root.gt-run-clicked(); } }
                     }
                 }
-                if root.nav-active == "catalog": ProbeView {
-                    blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). Read-only; refresh from the CLI with neoth catalog refresh.";
-                    action-label: "Refresh";
-                    output: root.catalog-output;
-                    running: root.catalog-running;
-                    empty-hint: "Click \"Refresh\" to load the model catalog.";
-                    run-clicked => { root.catalog-run-clicked(); }
-                    // Homogeneity: auto-load on first open (matches agents/mesh/overview).
-                    init => { if (root.catalog-output == "") { root.catalog-run-clicked(); } }
+                if root.nav-active == "catalog": VerticalLayout {
+                    spacing: Theme.space-tight;
+                    HorizontalLayout {
+                        alignment: end;
+                        NeothButton {
+                            label: "Rebuild from providers";
+                            primary: false;
+                            clicked => { root.catalog-refresh-clicked(); }
+                        }
+                    }
+                    ProbeView {
+                        blurb: "Model catalog — every cached provider model with capability/price metadata (neoth catalog list). \"Rebuild\" re-fetches from providers (neoth catalog refresh).";
+                        action-label: "Refresh";
+                        output: root.catalog-output;
+                        running: root.catalog-running;
+                        empty-hint: "Click \"Refresh\" to load the model catalog.";
+                        run-clicked => { root.catalog-run-clicked(); }
+                        // Homogeneity: auto-load on first open (matches agents/mesh/overview).
+                        init => { if (root.catalog-output == "") { root.catalog-run-clicked(); } }
+                    }
                 }
                 if root.nav-active == "quota": ProbeView {
                     blurb: "Provider quota — per-provider daily request state and any active 429 backoff window (neoth quota status). Read-only.";
