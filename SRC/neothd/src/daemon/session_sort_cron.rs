@@ -123,6 +123,7 @@ pub fn is_throwaway(card: &HindsightCard) -> bool {
 pub async fn group_titles(
     cards: &[HindsightCard],
     provider: &dyn Provider,
+    cap: u32,
 ) -> anyhow::Result<Vec<Folder>> {
     if cards.is_empty() {
         return Ok(vec![]);
@@ -173,9 +174,11 @@ pub async fn group_titles(
          Return JSON only."
     );
 
+    let budget = crate::tokens::budget::finalize_daemon_request(prompt, Some(system), cap)
+        .map_err(|e| anyhow::anyhow!("session_sort_cron over token cap: {e}"))?;
     let req = Request {
-        prompt,
-        system: Some(system.to_string()),
+        prompt: budget.prompt,
+        system: budget.system,
         ..Default::default()
     };
 
@@ -268,6 +271,7 @@ pub async fn run_session_sort_pass(
     home: &Path,
     provider: &dyn Provider,
     dry_run: bool,
+    cap: u32,
 ) -> anyhow::Result<SortReport> {
     // ── 1. Load ───────────────────────────────────────────────────────────
     let all_cards = list_cards(home);
@@ -315,7 +319,7 @@ pub async fn run_session_sort_pass(
     let cards_grouped = survivors.len();
 
     // ── 3. Group ──────────────────────────────────────────────────────────
-    let folders = match group_titles(&survivors, provider).await {
+    let folders = match group_titles(&survivors, provider, cap).await {
         Ok(f) => f,
         Err(e) => {
             warn!(error = %e, "session_sort_cron: group_titles provider call failed — skipping grouping");
@@ -563,14 +567,22 @@ pub async fn spawn_session_sort_cron(
 
         loop {
             ticker.tick().await;
-            let live_cfg = ctrl.latest().session_sort_cron;
+            let live_full = ctrl.latest();
+            let live_cfg = live_full.session_sort_cron;
             let live_interval = live_cfg.interval_duration();
             if live_interval != current_interval {
                 current_interval = live_interval;
                 ticker = tokio::time::interval(current_interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             }
-            match run_session_sort_pass(&home, provider.as_ref(), live_cfg.dry_run).await {
+            let wire_model =
+                crate::providers::provider_default_wire_model(provider.as_ref()).unwrap_or_default();
+            let cap = crate::tokens::budget::effective_cap(
+                "",
+                &wire_model,
+                live_full.tokens.max_per_request,
+            );
+            match run_session_sort_pass(&home, provider.as_ref(), live_cfg.dry_run, cap).await {
                 Ok(report) => {
                     info!(
                         loaded = report.cards_loaded,
@@ -718,7 +730,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let provider = MockProvider::new("[]");
         let report = rt
-            .block_on(run_session_sort_pass(dir.path(), &provider, true))
+            .block_on(run_session_sort_pass(dir.path(), &provider, true, u32::MAX))
             .unwrap();
 
         assert_eq!(report.cards_pruned, 1);
@@ -738,7 +750,7 @@ mod tests {
         ];
         let json = r#"[{"folder":"rust-work","session_ids":["abc"]},{"folder":"async-design","session_ids":["def"]}]"#;
         let provider = MockProvider::new(json);
-        let folders = group_titles(&cards, &provider).await.unwrap();
+        let folders = group_titles(&cards, &provider, u32::MAX).await.unwrap();
         assert_eq!(folders.len(), 2);
         assert_eq!(folders[0].name, "rust-work");
         assert_eq!(folders[0].session_ids, vec!["abc"]);
@@ -754,7 +766,7 @@ mod tests {
             "3 turns over 1 min on rust",
         )];
         let provider = MockProvider::new("this is not json at all {{{");
-        let folders = group_titles(&cards, &provider).await.unwrap();
+        let folders = group_titles(&cards, &provider, u32::MAX).await.unwrap();
         assert!(
             folders.is_empty(),
             "invalid JSON must produce empty folder list"
@@ -770,7 +782,7 @@ mod tests {
             "3 turns over 1 min on 日本語",
         )];
         let provider = MockProvider::new(format!("{}{{{{", "日本語".repeat(80)));
-        let folders = group_titles(&cards, &provider).await.unwrap();
+        let folders = group_titles(&cards, &provider, u32::MAX).await.unwrap();
         assert!(folders.is_empty());
     }
 
@@ -784,7 +796,7 @@ mod tests {
         )];
         let json = "```json\n[{\"folder\":\"memory-work\",\"session_ids\":[\"y\"]}]\n```";
         let provider = MockProvider::new(json);
-        let folders = group_titles(&cards, &provider).await.unwrap();
+        let folders = group_titles(&cards, &provider, u32::MAX).await.unwrap();
         assert_eq!(folders.len(), 1);
         assert_eq!(folders[0].name, "memory-work");
     }
@@ -792,7 +804,7 @@ mod tests {
     #[tokio::test]
     async fn group_titles_empty_cards_returns_empty() {
         let provider = MockProvider::new("[]");
-        let folders = group_titles(&[], &provider).await.unwrap();
+        let folders = group_titles(&[], &provider, u32::MAX).await.unwrap();
         assert!(folders.is_empty());
     }
 
@@ -814,7 +826,7 @@ mod tests {
             {"folder":"folder-b","session_ids":["dup-session"]}
         ]"#;
         let provider = MockProvider::new(json);
-        let report = run_session_sort_pass(dir.path(), &provider, false)
+        let report = run_session_sort_pass(dir.path(), &provider, false, u32::MAX)
             .await
             .unwrap();
 

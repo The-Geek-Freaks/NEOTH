@@ -2040,15 +2040,27 @@ impl crate::daemon::omi_native_ingest::NativeSummaryProvider for OmiSummaryProvi
             "omi.native_summary",
         );
 
+        // Apply typed budget enforcement (parity with the CLI finalize path):
+        // wrap the summarizer system + transcript prompt in [A, E], enforce the
+        // live cap, and fail-close if protected content cannot fit.
+        let cap = crate::tokens::budget::effective_cap(
+            "",
+            model.as_deref().unwrap_or("provider_default"),
+            config.tokens.max_per_request,
+        );
+        let budget = crate::tokens::budget::finalize_daemon_request(
+            prompt,
+            Some("You are NEOTH's conversation summarizer. Return only the bounded summary."),
+            cap,
+        )
+        .map_err(|e| format!("OMI cloud summary token cap exceeded: {e}"))?;
+
         let started = std::time::Instant::now();
         let completion = self
             .provider
             .complete(crate::providers::Request {
-                prompt,
-                system: Some(
-                    "You are NEOTH's conversation summarizer. Return only the bounded summary."
-                        .to_string(),
-                ),
+                prompt: budget.prompt,
+                system: budget.system,
                 temperature,
                 model,
                 ..crate::providers::Request::default()

@@ -400,8 +400,20 @@ impl SmartApproveSession {
                         HashMap::new()
                     }
                 };
+                // Retain the live client only when the verdict map is non-empty.
+                // An all-empty seal (e.g. duplicate tool name, or a server that
+                // declares zero decisive annotations) can never issue a grant,
+                // so keeping the spawned child alive until session end is pure
+                // resource waste.  The cache entry is still sealed to prevent
+                // re-initialization; future calls reach the normal Confirm path.
+                // McpClient::drop() → child.start_kill() terminates the child.
+                let has_grants = !verdicts.is_empty();
                 self.cache.seed_verdicts(cfg, verdicts);
-                self.clients.insert_live(cfg.id.clone(), client);
+                if has_grants {
+                    self.clients.insert_live(cfg.id.clone(), client);
+                }
+                // When !has_grants, `client` drops here, invoking
+                // McpClient::drop() → self.child.start_kill().
             }
             Ok(Err(error)) => {
                 tracing::warn!(
@@ -817,5 +829,53 @@ mod tests {
         right.env.insert("BETA".into(), "two".into());
         right.env.insert("ALPHA".into(), "one".into());
         assert_eq!(config_binding(&left), config_binding(&right));
+    }
+
+    /// FOLLOW-UP-W3-SMARTAPPROVE-DUP-TOOL-CLIENT fix verification.
+    ///
+    /// After a duplicate-tool (or any all-empty) seal, `initialize_server`
+    /// must NOT retain a live client: `clients.inner` must be absent for the
+    /// server so the child process is dropped immediately rather than held
+    /// until session end for zero benefit.
+    ///
+    /// A subsequent `bind_or_initialize` must resolve to `None` (normal
+    /// Confirm path fires, no grant) and must not re-trigger initialization.
+    #[tokio::test]
+    async fn duplicate_tool_seal_no_client_retained_and_confirm_fires() {
+        // Simulate the post-fix state: initialize_server received an Ok
+        // tools/list but classify_tool_verdicts returned Err(duplicate_tool),
+        // so it sealed the cache with an empty verdict map and did NOT call
+        // insert_live.  We reproduce that exact cache state here without
+        // spawning a real subprocess.
+        let cfg = server("dup-tool-srv");
+        let mut session = SmartApproveSession::default();
+
+        // Seal with empty verdicts — the fixed initialize_server does this
+        // for the duplicate-tool branch, then drops the client rather than
+        // calling insert_live.
+        assert!(session.cache.seed_verdicts(&cfg, HashMap::new()));
+
+        // No insert_live was called, so the clients registry must be absent
+        // (not poisoned-None, but entirely absent).
+        assert!(
+            !session.clients.inner.contains_key(&cfg.id),
+            "no live client must be retained after a duplicate-tool (empty-verdict) seal"
+        );
+
+        // bind_or_initialize sees a sealed cache (is_bound_to = true) but no
+        // live client slot → live_slot_mut returns None → returns None.
+        // The dispatch gate therefore fires the normal Confirm path.
+        let result = session.bind_or_initialize(&cfg, "ambiguous_tool").await;
+        assert!(
+            result.is_none(),
+            "duplicate-tool seal must make bind_or_initialize return None (Confirm)"
+        );
+
+        // The sealed cache must prevent re-initialization entirely.
+        assert_eq!(
+            session.initialization_attempts(),
+            0,
+            "a sealed cache entry must never trigger a second initialize_server call"
+        );
     }
 }

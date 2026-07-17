@@ -17,7 +17,10 @@ pub mod loader;
 pub mod schema;
 pub mod stages;
 
-pub use dispatcher::{StageOutcome, run_stage};
+pub use block_filter::restore_blocks;
+pub use dispatcher::{
+    SessionOnceGuard, StageOnceResult, StageOutcome, run_stage, run_stage_with_once_guard,
+};
 pub use loader::{load_all, load_all_strict};
 pub use stages::HookStage;
 

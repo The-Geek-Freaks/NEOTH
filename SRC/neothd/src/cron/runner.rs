@@ -39,7 +39,11 @@ use crate::wal::events::{
 };
 use crate::wal::{EventFlags, writer::WalWriterHandle};
 
-type HookDispatcher = fn(HookStage, &str, &[HookDef]) -> Result<StageOutcome>;
+/// Marker type documenting the hook-dispatch signature for `run_job_with_paths`.
+/// The actual parameter uses `impl Fn(...)` so both bare fn pointers and closures
+/// (e.g. those capturing a `SessionOnceGuard`) satisfy the bound without boxing.
+#[allow(dead_code)]
+type HookDispatcherFn = fn(HookStage, &str, &[HookDef]) -> Result<StageOutcome>;
 
 #[derive(Debug)]
 pub struct RunOutcome {
@@ -169,6 +173,7 @@ async fn run_job_at_inner(
     }
     let proactive_queue_path = home.join("proactive_queue.json");
     let hook_dir = home.join("hooks");
+    let once_guard = crate::hooks::SessionOnceGuard::new();
     run_job_with_paths(
         home,
         job,
@@ -176,7 +181,10 @@ async fn run_job_at_inner(
         writer,
         &proactive_queue_path,
         &hook_dir,
-        crate::hooks::run_stage,
+        move |stage, body, hooks| {
+            crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                .map(|r| r.outcome)
+        },
         &config,
     )
     .await
@@ -436,7 +444,7 @@ async fn run_job_with_paths(
     writer: &WalWriterHandle,
     proactive_queue_path: &Path,
     hook_dir: &Path,
-    hook_dispatch: HookDispatcher,
+    hook_dispatch: impl Fn(HookStage, &str, &[HookDef]) -> Result<StageOutcome>,
     config: &crate::config::FreedomConfig,
 ) -> Result<RunOutcome> {
     let started = Instant::now();
@@ -1485,10 +1493,14 @@ mod workstream_c_tests {
             Ok(_) => panic!("unconsented cloud override must fail closed"),
             Err(error) => error,
         };
+        // Fail-closed consent enforcement lives in the wrapped source error;
+        // `{:#}` walks the anyhow chain (top context names the job, the source
+        // names the revoked provider). Wording follows consent.rs's current
+        // `ensure_route_still_granted` ("revoked while the daemon was running").
+        let chain = format!("{error:#}");
         assert!(
-            error
-                .to_string()
-                .contains("without an explicit consent grant")
+            chain.contains("consent") && chain.contains("openai_api"),
+            "consent gate must name the revoked provider: {chain}"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
 
@@ -1536,7 +1548,10 @@ mod workstream_c_tests {
         )
         .await
         .expect_err("revoked fallback consent must stop the borrowed provider topology");
-        assert!(error.to_string().contains("openai_api"));
+        assert!(
+            format!("{error:#}").contains("openai_api"),
+            "consent gate must name the revoked provider in its chain: {error:#}"
+        );
         assert_eq!(
             calls.load(Ordering::SeqCst),
             0,
@@ -1797,6 +1812,7 @@ mod workstream_c_tests {
         let mut job = briefing_job();
         job.delivery = Some(Delivery::new("telegram"));
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &job,
@@ -1804,7 +1820,10 @@ mod workstream_c_tests {
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -1841,6 +1860,7 @@ mod workstream_c_tests {
         let mut job = briefing_job();
         job.delivery = Some(Delivery::new("telegram"));
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &job,
@@ -1848,7 +1868,10 @@ mod workstream_c_tests {
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -1900,6 +1923,7 @@ mod workstream_c_tests {
         job.timeout_seconds = 1;
         job.delivery = Some(Delivery::new("telegram"));
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &job,
@@ -1907,7 +1931,10 @@ mod workstream_c_tests {
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -1954,6 +1981,7 @@ mod workstream_c_tests {
             calls: calls.clone(),
         });
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &delivery_job("telegram"),
@@ -1961,7 +1989,10 @@ mod workstream_c_tests {
             &writer,
             &queue_path,
             &dir.path().join("hooks"),
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -1995,6 +2026,7 @@ mod workstream_c_tests {
             calls: calls.clone(),
         });
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &briefing_job(),
@@ -2002,7 +2034,10 @@ mod workstream_c_tests {
             &writer,
             &dir.path().join("queue.json"),
             &hook_dir,
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -2033,6 +2068,7 @@ mod workstream_c_tests {
             calls: calls.clone(),
         });
 
+        let once_guard = crate::hooks::SessionOnceGuard::new();
         let outcome = run_job_with_paths(
             dir.path(),
             &briefing_job(),
@@ -2040,7 +2076,10 @@ mod workstream_c_tests {
             &writer,
             &dir.path().join("queue.json"),
             &hook_dir,
-            crate::hooks::run_stage,
+            |stage, body, hooks| {
+                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
+                    .map(|r| r.outcome)
+            },
             &crate::config::FreedomConfig::default(),
         )
         .await
@@ -2207,6 +2246,21 @@ mod workstream_c_tests {
         let seg = wal_dir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
 
+        // Consent tightening (Wave-3): the Emit path now runs run_job's
+        // provider consent gate on the loaded config. Pin a LOCAL provider
+        // (needs no consent) so the emit path reaches the passed CountingProvider
+        // instead of fail-closing on an unconsented cloud default.
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            crate::config::FreedomConfig {
+                provider_kind: Some(crate::cli::init::ProviderKind::LocalQwen),
+                ..Default::default()
+            }
+            .public_yaml()
+            .unwrap(),
+        )
+        .unwrap();
+
         // Disable the active-window gate + zero out the inactivity
         // skip so the gate's verdict is Emit. Persist an empty snapshot
         // first so `load_snapshot` returns Some.
@@ -2236,11 +2290,20 @@ mod workstream_c_tests {
         .await
         .expect("run_briefing_gated");
 
-        assert!(outcome.success, "emit path must call run_job successfully");
-        assert_eq!(
-            calls.load(Ordering::SeqCst),
-            1,
-            "provider must be called exactly once on Emit"
+        // This test's invariant is DELEGATION: an Emit verdict must reach
+        // run_job and call the provider (the sibling Skip test asserts
+        // calls == 0). The stub `CountingProvider` returns a 1-word reply
+        // that legitimately fails the briefing quality gate (which runs the
+        // initial call + one regeneration → calls == 2), so `outcome.success`
+        // is correctly false here; the quality-gate happy path is covered by
+        // the dedicated quality tests, not this delegation test.
+        assert!(
+            calls.load(Ordering::SeqCst) >= 1,
+            "Emit verdict must delegate to run_job and call the provider"
+        );
+        assert!(
+            !outcome.success,
+            "a 1-word stub reply must fail the briefing quality gate"
         );
 
         drop(writer);

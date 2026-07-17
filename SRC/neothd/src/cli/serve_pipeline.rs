@@ -569,38 +569,45 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
     // When present, the egress tail performs the final in-place edit itself
     // and returns `None`, preventing the adapter loop from sending a duplicate.
     live_delivery: Option<&mut crate::channels::LiveDelivery>,
-    // GOLD-CCPARITY-ONCE: session-scoped fired set. Created once per channel
-    // session (outside the per-message loop) and passed by &mut ref so the
-    // PreEgress once-gate is shared across turns.
-    session_fired_once: &mut std::collections::HashSet<String>,
+    // GOLD-CCPARITY-ONCE: session-scoped once-guard. Shared Arc so the PreEgress
+    // once-gate is consistent across turns. run_stage_with_once_guard handles
+    // claim-before-effect atomically — no manual pre-filter or post-insert.
+    once_guard: &crate::hooks::SessionOnceGuard,
 ) -> Result<Option<OutboundMessage>> {
-    // ── PreEgress hooks (GOLD-CCPARITY-ONCE: pre-filter once=true hooks) ──
+    // ── PreEgress hooks (BUG-W2-P1-HOOK-ONCE-PARITY) ──
     // Last filter before the channel adapter sends the reply. A Replace
     // rewrites the outbound text (per-messenger formatting, profanity
     // scrub); a Block silently drops it with a HOOK_BLOCKED audit frame.
     let ts_unix = crate::time::now_unix_secs();
 
-    // Pre-filter once=true hooks that already fired this session.
-    let mut skipped_once_egress: Vec<String> = Vec::new();
-    let active_egress_hooks: Vec<crate::hooks::schema::HookDef> = hooks
-        .iter()
-        .filter(|h| {
-            if h.once()
-                && h.stage == crate::hooks::HookStage::PreEgress
-                && h.is_enabled()
-                && session_fired_once.contains(&h.name)
-            {
-                skipped_once_egress.push(h.name.clone());
-                false
-            } else {
-                true
+    // BUG-W2-P1-HOOK-ONCE-PARITY: run_stage_with_once_guard atomically claims
+    // once=true hooks before their effect, eliminating the pre-filter /
+    // post-insert race. Skipped names are returned for WAL attribution.
+    let egress_result = match crate::hooks::run_stage_with_once_guard(
+        crate::hooks::HookStage::PreEgress,
+        body,
+        hooks,
+        None,
+        false,
+        once_guard,
+    ) {
+        Ok(r) => r,
+        Err(e) => {
+            warn!(error = %e, "PreEgress hook dispatch failed");
+            // Fail-open: continue with unmodified body.
+            crate::hooks::StageOnceResult {
+                outcome: crate::hooks::StageOutcome::Continue {
+                    body: body.to_string(),
+                    hits: Vec::new(),
+                },
+                filtered_blocks: Vec::new(),
+                skipped_once: Vec::new(),
             }
-        })
-        .cloned()
-        .collect();
+        }
+    };
 
-    // Emit HOOK_SKIPPED_ONCE for each suppressed hook.
-    for name in &skipped_once_egress {
+    // Emit HOOK_SKIPPED_ONCE for each suppressed once-hook.
+    for name in &egress_result.skipped_once {
         if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
             "name": name,
             "stage": "pre_egress",
@@ -617,17 +624,10 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
         }
     }
 
-    let reply_text = match crate::hooks::run_stage(
-        crate::hooks::HookStage::PreEgress,
-        body,
-        &active_egress_hooks,
-    ) {
-        Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
+    let reply_text = match egress_result.outcome {
+        crate::hooks::StageOutcome::Continue { body, hits } => {
             for name in &hits {
-                // Record once=true hooks as fired.
-                if hooks.iter().any(|h| h.name == *name && h.once()) {
-                    session_fired_once.insert(name.clone());
-                }
+                // once=true claim is handled atomically by the guard — no insert.
                 if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
                     "name": name,
                     "stage": "pre_egress",
@@ -647,7 +647,7 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
             }
             body
         }
-        Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+        crate::hooks::StageOutcome::Block { name, reason } => {
             info!(
                 channel = channel_str,
                 recipient_hash = %sender_hash,
@@ -672,10 +672,6 @@ pub(crate) async fn release_channel_reply<P: crate::permissions::PolicyArgument 
                 .await;
             }
             return Ok(::std::option::Option::None);
-        }
-        Err(e) => {
-            warn!(error = %e, "PreEgress hook dispatch failed");
-            body.to_string()
         }
     };
 
@@ -808,13 +804,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         reload_controller.source_path().to_path_buf(),
     );
 
-    // GOLD-CCPARITY-ONCE: session-scoped fired set for the channel handler.
-    // The PipelineHandler is a Fn (not FnMut), so we use Arc<Mutex<HashSet>>
-    // to share mutable state across per-message calls. One channel session
-    // (one call to build_pipeline_handler) = one session_fired_once set —
-    // resets when the daemon restarts or the channel reconnects.
-    let session_fired_once_arc: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>> =
-        Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+    // GOLD-CCPARITY-ONCE: session-scoped once-guard for the channel handler.
+    // The PipelineHandler is a Fn (not FnMut), so we use Arc<SessionOnceGuard>
+    // to share the guard across per-message calls. One channel session (one call
+    // to build_pipeline_handler) = one guard — resets when the daemon restarts
+    // or the channel reconnects. SessionOnceGuard is Arc-backed internally, so
+    // the outer Arc is a cheap pointer to the guard, not a double-wrap.
+    let session_fired_once_arc = Arc::new(crate::hooks::SessionOnceGuard::new());
 
     Box::new(move |inbound: InboundMessage| {
         let provider = Arc::clone(&provider);
@@ -1007,28 +1003,30 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
             };
             let ingress_ts_unix = crate::time::now_unix_secs();
-            // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
-            let mut skipped_once_ingress: Vec<String> = Vec::new();
-            let active_ingress_hooks: Vec<crate::hooks::schema::HookDef> = {
-                let fired = session_fired_once.lock().await;
-                hooks
-                    .iter()
-                    .filter(|h| {
-                        if h.once()
-                            && h.stage == crate::hooks::HookStage::PreChannelIngress
-                            && h.is_enabled()
-                            && fired.contains(&h.name)
-                        {
-                            skipped_once_ingress.push(h.name.clone());
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .cloned()
-                    .collect()
+            // BUG-W2-P1-HOOK-ONCE-PARITY: run_stage_with_once_guard atomically
+            // claims once=true hooks — no manual pre-filter or post-insert.
+            let ingress_result = match crate::hooks::run_stage_with_once_guard(
+                crate::hooks::HookStage::PreChannelIngress,
+                raw_text,
+                &hooks,
+                None,
+                false,
+                &*session_fired_once,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "PreChannelIngress hook dispatch failed");
+                    crate::hooks::StageOnceResult {
+                        outcome: crate::hooks::StageOutcome::Continue {
+                            body: raw_text.to_string(),
+                            hits: Vec::new(),
+                        },
+                        filtered_blocks: Vec::new(),
+                        skipped_once: Vec::new(),
+                    }
+                }
             };
-            for name in &skipped_once_ingress {
+            for name in &ingress_result.skipped_once {
                 if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
                     "name": name,
                     "stage": "pre_channel_ingress",
@@ -1044,18 +1042,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
                 }
             }
-            let hooked_text: String = match crate::hooks::run_stage(
-                crate::hooks::HookStage::PreChannelIngress,
-                raw_text,
-                &active_ingress_hooks,
-            ) {
-                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
-                    let mut fired = session_fired_once.lock().await;
+            let hooked_text: String = match ingress_result.outcome {
+                crate::hooks::StageOutcome::Continue { body, hits } => {
                     for name in &hits {
-                        // Record once=true hooks as fired.
-                        if hooks.iter().any(|h| h.name == *name && h.once()) {
-                            fired.insert(name.clone());
-                        }
+                        // once=true claim is handled atomically by the guard.
                         let payload = match serde_json::to_vec(&serde_json::json!({
                             "name": name,
                             "stage": "pre_channel_ingress",
@@ -1080,7 +1070,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
                     body
                 }
-                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                crate::hooks::StageOutcome::Block { name, reason } => {
                     info!(
                         channel = channel_str,
                         sender_hash = %sender_hash,
@@ -1110,10 +1100,6 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     )
                     .await;
                     return Ok(::std::option::Option::None);
-                }
-                Err(e) => {
-                    warn!(error = %e, "PreChannelIngress hook dispatch failed");
-                    raw_text.to_string()
                 }
             };
             let raw_text = hooked_text.as_str();
@@ -1328,7 +1314,6 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             input_tokens: None,
                             output_tokens: None,
                         };
-                        let mut fired = session_fired_once.lock().await;
                         return release_channel_reply(
                             &writer,
                             &neoth_home,
@@ -1342,7 +1327,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             channel_asker.as_ref().map(Arc::clone),
                             false,
                             None,
-                            &mut fired,
+                            &*session_fired_once,
                         )
                         .await;
                     }
@@ -2252,45 +2237,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
             };
             let provider_call_ts_unix = crate::time::now_unix_secs();
-            // GOLD-CCPARITY-ONCE: pre-filter once=true hooks already fired.
-            let mut skipped_once_provider: Vec<String> = Vec::new();
-            let active_provider_hooks: Vec<crate::hooks::schema::HookDef> = {
-                let fired = session_fired_once.lock().await;
-                hooks
-                    .iter()
-                    .filter(|h| {
-                        if h.once()
-                            && h.stage == crate::hooks::HookStage::PreProviderCall
-                            && h.is_enabled()
-                            && fired.contains(&h.name)
-                        {
-                            skipped_once_provider.push(h.name.clone());
-                            false
-                        } else {
-                            true
-                        }
-                    })
-                    .cloned()
-                    .collect()
-            };
-            for name in &skipped_once_provider {
-                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-                    "name": name,
-                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
-                    "ts_unix": provider_call_ts_unix,
-                })) {
-                    let header = crate::wal::make_header(
-                        crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
-                        &payload,
-                    );
-                    if let Err(e) = writer.append(header, payload).await {
-                        tracing::warn!(
-                            error = %e,
-                            "WAL append PreProviderCall HOOK_SKIPPED_ONCE failed"
-                        );
-                    }
-                }
-            }
+            // BUG-W2-P1-HOOK-ONCE-PARITY: run_stage_with_once_guard atomically
+            // claims once=true hooks and captures FilteredBlocks so pending_blocks
+            // can be restored into the LLM reply at PostProviderCall.
             // GOLD-ADAPT-ODY-28 — prepend user-local TZ context BEFORE the
             // PreProviderCall hook stage so every hook (token-limit, policy,
             // audit, canonical-prompt-hash) operates on the exact prompt that
@@ -2317,13 +2266,52 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let _ = writer.append(hdr, payload).await;
             }
 
-            let (final_prompt, hook_hits) = match crate::hooks::run_stage(
+            let provider_stage_result = match crate::hooks::run_stage_with_once_guard(
                 crate::hooks::HookStage::PreProviderCall,
                 &final_prompt,
-                &active_provider_hooks,
+                &hooks,
+                None,
+                false,
+                &*session_fired_once,
             ) {
-                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => (body, hits),
-                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "hook dispatcher errored — continuing without hooks");
+                    crate::hooks::StageOnceResult {
+                        outcome: crate::hooks::StageOutcome::Continue {
+                            body: final_prompt.clone(),
+                            hits: Vec::new(),
+                        },
+                        filtered_blocks: Vec::new(),
+                        skipped_once: Vec::new(),
+                    }
+                }
+            };
+            // Emit HOOK_SKIPPED_ONCE for suppressed once-hooks.
+            for name in &provider_stage_result.skipped_once {
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                    "ts_unix": provider_call_ts_unix,
+                })) {
+                    let header = crate::wal::make_header(
+                        crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+                        &payload,
+                    );
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(
+                            error = %e,
+                            "WAL append PreProviderCall HOOK_SKIPPED_ONCE failed"
+                        );
+                    }
+                }
+            }
+            // GOLD-ADAPT-SKILL-09 (channel parity): capture filtered_blocks so
+            // PostProviderCall can restore redacted regions into the LLM reply.
+            let pending_blocks = provider_stage_result.filtered_blocks;
+            let (final_prompt, hook_hits) = match provider_stage_result.outcome {
+                crate::hooks::StageOutcome::Continue { body, hits } => (body, hits),
+                crate::hooks::StageOutcome::Block { name, reason } => {
                     info!(hook = %name, reason = %reason, "PreProviderCall hook blocked turn");
                     let payload = match serde_json::to_vec(&serde_json::json!({
                         "name": name,
@@ -2348,39 +2336,29 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     .await;
                     return Ok(::std::option::Option::None);
                 }
-                Err(e) => {
-                    warn!(error = %e, "hook dispatcher errored — continuing without hooks");
-                    (final_prompt, Vec::new())
-                }
             };
-            {
-                let mut fired = session_fired_once.lock().await;
-                for name in &hook_hits {
-                    // GOLD-CCPARITY-ONCE: record once=true hooks as fired.
-                    if hooks.iter().any(|h| h.name == *name && h.once()) {
-                        fired.insert(name.clone());
+            for name in &hook_hits {
+                // once=true claim is handled atomically by the guard.
+                let payload = match serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                })) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            hook = %name,
+                            "HOOK_FIRED audit payload serialisation failed; frame skipped"
+                        );
+                        continue;
                     }
-                    let payload = match serde_json::to_vec(&serde_json::json!({
-                        "name": name,
-                        "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
-                    })) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                hook = %name,
-                                "HOOK_FIRED audit payload serialisation failed; frame skipped"
-                            );
-                            continue;
-                        }
-                    };
-                    let header = crate::wal::make_header(
-                        crate::wal::events::EVENT_TYPE_HOOK_FIRED,
-                        &payload,
-                    );
-                    if let Err(e) = writer.append(header, payload).await {
-                        tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
-                    }
+                };
+                let header = crate::wal::make_header(
+                    crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                    &payload,
+                );
+                if let Err(e) = writer.append(header, payload).await {
+                    tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
                 }
             }
 
@@ -3644,7 +3622,90 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 input_tokens: completion.input_tokens,
                 output_tokens: completion.output_tokens,
             };
-            let mut fired = session_fired_once.lock().await;
+
+            // ── PostProviderCall hooks (channel-parity with CLI path) ─────
+            // GOLD-ADAPT-SKILL-09 parity: restore any blocks redacted at
+            // PreProviderCall, then run PostProviderCall hooks so operators
+            // get the same last-chance reply mutation / block capability on
+            // channel turns as on CLI turns.
+            let restored_reply =
+                crate::hooks::restore_blocks(&completion.text, &pending_blocks);
+            let post_ts = crate::time::now_unix_secs();
+            let post_result = match crate::hooks::run_stage_with_once_guard(
+                crate::hooks::HookStage::PostProviderCall,
+                &restored_reply,
+                &hooks,
+                None,
+                false,
+                &*session_fired_once,
+            ) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!(error = %e, "PostProviderCall hook dispatch failed — continuing");
+                    crate::hooks::StageOnceResult {
+                        outcome: crate::hooks::StageOutcome::Continue {
+                            body: restored_reply.clone(),
+                            hits: Vec::new(),
+                        },
+                        filtered_blocks: Vec::new(),
+                        skipped_once: Vec::new(),
+                    }
+                }
+            };
+            for name in &post_result.skipped_once {
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": crate::hooks::HookStage::PostProviderCall.as_str(),
+                    "ts_unix": post_ts,
+                })) {
+                    let header = crate::wal::make_header(
+                        crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
+                        &payload,
+                    );
+                    let _ = writer.append(header, payload).await;
+                }
+            }
+            let reply_for_egress = match post_result.outcome {
+                crate::hooks::StageOutcome::Continue { body, hits } => {
+                    for name in &hits {
+                        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                            "name": name,
+                            "stage": crate::hooks::HookStage::PostProviderCall.as_str(),
+                            "ts_unix": post_ts,
+                        })) {
+                            let header = crate::wal::make_header(
+                                crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                                &payload,
+                            );
+                            let _ = writer.append(header, payload).await;
+                        }
+                    }
+                    body
+                }
+                crate::hooks::StageOutcome::Block { name, reason } => {
+                    info!(
+                        hook = %name,
+                        reason = %reason,
+                        "channel reply blocked at post_provider_call"
+                    );
+                    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": crate::hooks::HookStage::PostProviderCall.as_str(),
+                        "reason": reason,
+                        "ts_unix": post_ts,
+                    })) {
+                        emit_required_audit(
+                            &writer,
+                            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                            "HOOK_BLOCKED",
+                            payload,
+                        )
+                        .await;
+                    }
+                    return Ok(::std::option::Option::None);
+                }
+            };
+
             release_channel_reply(
                 &writer,
                 &neoth_home,
@@ -3653,12 +3714,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &inbound,
                 channel_str,
                 &sender_hash,
-                &completion.text,
+                &reply_for_egress,
                 &provenance,
                 channel_asker,
                 live_send_preauthorized,
                 live_delivery.as_mut(),
-                &mut fired,
+                &*session_fired_once,
             )
             .await
         })
@@ -4402,8 +4463,7 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
         };
-        let mut session_fired_once_test: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let once_guard_test = crate::hooks::SessionOnceGuard::new();
         let out = release_channel_reply(
             &writer,
             dir.path(),
@@ -4417,7 +4477,7 @@ mod tests {
             None, // no confirm bus in this test
             false,
             None,
-            &mut session_fired_once_test,
+            &once_guard_test,
         )
         .await
         .expect("release ok");
@@ -4452,8 +4512,7 @@ mod tests {
             input_tokens: None,
             output_tokens: None,
         };
-        let mut session_fired_once_test2: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let once_guard_test2 = crate::hooks::SessionOnceGuard::new();
         let out = release_channel_reply(
             &writer,
             dir.path(),
@@ -4467,7 +4526,7 @@ mod tests {
             None, // no confirm bus in this test
             false,
             None,
-            &mut session_fired_once_test2,
+            &once_guard_test2,
         )
         .await
         .expect("release ok (gate Deny is Ok(None), not Err)");
@@ -4514,7 +4573,7 @@ mod tests {
             input_tokens: Some(2),
             output_tokens: Some(3),
         };
-        let mut fired = std::collections::HashSet::new();
+        let once_guard_live = crate::hooks::SessionOnceGuard::new();
 
         let outbound = release_channel_reply(
             &writer,
@@ -4529,7 +4588,7 @@ mod tests {
             None,
             true, // already authorized before the first preview
             Some(&mut delivery),
-            &mut fired,
+            &once_guard_live,
         )
         .await
         .unwrap();

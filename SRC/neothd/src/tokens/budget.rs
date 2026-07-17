@@ -419,6 +419,74 @@ fn build_per_block(pre: &[(Block, u32, u32)], post: &[(Block, u32, u32)]) -> Vec
     out
 }
 
+/// Result of [`finalize_daemon_request`]: the rendered, budget-enforced
+/// system + prompt pair and the conservative token estimate the caller may
+/// forward to the cost-authorizer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DaemonBudgetOut {
+    /// Rendered system string (all non-E blocks joined by `"\n\n"`), or `None`
+    /// when no system prompt was supplied.
+    pub system: Option<String>,
+    /// Rendered user prompt (Block E content).
+    pub prompt: String,
+    /// Conservative upper-bound token count for the full assembled payload.
+    pub total_tokens: u32,
+}
+
+/// Daemon-path typed budget enforcement.
+///
+/// Assembles a minimal `[A(system)?, E(prompt)]` typed bundle, calls
+/// [`enforce_budget_to_fit`], and returns the rendered strings.  Because A
+/// and E are both non-degradable the enforcer cannot remove any bytes; the
+/// function therefore returns `Err` when `total_tokens > cap` (protected
+/// content does not fit), signalling the caller to fail-close rather than
+/// silently truncating.
+///
+/// Structurally identical to the CLI's `finalize_provider_request` so future
+/// additions of C/D context to daemon paths inherit degradation automatically.
+///
+/// `cap` must be computed by the caller via [`effective_cap`] from the live
+/// config and the provider's wire model — never hard-coded.
+pub fn finalize_daemon_request(
+    prompt: impl Into<String>,
+    system: Option<impl Into<String>>,
+    cap: u32,
+) -> Result<DaemonBudgetOut, &'static str> {
+    let mut items: Vec<BlockItem> = Vec::with_capacity(2);
+    if let Some(sys) = system {
+        items.push(BlockItem::new(Block::A, sys));
+    }
+    items.push(BlockItem::new(Block::E, prompt));
+
+    // A and E are non-degradable so enforce_budget_to_fit will not remove any
+    // bytes here.  The call is kept for structural parity with the CLI path:
+    // future refactors that prepend C/D context to daemon prompts get
+    // degradation automatically.
+    let _ = enforce_budget_to_fit(&mut items, cap);
+
+    // Final ensure: if total still exceeds the cap after enforcement, the
+    // protected content itself does not fit — fail-close.
+    let total_tokens = count_total(&items);
+    if total_tokens > cap {
+        return Err("daemon prompt + system exceeds token cap; protected A/E cannot be degraded");
+    }
+
+    // Invariant: BlockItem::new binds tokens = count_tokens_upper_bound(content).
+    // Verify no drift (enforce_budget_to_fit does not mutate non-degradable blocks,
+    // but a future code path might; a debug_assert keeps the accounting honest).
+    debug_assert!(
+        items.iter().all(|i| i.tokens == count_tokens_upper_bound(&i.content)),
+        "token-budget accounting drifted in finalize_daemon_request"
+    );
+
+    let (prompt_out, system_out) = render_request(&items)?;
+    Ok(DaemonBudgetOut {
+        system: system_out,
+        prompt: prompt_out,
+        total_tokens,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,5 +874,39 @@ mod tests {
         // operator_cap=100k is also below the 170k window-scale → clamp to 100k.
         let mid = effective_cap("claude_cli", "claude-opus-4-7", 100_000);
         assert_eq!(mid, 100_000);
+    }
+
+    // ── finalize_daemon_request ───────────────────────────────────────────────
+
+    #[test]
+    fn finalize_daemon_request_fits_unchanged() {
+        // Both system (A) and prompt (E) fit within cap — returned verbatim.
+        let out = finalize_daemon_request("hello", Some("be helpful"), 1_000).unwrap();
+        assert_eq!(out.prompt, "hello");
+        assert_eq!(out.system.as_deref(), Some("be helpful"));
+        assert!(out.total_tokens > 0);
+        assert!(out.total_tokens <= 1_000);
+    }
+
+    #[test]
+    fn finalize_daemon_request_over_cap_e_only_with_a_protected_returns_err() {
+        // System (A) is present and protected; prompt (E) is also protected.
+        // When their combined token estimate exceeds the cap, the function must
+        // return Err rather than silently truncating either non-degradable block.
+        let big_prompt = "x".repeat(10_000);
+        let result = finalize_daemon_request(big_prompt, Some("you are a daemon"), 100);
+        assert!(
+            result.is_err(),
+            "over-cap with only A+E (both protected) must return Err, not truncate"
+        );
+    }
+
+    #[test]
+    fn finalize_daemon_request_a_and_e_cannot_fit_returns_err() {
+        // A alone already exceeds the cap; the function must fail-close.
+        let prompt = "p".repeat(5_000);
+        let system = "s".repeat(5_000);
+        let result = finalize_daemon_request(prompt, Some(system), 500);
+        assert!(result.is_err());
     }
 }

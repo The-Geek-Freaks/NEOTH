@@ -4,7 +4,7 @@
 //! the current stage, applies each in order, and returns a [`StageOutcome`]
 //! that the caller folds into its own dispatch logic.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
@@ -477,6 +477,355 @@ pub fn run_stage_with_config_returning_blocks(
         },
         accumulated_blocks,
     ))
+}
+
+// ── BUG-W2-P1-HOOK-ONCE-PARITY ──────────────────────────────────────────────
+
+/// Session-scoped once-gate for atomic claim-before-effect in the dispatcher.
+///
+/// Wraps `Arc<Mutex<HashSet<String>>>` so the dispatcher can, for each
+/// `once = true` hook:
+/// 1. Lock the set.
+/// 2. Check whether the hook's name is already claimed.
+/// 3. If not → insert the name (claim) **before** the effect executes.
+/// 4. Drop the lock, then run the action.
+///
+/// This eliminates the TOCTOU window that existed in each caller
+/// (`cli/chat.rs`, `serve_pipeline.rs`, `cron/runner.rs`) where
+/// `session_fired_once.contains()` was checked without holding the lock
+/// across the effect, allowing two concurrent channel turns or scheduler
+/// ticks to both see the name absent and both fire.
+///
+/// **Usage:** create one `SessionOnceGuard` per logical session and share
+/// it (cheaply cloned via `Arc`) across all concurrent stage invocations
+/// for that session. The inner `Mutex` is `std::sync` (not `tokio`): the
+/// dispatcher is synchronous and never holds the lock across an await point,
+/// so there is no deadlock risk even when callers are async.
+///
+/// **Wiring (per caller — do not edit callers here; document only):**
+/// - `cli/chat.rs`: replace `let mut session_fired_once: HashSet<String>` at
+///   line ~5040 with `let once_guard = SessionOnceGuard::new();` and change
+///   the `run_hook_stage` signature from `&mut HashSet<String>` to
+///   `&SessionOnceGuard`. Inside `run_hook_stage`, replace
+///   `run_stage_with_config_returning_blocks` with `run_stage_with_once_guard`
+///   and use `result.skipped_once` for WAL HOOK_SKIPPED_ONCE writes; remove
+///   the manual pre-filter loop and post-insert.
+/// - `cli/serve_pipeline.rs`: change line ~816 from
+///   `Arc<tokio::sync::Mutex<HashSet<String>>>` to `Arc<SessionOnceGuard>`
+///   (or just `SessionOnceGuard`). At each `crate::hooks::run_stage(...)` call
+///   for PreChannelIngress (line ~1047), PreEgress (line ~620), and
+///   PreProviderCall (line ~2320) switch to `run_stage_with_once_guard`. For
+///   the PreProviderCall call, keep `result.filtered_blocks` and after the LLM
+///   replies call `crate::hooks::block_filter::restore_blocks(llm_body,
+///   &filtered_blocks)` — that is the missing PostProviderCall restoration path.
+///   Remove the manual `fired.contains` / `fired.insert` blocks (the guard
+///   owns that now).
+/// - `cron/runner.rs`: create a `SessionOnceGuard::new()` per job invocation
+///   where `crate::hooks::run_stage` is currently passed as a function pointer;
+///   wrap the call in a closure that captures the guard and calls
+///   `run_stage_with_once_guard`, mapping the `StageOnceResult` back to
+///   `StageOutcome` via `result.outcome` (no once-hooks in cron today, but the
+///   single code path parity is required).
+pub struct SessionOnceGuard(Arc<Mutex<HashSet<String>>>);
+
+impl SessionOnceGuard {
+    /// Create a fresh, empty guard for a new session.
+    pub fn new() -> Self {
+        SessionOnceGuard(Arc::new(Mutex::new(HashSet::new())))
+    }
+}
+
+impl Clone for SessionOnceGuard {
+    /// Cheap clone — shares the underlying `Arc`; same session, same set.
+    fn clone(&self) -> Self {
+        SessionOnceGuard(Arc::clone(&self.0))
+    }
+}
+
+impl Default for SessionOnceGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// BUG-W2-P1-HOOK-ONCE-PARITY — result of a once-aware stage dispatch.
+///
+/// Extends `(StageOutcome, Vec<FilteredBlock>)` (the pair returned by
+/// [`run_stage_with_config_returning_blocks`]) with `skipped_once`: the names
+/// of `once = true` hooks that were suppressed because the
+/// [`SessionOnceGuard`] already held a claim on them.
+///
+/// Callers are responsible for writing one `HOOK_SKIPPED_ONCE` (0x8B) WAL
+/// frame per name in `skipped_once`. The dispatcher surfaces names only;
+/// it does not write WAL (it has no WAL handle).
+#[derive(Debug)]
+pub struct StageOnceResult {
+    /// Outcome of the stage, identical to [`StageOutcome`] semantics.
+    pub outcome: StageOutcome,
+    /// Blocks accumulated by `BlockFilter` actions at this stage. Non-empty
+    /// only when a `HookAction::BlockFilter` fired. Callers at
+    /// `PreProviderCall` keep these and call `restore_blocks` on the LLM
+    /// response at `PostProviderCall`.
+    pub filtered_blocks: Vec<FilteredBlock>,
+    /// Names of `once = true` hooks skipped because the session-once guard
+    /// already held a claim. One `HOOK_SKIPPED_ONCE` (0x8B) WAL frame per
+    /// entry is the caller's responsibility.
+    pub skipped_once: Vec<String>,
+}
+
+/// BUG-W2-P1-HOOK-ONCE-PARITY — dispatcher entry-point that enforces `once`
+/// atomically via `once_guard`.
+///
+/// ## Ordering guarantee
+///
+/// For every enabled hook whose matcher fires at `stage`, if `hook.once = true`:
+///
+/// 1. Lock `once_guard` (std::sync::Mutex, never held across an await).
+/// 2. If the hook's name is already in the claimed set →
+///    push to `StageOnceResult::skipped_once`, drop the lock, **continue to
+///    the next hook** (effect never runs).
+/// 3. Otherwise → insert the name into the claimed set **before** executing
+///    the action, drop the lock, then run the action.
+///
+/// Because the claim (step 3) happens while the mutex is held, and the
+/// second concurrent caller acquires the same mutex and therefore sees the
+/// name already present (step 2), it is impossible for both callers to
+/// proceed to the action. The TOCTOU window (check without holding the lock
+/// across the effect) that existed in every prior caller is eliminated.
+///
+/// ## Preserved semantics
+///
+/// All existing behaviors are reproduced exactly:
+/// - `fail_fast` (stage-level and per-hook)
+/// - `required` plugins
+/// - `Block` actions short-circuit the stage and carry `skipped_once` in the result
+/// - `FilteredBlock` accumulation — non-empty when `BlockFilter` actions fire
+///
+/// ## Shared entry-point for CLI / channels / cron
+///
+/// CLI (`run_hook_stage`), channels (`build_pipeline_handler`), and cron
+/// (`runner`) all call this function with their session's `SessionOnceGuard`.
+/// See the wiring notes on [`SessionOnceGuard`] for the exact per-file changes.
+pub fn run_stage_with_once_guard(
+    stage: HookStage,
+    body: &str,
+    hooks: &[HookDef],
+    invoker: Option<&dyn PluginInvoker>,
+    fail_fast: bool,
+    once_guard: &SessionOnceGuard,
+) -> Result<StageOnceResult> {
+    let mut current = body.to_string();
+    let mut hits: Vec<String> = Vec::new();
+    let mut accumulated_blocks: Vec<FilteredBlock> = Vec::new();
+    let mut skipped_once: Vec<String> = Vec::new();
+
+    for hook in hooks.iter().filter(|h| h.stage == stage && h.is_enabled()) {
+        // ── Step 1: evaluate matcher — no side effects ───────────────────
+        let fires = match &hook.matcher {
+            None => true,
+            Some(m) => match compile_cached(&m.pattern) {
+                Ok(re) => re.is_match(&current),
+                Err(e) => {
+                    if fail_fast || hook.fail_fast {
+                        tracing::error!(
+                            hook = %hook.name,
+                            pattern = %m.pattern,
+                            error = %e,
+                            "fail_fast: bad regex in hook matcher — blocking stage",
+                        );
+                        return Ok(StageOnceResult {
+                            outcome: StageOutcome::Block {
+                                name: hook.name.clone(),
+                                reason: format!(
+                                    "fail_fast: regex compile failed for hook `{name}`: {e}",
+                                    name = hook.name,
+                                ),
+                            },
+                            filtered_blocks: Vec::new(),
+                            skipped_once,
+                        });
+                    }
+                    tracing::warn!(
+                        hook = %hook.name,
+                        pattern = %m.pattern,
+                        error = %e,
+                        "bad regex in hook matcher — skipping hook",
+                    );
+                    continue;
+                }
+            },
+        };
+        if !fires {
+            continue;
+        }
+
+        // ── Step 2: atomic claim-before-effect for once=true hooks ───────
+        // The lock is acquired, the claim check + optional insert happen
+        // under the lock, and the lock is dropped BEFORE any effect runs.
+        // Two concurrent callers sharing this guard cannot both proceed
+        // past this gate for the same hook name.
+        if hook.once() {
+            let already_claimed = {
+                let mut set = once_guard.0.lock().unwrap_or_else(|e| e.into_inner());
+                if set.contains(&hook.name) {
+                    // Already claimed by an earlier (possibly concurrent) call.
+                    // Signal the caller to emit HOOK_SKIPPED_ONCE.
+                    skipped_once.push(hook.name.clone());
+                    true
+                } else {
+                    // Claim BEFORE the effect. The lock is still held here,
+                    // so no concurrent caller can insert in parallel.
+                    set.insert(hook.name.clone());
+                    false
+                }
+                // Mutex guard drops here — effect runs outside the lock.
+            };
+            if already_claimed {
+                continue;
+            }
+        }
+
+        // ── Step 3: execute effect ───────────────────────────────────────
+        match &hook.action {
+            HookAction::Allow => {
+                hits.push(hook.name.clone());
+            }
+            HookAction::Replace { template } => {
+                hits.push(hook.name.clone());
+                if let Some(m) = &hook.matcher
+                    && let Ok(re) = compile_cached(&m.pattern)
+                {
+                    current = re.replace_all(&current, template.as_str()).into_owned();
+                    continue;
+                }
+                // No matcher → replace the entire body.
+                current = template.clone();
+            }
+            HookAction::Block { reason } => {
+                return Ok(StageOnceResult {
+                    outcome: StageOutcome::Block {
+                        name: hook.name.clone(),
+                        reason: reason.clone(),
+                    },
+                    filtered_blocks: Vec::new(),
+                    skipped_once,
+                });
+            }
+            HookAction::Plugin { plugin_id, required } => {
+                hits.push(hook.name.clone());
+                match invoker {
+                    Some(inv) => {
+                        if let Err(e) = inv.invoke(plugin_id) {
+                            if *required {
+                                tracing::error!(
+                                    hook = %hook.name,
+                                    plugin_id = %plugin_id,
+                                    error = %e,
+                                    "required plugin invocation failed — blocking stage"
+                                );
+                                return Ok(StageOnceResult {
+                                    outcome: StageOutcome::Block {
+                                        name: hook.name.clone(),
+                                        reason: format!(
+                                            "required plugin `{plugin_id}` failed: {e}"
+                                        ),
+                                    },
+                                    filtered_blocks: Vec::new(),
+                                    skipped_once,
+                                });
+                            }
+                            if hook.fail_fast {
+                                tracing::error!(
+                                    hook = %hook.name,
+                                    plugin_id = %plugin_id,
+                                    error = %e,
+                                    "fail_fast: optional plugin invocation failed — blocking stage"
+                                );
+                                return Ok(StageOnceResult {
+                                    outcome: StageOutcome::Block {
+                                        name: hook.name.clone(),
+                                        reason: format!(
+                                            "fail_fast: plugin `{plugin_id}` invocation failed: {e}"
+                                        ),
+                                    },
+                                    filtered_blocks: Vec::new(),
+                                    skipped_once,
+                                });
+                            }
+                            tracing::warn!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                error = %e,
+                                "plugin invocation failed — stage continues (required=false)"
+                            );
+                        }
+                    }
+                    None => {
+                        if *required {
+                            tracing::error!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                "required plugin hook has no PluginInvoker — \
+                                 blocking stage (safety contract violation)"
+                            );
+                            return Ok(StageOnceResult {
+                                outcome: StageOutcome::Block {
+                                    name: hook.name.clone(),
+                                    reason: format!(
+                                        "required plugin `{plugin_id}` unavailable — no invoker registered"
+                                    ),
+                                },
+                                filtered_blocks: Vec::new(),
+                                skipped_once,
+                            });
+                        }
+                        if hook.fail_fast {
+                            tracing::error!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                "fail_fast: optional plugin hook has no PluginInvoker — \
+                                 blocking stage"
+                            );
+                            return Ok(StageOnceResult {
+                                outcome: StageOutcome::Block {
+                                    name: hook.name.clone(),
+                                    reason: format!(
+                                        "fail_fast: plugin `{plugin_id}` unavailable — no invoker registered"
+                                    ),
+                                },
+                                filtered_blocks: Vec::new(),
+                                skipped_once,
+                            });
+                        }
+                        tracing::warn!(
+                            hook = %hook.name,
+                            plugin_id = %plugin_id,
+                            "no PluginInvoker wired — optional Plugin action degrades to Allow"
+                        );
+                    }
+                }
+            }
+            HookAction::BlockFilter { start_marker, end_marker, placeholder } => {
+                hits.push(hook.name.clone());
+                let (filtered, blocks) =
+                    apply_block_filter(&current, start_marker, end_marker, placeholder);
+                tracing::debug!(
+                    hook = %hook.name,
+                    redacted_regions = blocks.len(),
+                    "block_filter: redacted {} ignore region(s)",
+                    blocks.len(),
+                );
+                current = filtered;
+                accumulated_blocks.extend(blocks);
+            }
+        }
+    }
+
+    Ok(StageOnceResult {
+        outcome: StageOutcome::Continue { body: current, hits },
+        filtered_blocks: accumulated_blocks,
+        skipped_once,
+    })
 }
 
 #[cfg(test)]
@@ -1277,5 +1626,293 @@ mod tests {
                 "fail_fast=false must continue on optional plugin failure, got {other:?}"
             ),
         }
+    }
+
+    // ── BUG-W2-P1-HOOK-ONCE-PARITY tests ────────────────────────────────────
+
+    fn once_allow_hook(name: &str, stage: HookStage) -> HookDef {
+        HookDef {
+            name: name.into(),
+            stage,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::Allow,
+            status_message: None,
+            once: true,
+            fail_fast: false,
+        }
+    }
+
+    /// (a) Two concurrent threads sharing one [`SessionOnceGuard`] and calling
+    /// `run_stage_with_once_guard` with the same `once = true` hook must result
+    /// in exactly one fire and exactly one HOOK_SKIPPED_ONCE signal.
+    ///
+    /// This is the core concurrency proof: the claim (name inserted into the set)
+    /// happens atomically before the effect, so the thread that loses the mutex
+    /// race always finds the name present and skips.
+    #[test]
+    fn once_guard_concurrent_claims_allow_exactly_one_fire() {
+        let guard = Arc::new(SessionOnceGuard::new());
+        let hook = once_allow_hook("startup-banner", HookStage::PreProviderCall);
+        let hooks = vec![hook];
+
+        let guard2 = Arc::clone(&guard);
+        let hooks2 = hooks.clone();
+
+        // Spawn two threads; neither is sequenced relative to the other.
+        let t1 = std::thread::spawn(move || {
+            run_stage_with_once_guard(
+                HookStage::PreProviderCall,
+                "body",
+                &hooks,
+                None,
+                false,
+                &guard,
+            )
+            .expect("t1 dispatch must not error")
+        });
+        let t2 = std::thread::spawn(move || {
+            run_stage_with_once_guard(
+                HookStage::PreProviderCall,
+                "body",
+                &hooks2,
+                None,
+                false,
+                &guard2,
+            )
+            .expect("t2 dispatch must not error")
+        });
+
+        let r1 = t1.join().expect("t1 panicked");
+        let r2 = t2.join().expect("t2 panicked");
+
+        // Collect hits and skipped_once across both results.
+        let fires: Vec<_> = (match &r1.outcome {
+            StageOutcome::Continue { hits, .. } => hits.as_slice(),
+            _ => &[],
+        })
+        .iter()
+        .chain(
+            (match &r2.outcome {
+                StageOutcome::Continue { hits, .. } => hits.as_slice(),
+                _ => &[],
+            })
+            .iter(),
+        )
+        .cloned()
+        .collect();
+
+        let skips: Vec<_> = r1
+            .skipped_once
+            .iter()
+            .chain(r2.skipped_once.iter())
+            .cloned()
+            .collect();
+
+        assert_eq!(
+            fires.len(),
+            1,
+            "exactly one thread must fire the once-hook; fires={fires:?}"
+        );
+        assert_eq!(
+            fires[0], "startup-banner",
+            "fired hook name must be 'startup-banner'"
+        );
+        assert_eq!(
+            skips.len(),
+            1,
+            "exactly one HOOK_SKIPPED_ONCE must be signalled; skips={skips:?}"
+        );
+        assert_eq!(
+            skips[0], "startup-banner",
+            "skipped hook name must be 'startup-banner'"
+        );
+    }
+
+    /// (a-repeat) Repeated sequential calls with the same guard must also
+    /// enforce once semantics — the second call sees the name already claimed.
+    #[test]
+    fn once_guard_sequential_second_call_is_skipped() {
+        let guard = SessionOnceGuard::new();
+        let hooks = vec![once_allow_hook("init-hook", HookStage::PreProviderCall)];
+
+        let r1 = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            &hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert!(r1.skipped_once.is_empty(), "first call must not skip");
+        match &r1.outcome {
+            StageOutcome::Continue { hits, .. } => {
+                assert_eq!(hits, &["init-hook"], "first call must fire the hook");
+            }
+            other => panic!("first call must Continue, got {other:?}"),
+        }
+
+        let r2 = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            &hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert_eq!(
+            r2.skipped_once,
+            vec!["init-hook".to_string()],
+            "second call must signal HOOK_SKIPPED_ONCE"
+        );
+        match &r2.outcome {
+            StageOutcome::Continue { hits, .. } => {
+                assert!(hits.is_empty(), "second call must NOT fire the hook");
+            }
+            other => panic!("second call must still Continue, got {other:?}"),
+        }
+    }
+
+    /// (b) PostProviderCall + restoration: the same [`SessionOnceGuard`] is
+    /// shared across `PreProviderCall` (where a `BlockFilter` hook redacts
+    /// content) and `PostProviderCall` (where a once-hook fires). Proves that
+    /// both stages share one dispatcher code path and that `FilteredBlock`s
+    /// returned from `PreProviderCall` restore correctly at `PostProviderCall`.
+    #[test]
+    fn post_provider_call_with_once_guard_and_block_filter_restoration() {
+        use super::super::block_filter::restore_blocks;
+
+        let guard = SessionOnceGuard::new();
+
+        // A BlockFilter hook at PreProviderCall redacts annotated regions.
+        let pre_hook = HookDef {
+            name: "code-simplification".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::BlockFilter {
+                start_marker: "// neoth-ignore-start".into(),
+                end_marker: "// neoth-ignore-end".into(),
+                placeholder: "/* neoth-ignore: {lines} lines (offset {offset}) */\n".into(),
+            },
+            status_message: None,
+            once: true,
+            fail_fast: false,
+        };
+        // A once-Allow hook at PostProviderCall fires on the first response.
+        let post_hook = once_allow_hook("post-restore-audit", HookStage::PostProviderCall);
+
+        let all_hooks = vec![pre_hook, post_hook];
+        let body =
+            "before\n// neoth-ignore-start\nkept complex code\n// neoth-ignore-end\nafter\n";
+
+        // ── PreProviderCall ── redact the ignore region.
+        let pre = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            body,
+            &all_hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert!(pre.skipped_once.is_empty(), "pre first call must not skip");
+        let redacted = match &pre.outcome {
+            StageOutcome::Continue { body, hits } => {
+                assert!(
+                    hits.contains(&"code-simplification".to_string()),
+                    "block-filter hook must appear in hits: {hits:?}"
+                );
+                body.clone()
+            }
+            other => panic!("pre must Continue, got {other:?}"),
+        };
+        assert!(
+            !redacted.contains("kept complex code"),
+            "redacted body must not expose the ignored region"
+        );
+        let pending_blocks = pre.filtered_blocks;
+        assert_eq!(pending_blocks.len(), 1, "one FilteredBlock must be returned");
+
+        // ── PostProviderCall ── once-hook fires; same guard, first time.
+        let post1 = run_stage_with_once_guard(
+            HookStage::PostProviderCall,
+            &redacted,
+            &all_hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert!(post1.skipped_once.is_empty(), "first post call must not skip");
+        match &post1.outcome {
+            StageOutcome::Continue { hits, .. } => {
+                assert!(
+                    hits.contains(&"post-restore-audit".to_string()),
+                    "post-hook must appear in hits on first post call: {hits:?}"
+                );
+            }
+            other => panic!("first post call must Continue, got {other:?}"),
+        }
+
+        // ── Restoration ── caller replaces placeholders with originals.
+        let restored = restore_blocks(&redacted, &pending_blocks);
+        assert!(
+            restored.contains("kept complex code"),
+            "restored body must contain the original ignored region"
+        );
+        assert_eq!(
+            restored, body,
+            "restore_blocks must be a perfect inverse of the BlockFilter action"
+        );
+
+        // ── Second PostProviderCall ── once-hook already claimed, must skip.
+        let post2 = run_stage_with_once_guard(
+            HookStage::PostProviderCall,
+            &redacted,
+            &all_hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert_eq!(
+            post2.skipped_once,
+            vec!["post-restore-audit".to_string()],
+            "second post call must emit HOOK_SKIPPED_ONCE for the once-hook"
+        );
+        match &post2.outcome {
+            StageOutcome::Continue { hits, .. } => {
+                assert!(
+                    !hits.contains(&"post-restore-audit".to_string()),
+                    "skipped hook must NOT appear in hits on second post call"
+                );
+            }
+            other => panic!("second post call must still Continue, got {other:?}"),
+        }
+
+        // ── PreProviderCall second call ── BlockFilter hook also claimed; must skip.
+        let pre2 = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            body,
+            &all_hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert_eq!(
+            pre2.skipped_once,
+            vec!["code-simplification".to_string()],
+            "second pre call must emit HOOK_SKIPPED_ONCE for the block-filter hook"
+        );
+        assert!(
+            pre2.filtered_blocks.is_empty(),
+            "skipped hook must produce no FilteredBlocks"
+        );
     }
 }

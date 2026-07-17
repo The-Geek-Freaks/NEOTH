@@ -1661,11 +1661,11 @@ async fn enforce_preflight(
     // boundary (already loaded fail-loud there) into the full authorization
     // precedence chain.
     tweaks_model_for_cost: Option<String>,
-    // GOLD-CCPARITY-ONCE: session-scoped set of once=true hook names that have
-    // already fired. Passed by &mut ref so PrePipeline + PreProviderCall share
-    // the same set — a once=true hook fired at PrePipeline is suppressed at
-    // PreProviderCall within the same session.
-    session_fired_once: &mut std::collections::HashSet<String>,
+    // GOLD-CCPARITY-ONCE: session-scoped once-guard shared across PrePipeline +
+    // PreProviderCall — a once=true hook fired at PrePipeline is suppressed at
+    // PreProviderCall within the same session. Arc-backed so it is cheaply
+    // Clone and safe to pass by shared ref across stages.
+    once_guard: &crate::hooks::SessionOnceGuard,
 ) -> Result<PreflightOutcome> {
     // Resolve sub-agent dispatch once and reuse it for prompt + model routing.
     // The PaidProviderCall decision now happens at each real provider leaf,
@@ -2243,7 +2243,7 @@ async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
-        session_fired_once,
+        once_guard,
     )
     .await?
     {
@@ -2293,7 +2293,7 @@ async fn enforce_preflight(
         &final_prompt,
         &hooks,
         &writer,
-        session_fired_once,
+        once_guard,
     )
     .await?
     {
@@ -3615,10 +3615,10 @@ async fn run_post_reply_pipelines(
     current_session_id: String,
     prompt_token_estimate: u32,
     turn_journal: Option<crate::recovery::turn_journal::TurnJournal>,
-    // GOLD-CCPARITY-ONCE: session-scoped fired set threaded from run_chat_with
+    // GOLD-CCPARITY-ONCE: session-scoped once-guard threaded from run_chat_with
     // through enforce_preflight to here so PostProviderCall shares the same
-    // once-guard as PrePipeline and PreProviderCall.
-    session_fired_once: &mut std::collections::HashSet<String>,
+    // guard as PrePipeline and PreProviderCall.
+    once_guard: &crate::hooks::SessionOnceGuard,
     // GOLD-ADAPT-ODY-20 — number of successful MCP tool-calls in this turn.
     // Gates auto-skill extraction (default threshold: ≥ 2). `0` on non-MCP turns.
     mcp_tool_calls: u32,
@@ -3717,7 +3717,7 @@ async fn run_post_reply_pipelines(
         &response_text,
         &hooks,
         &writer,
-        session_fired_once,
+        once_guard,
     )
     .await?
     {
@@ -5030,15 +5030,14 @@ pub async fn run_chat_with(
     )
     .await?;
 
-    // GOLD-CCPARITY-ONCE: session-scoped fired set. One run_chat_with call =
-    // one CLI session. Created here before enforce_preflight so the same set
+    // GOLD-CCPARITY-ONCE: session-scoped once-guard. One run_chat_with call =
+    // one CLI session. Created here before enforce_preflight so the same guard
     // is shared across PrePipeline, PreProviderCall, and PostProviderCall
-    // within the single turn (and the same set is reused across multi-turn
+    // within the single turn (and the same guard is reused across multi-turn
     // batch sessions if run_chat_with is called in a loop). For the CLI path
-    // this function is called once per invocation, so the set lives exactly
+    // this function is called once per invocation, so the guard lives exactly
     // as long as the session.
-    let mut session_fired_once: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let once_guard = crate::hooks::SessionOnceGuard::new();
 
     let (
         writer,
@@ -5072,7 +5071,7 @@ pub async fn run_chat_with(
         skill_effort,
         // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
         tweaks.model_default.clone(),
-        &mut session_fired_once,
+        &once_guard,
     )
     .await?
     {
@@ -5229,7 +5228,7 @@ pub async fn run_chat_with(
         current_session_id,
         prompt_token_estimate,
         turn_journal,
-        &mut session_fired_once,
+        &once_guard,
         // GOLD-ADAPT-ODY-20 — thread through for auto-skill extraction gate.
         mcp_tool_calls,
         // REVFIX-EXCERPTS-01 — structured call records for digest-based extraction.
@@ -5386,43 +5385,35 @@ enum HookOutcome {
 /// before returning so every abort is traceable without the caller duplicating
 /// the WAL write.
 ///
-/// `session_fired_once` is a session-scoped set of hook names that have already
-/// fired this session (GOLD-CCPARITY-ONCE). Hooks with `once = true` that appear
-/// in this set are **pre-filtered** before calling the dispatcher — this ensures
-/// their `Replace` actions are never applied (cannot undo a replace post-hoc).
-/// On first firing the name is inserted; on subsequent firings a
-/// `HOOK_SKIPPED_ONCE` (0x8B) WAL frame is emitted instead of `HOOK_FIRED`.
+/// `once_guard` is the session-scoped [`crate::hooks::SessionOnceGuard`] that
+/// atomically claims `once = true` hooks before their effect runs
+/// (GOLD-CCPARITY-ONCE / BUG-W2-P1-HOOK-ONCE-PARITY). The guard is shared
+/// across all stages in the session; first fire claims the name; subsequent
+/// fires produce a `HOOK_SKIPPED_ONCE` (0x8B) WAL frame without re-running
+/// the effect. No manual pre-filter or post-insert is needed here — the
+/// dispatcher handles both steps atomically under its internal mutex.
 async fn run_hook_stage(
     stage: crate::hooks::HookStage,
     body: &str,
     hooks: &[crate::hooks::schema::HookDef],
     writer: &crate::wal::writer::WalWriterHandle,
-    session_fired_once: &mut std::collections::HashSet<String>,
+    once_guard: &crate::hooks::SessionOnceGuard,
 ) -> Result<HookOutcome> {
-    // GOLD-CCPARITY-ONCE: pre-filter once=true hooks that already fired.
-    // Emit HOOK_SKIPPED_ONCE for each suppressed hook. Only hooks that match
-    // this stage are relevant (disabled hooks are ignored by the dispatcher
-    // anyway, so we don't need to gate on is_enabled here).
-    let mut skipped_once_names: Vec<String> = Vec::new();
-    let active_hooks: Vec<crate::hooks::schema::HookDef> = hooks
-        .iter()
-        .filter(|h| {
-            if h.once()
-                && h.stage == stage
-                && h.is_enabled()
-                && session_fired_once.contains(&h.name)
-            {
-                skipped_once_names.push(h.name.clone());
-                false // suppress: exclude from dispatcher
-            } else {
-                true // pass through
-            }
-        })
-        .cloned()
-        .collect();
-
-    // Emit HOOK_SKIPPED_ONCE for every suppressed once-hook at this stage.
-    for name in &skipped_once_names {
+    let before = body.to_string();
+    // GOLD-ADAPT-SKILL-09 + BUG-W2-P1-HOOK-ONCE-PARITY: single entry point
+    // that handles BlockFilter accumulation AND once-semantics atomically.
+    let result = crate::hooks::run_stage_with_once_guard(
+        stage,
+        body,
+        hooks,
+        crate::hooks::dispatcher::current_global_invoker().map(|a| a.as_ref()),
+        false,
+        once_guard,
+    )?;
+    // Emit HOOK_SKIPPED_ONCE for every once=true hook that was suppressed
+    // by the guard this call. The dispatcher surfaced their names; WAL write
+    // is the caller's responsibility (dispatcher has no WAL handle).
+    for name in &result.skipped_once {
         emit_hook_frame(
             writer,
             crate::wal::events::EVENT_TYPE_HOOK_SKIPPED_ONCE,
@@ -5432,20 +5423,7 @@ async fn run_hook_stage(
         )
         .await;
     }
-
-    let before = body.to_string();
-    // GOLD-ADAPT-SKILL-09: use the blocks-returning variant so any
-    // BlockFilter actions at this stage return their FilteredBlocks.
-    // The blocks are passed back to the caller via HookOutcome::Continue.
-    let (outcome, filtered_blocks) =
-        crate::hooks::dispatcher::run_stage_with_config_returning_blocks(
-            stage,
-            body,
-            &active_hooks,
-            crate::hooks::dispatcher::current_global_invoker().map(|a| a.as_ref()),
-            false,
-        )?;
-    match outcome {
+    match result.outcome {
         crate::hooks::StageOutcome::Continue { body: after, hits } => {
             for name in &hits {
                 // CCPARITY-STATUS-MSG: look up the fired hook's status_message
@@ -5464,11 +5442,8 @@ async fn run_hook_stage(
                     status_note,
                 )
                 .await;
-                // GOLD-CCPARITY-ONCE: if this hook has once=true, record it as
-                // fired so subsequent calls in this session suppress it.
-                if hooks.iter().any(|h| h.name == *name && h.once()) {
-                    session_fired_once.insert(name.clone());
-                }
+                // once=true claim is handled atomically inside
+                // run_stage_with_once_guard — no manual insert here.
             }
             if !hits.is_empty() && after != before {
                 emit_hook_frame(
@@ -5480,7 +5455,7 @@ async fn run_hook_stage(
                 )
                 .await;
             }
-            Ok(HookOutcome::Continue(after, filtered_blocks))
+            Ok(HookOutcome::Continue(after, result.filtered_blocks))
         }
         crate::hooks::StageOutcome::Block { name, reason } => {
             emit_hook_frame(
@@ -12959,10 +12934,10 @@ mod tests {
     // ── GOLD-CCPARITY-ONCE: run_hook_stage once-gate tests ──────────────────
     //
     // These tests exercise run_hook_stage directly with a real (temp-file) WAL
-    // writer and a session_fired_once HashSet, verifying:
-    //   1. First call → HOOK_FIRED, name inserted into set.
-    //   2. Second call with same set → HOOK_SKIPPED_ONCE, no second HOOK_FIRED.
-    //   3. Fresh HashSet → fires again (independent session).
+    // writer and a SessionOnceGuard, verifying WAL event emission:
+    //   1. First call → HOOK_FIRED.
+    //   2. Second call with same guard → HOOK_SKIPPED_ONCE, no second HOOK_FIRED.
+    //   3. Fresh SessionOnceGuard → fires again (independent session).
     //   4. once=false hook fires every time with no HOOK_SKIPPED_ONCE.
 
     /// Decode all frames from a WAL file after the segment header and collect
@@ -13002,16 +12977,15 @@ mod tests {
             fail_fast: false,
         };
         let hooks = vec![hook];
-        let mut session_fired_once: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let once_guard = crate::hooks::SessionOnceGuard::new();
 
-        // Call 1 — first firing. Must emit HOOK_FIRED and insert name.
+        // Call 1 — first firing. Must emit HOOK_FIRED.
         let outcome = run_hook_stage(
             crate::hooks::HookStage::PrePipeline,
             "hello",
             &hooks,
             &writer,
-            &mut session_fired_once,
+            &once_guard,
         )
         .await
         .unwrap();
@@ -13019,18 +12993,14 @@ mod tests {
             matches!(outcome, HookOutcome::Continue(ref b, _) if b == "hello"),
             "first firing must Continue with unchanged body"
         );
-        assert!(
-            session_fired_once.contains("startup-banner"),
-            "name must be in fired set after first firing"
-        );
 
-        // Call 2 — same session_fired_once — must suppress, emit HOOK_SKIPPED_ONCE.
+        // Call 2 — same guard — must suppress, emit HOOK_SKIPPED_ONCE.
         let outcome2 = run_hook_stage(
             crate::hooks::HookStage::PrePipeline,
             "world",
             &hooks,
             &writer,
-            &mut session_fired_once,
+            &once_guard,
         )
         .await
         .unwrap();
@@ -13039,24 +13009,20 @@ mod tests {
             "suppressed once-hook must still Continue (not Block)"
         );
 
-        // Call 3 — fresh session set — must fire again (independent session).
-        let mut new_session: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Call 3 — fresh guard — must fire again (independent session).
+        let new_guard = crate::hooks::SessionOnceGuard::new();
         let outcome3 = run_hook_stage(
             crate::hooks::HookStage::PrePipeline,
             "fresh",
             &hooks,
             &writer,
-            &mut new_session,
+            &new_guard,
         )
         .await
         .unwrap();
         assert!(
             matches!(outcome3, HookOutcome::Continue(ref b, _) if b == "fresh"),
-            "new session must fire once-hook again"
-        );
-        assert!(
-            new_session.contains("startup-banner"),
-            "name must be in new session set after firing"
+            "new guard must fire once-hook again"
         );
 
         // Drain writer so WAL file is complete.
@@ -13104,16 +13070,15 @@ mod tests {
             fail_fast: false,
         };
         let hooks = vec![hook];
-        let mut session_fired_once: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let once_guard = crate::hooks::SessionOnceGuard::new();
 
-        // Two calls with the same session set. Both must fire.
+        // Two calls with the same guard. Both must fire (once=false).
         run_hook_stage(
             crate::hooks::HookStage::PrePipeline,
             "turn1",
             &hooks,
             &writer,
-            &mut session_fired_once,
+            &once_guard,
         )
         .await
         .unwrap();
@@ -13122,7 +13087,7 @@ mod tests {
             "turn2",
             &hooks,
             &writer,
-            &mut session_fired_once,
+            &once_guard,
         )
         .await
         .unwrap();
@@ -13147,11 +13112,8 @@ mod tests {
             skipped_count, 0,
             "once=false hook must never emit HOOK_SKIPPED_ONCE, got {skipped_count}"
         );
-        // fired set stays empty — once=false hooks do NOT populate it.
-        assert!(
-            !session_fired_once.contains("audit-log"),
-            "once=false hook must not populate session_fired_once"
-        );
+        // once=false hooks do NOT claim the guard — no assertion needed since
+        // SessionOnceGuard's inner set is not accessible from this module.
     }
 
     // ── GOLD-ADAPT-SKILL-10: skill-catalog banner unit tests ─────────────

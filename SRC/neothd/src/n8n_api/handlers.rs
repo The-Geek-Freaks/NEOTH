@@ -367,9 +367,25 @@ fn build_provider_request(
         }),
     });
 
+    // Apply typed budget enforcement (parity with the CLI finalize path):
+    // wrap the enriched system (A) + prompt (E), enforce the live cap derived
+    // from the resolved model and operator config, and fail-close if protected
+    // content cannot fit.
+    let cap = crate::tokens::budget::effective_cap(
+        "",
+        effective_model.as_deref().unwrap_or("provider_default"),
+        config.tokens.max_per_request,
+    );
+    let budget = crate::tokens::budget::finalize_daemon_request(
+        enriched.prompt,
+        enriched.system,
+        cap,
+    )
+    .map_err(|e| anyhow::anyhow!("n8n provider_call over token cap: {e}"))?;
+
     Ok(crate::providers::Request {
-        prompt: enriched.prompt,
-        system: enriched.system,
+        prompt: budget.prompt,
+        system: budget.system,
         model: effective_model,
         ..Default::default()
     })
