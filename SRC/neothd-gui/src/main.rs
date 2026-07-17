@@ -6101,6 +6101,64 @@ fn main() -> Result<()> {
             });
         });
 
+        // L73 — mesh peer context menu: copy peer ID to clipboard.
+        window.on_mesh_peer_copy_id(move |peer_id| {
+            if let Err(e) = arboard::Clipboard::new()
+                .and_then(|mut c| c.set_text(peer_id.to_string()))
+            {
+                tracing::warn!(error = %e, "peer id clipboard copy failed");
+            }
+        });
+
+        // L73 — mesh peer context menu: revoke (remove) a peer.
+        let weak_mesh_revoke = window.as_weak();
+        window.on_mesh_peer_revoke(move |peer_id| {
+            let weak = weak_mesh_revoke.clone();
+            let peer = peer_id.to_string();
+            std::thread::spawn(move || {
+                // Revoke is destructive — check the exit status so a failure is
+                // NOT reported as success. run_neothd_probe merges stderr and
+                // drops the status, so spawn directly here.
+                let result = which_neothd().and_then(|bin| {
+                    let mut c = spawn_neothd_plain(&bin);
+                    c.arg("cluster").arg("revoke").arg(peer.as_str());
+                    c.output()
+                        .inspect_err(|e| {
+                            tracing::warn!(error = %e, "cluster revoke spawn failed")
+                        })
+                        .ok()
+                });
+                match result {
+                    Some(o) if o.status.success() => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Mesh peer removed",
+                            &format!("Removed peer {peer}."),
+                        );
+                        refresh_mesh(weak.clone());
+                    }
+                    Some(o) => {
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let msg: String = err.trim().chars().take(160).collect();
+                        push_toast(
+                            &weak,
+                            "error",
+                            "Revoke failed",
+                            if msg.is_empty() {
+                                "cluster revoke exited non-zero"
+                            } else {
+                                msg.as_str()
+                            },
+                        );
+                    }
+                    None => {
+                        push_toast(&weak, "error", "Revoke failed", "neoth binary not found");
+                    }
+                }
+            });
+        });
+
         let weak_conflict_resolve = window.as_weak();
         window.on_mesh_conflict_resolve_clicked(move |content_id, preferred_origin| {
             let weak = weak_conflict_resolve.clone();

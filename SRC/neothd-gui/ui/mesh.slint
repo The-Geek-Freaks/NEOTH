@@ -73,6 +73,7 @@ component PeerCard inherits Rectangle {
 
     callback sync-clicked();
     callback expand-clicked();
+    callback context-menu(string /*peer-id*/, length /*x*/, length /*y*/);
 
     // Rail color: pink = unreachable, amber = stale (> 30 s), green = fresh
     property <color> rail-color: !root.reachable ? Theme.consent
@@ -290,6 +291,17 @@ component PeerCard inherits Rectangle {
                     det-ta := TouchArea {
                         mouse-cursor: pointer;
                         clicked => { root.expand-clicked(); }
+                        pointer-event(ev) => {
+                            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+                                // Window-absolute pointer position (det-ta origin +
+                                // in-element offset) — matches the kanban ctx-menu
+                                // coord source. `self.mouse-x` alone is element-local
+                                // and would pin the menu to the content corner.
+                                root.context-menu(root.peer-id,
+                                    self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                            }
+                        }
                     }
                 }
             }
@@ -381,6 +393,7 @@ export component MeshView inherits Rectangle {
     callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
     callback peer-expanded(string /*peer-id*/);       // toggle inline detail
     callback conflict-resolve-clicked(string /*content-id*/, string /*preferred origin*/);
+    callback mesh-peer-ctx(string /*peer-id*/, length /*x*/, length /*y*/);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -741,6 +754,7 @@ export component MeshView inherits Rectangle {
                                 expanded: root.expanded-peer == peer.id;
                                 sync-clicked => { root.peer-sync-clicked(peer.id); }
                                 expand-clicked => { root.peer-expanded(peer.id); }
+                                context-menu(id, x, y) => { root.mesh-peer-ctx(id, x, y); }
                             }
 
                             // Empty state — no peers discovered
