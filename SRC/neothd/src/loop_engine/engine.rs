@@ -265,6 +265,63 @@ fn round_quality_score(provider_id: &str, text: &str) -> f32 {
     ((0.40 * tier + 0.35 * dynamic) / OBSERVED_WEIGHT).clamp(0.0, 1.0)
 }
 
+/// Charges the Council's whole-message call budget before every provider leaf
+/// reachable through the dissent loop (normal rounds, retries, compaction and
+/// goal-judge calls all use this same provider object).
+struct CouncilBudgetedLoopProvider<'a> {
+    inner: &'a dyn crate::providers::Provider,
+    budget: crate::council::BudgetToken,
+}
+
+#[async_trait::async_trait]
+impl crate::providers::Provider for CouncilBudgetedLoopProvider<'_> {
+    fn name(&self) -> &'static str {
+        self.inner.name()
+    }
+
+    fn request_controls(&self) -> crate::providers::ProviderRequestControls {
+        self.inner.request_controls()
+    }
+
+    fn validate_request_controls(&self, req: &crate::providers::Request) -> Result<()> {
+        self.inner.validate_request_controls(req)
+    }
+
+    fn default_model(&self) -> Option<&str> {
+        self.inner.default_model()
+    }
+
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.inner.resolve_model_for_wire(requested_model)
+    }
+
+    fn output_token_ceiling(&self, req: &crate::providers::Request) -> Option<u32> {
+        self.inner.output_token_ceiling(req)
+    }
+
+    fn handles_nonstream_quota_backoff(&self) -> bool {
+        self.inner.handles_nonstream_quota_backoff()
+    }
+
+    fn preserves_inner_response_identity(&self) -> bool {
+        true
+    }
+
+    async fn complete(
+        &self,
+        req: crate::providers::Request,
+    ) -> Result<crate::providers::Completion> {
+        self.budget
+            .charge()
+            .map_err(|error| anyhow::anyhow!("Council dissent loop {error}"))?;
+        crate::providers::cost_authorization::precharged_council_attempt_scope(
+            self.budget.clone(),
+            self.inner.complete(req),
+        )
+        .await
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Core entry point
 // ---------------------------------------------------------------------------
@@ -291,22 +348,29 @@ pub async fn run_loop(
     writer: &WalWriterHandle,
     freedom: &crate::config::FreedomConfig,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    council_budget: Option<&crate::council::BudgetToken>,
     elicitation: &crate::cli::elicitation::ElicitationHandler,
 ) -> Result<LoopRunRecord> {
     config.validate_safety()?;
 
-    // Own the boundary here as well as at the chat/channel entry point. Most
-    // callers already pass an authorized decorator, but the council
-    // dissent-invoke path builds the winning role provider just in time. The
-    // nested decorator deliberately forwards `complete_authorized`, so every
-    // loop/goal-judge/compaction round reaches exactly one leaf authorization.
+    // Own the single authorization boundary for the entire loop. Callers must
+    // pass their raw/provider-decorator chain (a token cap is fine), never an
+    // existing CostAuthorizingProvider/AuthorizedProvider; nested authorization
+    // boundaries are deliberately rejected at runtime.
     let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
         provider,
         authorizer.clone(),
         req.model.clone(),
         "loop_provider_round",
     );
-    let provider: &dyn crate::providers::Provider = &authorized_provider;
+    let budgeted_provider = council_budget.map(|budget| CouncilBudgetedLoopProvider {
+        inner: &authorized_provider,
+        budget: budget.clone(),
+    });
+    let provider: &dyn crate::providers::Provider = match budgeted_provider.as_ref() {
+        Some(provider) => provider,
+        None => &authorized_provider,
+    };
     let loop_id = new_loop_id();
     let prompt_hash = format!("{:016x}", xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()));
     let ts_start = now_unix();
@@ -341,6 +405,10 @@ pub async fn run_loop(
     let mut per_round: Vec<LoopRound> = Vec::new();
     let mut final_text = String::new();
     let mut stop_reason = StopReason::CapHit;
+    // This is a per-operator-turn allowance, not a per-round allowance. Every
+    // nested MCP loop below borrows the same value so max_rounds cannot
+    // multiply paid compaction leaves.
+    let mut compaction_budget = crate::mcp::dispatch_loop::CompactionBudget::default();
 
     // Common dispatch-loop arguments derived from freedom config.
     let rollback = &freedom.rollback;
@@ -420,9 +488,11 @@ pub async fn run_loop(
             None,
             // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
             &freedom.tools.harness,
+            &mut compaction_budget,
             config
                 .tool_call_budget
                 .map(|budget| budget.saturating_sub(state.accumulated_tool_calls)),
+            &config.neoth_home,
         )
         .await?;
 
@@ -464,12 +534,25 @@ pub async fn run_loop(
                         }),
                     )
                     .await;
-                    let refined = crate::council::self_reflect::refine(
-                        &req.prompt,
-                        &outcome.final_text,
-                        hemisphere.as_ref(),
-                    )
-                    .await;
+                    let refined = match council_budget {
+                        Some(budget) => {
+                            crate::council::self_reflect::refine_with_budget(
+                                &req.prompt,
+                                &outcome.final_text,
+                                hemisphere.as_ref(),
+                                budget,
+                            )
+                            .await
+                        }
+                        None => {
+                            crate::council::self_reflect::refine(
+                                &req.prompt,
+                                &outcome.final_text,
+                                hemisphere.as_ref(),
+                            )
+                            .await
+                        }
+                    };
                     refined.refined
                 }
                 Err(e) => {
@@ -636,7 +719,66 @@ fn is_elevated_or_full(autonomy: AutonomyLevel) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::TempDir;
+
+    struct CountingLoopProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for CountingLoopProvider {
+        fn name(&self) -> &'static str {
+            "loop_budget_test"
+        }
+
+        async fn complete(
+            &self,
+            _req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: "ok".into(),
+                identity: crate::providers::CompletionIdentity {
+                    provider: "loop_budget_test".into(),
+                    wire_model: "test-model".into(),
+                },
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn council_loop_provider_cannot_dispatch_past_shared_budget() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let inner = CountingLoopProvider {
+            calls: Arc::clone(&calls),
+        };
+        let budget = crate::council::BudgetToken::new(1);
+        let provider = CouncilBudgetedLoopProvider {
+            inner: &inner,
+            budget: budget.clone(),
+        };
+
+        crate::providers::Provider::complete(&provider, crate::providers::Request::default())
+            .await
+            .unwrap();
+        let error =
+            crate::providers::Provider::complete(&provider, crate::providers::Request::default())
+                .await
+                .expect_err("second dissent-loop leaf must be rejected");
+
+        assert!(error.to_string().contains("budget exhausted"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(budget.used(), 1);
+        assert!(budget.was_denied());
+    }
 
     #[test]
     fn stop_reason_serialises_correctly() {

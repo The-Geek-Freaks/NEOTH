@@ -40,15 +40,20 @@ the operator's request is genuinely ambiguous and you cannot proceed without \
 one missing detail, reply with exactly `[[clarify]] <one concise question>` and \
 nothing else. Otherwise answer normally; never use this for rhetorical questions.";
 
+/// Typed prompt-assembly view of the optional protocol.  The returned content
+/// carries no separator padding; the block renderer owns canonical `\n\n`
+/// boundaries and can therefore account for the exact provider bytes.
+pub(crate) fn protocol_block() -> Option<&'static str> {
+    enabled().then(|| CLARIFY_PROTOCOL.trim())
+}
+
 /// Append the clarification protocol to the assembled system prompt when the
 /// feature is opted-in. A no-op (returns `base` unchanged) by default, so the
 /// common path's system prompt is byte-for-byte identical.
 pub fn augment_system(base: String) -> String {
-    if enabled() {
-        format!("{base}{CLARIFY_PROTOCOL}")
-    } else {
-        base
-    }
+    protocol_block()
+        .map(|protocol| format!("{base}\n\n{protocol}"))
+        .unwrap_or(base)
 }
 
 /// Markers `clarify::is_ambiguous` recognises — stripped so the operator sees a

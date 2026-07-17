@@ -57,6 +57,10 @@ impl Provider for AbliteratedProvider {
         self.inner.default_model()
     }
 
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.inner.resolve_model_for_wire(requested_model)
+    }
+
     /// Delegates to the inner adapter unchanged (its circuit breaker still
     /// fires on repeated local-inference failures).
     async fn complete_raw(

@@ -757,6 +757,22 @@ fn instance_registry_error_reply(inbound: &InboundMessage) -> OutboundMessage {
     )
 }
 
+fn provider_backed_channel_slash(name: &str) -> bool {
+    matches!(name, "research" | "background" | "btw")
+}
+
+fn ensure_provider_backed_channel_slash_consent(
+    name: &str,
+    home: &std::path::Path,
+    config: &FreedomConfig,
+) -> Result<()> {
+    if provider_backed_channel_slash(name) {
+        crate::consent::ensure_all_still_granted(home, config)
+            .with_context(|| format!("channel /{name} provider consent"))?;
+    }
+    Ok(())
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -1349,22 +1365,27 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // PaidProviderCall decision to each final provider request. This
             // context is reused by /research, /background, MCP/loop rounds,
             // council leaves and the direct fallback path below.
-            let provider_call_authorizer = if let Some(asker) =
-                channel_asker.as_ref().map(Arc::clone)
-            {
-                crate::providers::cost_authorization::ProviderCallAuthorizer::channel_reload(
-                    Arc::clone(&reload_controller),
-                    Some(writer.clone()),
-                    asker,
-                    neoth_home.clone(),
-                )
-            } else {
-                crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed_reload(
-                    Arc::clone(&reload_controller),
-                    Some(writer.clone()),
-                    neoth_home.clone(),
-                )
-            };
+            // Bind every leaf in this inbound turn to the same immutable
+            // FreedomConfig generation already used for provider topology,
+            // trigger cost, daily cap and prompt budgeting. Reload is observed
+            // at the next handler invocation; reading it again per Council leaf
+            // would splice two policy generations into one authorization.
+            let provider_call_authorizer =
+                if let Some(asker) = channel_asker.as_ref().map(Arc::clone) {
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::channel(
+                        autonomy_policy.clone(),
+                        Some(writer.clone()),
+                        asker,
+                        config_for_handler.tokens.max_per_request,
+                    )
+                } else {
+                    crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+                        autonomy_policy.clone(),
+                        Some(writer.clone()),
+                        config_for_handler.tokens.max_per_request,
+                    )
+                }
+                .with_usage_home(neoth_home.clone());
 
             // ── GOLD-TASK-01 — general-task routing branch ────────────────
             // Non-coding inbound prompts (reminders, scheduling, research,
@@ -1857,6 +1878,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 });
             let channel_enriched_system = channel_enriched.system;
             let channel_used_skill_id = channel_enriched.used_skill_id;
+            let mut channel_budget_items = channel_enriched.budget_items;
             // GOLD-LOOP-06 — a matched `loop: true` skill engages the loop
             // engine below even when freedom.yaml's loop gate is off (the
             // skill declares itself inherently iterative).
@@ -1907,6 +1929,27 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &sanitized_text,
             ) {
                 crate::slash::Invocation::Command { name, args } => {
+                    // Provider-backed slash commands return from this match
+                    // before the ordinary turn's live consent gate below. Gate
+                    // them here, before constructing a research loop or
+                    // spawning a background task, so marker revocation yields
+                    // zero provider calls on every early-return path.
+                    if let Err(error) = ensure_provider_backed_channel_slash_consent(
+                        &name,
+                        &neoth_home,
+                        config_for_handler.as_ref(),
+                    ) {
+                        warn!(
+                            channel = channel_str,
+                            command = %name,
+                            error = %error,
+                            "provider consent revoked; blocking channel slash command"
+                        );
+                        return Ok(::std::option::Option::Some(reply_to_inbound(
+                            &inbound,
+                            format!("[NEOTH] {error}"),
+                        )));
+                    }
                     // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
                     // Read-only: no system mutation → not blocked by the channel
                     // privilege ceiling. Runs the multi-step search→read→synthesize
@@ -1929,7 +1972,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                     let research_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
                                             provider.as_ref(),
                                             provider_call_authorizer.clone(),
-                                            config_for_handler.provider_model.clone(),
+                                            crate::providers::provider_default_wire_model(provider.as_ref()),
                                             "channel_deep_research_round",
                                         );
                                     let http = match channel_asker.as_ref() {
@@ -1995,16 +2038,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 &name,
                                 prompt_body,
                                 channel_enriched_system.clone(),
+                                &instance_paths.home,
+                                &instance_paths.config,
                                 config_for_handler.as_ref().clone(),
                                 Arc::clone(&provider),
                                 Some(&writer),
-                                provider_call_authorizer.clone(),
                             )
                             .await
                             {
                                 Ok(_) => format!(
-                                    "[NEOTH] /{name}: running in background — \
-                                         result ready at next idle"
+                                    "[NEOTH] /{name}: queued safely. The result appears at the \
+                                         next CLI chat idle; deferred channel replies are not available yet."
                                 ),
                                 Err(e) => format!("/{name}: authorization failed: {e:#}"),
                             }
@@ -2091,6 +2135,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         }
                         let rendered = cmd.render(&args, operator_id.as_deref());
                         info!(slash_command = %name, "slash dispatch");
+                        channel_budget_items = vec![
+                            crate::tokens::budget::BlockItem::new(
+                                crate::tokens::budget::Block::B,
+                                rendered.clone(),
+                            ),
+                            crate::tokens::budget::BlockItem::new(
+                                crate::tokens::budget::Block::E,
+                                args.clone(),
+                            ),
+                        ];
                         (args, Some(rendered))
                     } else {
                         // Unknown command — pass through with the
@@ -2306,8 +2360,26 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             } else {
                 final_prompt
             };
-            let channel_effective_model =
+            // Pending clarification state must preserve the post-hook prompt,
+            // but not the output-preset wrapper added by the finalizer below.
+            // Otherwise the next answer turn would apply that wrapper twice.
+            let clarification_source_prompt = final_prompt.clone();
+            let channel_requested_model =
                 channel_skill_model.or_else(|| config_for_handler.provider_model.clone());
+            let channel_effective_model = match crate::cli::chat::resolve_provider_call_wire_model(
+                config_for_handler.as_ref(),
+                provider.as_ref(),
+                channel_requested_model.as_deref(),
+            ) {
+                Ok(model) => Some(model),
+                Err(error) => {
+                    warn!(error = %error, "channel provider has no resolvable wire model; turn blocked");
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        format!("[NEOTH] Request blocked before sending: {error}"),
+                    )));
+                }
+            };
             let channel_thinking_budget = match channel_skill_effort {
                 Some(effort) if provider.request_controls().supports_thinking_budget() => {
                     Some(crate::providers::effort_override::effort_to_tokens(effort))
@@ -2322,15 +2394,58 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 }
                 None => None,
             };
+            if let Err(error) = crate::tokens::budget::replace_user_message(
+                &mut channel_budget_items,
+                final_prompt.clone(),
+            ) {
+                warn!(
+                    error,
+                    "channel token-budget bundle invalid; turn blocked fail-closed"
+                );
+                return Ok(Some(reply_to_inbound(
+                    &inbound,
+                    "[NEOTH] The request could not be assembled safely. Please retry after checking the active prompt configuration.",
+                )));
+            }
+            let budgeted = match crate::cli::chat::finalize_provider_request(
+                channel_budget_items,
+                &final_prompt,
+                system_override.as_deref(),
+                config_for_handler.as_ref(),
+                &neoth_home,
+                provider.name(),
+                channel_effective_model.as_deref(),
+                Some(crate::cli::chat::routing_safe_effective_cap_at(
+                    config_for_handler.as_ref(),
+                    provider.name(),
+                    channel_effective_model.as_deref(),
+                    &neoth_home,
+                )),
+                &writer,
+            )
+            .await
+            {
+                Ok(request) => request,
+                Err(error) => {
+                    warn!(error = %error, "channel request exceeded the safe token budget; provider dispatch blocked");
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        format!("[NEOTH] Request blocked before sending: {error}"),
+                    )));
+                }
+            };
+            let crate::cli::chat::BudgetedProviderRequest {
+                prompt: final_prompt,
+                system: system_override,
+                effective_cap: request_token_cap,
+                ..
+            } = budgeted;
             let req = Request {
                 prompt: final_prompt.clone(),
-                // HERMES-03b hook A — inject the clarification protocol into the
-                // system prompt so the model may emit `[[clarify]] <question>`.
-                // `augment_system` is a no-op when the feature is off, so the
-                // default channel system prompt is byte-for-byte unchanged.
-                system: system_override
-                    .clone()
-                    .map(crate::cli::clarify_chat::augment_system),
+                // `finalize_provider_request` injects the clarification protocol,
+                // output preset and fixed preambles before enforcing the same
+                // typed A-E budget used by CLI/GUI.
+                system: system_override.clone(),
                 // GOLD-CCPARITY-MODEL-02: apply per-skill model override on the
                 // channel path. The channel path has no agent dispatch, so only
                 // the skill tier of the priority chain applies here.
@@ -2342,9 +2457,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 thinking_budget: channel_thinking_budget,
                 ..Default::default()
             };
+            let token_capped_provider = crate::providers::token_cap::TokenCappedProvider::new(
+                provider.as_ref(),
+                request_token_cap,
+            );
+            // Every retry/helper starts from this exact degraded request. The
+            // live dispatch consumes `req` in one of the branches below.
+            let recovery_base_req = req.clone();
             let authorized_provider =
                 crate::providers::cost_authorization::CostAuthorizingProvider::new(
-                    provider.as_ref(),
+                    &token_capped_provider,
                     provider_call_authorizer.clone(),
                     req.model.clone(),
                     "channel_provider_round",
@@ -2363,58 +2485,82 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // the trigger fires; otherwise the dispatch falls through
             // to the existing MCP-autoroute / direct branches.
             //
-            // Channels pass a flat 0.01 EUR estimate to the budget
-            // gate — they don't pre-compute a per-prompt cost like the
-            // CLI's `cost_estimate` path. Operators wanting tighter
-            // budget control raise `policy.budget_multiplier` in
-            // freedom.yaml.
-            // SPEC-03 suppress: read `freedom.yaml::council.disabled` fresh
-            // per message so `neoth council suppress` gates the channel path
-            // without a daemon restart. Use the daemon instance's captured
-            // home and fail closed when an existing policy file is unreadable
-            // or invalid; falling back here could autonomously convene a
-            // council that the operator explicitly disabled.
-            let council_cfg = match crate::config::FreedomConfig::load_from_path_or_default(
-                &instance_paths.config,
-            ) {
-                Ok(config) => config.council,
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        path = %instance_paths.config.display(),
-                        "council policy reload failed; turn blocked fail-closed"
-                    );
-                    return Ok(Some(reply_to_inbound(
-                        &inbound,
-                        "[NEOTH] freedom.yaml is unreadable or invalid. Fix the operator policy before retrying.",
-                    )));
-                }
-            };
+            // Trigger topology, cost bound and hard leaf authorization must
+            // observe one accepted reload generation. `config_for_handler` is
+            // the immutable per-turn snapshot; independently reopening YAML
+            // here could combine a new trigger cap with old dispatch routing.
+            let council_cfg = &config_for_handler.council;
             // GOLD-ADAPT-G-01: OR-in mode=single alongside disabled=true.
             // Both force the single-hemisphere path; they are orthogonal knobs.
-            // `mode` hot-reloads per message from the instance-local path above —
-            // no daemon restart needed after editing freedom.yaml.
+            // `mode` is read from the reload controller's accepted per-message
+            // snapshot, so no daemon restart is needed after a valid reload.
             let council_disabled =
                 council_cfg.disabled.unwrap_or(false) || council_cfg.mode.is_single();
             let council_policy = council_cfg.trigger.to_policy();
-            let council_decision = crate::cli::chat::evaluate_council_trigger(
+            let council_cost = crate::cli::chat::council_trigger_cost_bound_at(
+                config_for_handler.as_ref(),
+                &req,
                 &neoth_home,
-                &req.prompt,
-                0.01,
-                council_disabled,
-                &council_policy,
             );
+            let council_decision = match council_cost {
+                Ok((estimated_single_call_usd, estimated_council_cost_usd)) => {
+                    crate::cli::chat::evaluate_council_trigger(
+                        &neoth_home,
+                        &req.prompt,
+                        estimated_single_call_usd,
+                        estimated_council_cost_usd,
+                        council_cfg.daily_usd_cap,
+                        council_disabled,
+                        &council_policy,
+                    )
+                }
+                Err(_)
+                    if council_disabled
+                        || std::env::var("NEOTH_COUNCIL_DISABLE").is_ok_and(|value| {
+                            value == "1" || value.eq_ignore_ascii_case("true")
+                        }) =>
+                {
+                    crate::cli::chat::evaluate_council_trigger(
+                        &neoth_home,
+                        &req.prompt,
+                        0.0,
+                        Some(0.0),
+                        council_cfg.daily_usd_cap,
+                        council_disabled,
+                        &council_policy,
+                    )
+                }
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        "channel Council cost bound unavailable under active daily cap; smart trigger skipped fail-closed"
+                    );
+                    crate::council::TriggerDecision::Skip {
+                        reason:
+                            "council cost bound unavailable under active daily cap — fail-closed"
+                                .into(),
+                    }
+                }
+            };
+            let council_mif_message = council_decision
+                .should_convene()
+                .then(|| {
+                    crate::cli::chat::mif_disambiguation(config_for_handler.as_ref(), &req.prompt)
+                })
+                .flatten();
             // GOLD-SEC-32 / B-19: hard rolling-24h convene cap on the channel
             // (autonomous) path — enforced before convening and independent of
-            // the EUR budget gate, so a runaway loop can't fan out council
+            // the USD budget gate, so a runaway loop can't fan out council
             // calls without bound.
             let council_home = neoth_home.clone();
             let council_now = crate::council::last_ts::now_unix() as i64;
             // B-25: atomic OS-locked admission on the channel (autonomous) path.
             // No council_force on this path — channel path is always autonomous.
-            let (council_enable, council_cap_hit, council_deny_reason) = if council_decision
-                .should_convene()
+            let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message
+                .is_some()
             {
+                (false, false, Some("mif_conflicted_disambiguation"))
+            } else if council_decision.should_convene() {
                 use crate::council::day_counter::AdmitResult;
                 match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
                     AdmitResult::Admitted => (true, false, None::<&'static str>),
@@ -2501,7 +2647,21 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .any(|hook| hook.stage == crate::hooks::HookStage::PreEgress && hook.is_enabled());
             let mut live_delivery: Option<crate::channels::LiveDelivery> = None;
             let mut live_send_preauthorized = false;
-            let mut completion = if council_enable {
+            let mut completion = if let Some(message) = council_mif_message {
+                crate::providers::Completion {
+                    text: message,
+                    identity: crate::providers::CompletionIdentity {
+                        provider: "council_mif".into(),
+                        wire_model: "deterministic".into(),
+                    },
+                    model: "deterministic".to_owned(),
+                    latency: started.elapsed(),
+                    input_tokens: None,
+                    output_tokens: None,
+                    cache_creation_tokens: None,
+                    cache_read_tokens: None,
+                }
+            } else if council_enable {
                 info!(
                     channel = channel_str,
                     decision = ?council_decision,
@@ -2573,12 +2733,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     );
                     match crate::loop_engine::engine::run_loop(
                         &loop_cfg,
-                        &authorized_provider,
+                        // The loop installs its own per-leaf authorizer. Keep
+                        // the token cap, but do not nest the channel boundary.
+                        &token_capped_provider,
                         req.clone(),
                         &mcp_servers_for_loop,
                         &writer,
                         &config_for_handler,
                         provider_call_authorizer.clone(),
+                        None,
                         // P4 — channel path is headless (no TTY): elicitation off.
                         &crate::cli::elicitation::ElicitationHandler::Disabled,
                     )
@@ -2615,6 +2778,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
                 } else {
                     let loop_req = req.clone();
+                    let mut compaction_budget =
+                        crate::mcp::dispatch_loop::CompactionBudget::default();
                     match crate::cli::chat::run_mcp_dispatch_loop(
                         &authorized_provider,
                         loop_req,
@@ -2649,7 +2814,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         crate::context::compaction::CompactionPolicy::from_config(
                             config_for_handler.compaction.enabled,
                             config_for_handler.compaction.progressive,
-                            config_for_handler.tokens.max_per_request,
+                            request_token_cap,
                             config_for_handler.compaction.threshold_fraction,
                         ),
                         // GOLD-HR-08/10 — tool-result compression (live snapshot;
@@ -2680,9 +2845,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         Some(inbound.sender_id.clone()),
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config_for_handler.tools.harness,
+                        &mut compaction_budget,
                         // Channel turns are bounded by max_turns; no outer
                         // multi-round full-autonomy budget wraps this call.
                         None,
+                        &instance_paths.home,
                     )
                     .await
                     {
@@ -2836,7 +3003,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 crate::memory::pending_clarifications::store(
                     channel_str,
                     &sender_hash,
-                    &final_prompt,
+                    &clarification_source_prompt,
                 );
                 completion.text = crate::cli::clarify_chat::strip_marker(&completion.text);
             }
@@ -2921,16 +3088,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             {
                 let report = crate::security::refusal_detect::classify(&completion.text);
                 if report.is_refusal() {
-                    let recovery_req = crate::providers::Request {
-                        prompt: final_prompt.clone(),
-                        system: system_override.clone(),
-                        model: channel_effective_model.clone(),
-                        ..Default::default()
-                    };
                     let now_unix = crate::time::now_unix_secs();
                     match crate::security::refusal_recovery::try_recover_multi(
                         &authorized_provider,
-                        &recovery_req,
+                        &recovery_base_req,
                         &completion.text,
                         &config_for_handler.refusal_recovery.disabled_reframings,
                         Some(&writer),
@@ -3010,10 +3171,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     let now_unix_ch = crate::time::now_unix_secs() as i64;
                     match crate::skills::teacher::try_teacher_escalation(
                         &completion.text,
-                        &final_prompt,
-                        system_override.as_deref(),
+                        &recovery_base_req.prompt,
+                        recovery_base_req.system.as_deref(),
                         (*provider).name(),
                         &config_for_handler,
+                        &instance_paths.home,
                         &provider_call_authorizer,
                         Some(&writer),
                         now_unix_ch,
@@ -3656,6 +3818,137 @@ mod tests {
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct ChannelDefaultAliasProvider;
+
+    #[async_trait]
+    impl Provider for ChannelDefaultAliasProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("channel-gpt4o-alias")
+        }
+
+        fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+            match requested_model {
+                "channel-gpt4o-alias" => "gpt-4o".into(),
+                other => other.into(),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_token_budget_degrades_the_actual_post_hook_request() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) =
+            crate::wal::spawn(home.path().join("channel-budget.wal")).expect("spawn test WAL");
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 20_000;
+        let mut items = vec![
+            BlockItem::new(Block::A, "protected channel policy"),
+            BlockItem::new(Block::D, "discardable channel recall ".repeat(4_000)),
+            BlockItem::new(Block::E, "before hook"),
+        ];
+        crate::tokens::budget::replace_user_message(&mut items, "after hook")
+            .expect("one channel user-message block");
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+
+        let request = crate::cli::chat::finalize_provider_request(
+            items,
+            "after hook",
+            system.as_deref(),
+            &config,
+            home.path(),
+            "test_provider",
+            None,
+            None,
+            &writer,
+        )
+        .await
+        .expect("discardable D context should be degraded before channel dispatch");
+
+        assert_eq!(request.prompt, "after hook");
+        assert!(
+            request
+                .system
+                .as_deref()
+                .is_some_and(|system| system.contains("protected channel policy"))
+        );
+        assert!(
+            !request
+                .system
+                .as_deref()
+                .unwrap_or_default()
+                .contains("discardable channel recall")
+        );
+        assert!(request.prompt_token_estimate <= request.effective_cap);
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn channel_default_and_config_alias_are_resolved_before_model_budgeting() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        // The daemon uses arc_from_config, including its ArcAdapter, when
+        // history compaction is enabled. Both decorators must preserve the
+        // effective primary's exact wire model.
+        let provider = crate::providers::compactor::arc_from_config(
+            Arc::new(ChannelDefaultAliasProvider),
+            None,
+            None,
+            &crate::config::TokensConfig::default(),
+            None,
+        );
+        let mut config = FreedomConfig::default();
+        let default_model =
+            crate::cli::chat::resolve_provider_call_wire_model(&config, provider.as_ref(), None)
+                .unwrap();
+        assert_eq!(default_model, "gpt-4o");
+        config.provider_model = Some("@fast".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "gpt-4o".into());
+        let model = crate::cli::chat::resolve_provider_call_wire_model(
+            &config,
+            provider.as_ref(),
+            config.provider_model.as_deref(),
+        )
+        .unwrap();
+        assert_eq!(model, "gpt-4o");
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) =
+            crate::wal::spawn(home.path().join("channel-default-model.wal")).unwrap();
+        config.tokens.max_per_request = 200_000;
+        let items = vec![
+            BlockItem::new(Block::A, "protected channel policy"),
+            BlockItem::new(Block::E, "hello"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+        let request = crate::cli::chat::finalize_provider_request(
+            items,
+            "hello",
+            system.as_deref(),
+            &config,
+            home.path(),
+            provider.name(),
+            Some(&model),
+            None,
+            &writer,
+        )
+        .await
+        .unwrap();
+        assert_eq!(request.effective_cap, 108_800);
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
 
     #[derive(Default)]
     struct LiveReleaseChannel {

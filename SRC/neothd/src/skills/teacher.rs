@@ -75,6 +75,7 @@ pub fn low_confidence_local(text: &str) -> bool {
 ///   for WAL payload; caller must have already verified `is_local_provider`).
 /// * `config` — the operator's full `FreedomConfig` (for `from_config_for_teacher`
 ///   + `teacher_model_override`).
+/// * `home` — active instance root used for its model catalog.
 /// * `authorizer` — the live per-leaf cost/permission boundary inherited from
 ///   the calling chat or channel turn.
 /// * `writer` — optional WAL writer (absent in unit tests / dry-run callers).
@@ -92,6 +93,7 @@ pub async fn try_teacher_escalation(
     system: Option<&str>,
     provider_name: &str,
     config: &crate::config::FreedomConfig,
+    home: &std::path::Path,
     authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     writer: Option<&WalWriterHandle>,
     ts: i64,
@@ -132,7 +134,7 @@ pub async fn try_teacher_escalation(
 
     // ── Build the teacher provider ─────────────────────────────────────────
     // from_config_for_teacher returns Err if teacher_provider is local (guard).
-    let teacher = crate::providers::from_config_for_teacher(config).await?;
+    let teacher = crate::providers::from_config_for_teacher_at(config, home).await?;
     let teacher_name = teacher.name();
 
     // ── ODY-18 anti-injection: fence the local output ─────────────────────
@@ -157,13 +159,19 @@ pub async fn try_teacher_escalation(
             .unwrap_or_default()
     );
 
-    // Override model if the operator specified one.
-    let model_override = config.refusal_recovery.teacher_model_override.clone();
+    // Resolve an explicit teacher override through the global alias map and
+    // the concrete teacher adapter before cost authorization. With no override,
+    // bind the already-built teacher's canonical default.
+    let teacher_model = crate::providers::resolve_configured_request_model_for_wire(
+        config,
+        teacher.as_ref(),
+        config.refusal_recovery.teacher_model_override.as_deref(),
+    )?;
 
     let teacher_req = crate::providers::Request {
         prompt: original_prompt.to_string(),
         system: Some(teacher_system),
-        model: model_override,
+        model: Some(teacher_model),
         ..Default::default()
     };
 

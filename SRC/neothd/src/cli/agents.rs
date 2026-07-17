@@ -146,7 +146,7 @@ async fn run_fan_out(
     let loaded = crate::sub_agents::load_all(agent_dir)
         .await
         .with_context(|| format!("load agents from {}", agent_dir.display()))?;
-    let selected: Vec<SubAgent> = agent_names
+    let mut selected: Vec<SubAgent> = agent_names
         .iter()
         .map(|name| {
             loaded
@@ -171,18 +171,15 @@ async fn run_fan_out(
         crate::providers::fallback_chain_from_config(&config, &neoth_home, Some(writer.clone()))
             .await
             .context("build sub-agent provider")?;
-    let default_model = config
-        .inference
-        .slot_for(crate::config::inference::HemisphereRole::Left)
-        .model
-        .clone()
-        .or_else(|| config.provider_model.clone());
+    canonicalize_agent_models(&config, raw_provider.as_ref(), &mut selected)?;
+    let default_model = crate::providers::provider_default_wire_model(raw_provider.as_ref());
     let provider = Arc::new(
         crate::providers::cost_authorization::AuthorizedProvider::from_box(
             raw_provider,
             crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                 config.autonomy_policy(),
                 Some(writer.clone()),
+                config.tokens.max_per_request,
             ),
             default_model,
             "sub_agents.fan_out",
@@ -239,6 +236,26 @@ async fn run_fan_out(
     let _ = writer_join.await;
     let (record, path) = record_result?;
     render_run(&record, &path, output)
+}
+
+/// Agent TOML is a second model-selection surface after `freedom.yaml`.
+/// Normalize it before the worker is built so both the primary answer and its
+/// QA pass carry the exact same global-alias- and adapter-resolved wire model.
+fn canonicalize_agent_models(
+    config: &FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    agents: &mut [SubAgent],
+) -> Result<()> {
+    for agent in agents {
+        if agent.model.is_some() {
+            agent.model = Some(crate::providers::resolve_configured_request_model_for_wire(
+                config,
+                provider,
+                agent.model.as_deref(),
+            )?);
+        }
+    }
+    Ok(())
 }
 
 fn render_run(
@@ -469,6 +486,27 @@ fn render_show(name: &str, rows: &[AgentRow<'_>], output: &OutputFormat) -> Resu
 mod tests {
     use super::*;
 
+    struct AliasProvider;
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for AliasProvider {
+        fn name(&self) -> &'static str {
+            "alias_test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("wire:default")
+        }
+
+        fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+            if requested_model.starts_with("wire:") {
+                requested_model.to_owned()
+            } else {
+                format!("wire:{requested_model}")
+            }
+        }
+    }
+
     fn fake(name: &str, desc: &str) -> SubAgent {
         SubAgent {
             name: name.into(),
@@ -507,6 +545,24 @@ mod tests {
         // Sorted; helper is operator, planner is builtin
         assert_eq!(rows[0].source, "operator");
         assert_eq!(rows[1].source, "builtin");
+    }
+
+    #[test]
+    fn agent_models_resolve_global_alias_then_provider_wire_identity() {
+        let mut config = FreedomConfig::default();
+        config
+            .models_aliases
+            .insert("@agent".into(), "provider-native".into());
+        let mut agents = vec![fake("explicit", "e"), fake("default", "d")];
+        agents[0].model = Some("@agent".into());
+
+        canonicalize_agent_models(&config, &AliasProvider, &mut agents).unwrap();
+
+        assert_eq!(agents[0].model.as_deref(), Some("wire:provider-native"));
+        assert_eq!(
+            agents[1].model, None,
+            "unset models inherit the wrapper default"
+        );
     }
 
     #[test]

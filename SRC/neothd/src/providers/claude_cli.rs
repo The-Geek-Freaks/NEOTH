@@ -636,7 +636,7 @@ fn inject_or_override(env: &mut Vec<(String, String)>, key: &str, value: &str) {
 /// translates it because some operator configs still reference the
 /// alias + claude-cli rejects unknown model names. Pure mapping —
 /// unknown inputs pass through unchanged.
-pub(super) fn normalise_model(model: &str) -> String {
+pub(crate) fn normalise_model(model: &str) -> String {
     match model {
         "opusplan" | "opus-plan" => "claude-opus-4-7[1m]".to_string(),
         other => other.to_string(),
@@ -679,7 +679,7 @@ impl Provider for ClaudeCliAdapter {
     async fn complete_raw(
         &self,
         mut req: Request,
-        _permit: &ProviderDispatchPermit,
+        permit: &ProviderDispatchPermit,
     ) -> Result<Completion> {
         self.canonicalize_request_model(&mut req);
         // GR-04: circuit breaker — same pattern as openai_api. Note
@@ -707,6 +707,7 @@ impl Provider for ClaudeCliAdapter {
                                 &binary,
                                 &model_default,
                                 req,
+                                permit,
                                 idle_timeout_secs,
                                 hard_timeout_secs,
                                 resume_session_id.clone(),
@@ -1095,6 +1096,7 @@ async fn complete_tmux_uncached(
     binary: &str,
     model_default: &str,
     req: Request,
+    permit: &ProviderDispatchPermit,
     idle_timeout_secs: u64,
     hard_timeout_secs: u64,
     resume_session_id: Option<String>,
@@ -1131,6 +1133,7 @@ async fn complete_tmux_uncached(
     // the warm pane is a single serial conversation, so concurrent callers
     // already queue on this lock regardless of retry.
     let mut attempt: u32 = 0;
+    let mut retry_authorization_pending = false;
     let response = loop {
         // Repair stale slot: tmux may have lost the session (operator
         // killed it, OS OOM, server restart). Detect + clear so the
@@ -1171,6 +1174,17 @@ async fn complete_tmux_uncached(
             // the first send against the splash redraw.
             tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
             *guard = Some(session);
+        }
+
+        // Session repair and backoff do not spend or reserve a provider leaf.
+        // Mint the next 0x20 only after the transport is ready and immediately
+        // before the next real pane send.
+        if retry_authorization_pending {
+            permit
+                .begin_retry_attempt()
+                .await
+                .context("authorize exact claude_cli retry attempt")?;
+            retry_authorization_pending = false;
         }
 
         let send_result = {
@@ -1251,6 +1265,24 @@ async fn complete_tmux_uncached(
                 ));
             }
             TmuxRetryPlan::Retry(step) => {
+                let retry_reason = match step.class {
+                    super::claude_retry::RetryClass::EmptyStdout => {
+                        super::ProviderRetryReason::EmptyStdout
+                    }
+                    super::claude_retry::RetryClass::SessionCollision => {
+                        super::ProviderRetryReason::SessionCollision
+                    }
+                    super::claude_retry::RetryClass::Transient => {
+                        super::ProviderRetryReason::Transient
+                    }
+                    super::claude_retry::RetryClass::Auth => {
+                        unreachable!("authentication failures must never enter the retry arm")
+                    }
+                };
+                permit
+                    .finish_attempt_for_retry(retry_reason)
+                    .await
+                    .context("close failed claude_cli attempt before retry")?;
                 warn!(
                     class = step.class.as_str(),
                     attempt = attempt + 1,
@@ -1269,6 +1301,7 @@ async fn complete_tmux_uncached(
                 }
                 tokio::time::sleep(step.sleep).await;
                 attempt += 1;
+                retry_authorization_pending = true;
                 continue;
             }
         }

@@ -451,13 +451,20 @@ pub async fn run_companion_server(
         .local_addr()
         .unwrap_or(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), state.port));
     info!(addr = %local_addr, "companion server listening (GOLD-ADAPT-ODY-24)");
+    let mut connections = tokio::task::JoinSet::new();
 
     loop {
         let accept = tokio::select! {
             biased;
             _ = shutdown.notified() => {
-                info!("companion: shutdown signal received; draining");
+                info!("companion: shutdown signal received; stopping connections");
                 break;
+            }
+            Some(result) = connections.join_next(), if !connections.is_empty() => {
+                if let Err(error) = result {
+                    warn!(%error, "companion: connection task failed");
+                }
+                continue;
             }
             res = listener.accept() => res,
         };
@@ -478,7 +485,7 @@ pub async fn run_companion_server(
         }
 
         let state_for_conn = Arc::clone(&state);
-        tokio::spawn(async move {
+        connections.spawn(async move {
             let io = TokioIo::new(stream);
             let svc = service_fn(move |req| {
                 let s = Arc::clone(&state_for_conn);
@@ -489,6 +496,11 @@ pub async fn run_companion_server(
             }
         });
     }
+
+    // HTTP/1 keep-alive connections may otherwise outlive the accept loop and
+    // retain CompanionState's WAL sender forever. Abort and await every
+    // connection before the daemon starts draining the WAL writer.
+    connections.shutdown().await;
 }
 
 // ── Spawn helper ─────────────────────────────────────────────────────────────
@@ -1003,6 +1015,50 @@ mod tests {
         // Return `dir` so it isn't dropped (and the temp dir deleted) while the
         // writer task is still open.
         (handle, join, dir)
+    }
+
+    #[tokio::test]
+    async fn shutdown_aborts_idle_connection_before_wal_drain() {
+        use tokio::io::AsyncWriteExt;
+
+        let shutdown = Arc::new(Notify::new());
+        let (writer, wal_join, _wal_dir) = temp_writer();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let state = Arc::new(CompanionState::new(writer.clone(), port));
+        let server = tokio::spawn(run_companion_server(
+            listener,
+            Arc::clone(&state),
+            Arc::clone(&shutdown),
+        ));
+
+        let mut idle = tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .unwrap();
+        idle.write_all(b"GET /api/v1/companion/pair HTTP/1.1\r\nHost: localhost\r\n")
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while Arc::strong_count(&state) < 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("server never accepted the idle connection");
+
+        shutdown.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .expect("companion server did not stop")
+            .expect("companion server task panicked");
+        drop(state);
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(3), wal_join)
+            .await
+            .expect("idle connection retained CompanionState's WAL sender")
+            .expect("WAL writer task panicked");
+
+        drop(idle);
     }
 
     #[tokio::test]

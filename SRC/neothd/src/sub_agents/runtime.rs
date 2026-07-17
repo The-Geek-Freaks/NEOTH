@@ -453,6 +453,7 @@ fn validate_run_id(run_id: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -463,6 +464,7 @@ mod tests {
 
     struct QaScriptProvider {
         calls: AtomicUsize,
+        request_models: Mutex<Vec<(bool, Option<String>)>>,
         malformed: bool,
         always_fail: bool,
         fail_primary_system: Option<String>,
@@ -496,6 +498,10 @@ mod tests {
                 .system
                 .as_deref()
                 .is_some_and(|system| system.contains("strict QA verifier"));
+            self.request_models
+                .lock()
+                .unwrap()
+                .push((is_qa, req.model.clone()));
             if !is_qa
                 && self
                     .fail_primary_system
@@ -581,6 +587,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let raw = Arc::new(QaScriptProvider {
             calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: false,
             fail_primary_system: None,
@@ -601,6 +608,16 @@ mod tests {
         .unwrap();
         assert_eq!(report.pass_count, 2);
         assert_eq!(raw.calls.load(Ordering::SeqCst), 4);
+        let request_models = raw.request_models.lock().unwrap();
+        assert_eq!(request_models.iter().filter(|(is_qa, _)| !is_qa).count(), 2);
+        assert_eq!(request_models.iter().filter(|(is_qa, _)| *is_qa).count(), 2);
+        assert!(
+            request_models
+                .iter()
+                .all(|(_, model)| model.as_deref() == Some("wire-model-v1")),
+            "primary and QA requests must use the same canonical agent model"
+        );
+        drop(request_models);
         assert!(report.results.iter().all(|result| {
             result.provider_calls.len() == 2
                 && result
@@ -615,6 +632,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let raw = Arc::new(QaScriptProvider {
             calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: false,
             fail_primary_system: Some("FAIL_ME".into()),
@@ -643,6 +661,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let raw = Arc::new(QaScriptProvider {
             calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
             malformed: true,
             always_fail: false,
             fail_primary_system: None,
@@ -666,6 +685,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let raw = Arc::new(QaScriptProvider {
             calls: AtomicUsize::new(0),
+            request_models: Mutex::new(Vec::new()),
             malformed: false,
             always_fail: true,
             fail_primary_system: None,

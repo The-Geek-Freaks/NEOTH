@@ -229,7 +229,9 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // so WAL audit frames are skipped here (wal=None). The inner provider retains
     // the same identity for callers — only the prompt is modified in-place.
     let provider: Box<dyn providers::Provider> = if config.tokens.history_compaction_enabled {
-        let utility = providers::from_config_for_utility(&config).await.ok();
+        let utility = providers::from_config_for_utility_at(&config, &neoth_home)
+            .await
+            .ok();
         providers::compactor::CompactingProvider::from_config(
             provider,
             utility,
@@ -257,6 +259,10 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
 /// later phases still consume them.
 struct PromptBundle {
     combined_system: Option<String>,
+    /// Exact typed A-E/Conductor representation of `combined_system` plus the
+    /// single user-message E block.  This survives hooks, slash/agent routing
+    /// and output-preset assembly until the final provider Request is built.
+    budget_items: Vec<crate::tokens::budget::BlockItem>,
     skill_tool_allowlist: Option<Vec<String>>,
     /// GOLD-ADAPT-PWF-01: SHA-256 hex of `task_plan.md` at injection time,
     /// or `None` when no plan file was present or the active skill is not
@@ -278,6 +284,392 @@ struct PromptBundle {
     /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
     /// it to `req.thinking_budget` before the provider spawn.
     resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
+}
+
+#[derive(Debug)]
+pub(super) struct BudgetedProviderRequest {
+    pub(super) prompt: String,
+    pub(super) system: Option<String>,
+    pub(super) prompt_bundle_hash: String,
+    pub(super) prompt_token_estimate: u32,
+    pub(super) effective_cap: u32,
+}
+
+fn route_wire_model(
+    config: &FreedomConfig,
+    provider_name: &str,
+    model: Option<&str>,
+    home: Option<&std::path::Path>,
+) -> String {
+    let configured = model
+        .map(|id| config.resolve_model_alias(id).to_owned())
+        .or_else(|| {
+            let role = if provider_name == "anthropic_api" {
+                crate::providers::model_roles::ModelRole::Balanced
+            } else {
+                crate::providers::model_roles::ModelRole::Flagship
+            };
+            let catalog_model = matches!(
+                provider_name,
+                "claude_cli" | "openai_api" | "gemini_api" | "cohere_api" | "copilot_api"
+            )
+            .then(|| {
+                home.and_then(|home| {
+                    crate::providers::catalog_flagship_model_at(home, provider_name)
+                })
+            })
+            .flatten();
+            catalog_model.or_else(|| {
+                crate::providers::model_roles::default_table()
+                    .resolve(provider_name, role)
+                    .map(str::to_owned)
+            })
+        })
+        .or_else(|| {
+            (provider_name == "local_ollama")
+                .then(|| crate::providers::ollama_api::DEFAULT_MODEL.to_owned())
+        })
+        .unwrap_or_else(|| "provider_default".to_owned());
+    match provider_name {
+        // Claude CLI rewrites these legacy aliases immediately before the
+        // transport. Route budgeting must use that exact same wire id or the
+        // model-window lookup and envelope reserve can both be bypassed.
+        "claude_cli" => crate::providers::claude_cli::normalise_model(&configured),
+        _ => configured,
+    }
+}
+
+fn route_primary_equivalent_cap(
+    config: &FreedomConfig,
+    provider_name: &str,
+    model: Option<&str>,
+    primary_non_content: u32,
+    home: Option<&std::path::Path>,
+) -> u32 {
+    let model = route_wire_model(config, provider_name, model, home);
+    let leaf_cap =
+        crate::tokens::budget::effective_cap(provider_name, &model, config.tokens.max_per_request);
+    let leaf_non_content = crate::providers::token_cap::request_non_content_token_upper_bound(
+        &crate::providers::Request {
+            model: Some(model),
+            ..Default::default()
+        },
+    );
+
+    // Express every leaf as the cap a request carrying the primary model name
+    // may use while still fitting this route.  Merely taking the minimum model
+    // window is insufficient: fallback replaces `Request.model`, and a longer
+    // wire id consumes part of that same window.
+    leaf_cap
+        .saturating_sub(leaf_non_content)
+        .saturating_add(primary_non_content)
+}
+
+fn include_route_slot_cap(
+    config: &FreedomConfig,
+    cap: &mut u32,
+    slot: &crate::config::inference::HemisphereSlot,
+    primary_provider_name: &str,
+    primary_model: Option<&str>,
+    primary_non_content: u32,
+    home: Option<&std::path::Path>,
+) {
+    let (provider_name, model) = match slot.provider {
+        Some(provider) => (provider.as_str(), slot.model.as_deref()),
+        None => (primary_provider_name, primary_model),
+    };
+    *cap = (*cap).min(route_primary_equivalent_cap(
+        config,
+        provider_name,
+        model,
+        primary_non_content,
+        home,
+    ));
+}
+
+/// Resolve the primary-equivalent request cap that is safe for every reachable
+/// leaf.  This accounts for both the model window and each exact wire model
+/// name; fallback swaps the model field after finalization, so a longer route
+/// id must reduce content capacity before optional Block-D context is retained.
+pub(super) fn routing_safe_effective_cap(
+    config: &FreedomConfig,
+    primary_provider_name: &str,
+    primary_model: Option<&str>,
+) -> u32 {
+    routing_safe_effective_cap_inner(config, primary_provider_name, primary_model, None)
+}
+
+pub(super) fn routing_safe_effective_cap_at(
+    config: &FreedomConfig,
+    primary_provider_name: &str,
+    primary_model: Option<&str>,
+    home: &std::path::Path,
+) -> u32 {
+    routing_safe_effective_cap_inner(config, primary_provider_name, primary_model, Some(home))
+}
+
+fn routing_safe_effective_cap_inner(
+    config: &FreedomConfig,
+    primary_provider_name: &str,
+    primary_model: Option<&str>,
+    home: Option<&std::path::Path>,
+) -> u32 {
+    use crate::config::inference::HemisphereRole;
+
+    let primary_model = route_wire_model(config, primary_provider_name, primary_model, home);
+    let primary_non_content = crate::providers::token_cap::request_non_content_token_upper_bound(
+        &crate::providers::Request {
+            model: Some(primary_model.clone()),
+            ..Default::default()
+        },
+    );
+    let mut cap = route_primary_equivalent_cap(
+        config,
+        primary_provider_name,
+        Some(&primary_model),
+        primary_non_content,
+        home,
+    );
+
+    // Runtime first drops empty/unconsented/unbuildable slots and only then
+    // applies `max_hops`. Any configured suffix can therefore move into a
+    // reachable position. Without constructing the chain twice, the exact
+    // safe set is every configured slot whenever at least one hop is allowed.
+    if config.fallback.max_hops > 0 {
+        for slot in &config.fallback.chain {
+            include_route_slot_cap(
+                config,
+                &mut cap,
+                slot,
+                primary_provider_name,
+                Some(&primary_model),
+                primary_non_content,
+                home,
+            );
+        }
+    }
+
+    let council_enabled =
+        !config.council.disabled.unwrap_or(false) && !config.council.mode.is_single();
+    if !council_enabled {
+        return cap;
+    }
+
+    let roles = [
+        HemisphereRole::Left,
+        HemisphereRole::Right,
+        HemisphereRole::Cerebellum,
+    ];
+    // An empty Council slot delegates to `from_config(config)`, whose model is
+    // the configured provider default — not a per-turn CLI/skill override on
+    // the primary request.
+    let configured_primary_provider = config
+        .provider_kind
+        .map(crate::cli::init::ProviderKind::as_provider_id)
+        .filter(|provider| *provider != "none")
+        .unwrap_or(primary_provider_name);
+    let configured_primary_model = config.provider_model.as_deref();
+    for role in roles {
+        include_route_slot_cap(
+            config,
+            &mut cap,
+            config.inference.slot_for(role),
+            configured_primary_provider,
+            configured_primary_model,
+            primary_non_content,
+            home,
+        );
+    }
+
+    if config.inference.hemisphere_council_depth.get() > 1 {
+        for outer_role in roles {
+            for inner_role in roles {
+                include_route_slot_cap(
+                    config,
+                    &mut cap,
+                    config.inference.slot_for_sub(outer_role, inner_role),
+                    configured_primary_provider,
+                    configured_primary_model,
+                    primary_non_content,
+                    home,
+                );
+            }
+        }
+    }
+
+    cap
+}
+
+fn prompt_bundle_hash_for_items(items: &[crate::tokens::budget::BlockItem]) -> String {
+    use crate::skills::versioning::{BundleBlock, BundleBlockEntry};
+    use crate::tokens::budget::Block;
+
+    let entries: Vec<BundleBlockEntry<'_>> = items
+        .iter()
+        .map(|item| BundleBlockEntry {
+            block: match item.block {
+                Block::A => BundleBlock::A,
+                Block::B => BundleBlock::B,
+                Block::C => BundleBlock::C,
+                Block::D => BundleBlock::D,
+                Block::E => BundleBlock::E,
+                Block::Conductor => BundleBlock::Conductor,
+            },
+            content: &item.content,
+        })
+        .collect();
+    crate::skills::versioning::prompt_bundle_hash_hex(&entries)
+}
+
+/// Apply the last two dispatch-time prompt mutations (output preset + fixed
+/// preambles), enforce the effective model cap against the real typed bundle,
+/// and render the exact Request pair.  No provider path may assemble additional
+/// prompt bytes after this boundary.
+pub(super) async fn finalize_provider_request(
+    mut items: Vec<crate::tokens::budget::BlockItem>,
+    preflight_prompt: &str,
+    preflight_system: Option<&str>,
+    config: &FreedomConfig,
+    home: &std::path::Path,
+    provider_name: &str,
+    effective_model: Option<&str>,
+    route_cap: Option<u32>,
+    writer: &crate::wal::writer::WalWriterHandle,
+) -> Result<BudgetedProviderRequest> {
+    use crate::tokens::budget::{Block, BlockItem};
+
+    let (typed_prompt, typed_system) =
+        crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        typed_prompt == preflight_prompt && typed_system.as_deref() == preflight_system,
+        "typed prompt blocks do not match preflight output; provider dispatch refused"
+    );
+
+    let presets = crate::config::presets::load(home)
+        .context("load active output-format preset before provider dispatch")?;
+    let final_prompt = match presets
+        .active
+        .as_ref()
+        .and_then(|name| presets.presets.get(name))
+    {
+        Some(preset) => {
+            crate::config::presets::wrap_user_prompt(preflight_prompt, preset).into_owned()
+        }
+        None => preflight_prompt.to_owned(),
+    };
+    crate::tokens::budget::replace_user_message(&mut items, final_prompt)
+        .map_err(anyhow::Error::msg)?;
+
+    if !items.iter().any(|item| {
+        item.block != Block::E && item.content.contains("## Core principles (always apply)")
+    }) {
+        items.insert(
+            0,
+            BlockItem::new(
+                Block::B,
+                crate::providers::context_guards::code_discipline_preamble().trim_end(),
+            ),
+        );
+    }
+    if let Some(protocol) = crate::cli::clarify_chat::protocol_block()
+        && !items
+            .iter()
+            .any(|item| item.block != Block::E && item.content == protocol)
+    {
+        let e_index = items
+            .iter()
+            .position(|item| item.block == Block::E)
+            .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
+        items.insert(e_index, BlockItem::new(Block::B, protocol));
+    }
+
+    let primary_cap = crate::tokens::budget::effective_cap(
+        provider_name,
+        effective_model.unwrap_or("provider_default"),
+        config.tokens.max_per_request,
+    );
+    let cap = route_cap.map_or(primary_cap, |candidate| candidate.min(primary_cap));
+    let system_item_count = items.iter().filter(|item| item.block != Block::E).count();
+    let separator_reserve = system_item_count
+        .saturating_sub(1)
+        .saturating_mul(2)
+        .min(u32::MAX as usize) as u32;
+    let envelope_reserve = crate::providers::token_cap::request_non_content_token_upper_bound(
+        &crate::providers::Request {
+            prompt: String::new(),
+            system: (system_item_count > 0).then(String::new),
+            model: effective_model.map(str::to_owned),
+            ..Default::default()
+        },
+    )
+    .saturating_add(separator_reserve);
+    let content_cap = cap.saturating_sub(envelope_reserve);
+    let hash_before = prompt_bundle_hash_for_items(&items);
+    let detail = crate::tokens::budget::enforce_budget_to_fit(&mut items, content_cap);
+    if let Some(detail) = detail.as_ref() {
+        warn!(
+            effective_request_cap = cap,
+            content_cap = detail.cap,
+            envelope_reserve,
+            original_total = detail.original_total,
+            new_total = detail.new_total,
+            dropped_d = detail.dropped_d_count,
+            dropped_c = detail.dropped_c_count,
+            conductor_truncated = detail.conductor_truncated,
+            "final provider request exceeded token cap; typed degradation applied"
+        );
+        let budget_payload = serde_json::to_vec(&serde_json::json!({
+            "cap": cap,
+            "content_cap": detail.cap,
+            "envelope_reserve": envelope_reserve,
+            "original_total": detail.original_total,
+            "new_total": detail.new_total,
+            "dropped_d_count": detail.dropped_d_count,
+            "dropped_c_count": detail.dropped_c_count,
+            "conductor_truncated": detail.conductor_truncated,
+            "prompt_bundle_hash": hash_before,
+            "ts_unix": now_unix(),
+        }))
+        .context("serialize BUDGET_EXCEEDED audit")?;
+        let budget_header = crate::wal::make_header(EVENT_TYPE_BUDGET_EXCEEDED, &budget_payload);
+        if let Err(error) = writer.append(budget_header, budget_payload).await {
+            warn!(error = %error, "BUDGET_EXCEEDED WAL emit failed (non-fatal)");
+        }
+    }
+
+    let (prompt, system) =
+        crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
+    let prompt_bundle_hash = prompt_bundle_hash_for_items(&items);
+
+    // Validate each stored item estimate, then account the exact rendered
+    // system string (including inter-block separators).  The latter is the
+    // authoritative request estimate and can be slightly higher than the sum
+    // used by per-block degradation because of `\n\n` boundaries.
+    anyhow::ensure!(
+        items.iter().all(|item| {
+            item.tokens == crate::tokens::budget::count_tokens_upper_bound(&item.content)
+        }),
+        "token-budget accounting drifted from final provider bytes"
+    );
+    let prompt_token_estimate =
+        crate::providers::token_cap::request_token_upper_bound(&crate::providers::Request {
+            prompt: prompt.clone(),
+            system: system.clone(),
+            model: effective_model.map(str::to_owned),
+            ..Default::default()
+        });
+    anyhow::ensure!(
+        prompt_token_estimate <= cap,
+        "final provider request has a conservative input-token upper bound of {prompt_token_estimate}, above the effective cap {cap}; protected A/B/E content cannot be degraded safely"
+    );
+
+    Ok(BudgetedProviderRequest {
+        prompt,
+        system,
+        prompt_bundle_hash,
+        prompt_token_estimate,
+        effective_cap: cap,
+    })
 }
 
 /// Stable, sorted MCP server ids that define this turn's configured scope.
@@ -1075,15 +1467,40 @@ async fn build_prompt_bundle(
     let deep_link_block = args
         .stream
         .then(|| crate::cli::deep_links::DEEP_LINK_PROMPT.to_string());
-    let combined_system = [
-        enriched.system,
-        guidance_block,
-        recall_block,
-        deep_link_block,
-    ]
-    .into_iter()
-    .flatten()
-    .reduce(|acc, next| format!("{acc}\n\n{next}"));
+    // Preserve each layer's typed budget identity instead of folding to a
+    // string-only value.  EnrichedRequest ends with the sole E item; append
+    // chat-only D/A layers immediately before it, then render the legacy string
+    // from that same representation so the two views cannot drift.
+    let mut budget_items = enriched.budget_items;
+    let user_item = budget_items
+        .pop()
+        .filter(|item| item.block == crate::tokens::budget::Block::E)
+        .ok_or_else(|| anyhow::anyhow!("prompt assembler lost the typed Block E item"))?;
+    if let Some(guidance) = guidance_block {
+        let mut item =
+            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, guidance);
+        item.ts_ns = 1;
+        budget_items.push(item);
+    }
+    if let Some(recall) = recall_block {
+        let mut item =
+            crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, recall);
+        item.ts_ns = 2;
+        budget_items.push(item);
+    }
+    if let Some(deep_link) = deep_link_block {
+        budget_items.push(crate::tokens::budget::BlockItem::new(
+            crate::tokens::budget::Block::A,
+            deep_link,
+        ));
+    }
+    budget_items.push(user_item);
+    let (typed_prompt, combined_system) =
+        crate::tokens::budget::render_request(&budget_items).map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        typed_prompt == prompt,
+        "typed prompt bundle diverged from the operator message"
+    );
     // used_skill_id is plumbed through for any downstream audit
     // consumers; the existing chat path consumes `combined_system`
     // the same way it did before the helper extraction.
@@ -1113,6 +1530,7 @@ async fn build_prompt_bundle(
     Ok((
         PromptBundle {
             combined_system,
+            budget_items,
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
@@ -1140,7 +1558,6 @@ enum PreflightOutcome {
     Continue {
         writer: crate::wal::writer::WalWriterHandle,
         writer_join: tokio::task::JoinHandle<()>,
-        predicted_cost: crate::providers::cost::CostEstimate,
         review_context: Option<(String, String)>,
         final_prompt: String,
         final_system: Option<String>,
@@ -1167,6 +1584,10 @@ enum PreflightOutcome {
         /// Threaded to `run_post_reply_pipelines` where `restore_blocks`
         /// re-injects original content before WAL write + recall.
         pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
+        /// Typed request blocks after every preflight prompt/system rewrite.
+        /// Output-preset and fixed-preamble additions happen once more at the
+        /// final budget boundary immediately before Request construction.
+        budget_items: Vec<crate::tokens::budget::BlockItem>,
     },
 }
 
@@ -1182,12 +1603,25 @@ fn resolve_provider_call_model(
     (model.map(str::to_string), source.as_str())
 }
 
+/// Apply the operator's global one-level alias map and then the selected
+/// provider's adapter-specific canonicalization. Both CLI and channel request
+/// assembly use this before token budgeting, and copy the returned value into
+/// `Request.model` unchanged.
+pub(super) fn resolve_provider_call_wire_model(
+    config: &FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+    requested_model: Option<&str>,
+) -> Result<String> {
+    crate::providers::resolve_configured_request_model_for_wire(config, provider, requested_model)
+}
+
 // GOLD-ADAPT-PWF-01 adds `plan_attest_hash` as a 9th parameter;
 // GOLD-ADAPT-OH-13 adds `agent_raw_layers` as a 10th. Suppress the lint
 // rather than refactoring into a context struct (separate concern).
 #[allow(clippy::too_many_arguments)]
 async fn enforce_preflight(
     combined_system: Option<String>,
+    budget_items: Vec<crate::tokens::budget::BlockItem>,
     prompt: String,
     provider: &dyn crate::providers::Provider,
     args: &ChatArgs,
@@ -1203,6 +1637,10 @@ async fn enforce_preflight(
     // B22 — skill model is already resolved by build_prompt_bundle. It must be
     // present before PaidProviderCall authorization, not merged afterwards.
     skill_model_for_cost: Option<String>,
+    // Exact detached requests carry the same per-skill reasoning control as a
+    // foreground dispatch instead of reconstructing a weaker raw request in
+    // the child process.
+    skill_effort_for_request: Option<crate::providers::effort_override::EffortBudget>,
     // B22-TWEAKS-MODEL-01 — tweaks.model_default propagated from the chat
     // boundary (already loaded fail-loud there) into the full authorization
     // precedence chain.
@@ -1236,7 +1674,7 @@ async fn enforce_preflight(
                     omit_flags: agent.to_omit_flags(),
                 })
         });
-    let (effective_model, model_source) = resolve_provider_call_model(
+    let (requested_model, model_source) = resolve_provider_call_model(
         agent_dispatch
             .as_ref()
             .and_then(|dispatch| dispatch.model.as_deref()),
@@ -1245,25 +1683,14 @@ async fn enforce_preflight(
         tweaks_model_for_cost.as_deref(),
         config.provider_model.as_deref(),
     );
-    let call_authorizer =
-        crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
-            config.autonomy_policy(),
-            Some(writer.clone()),
-        )
-        .with_audit_context(
-            crate::providers::cost_authorization::ProviderCallAuditContext {
-                source: Some("chat"),
-                call_type: Some("chat_preflight_round"),
-                operator_id: config.operator_id.clone(),
-                target: Some(
-                    crate::profile::runner::extract_target_label(provider.name()).to_owned(),
-                ),
-                model_source: Some(model_source),
-                cost_estimate_model: effective_model.clone(),
-                ..Default::default()
-            },
-        );
-
+    // Resolve defaults and aliases before the common finalizer. The exact same
+    // canonical model is then copied into Request.model, so model-window
+    // degradation, cost authorization, and transport cannot disagree.
+    let effective_model = Some(resolve_provider_call_wire_model(
+        config,
+        provider,
+        requested_model.as_deref(),
+    )?);
     // ── Provider quota pre-flight (H5 cascade) ─────────────────────────────
     // If a previous turn recorded a 429 and the backoff window is still
     // active, refuse the call HERE rather than paying the round-trip just
@@ -1317,8 +1744,12 @@ async fn enforce_preflight(
     //   moral_core > operator_context > preset_addendum > explicit_system >
     //   repo_context_block > skill_layer > mcp_catalogue
     // then folds guidance_block + recall_block in above that (same order as
-    // the main combined_system fold).  Returns `(agent_prompt, agent_system)`.
-    let build_agent_system = |d: &crate::sub_agents::Dispatch| -> Option<String> {
+    // the main combined_system fold). Returns the rendered system plus the
+    // typed bundle that produced it.
+    let build_agent_system = |d: &crate::sub_agents::Dispatch| -> Result<(
+        Option<String>,
+        Vec<crate::tokens::budget::BlockItem>,
+    )> {
         use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let f = &d.omit_flags;
         let enriched = build_enriched_request(EnrichmentInputs {
@@ -1364,30 +1795,41 @@ async fn enforce_preflight(
                 .as_deref()
                 .map(crate::pipeline::CommunicationProfilePrompt::presentation_only),
         });
-        // Fold guidance + recall on top (same authority order as main path),
-        // respecting the omit flags.
-        let guidance = if f.recall {
-            None
-        } else {
-            agent_raw_layers.guidance_block.as_deref()
-        };
-        let recall = if f.recall {
-            None
-        } else {
-            agent_raw_layers.recall_block.as_deref()
-        };
-        // The agent's own system prompt is always the base.
-        let agent_base = Some(d.system.as_str());
-        [agent_base, enriched.system.as_deref(), guidance, recall]
-            .into_iter()
-            .flatten()
-            .filter(|s| !s.is_empty())
-            .fold(None::<String>, |acc, layer| {
-                Some(match acc {
-                    None => layer.to_string(),
-                    Some(a) => format!("{a}\n\n{layer}"),
-                })
-            })
+        let mut items = enriched.budget_items;
+        let user_item = items
+            .pop()
+            .filter(|item| item.block == crate::tokens::budget::Block::E)
+            .ok_or_else(|| anyhow::anyhow!("agent prompt assembler lost Block E"))?;
+        // The agent's own system prompt is always the protected base.
+        if !d.system.trim().is_empty() {
+            items.insert(
+                0,
+                crate::tokens::budget::BlockItem::new(
+                    crate::tokens::budget::Block::B,
+                    d.system.trim(),
+                ),
+            );
+        }
+        if !f.recall {
+            if let Some(guidance) = agent_raw_layers.guidance_block.as_deref() {
+                let mut item = crate::tokens::budget::BlockItem::new(
+                    crate::tokens::budget::Block::D,
+                    guidance,
+                );
+                item.ts_ns = 1;
+                items.push(item);
+            }
+            if let Some(recall) = agent_raw_layers.recall_block.as_deref() {
+                let mut item =
+                    crate::tokens::budget::BlockItem::new(crate::tokens::budget::Block::D, recall);
+                item.ts_ns = 2;
+                items.push(item);
+            }
+        }
+        items.push(user_item);
+        let (_, system) =
+            crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
+        Ok((system, items))
     };
 
     // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
@@ -1403,7 +1845,7 @@ async fn enforce_preflight(
     //   (b) pass the agent denylist slice into run_mcp_dispatch_loop.
     let mut agent_allowed_tools: Vec<String> = vec![];
     let mut agent_disallowed_tools: Vec<String> = vec![];
-    let (final_prompt, final_system) = if let Some(d) = agent_dispatch {
+    let (final_prompt, final_system, mut final_budget_items) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
         // GOLD-CCPARITY-SA-DENY-01: capture tool lists BEFORE d is moved.
         agent_allowed_tools = d.allowed_tools.clone();
@@ -1440,8 +1882,8 @@ async fn enforce_preflight(
                 }
             }
         }
-        let agent_system = build_agent_system(&d);
-        (d.prompt, agent_system)
+        let (agent_system, agent_budget_items) = build_agent_system(&d)?;
+        (d.prompt, agent_system, agent_budget_items)
     } else {
         match crate::slash::parse_invocation(&prompt) {
             crate::slash::Invocation::Command {
@@ -1470,10 +1912,34 @@ async fn enforce_preflight(
                                 topic = topic,
                                 "slash /research: starting deep-research engine"
                             );
+                            // Keep the writer-owning authorizer scoped to the
+                            // one branch that needs it. Preflight abort paths
+                            // can then drain their WAL without a hidden sender
+                            // clone keeping the channel open forever.
+                            let research_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                                config.autonomy_policy(),
+                                Some(writer.clone()),
+                                config.tokens.max_per_request,
+                            )
+                            .with_usage_home(home.to_path_buf())
+                            .with_audit_context(
+                                crate::providers::cost_authorization::ProviderCallAuditContext {
+                                    source: Some("chat"),
+                                    call_type: Some("deep_research_round"),
+                                    operator_id: config.operator_id.clone(),
+                                    target: Some(
+                                        crate::profile::runner::extract_target_label(provider.name())
+                                            .to_owned(),
+                                    ),
+                                    model_source: Some(model_source),
+                                    cost_estimate_model: effective_model.clone(),
+                                    ..Default::default()
+                                },
+                            );
                             let research_provider =
                                 crate::providers::cost_authorization::CostAuthorizingProvider::new(
                                     provider,
-                                    call_authorizer.clone(),
+                                    research_authorizer,
                                     effective_model.clone(),
                                     "deep_research_round",
                                 );
@@ -1513,39 +1979,77 @@ async fn enforce_preflight(
                 }
 
                 // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
-                // Short-circuit before the TOML registry: spawn a headless
-                // provider call in a Tokio background task, deliver result at
-                // next idle turn. Builds a fresh provider Arc from the live
-                // config (avoids changing enforce_preflight's &dyn signature).
+                // Short-circuit before the TOML registry. CLI turns are
+                // one-shot runtimes, so a private detached worker process owns
+                // the durable job and survives after this command exits.
                 if name == "background" || name == "btw" {
                     let prompt_body = cmd_args.trim().to_string();
                     if prompt_body.is_empty() {
                         println!("Usage: /{name} <prompt>");
                     } else {
-                        match crate::providers::fallback_chain_from_config(config, home, None).await
-                        {
-                            Ok(bg_provider) => {
-                                match crate::cli::bg_session::spawn_background_session(
-                                    &name,
-                                    prompt_body,
-                                    combined_system.clone(),
-                                    config.clone(),
-                                    bg_provider.into(),
-                                    Some(&writer),
-                                    call_authorizer.clone(),
-                                )
-                                .await
-                                {
-                                    Ok(_) => println!(
-                                        "[neoth] /{name}: background session queued — \
-                                         result at next idle"
-                                    ),
-                                    Err(e) => eprintln!("/{name}: authorization failed: {e:#}"),
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("/{name}: failed to build provider: {e:#}");
-                            }
+                        let selected_config_path = args
+                            .config
+                            .clone()
+                            .unwrap_or_else(FreedomConfig::default_path);
+                        let queue_result: Result<_> = async {
+                            let mut request_items = budget_items.clone();
+                            crate::tokens::budget::replace_user_message(
+                                &mut request_items,
+                                prompt_body,
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                            let (preflight_prompt, preflight_system) =
+                                crate::tokens::budget::render_request(&request_items)
+                                    .map_err(anyhow::Error::msg)?;
+                            let route_cap = routing_safe_effective_cap_at(
+                                config,
+                                provider.name(),
+                                effective_model.as_deref(),
+                                home,
+                            );
+                            let budgeted = finalize_provider_request(
+                                request_items,
+                                &preflight_prompt,
+                                preflight_system.as_deref(),
+                                config,
+                                home,
+                                provider.name(),
+                                effective_model.as_deref(),
+                                Some(route_cap),
+                                &writer,
+                            )
+                            .await?;
+                            let thinking_budget = skill_effort_for_request
+                                .filter(|_| provider.request_controls().supports_thinking_budget())
+                                .map(crate::providers::effort_override::effort_to_tokens);
+                            let request = Request {
+                                prompt: budgeted.prompt,
+                                system: budgeted.system,
+                                model: effective_model.clone(),
+                                temperature: args.temperature,
+                                top_p: args.top_p,
+                                sampling_seed: args.sampling_seed,
+                                stop_sequences: Vec::new(),
+                                thinking_budget,
+                            };
+                            provider.validate_request_controls(&request)?;
+                            crate::cli::bg_session::spawn_background_process(
+                                &name,
+                                request,
+                                home,
+                                &selected_config_path,
+                                config.clone(),
+                                Some(&writer),
+                            )
+                            .await
+                        }
+                        .await;
+                        match queue_result {
+                            Ok(_) => println!(
+                                "[neoth] /{name}: background session queued — \
+                                 result at next idle"
+                            ),
+                            Err(e) => eprintln!("/{name}: queue failed: {e:#}"),
                         }
                     }
                     drop(writer);
@@ -1596,13 +2100,27 @@ async fn enforce_preflight(
                     }
                     let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
                     info!(slash_command = %name, "slash dispatch");
-                    (cmd_args, Some(rendered))
+                    let items = vec![
+                        crate::tokens::budget::BlockItem::new(
+                            crate::tokens::budget::Block::B,
+                            rendered.clone(),
+                        ),
+                        crate::tokens::budget::BlockItem::new(
+                            crate::tokens::budget::Block::E,
+                            cmd_args.clone(),
+                        ),
+                    ];
+                    (cmd_args, Some(rendered), items)
                 } else {
-                    (prompt.clone(), combined_system)
+                    (prompt.clone(), combined_system, budget_items.clone())
                 }
             }
-            crate::slash::Invocation::Escaped { text } => (text, combined_system),
-            crate::slash::Invocation::NotACommand => (prompt.clone(), combined_system),
+            crate::slash::Invocation::Escaped { text } => {
+                (text, combined_system, budget_items.clone())
+            }
+            crate::slash::Invocation::NotACommand => {
+                (prompt.clone(), combined_system, budget_items.clone())
+            }
         }
     };
 
@@ -1762,28 +2280,18 @@ async fn enforce_preflight(
         }
     };
 
-    // Council-trigger heuristic only. This is deliberately not an
-    // authorization: the real cost gate runs per provider round below. Use the
-    // fully hook-mutated request so even this advisory estimate is not stale.
-    let predicted_cost = {
-        let meter = crate::providers::meter::Meter::with_default_window();
-        let assembled = format!(
-            "{}\n\n{}",
-            final_system.as_deref().unwrap_or(""),
-            final_prompt
-        );
-        crate::providers::cost::predict(
-            provider.name(),
-            effective_model.as_deref().unwrap_or("provider_default"),
-            &assembled,
-            &meter,
-        )
-    };
+    crate::tokens::budget::replace_user_message(&mut final_budget_items, final_prompt.clone())
+        .map_err(anyhow::Error::msg)?;
+    let (typed_prompt, typed_system) =
+        crate::tokens::budget::render_request(&final_budget_items).map_err(anyhow::Error::msg)?;
+    anyhow::ensure!(
+        typed_prompt == final_prompt && typed_system == final_system,
+        "typed prompt blocks diverged during preflight; provider dispatch refused"
+    );
 
     Ok(PreflightOutcome::Continue {
         writer,
         writer_join,
-        predicted_cost,
         review_context,
         final_prompt,
         final_system,
@@ -1796,11 +2304,12 @@ async fn enforce_preflight(
         agent_allowed_tools,
         agent_disallowed_tools,
         pending_block_restorations,
+        budget_items: final_budget_items,
     })
 }
 
-/// GOLD-ARCH-02 phase 3 — make the provider call for one chat turn: build the
-/// Request (+ Karpathy code-discipline preamble), emit the AP-2 local-inference
+/// GOLD-ARCH-02 phase 3 — make the provider call for one chat turn from the
+/// already budgeted final Request bytes, emit the AP-2 local-inference
 /// trace pair, dispatch via the stream / council / MCP-tool-loop / direct-complete
 /// branch, release the cluster in-flight gauge, and bump the provider quota on
 /// success. Owns the WAL writer + join handle so every error path drains them
@@ -1845,7 +2354,7 @@ async fn dispatch_provider(
     quota_path: std::path::PathBuf,
     quota_tracker: Option<crate::providers::quota::QuotaTracker>,
     prompt: &str,
-    predicted_cost: &crate::providers::cost::CostEstimate,
+    request_token_cap: u32,
     mcp_servers: &crate::mcp::McpServers,
     skill_tool_allowlist: Option<Vec<String>>,
     turn_id: &str,
@@ -1870,28 +2379,17 @@ async fn dispatch_provider(
     agent_allowed_tools: Vec<String>,
     agent_disallowed_tools: Vec<String>,
 ) -> Result<DispatchOutput> {
+    // Startup prompting proves consent only at provider construction time.
+    // Re-read the durable markers at the final one-shot dispatch boundary so
+    // a concurrent `neoth consent revoke` cannot leave this invocation holding
+    // a stale capability. The live gate intentionally ignores the startup-only
+    // NEOTH_CONSENT_BYPASS escape hatch.
+    if let Err(error) = crate::consent::ensure_all_still_granted(home, config) {
+        drop(writer);
+        let _ = writer_join.await;
+        return Err(error).context("chat provider consent was revoked before dispatch");
+    }
     let provider_name = provider.name();
-    // GOLD-ADAPT-ODY-27 — wrap the user prompt with the active output-format
-    // preset's inject_prefix/suffix (per-message, NOT a system-prompt layer, so
-    // it enforces an output shape without polluting the system block). A missing
-    // registry is an empty/no-op registry; an existing malformed or unreadable
-    // registry aborts before dispatch so an active output contract cannot
-    // disappear silently. Reads the per-turn active preset so a
-    // `neoth preset use <name>` takes effect on the next turn.
-    let final_prompt = {
-        let presets = crate::config::presets::load(home)
-            .context("load active output-format preset before provider dispatch")?;
-        match presets
-            .active
-            .as_ref()
-            .and_then(|name| presets.presets.get(name))
-        {
-            Some(preset) => {
-                crate::config::presets::wrap_user_prompt(&final_prompt, preset).into_owned()
-            }
-            None => final_prompt,
-        }
-    };
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
     // than move so the LOWKEY refusal-recovery path post-reply can
@@ -1899,15 +2397,10 @@ async fn dispatch_provider(
     // Original moves were tightening Rust's borrow-checker around the
     // Request literal; the cost of the extra Option<String> clone is
     // negligible compared to the LLM round-trip about to fire.
-    // Q1 (Session 19): inject the Karpathy metacognitive
-    // preamble (think-before-coding / simplicity-first /
-    // surgical-changes) before the operator-supplied system
-    // block. Idempotent — re-entry from council debate
-    // doesn't double-inject. Per
-    // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
-    let merged_system = Some(crate::cli::clarify_chat::augment_system(
-        crate::providers::context_guards::apply_code_discipline_preamble(final_system.as_deref()),
-    ));
+    // Output-preset wrapping and fixed system preambles are already represented
+    // as typed blocks and budgeted by `finalize_provider_request`.  Adding any
+    // prompt bytes here would bypass the cap.
+    let merged_system = final_system.clone();
     // GOLD-CCPARITY-EFFORT-03: map effort only when the effective provider
     // declares a real thinking-budget wire. Other leaves keep their native
     // default and emit an explicit warning instead of receiving an unsupported
@@ -1954,6 +2447,8 @@ async fn dispatch_provider(
         // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
         thinking_budget,
     };
+    let token_capped_provider =
+        crate::providers::token_cap::TokenCappedProvider::new(provider, request_token_cap);
     // B22: every provider invocation below (direct, stream, MCP iteration,
     // loop round, refusal retry) crosses this boundary. Decorators recurse with
     // the authorizer and gate each exact final leaf immediately before dispatch.
@@ -1961,15 +2456,27 @@ async fn dispatch_provider(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
+            config.tokens.max_per_request,
         )
+        .with_usage_home(home.to_path_buf())
         .with_audit_context(provider_audit_context);
     let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
-        provider,
+        &token_capped_provider,
         call_authorizer.clone(),
         effective_model.clone(),
         "chat_provider_round",
     );
     let provider: &dyn crate::providers::Provider = &authorized_provider;
+
+    // Dispatch runs in one inner scope so every `?`, stream error and explicit
+    // failure first drops per-call state (including the stream's audit ticket).
+    // The outer error arm can then release both authorizer-held WAL senders and
+    // safely await the writer without deadlocking.
+    macro_rules! return_dispatch_error {
+        ($error:expr) => {{
+            return Err($error);
+        }};
+    }
 
     // F4/D21 — open the turn-journal sidecar + WAL 0x05 anchor for mid-turn
     // crash durability. A journal surviving on disk at next launch = this turn
@@ -2058,8 +2565,8 @@ async fn dispatch_provider(
     // MCP-dispatch branch from `outcome.tool_call_records`; empty otherwise.
     let mut mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord> = Vec::new();
 
-    let (response_text, final_input_tokens, final_output_tokens, provider_used, model_used) =
-        if args.stream {
+    let dispatch_result: Result<(String, Option<u32>, Option<u32>, String, String)> = async {
+        Ok(if args.stream {
             // B-1 follow-up (Session 13) — streaming-branch audit gap.
             // Council never fans out on the streaming path (council needs
             // sync semantics + dissent scoring across full responses).
@@ -2083,9 +2590,7 @@ async fn dispatch_provider(
             {
                 Ok(p) => Some(p),
                 Err(berr) => {
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+                    return_dispatch_error!(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                 }
             };
             let stream_call_started = std::time::Instant::now();
@@ -2101,9 +2606,7 @@ async fn dispatch_provider(
                         record_quota_exceeded(qe, &quota_path, &writer).await;
                     }
                     warn!(error = %e, "provider stream open failed");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
+                    return_dispatch_error!(e);
                 }
             };
             let mut acc = String::new();
@@ -2131,22 +2634,18 @@ async fn dispatch_provider(
                             if let Some(p) = stream_permit {
                                 p.record_failure();
                             }
-                            drop(writer);
-                            let _ = writer_join.await;
-                            anyhow::bail!(
+                            return_dispatch_error!(anyhow::anyhow!(
                                 "provider `{provider_name}` emitted a stream chunk without an authenticated response identity"
-                            );
+                            ));
                         }
                         if let Some(bound) = &response_identity {
                             if bound != &chunk.identity {
                                 if let Some(p) = stream_permit {
                                     p.record_failure();
                                 }
-                                drop(writer);
-                                let _ = writer_join.await;
-                                anyhow::bail!(
+                                return_dispatch_error!(anyhow::anyhow!(
                                     "provider `{provider_name}` changed response identity within one stream"
-                                );
+                                ));
                             }
                         } else {
                             response_identity = Some(chunk.identity.clone());
@@ -2203,9 +2702,7 @@ async fn dispatch_provider(
                             print!("{tail}");
                             let _ = std::io::stdout().flush();
                         }
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
+                        return_dispatch_error!(e);
                     }
                 }
             }
@@ -2225,9 +2722,9 @@ async fn dispatch_provider(
                 if let Some(p) = stream_permit {
                     p.record_failure();
                 }
-                drop(writer);
-                let _ = writer_join.await;
-                anyhow::bail!("provider `{provider_name}` stream ended without a final done chunk");
+                return_dispatch_error!(anyhow::anyhow!(
+                    "provider `{provider_name}` stream ended without a final done chunk"
+                ));
             }
             let response_identity = response_identity.ok_or_else(|| {
             anyhow::anyhow!(
@@ -2335,6 +2832,11 @@ async fn dispatch_provider(
             let council_disable_cfg =
                 config.council.disabled.unwrap_or(false) || council_mode_single;
             let council_disable = council_disable_env || council_disable_cfg;
+            // Derive the advisory gate from the same concrete Request and
+            // FreedomConfig generation that the hard per-leaf authorizer will
+            // receive. With an active cap, unknown/unbounded paid leaves skip
+            // before even an env-forced fan-out; the hard cap is not bypassable.
+            let council_cost = council_trigger_cost_bound_at(config, &req, home);
             // Trigger decision is computed even when not used so the WAL
             // audit (next iteration) can record "council was triggerable
             // but skipped because operator opted out".
@@ -2358,6 +2860,15 @@ async fn dispatch_provider(
                         (false, false, _) => "freedom.yaml::council.disabled=true".into(),
                     },
                 }
+            } else if let Err(error) = &council_cost {
+                tracing::warn!(
+                    error = %error,
+                    "Council cost bound unavailable under active daily cap — smart trigger skipped fail-closed"
+                );
+                crate::council::TriggerDecision::Skip {
+                    reason: "council cost bound unavailable under active daily cap — fail-closed"
+                        .into(),
+                }
             } else if council_force {
                 crate::council::TriggerDecision::Convene {
                     reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
@@ -2369,23 +2880,64 @@ async fn dispatch_provider(
                 // open), matching prior behaviour for fresh installs.
                 let now_unix_b3 = crate::council::last_ts::now_unix();
                 let secs_since = crate::council::last_ts::seconds_since_last(home, now_unix_b3);
-                let ctx = crate::council::TriggerContext {
-                    seconds_since_last_council: secs_since,
-                    remaining_budget_eur: None,
-                    estimated_single_call_eur: predicted_cost.total_eur.max(0.01),
+                let remaining_budget_usd = match config.council.daily_usd_cap {
+                    None => Ok(None),
+                    Some(cap_usd) => crate::council::daily_budget::remaining_daily_budget_usd(
+                        home,
+                        cap_usd,
+                        now_unix_b3 as i64,
+                    )
+                    .map(Some),
                 };
-                // SPEC-03b: operator-tunable thresholds from
-                // `freedom.yaml::council.trigger` (defaults reproduce the prior
-                // hardcoded policy exactly).
-                crate::council::should_convene(prompt, &ctx, &config.council.trigger.to_policy())
+                match remaining_budget_usd {
+                    Ok(remaining_budget_usd) => {
+                        let (estimated_single_call_usd, estimated_council_cost_usd) =
+                            council_cost.as_ref().copied().expect("cost checked above");
+                        let ctx = crate::council::TriggerContext {
+                            seconds_since_last_council: secs_since,
+                            remaining_budget_usd,
+                            estimated_single_call_usd,
+                            estimated_council_cost_usd,
+                        };
+                        // SPEC-03b: operator-tunable thresholds from
+                        // `freedom.yaml::council.trigger` (defaults reproduce the prior
+                        // hardcoded policy exactly).
+                        crate::council::should_convene(
+                            prompt,
+                            &ctx,
+                            &config.council.trigger.to_policy(),
+                        )
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            error = %error,
+                            "council daily-budget snapshot invalid — smart trigger skipped fail-closed"
+                        );
+                        crate::council::TriggerDecision::Skip {
+                            reason: "council daily-budget state invalid — fail-closed".into(),
+                        }
+                    }
+                }
             };
+            let council_mif_message = trigger_decision
+                .should_convene()
+                .then(|| mif_disambiguation(config, &req.prompt))
+                .flatten();
             // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
-            // convening and independent of the EUR budget gate (which is None on
-            // the local/free path). Operator-forced council bypasses it.
+            // convening and independent of the USD budget gate. Operator-forced
+            // council bypasses it.
             let council_now = crate::council::last_ts::now_unix() as i64;
             // B-25: atomic OS-locked admission — fail-closed on any I/O error.
             // Operator-forced council (council_force=true) bypasses cap entirely.
-            let (council_enable, council_cap_hit, council_deny_reason) = if council_force {
+            let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message
+                .is_some()
+            {
+                (
+                    false,
+                    false,
+                    Some("mif_conflicted_disambiguation"),
+                )
+            } else if council_force {
                 (
                     trigger_decision.should_convene(),
                     false,
@@ -2461,7 +3013,16 @@ async fn dispatch_provider(
             let autoroute_decision =
                 mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
             let use_loop = !council_enable && autoroute_decision.is_on();
-            if council_enable {
+            if let Some(response_text) = council_mif_message {
+                println!("{response_text}");
+                (
+                    response_text,
+                    None,
+                    None,
+                    "council_mif".to_string(),
+                    "deterministic".to_string(),
+                )
+            } else if council_enable {
                 info!(
                     trigger = ?trigger_decision,
                     "council convened — running 3-hemisphere debate"
@@ -2489,9 +3050,7 @@ async fn dispatch_provider(
                         // WAL-writer shutdown) rather than falling back to a
                         // single provider the way the channel path does.
                         warn!(error = %e, "council debate failed; returning error");
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
+                        return_dispatch_error!(e);
                     }
                 };
                 println!("{response_text}");
@@ -2609,12 +3168,16 @@ async fn dispatch_provider(
                     );
                     match crate::loop_engine::engine::run_loop(
                         &loop_cfg,
-                        provider,
+                        // `run_loop` owns the one authorization boundary for all
+                        // rounds. Passing the outer chat boundary here would
+                        // create a forbidden nested authorizer on round one.
+                        &token_capped_provider,
                         req.clone(),
                         &mcp_servers_for_loop,
                         &writer,
                         config,
                         call_authorizer.clone(),
+                        None,
                         // P4 — elicitation is live in loop mode too on the interactive
                         // TTY (same gate as the single-dispatch path below).
                         if config.elicitation.enabled {
@@ -2657,12 +3220,12 @@ async fn dispatch_provider(
                                 record_quota_exceeded(qe, &quota_path, &writer).await;
                             }
                             warn!(error = %e, "GOLD-LOOP-01: loop engine failed");
-                            drop(writer);
-                            let _ = writer_join.await;
-                            return Err(e);
+                            return_dispatch_error!(e);
                         }
                     }
                 } else {
+                    let mut compaction_budget =
+                        crate::mcp::dispatch_loop::CompactionBudget::default();
                     match run_mcp_dispatch_loop(
                         provider,
                         req.clone(),
@@ -2684,7 +3247,7 @@ async fn dispatch_provider(
                         crate::context::compaction::CompactionPolicy::from_config(
                             config.compaction.enabled,
                             config.compaction.progressive,
-                            config.tokens.max_per_request,
+                            request_token_cap,
                             config.compaction.threshold_fraction,
                         ),
                         // GOLD-HR-08/10 — tool-result compression (None when disabled).
@@ -2714,8 +3277,10 @@ async fn dispatch_provider(
                         None,
                         // GOLD-ADAPT-HARNESS — operator harness knobs from freedom.yaml.
                         &config.tools.harness,
+                        &mut compaction_budget,
                         // Ordinary chat has no outer multi-round tool budget.
                         None,
+                        home,
                     )
                     .await
                     {
@@ -2728,9 +3293,7 @@ async fn dispatch_provider(
                                 record_quota_exceeded(qe, &quota_path, &writer).await;
                             }
                             warn!(error = %e, "MCP dispatch loop failed");
-                            drop(writer);
-                            let _ = writer_join.await;
-                            return Err(e);
+                            return_dispatch_error!(e);
                         }
                     }
                 }; // end loop_engage else branch
@@ -2791,9 +3354,9 @@ async fn dispatch_provider(
                             breaker_err = %berr,
                             "circuit breaker rejected call"
                         );
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+                        return_dispatch_error!(anyhow::anyhow!(
+                            "provider `{provider_name}`: {berr}"
+                        ));
                     }
                 };
                 let call_started = std::time::Instant::now();
@@ -2805,11 +3368,9 @@ async fn dispatch_provider(
                             if let Some(p) = permit {
                                 p.record_failure();
                             }
-                            drop(writer);
-                            let _ = writer_join.await;
-                            anyhow::bail!(
+                            return_dispatch_error!(anyhow::anyhow!(
                                 "provider `{provider_name}` returned no authenticated response identity"
-                            );
+                            ));
                         }
                         // QM-10 Phase 2: settle the permit on success.
                         if let Some(p) = permit {
@@ -2855,11 +3416,9 @@ async fn dispatch_provider(
                                 )
                             }
                             Some(_) => {
-                                drop(writer);
-                                let _ = writer_join.await;
-                                anyhow::bail!(
+                                return_dispatch_error!(anyhow::anyhow!(
                                     "provider `{provider_name}` returned no authenticated response identity for the clarification round"
-                                );
+                                ));
                             }
                             None => {
                                 println!("{}", completion.text);
@@ -2885,11 +3444,22 @@ async fn dispatch_provider(
                             record_quota_exceeded(qe, &quota_path, &writer).await;
                         }
                         warn!(error = %e, "provider call failed");
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Err(e);
+                        return_dispatch_error!(e);
                     }
                 }
+            }
+        })
+    }
+    .await;
+    let (response_text, final_input_tokens, final_output_tokens, provider_used, model_used) =
+        match dispatch_result {
+            Ok(output) => output,
+            Err(error) => {
+                drop(authorized_provider);
+                drop(call_authorizer);
+                drop(writer);
+                let _ = writer_join.await;
+                return Err(error);
             }
         };
 
@@ -2933,11 +3503,16 @@ async fn dispatch_provider(
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
     if !crate::providers::is_local_provider(&provider_used) {
-        quota_tracker.as_ref().ok_or_else(|| {
-            anyhow::anyhow!(
+        if quota_tracker.is_none() {
+            let error = anyhow::anyhow!(
                 "remote provider `{provider_used}` completed without initialized quota state"
-            )
-        })?;
+            );
+            drop(authorized_provider);
+            drop(call_authorizer);
+            drop(writer);
+            let _ = writer_join.await;
+            return Err(error);
+        }
         if let Err(e) = crate::providers::quota::QuotaTracker::update_at(&quota_path, |tracker| {
             tracker.record_success(&provider_used, crate::providers::quota::now_unix());
             Ok(())
@@ -3048,20 +3623,27 @@ async fn run_post_reply_pipelines(
             config.tokens.max_per_request,
         )
     };
-    let post_call_model = if model_used.is_empty()
+    let post_call_requested_model = if model_used.is_empty()
         || model_used == "unknown"
         || model_used == "multi-provider"
         || model_used == "multi-hop"
     {
-        config.provider_model.clone()
+        config.provider_model.as_deref()
     } else {
-        Some(model_used.clone())
+        Some(model_used.as_str())
     };
+    let post_call_model = Some(resolve_provider_call_wire_model(
+        &config,
+        provider,
+        post_call_requested_model,
+    )?);
     let call_authorizer =
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
+            config.tokens.max_per_request,
         )
+        .with_usage_home(first_tour_home.clone())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
                 source: Some("chat"),
@@ -3105,6 +3687,11 @@ async fn run_post_reply_pipelines(
     {
         HookOutcome::Continue(body, _blocks) => body,
         HookOutcome::Blocked { name, reason } => {
+            // End the borrow first, then release every writer-owning wrapper
+            // before waiting for the one-shot WAL task to finish.
+            let _ = provider;
+            drop(authorized_post_provider);
+            drop(call_authorizer);
             drop(writer);
             let _ = writer_join.await;
             anyhow::bail!("hook `{name}` blocked the reply at post_provider_call: {reason}");
@@ -3415,6 +4002,7 @@ async fn run_post_reply_pipelines(
         {
             match crate::security::refusal_abliterated::try_abliterated_fallback(
                 provider,
+                &call_authorizer,
                 &final_prompt,
                 final_system.as_deref(),
                 config.refusal_recovery.abliterated_model.as_deref(),
@@ -3459,6 +4047,7 @@ async fn run_post_reply_pipelines(
             final_system.as_deref(),
             &provider_used,
             &config,
+            &first_tour_home,
             &call_authorizer,
             Some(&writer),
             now_unix() as i64,
@@ -3559,7 +4148,7 @@ async fn run_post_reply_pipelines(
         // allow_cloud_fallback=false (the default cheap-by-default
         // posture) skips the learn pass entirely with a clear warn.
         let learn_provider_owned: Option<Box<dyn crate::providers::Provider>> =
-            match crate::providers::from_config_for_learn(&config).await {
+            match crate::providers::from_config_for_learn_at(&config, &first_tour_home).await {
                 Ok(p) => Some(p),
                 Err(e) => {
                     tracing::warn!(
@@ -3594,7 +4183,9 @@ async fn run_post_reply_pipelines(
                     crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                         config.autonomy_policy(),
                         Some(writer.clone()),
-                    ),
+                        config.tokens.max_per_request,
+                    )
+                    .with_usage_home(first_tour_home.clone()),
                     None,
                     "profile_learning_round",
                 );
@@ -3972,6 +4563,9 @@ async fn run_post_reply_pipelines(
         tracing::warn!(error = %e, "OH-11: could not persist chat_onboarding_completed=true (non-fatal)");
     }
 
+    let _ = provider;
+    drop(authorized_post_provider);
+    drop(call_authorizer);
     drop(writer);
     let _ = writer_join.await;
     Ok(())
@@ -4018,10 +4612,21 @@ pub async fn run_chat_with(
     // and whose `.delivered` marker is absent; prints each prefixed with
     // `[btw]`. Idempotent via the `.delivered` sibling marker.
     {
+        use std::io::Write as _;
+
         let bgjobs_home = first_tour_home.join("bgjobs");
         let pending = crate::cli::bg_session::maybe_deliver_bg_result(&bgjobs_home).await;
+        let stdout = std::io::stdout();
+        let mut stdout = stdout.lock();
         for result in pending {
-            println!("[btw] {result}");
+            writeln!(stdout, "[btw] {}", result.text())
+                .context("write completed background result to stdout")?;
+            stdout
+                .flush()
+                .context("flush completed background result to stdout")?;
+            result
+                .acknowledge()
+                .context("acknowledge completed background result delivery")?;
         }
     }
 
@@ -4316,15 +4921,12 @@ pub async fn run_chat_with(
         return Ok(());
     }
 
-    // ── Prompt-bundle hash + token-budget gate ────────────────────────────
+    // ── Early intent hash for pre-assembly skill audit ────────────────────
     //
-    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` computed here over the
-    // minimal block set visible at this site (Block::A = operator --system
-    // if set, Block::E = user message).  Hash is threaded through to the
-    // PROVIDER_REQUEST WAL frame emitted AFTER the 6-tier dispatch-model
-    // resolution (post enforce_preflight), and into BUDGET_EXCEEDED if
-    // token-cap degradation fires.
-    // Replay-determinism: same bundle → same hash, deterministically.
+    // Skill-suppression events can fire while the full bundle is still being
+    // assembled, so they receive this A+E intent hash.  The provider request
+    // and BUDGET_EXCEEDED event use a second hash computed from the complete,
+    // final typed bundle at the budget boundary below.
     let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
     if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
         bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
@@ -4336,96 +4938,7 @@ pub async fn run_chat_with(
         block: crate::skills::versioning::BundleBlock::E,
         content: &prompt,
     });
-    let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
-
-    // ODY-16: auto-scale token cap from discovered model context window
-    // (85% × window, hard-capped at 200K, ≤ operator_cap).
-    // Declared here so enforce_budget below uses it.
-    let resolved_cap: u32 = {
-        let model_name_for_cap =
-            model_for_estimate(&args, &config, tweaks.model_default.as_deref());
-        crate::tokens::budget::effective_cap(
-            provider.name(),
-            &model_name_for_cap,
-            config.tokens.max_per_request,
-        )
-    };
-
-    // ── ARCH-04 integration: pre-flight block-layer budget check ─────────
-    //
-    // Convert the bundle entries we just built (Block::A + Block::E
-    // today; B/C/D extend as the assembler grows) into the matching
-    // BlockItem shape + run enforce_budget. The cap reads from
-    // `config.tokens.max_per_request` (operator-tunable via
-    // `freedom.yaml::tokens.max_per_request`; defaults to 100_000
-    // per `TokensConfig::default_max_per_request`). Operators on
-    // tight-context models (e.g. Gemini Flash 32k) lower the cap;
-    // operators on Opus 4.7 (200k) keep the default.
-    //
-    // Today's call site only carries A + E — both undegradable per
-    // ARCH-04 policy — so `enforce_budget` either returns None (under
-    // cap, no-op) or Some(detail) with `new_total > cap` (operator-
-    // visible "your prompt exceeds the cap; tighten Block::A/E"
-    // signal). When the assembler emits Block::B/C/D the degradation
-    // policy starts firing for real.
-    let prompt_token_estimate: u32 = {
-        use crate::tokens::budget::{Block, BlockItem, count_tokens};
-        let items: Vec<BlockItem> = bundle_entries
-            .iter()
-            .map(|e| BlockItem {
-                block: match e.block {
-                    crate::skills::versioning::BundleBlock::A => Block::A,
-                    crate::skills::versioning::BundleBlock::B => Block::B,
-                    crate::skills::versioning::BundleBlock::C => Block::C,
-                    crate::skills::versioning::BundleBlock::D => Block::D,
-                    crate::skills::versioning::BundleBlock::E => Block::E,
-                    crate::skills::versioning::BundleBlock::Conductor => Block::Conductor,
-                },
-                importance: 0.5,
-                ts_ns: 0,
-                tokens: count_tokens(e.content),
-                content: e.content.to_string(),
-            })
-            .collect();
-        let estimate: u32 = items.iter().map(|i| i.tokens).sum();
-        let mut items_mut = items;
-        // ODY-16: use the auto-scaled cap (85% × discovered window, ≤200K,
-        // ≤operator_cap) declared at the top of dispatch_provider.
-        let cap = resolved_cap;
-        if let Some(detail) = crate::tokens::budget::enforce_budget(&mut items_mut, cap) {
-            // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
-            // so the audit-chain consumer sees them in cause-then-
-            // effect order. Best-effort emit — a WAL write failure
-            // here MUST NOT abort the chat turn (the audit signal is
-            // operator-visible via tracing::warn fallback).
-            warn!(
-                cap = detail.cap,
-                original_total = detail.original_total,
-                new_total = detail.new_total,
-                dropped_d = detail.dropped_d_count,
-                dropped_c = detail.dropped_c_count,
-                conductor_truncated = detail.conductor_truncated,
-                "prompt-bundle exceeded token cap; degradation applied (or A/B/E-only — operator should tighten)"
-            );
-            let budget_payload = serde_json::to_vec(&serde_json::json!({
-                "cap": detail.cap,
-                "original_total": detail.original_total,
-                "new_total": detail.new_total,
-                "dropped_d_count": detail.dropped_d_count,
-                "dropped_c_count": detail.dropped_c_count,
-                "conductor_truncated": detail.conductor_truncated,
-                "prompt_bundle_hash": prompt_bundle_hash,
-                "ts_unix": now_unix(),
-            }))
-            .unwrap_or_default();
-            let budget_header =
-                crate::wal::make_header(EVENT_TYPE_BUDGET_EXCEEDED, &budget_payload);
-            if let Err(e) = writer.append(budget_header, budget_payload).await {
-                warn!(error = %e, "BUDGET_EXCEEDED WAL emit failed (non-fatal)");
-            }
-        }
-        estimate
-    };
+    let intent_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
 
     // ── Operator context + skills load — K-Perf-4 parallel resource load ──
     // Both reads hit the filesystem and are mutually independent: operator_md
@@ -4452,6 +4965,7 @@ pub async fn run_chat_with(
     let (
         PromptBundle {
             combined_system,
+            budget_items,
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
@@ -4468,7 +4982,7 @@ pub async fn run_chat_with(
         home,
         PromptBuildContext {
             args: &args,
-            prompt_bundle_hash: &prompt_bundle_hash,
+            prompt_bundle_hash: &intent_bundle_hash,
             writer: &writer,
             mcp_servers: &mcp_servers,
         },
@@ -4493,7 +5007,6 @@ pub async fn run_chat_with(
     let (
         writer,
         writer_join,
-        predicted_cost,
         review_context,
         final_prompt,
         final_system,
@@ -4506,8 +5019,10 @@ pub async fn run_chat_with(
         agent_allowed_tools,
         agent_disallowed_tools,
         pending_block_restorations,
+        budget_items,
     ) = match enforce_preflight(
         combined_system,
+        budget_items,
         prompt,
         provider,
         &args,
@@ -4518,6 +5033,7 @@ pub async fn run_chat_with(
         plan_attest_hash,
         agent_raw_layers,
         skill_model,
+        skill_effort,
         // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
         tweaks.model_default.clone(),
         &mut session_fired_once,
@@ -4528,7 +5044,6 @@ pub async fn run_chat_with(
         PreflightOutcome::Continue {
             writer,
             writer_join,
-            predicted_cost,
             review_context,
             final_prompt,
             final_system,
@@ -4541,10 +5056,10 @@ pub async fn run_chat_with(
             agent_allowed_tools,
             agent_disallowed_tools,
             pending_block_restorations,
+            budget_items,
         } => (
             writer,
             writer_join,
-            predicted_cost,
             review_context,
             final_prompt,
             final_system,
@@ -4557,8 +5072,39 @@ pub async fn run_chat_with(
             agent_allowed_tools,
             agent_disallowed_tools,
             pending_block_restorations,
+            budget_items,
         ),
     };
+
+    let route_cap =
+        routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home);
+    let budgeted = match finalize_provider_request(
+        budget_items,
+        &final_prompt,
+        final_system.as_deref(),
+        &config,
+        &home,
+        provider.name(),
+        effective_model.as_deref(),
+        Some(route_cap),
+        &writer,
+    )
+    .await
+    {
+        Ok(request) => request,
+        Err(error) => {
+            drop(writer);
+            let _ = writer_join.await;
+            return Err(error);
+        }
+    };
+    let BudgetedProviderRequest {
+        prompt: final_prompt,
+        system: final_system,
+        prompt_bundle_hash,
+        prompt_token_estimate,
+        effective_cap: request_token_cap,
+    } = budgeted;
     // The actual 0x20 intent is emitted centrally for every concrete leaf,
     // after cost/permission approval and immediately before transport dispatch.
     // Carry the old turn-level business fields into those request-bound frames.
@@ -4607,7 +5153,7 @@ pub async fn run_chat_with(
         quota_path,
         quota_tracker,
         &prompt,
-        &predicted_cost,
+        request_token_cap,
         &mcp_servers,
         skill_tool_allowlist,
         // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
@@ -4677,7 +5223,7 @@ async fn name_session_best_effort(
     session_id: &str,
     opening: &str,
 ) {
-    let provider = match crate::providers::from_config_for_utility(config).await {
+    let provider = match crate::providers::from_config_for_utility_at(config, home).await {
         Ok(p) => p,
         Err(e) => {
             tracing::debug!(error = %e, "session-naming: utility provider build failed");
@@ -4698,7 +5244,9 @@ async fn name_session_best_effort(
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             config.autonomy_policy(),
             Some(writer.clone()),
+            config.tokens.max_per_request,
         )
+        .with_usage_home(home.to_path_buf())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
                 source: Some("chat"),
@@ -5284,6 +5832,11 @@ struct ProviderHemisphere {
     /// hemisphere resolves its OWN voice through `slot_for_sub`, so a
     /// SecurityEngineer on outer-Left never contaminates inner-Right.
     voice: Option<crate::council::types::CouncilVoice>,
+    /// Optional role-biased memory added only at the leaf. Keeping it separate
+    /// from `base_req.system` lets model-aware routing discard this Block-D
+    /// context before protected operator/persona bytes when a smaller Council
+    /// model is selected.
+    recall_fragment: Option<String>,
     /// False on incognito turns so recursive sub-councils cannot re-open a
     /// learned-memory surface after the outer prompt was scrubbed.
     allow_persistent_context: bool,
@@ -5311,6 +5864,13 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         };
         let mut req = self.base_req.clone();
         req.prompt = prompt.to_string();
+        let protected_system = req.system.clone();
+        if let Some(fragment) = self.recall_fragment.as_deref() {
+            req.system = Some(match req.system.take() {
+                Some(system) if !system.trim().is_empty() => format!("{system}\n\n{fragment}"),
+                _ => fragment.to_owned(),
+            });
+        }
         // GOLD-WIRE-04: layer this hemisphere's specialist voice onto the
         // system prompt at the leaf LLM call — system-role authority, and
         // applied here (not in base_req) so recursion's sub-hemispheres,
@@ -5318,6 +5878,45 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         req.system = compose_voice_system(req.system, self.voice);
         if req.model.is_none() {
             req.model = self.provider.default_model().map(str::to_owned);
+        }
+        let model = req.model.clone().expect("model checked above");
+        let cap = crate::tokens::budget::effective_cap(
+            provider_name,
+            &model,
+            self.authorizer.input_token_cap(),
+        );
+        let mut dropped_recall = false;
+        let mut dropped_groundtruth = false;
+        let mut dropped_voice = false;
+        if crate::providers::token_cap::request_token_upper_bound(&req) > cap
+            && self.recall_fragment.is_some()
+        {
+            req.system = compose_voice_system(protected_system.clone(), self.voice);
+            dropped_recall = true;
+        }
+        if crate::providers::token_cap::request_token_upper_bound(&req) > cap
+            && let Some(prompt_without_groundtruth) =
+                crate::council::factual_check::strip_ground_truth_suffix(&req.prompt)
+        {
+            req.prompt = prompt_without_groundtruth.to_owned();
+            dropped_groundtruth = true;
+        }
+        if crate::providers::token_cap::request_token_upper_bound(&req) > cap
+            && self.voice.is_some()
+        {
+            req.system = protected_system;
+            dropped_voice = true;
+        }
+        if dropped_recall || dropped_groundtruth || dropped_voice {
+            warn!(
+                provider = provider_name,
+                model = %model,
+                cap,
+                dropped_recall,
+                dropped_groundtruth,
+                dropped_voice,
+                "council leaf exceeded routed model cap; optional leaf context degraded"
+            );
         }
         if req.model.is_none() {
             return Err(format!(
@@ -5396,6 +5995,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         let fresh = crate::council::BudgetToken::new(
             crate::config::inference::DEFAULT_MAX_CALLS_PER_USER_MESSAGE,
         );
+        fresh.charge().map_err(|error| error.to_string())?;
         self.ask_with_depth_budget(prompt, depth, fresh).await
     }
 
@@ -5431,10 +6031,18 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // was built for the one-shot Split-recovery path and must NOT
         // recurse. Delegate to `ask`.
         if depth <= 1 {
-            return self.ask(prompt).await;
+            return crate::providers::cost_authorization::precharged_council_attempt_scope(
+                budget,
+                self.ask(prompt),
+            )
+            .await;
         }
         let Some(config) = &self.config else {
-            return self.ask(prompt).await;
+            return crate::providers::cost_authorization::precharged_council_attempt_scope(
+                budget,
+                self.ask(prompt),
+            )
+            .await;
         };
         // Build three sub-hemispheres from the per-role bindings.
         // Sub-hemispheres carry the same config Arc so they themselves
@@ -5712,16 +6320,18 @@ async fn build_hemisphere(
     req: &crate::providers::Request,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<ProviderHemisphere> {
-    let provider = crate::providers::from_config_for_role(config, role).await?;
+    let provider = crate::providers::from_config_for_role_at(config, role, neoth_home).await?;
     let mut base_req = req.clone();
-    if base_req.model.is_none() {
-        base_req.model = config
-            .inference
-            .slot_for(role)
-            .model
-            .clone()
-            .or_else(|| provider.default_model().map(str::to_owned));
-    }
+    // Council leaves are independent provider calls. Never inherit the chat
+    // primary's model from `req`: the role slot (or that role provider's
+    // default) is the contract for this leaf. Resolve aliases now so request
+    // budgeting sees the same canonical model that `complete_authorized`
+    // binds again at the exact paid-call boundary.
+    base_req.model = Some(resolve_provider_call_wire_model(
+        config,
+        provider.as_ref(),
+        config.inference.slot_for(role).model.as_deref(),
+    )?);
     Ok(ProviderHemisphere {
         provider,
         base_req,
@@ -5731,6 +6341,7 @@ async fn build_hemisphere(
         outer_role: None,
         // GOLD-WIRE-04: this role's specialist voice, applied at leaf `ask`.
         voice: config.inference.slot_for(role).voice,
+        recall_fragment: None,
         allow_persistent_context: false,
     })
 }
@@ -5746,6 +6357,7 @@ pub(crate) async fn build_hemisphere_for_loop(
     req: &crate::providers::Request,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
 ) -> Result<Box<dyn crate::council::orchestrator::HemisphereProvider>> {
+    let authorizer = authorizer.with_council_daily_cap(neoth_home, config.council.daily_usd_cap)?;
     let h = build_hemisphere(config, neoth_home, role, req, authorizer).await?;
     Ok(Box::new(h))
 }
@@ -5767,7 +6379,8 @@ async fn build_hemisphere_with_config(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     allow_persistent_context: bool,
 ) -> Result<ProviderHemisphere> {
-    let provider = crate::providers::from_config_for_role(config.as_ref(), role).await?;
+    let provider =
+        crate::providers::from_config_for_role_at(config.as_ref(), role, neoth_home).await?;
     // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
     // resolved before the `config` Arc is moved into the struct.
     let voice = config.inference.slot_for(role).voice;
@@ -5778,22 +6391,13 @@ async fn build_hemisphere_with_config(
     // `outer_role: None` and skip this, so recursion doesn't double-inject.
     // Best-effort → leaves base_req untouched on empty recall.
     let mut base_req = req.clone();
-    if base_req.model.is_none() {
-        base_req.model = config
-            .inference
-            .slot_for(role)
-            .model
-            .clone()
-            .or_else(|| provider.default_model().map(str::to_owned));
-    }
-    if let Some(frag) =
-        hemisphere_recall_fragment(role, &req.prompt, neoth_home, allow_persistent_context).await
-    {
-        base_req.system = match base_req.system.take() {
-            Some(s) if !s.trim().is_empty() => Some(format!("{s}\n\n{frag}")),
-            _ => Some(frag),
-        };
-    }
+    base_req.model = Some(resolve_provider_call_wire_model(
+        config.as_ref(),
+        provider.as_ref(),
+        config.inference.slot_for(role).model.as_deref(),
+    )?);
+    let recall_fragment =
+        hemisphere_recall_fragment(role, &req.prompt, neoth_home, allow_persistent_context).await;
     Ok(ProviderHemisphere {
         provider,
         base_req,
@@ -5802,6 +6406,7 @@ async fn build_hemisphere_with_config(
         config: Some(config),
         outer_role: Some(role),
         voice,
+        recall_fragment,
         allow_persistent_context,
     })
 }
@@ -5826,8 +6431,13 @@ async fn build_sub_hemisphere_with_config(
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     allow_persistent_context: bool,
 ) -> Result<ProviderHemisphere> {
-    let provider =
-        crate::providers::from_config_for_sub_role(config.as_ref(), outer_role, inner_role).await?;
+    let provider = crate::providers::from_config_for_sub_role_at(
+        config.as_ref(),
+        outer_role,
+        inner_role,
+        neoth_home,
+    )
+    .await?;
     // GOLD-WIRE-04: inner-council hemisphere — voice resolves through
     // `slot_for_sub`, so an operator who pins a voice on
     // `hemisphere_sub_slots[outer][inner]` gets that specialist framing at
@@ -5835,14 +6445,15 @@ async fn build_sub_hemisphere_with_config(
     // outer-level slot voice (never the parent hemisphere's — no leak).
     let voice = config.inference.slot_for_sub(outer_role, inner_role).voice;
     let mut base_req = req.clone();
-    if base_req.model.is_none() {
-        base_req.model = config
+    base_req.model = Some(resolve_provider_call_wire_model(
+        config.as_ref(),
+        provider.as_ref(),
+        config
             .inference
             .slot_for_sub(outer_role, inner_role)
             .model
-            .clone()
-            .or_else(|| provider.default_model().map(str::to_owned));
-    }
+            .as_deref(),
+    )?);
     Ok(ProviderHemisphere {
         provider,
         base_req,
@@ -5851,6 +6462,7 @@ async fn build_sub_hemisphere_with_config(
         config: Some(config),
         outer_role: None,
         voice,
+        recall_fragment: None,
         allow_persistent_context,
     })
 }
@@ -7052,6 +7664,54 @@ async fn emit_council_transcripts(
     }
 }
 
+/// Convert the reviewed per-leaf USD bounds into the smart-trigger inputs.
+/// Without a daily cap there is no budget gate, so unknown subscription or
+/// deployment pricing remains usable and the hard provider authorizer keeps
+/// its existing policy semantics. With a cap, every reachable paid leaf must
+/// have a finite reviewed bound.
+pub(crate) fn council_trigger_cost_bound(
+    config: &FreedomConfig,
+    req: &crate::providers::Request,
+) -> Result<(f32, Option<f32>)> {
+    council_trigger_cost_bound_inner(config, req, None)
+}
+
+pub(crate) fn council_trigger_cost_bound_at(
+    config: &FreedomConfig,
+    req: &crate::providers::Request,
+    home: &std::path::Path,
+) -> Result<(f32, Option<f32>)> {
+    council_trigger_cost_bound_inner(config, req, Some(home))
+}
+
+fn council_trigger_cost_bound_inner(
+    config: &FreedomConfig,
+    req: &crate::providers::Request,
+    home: Option<&std::path::Path>,
+) -> Result<(f32, Option<f32>)> {
+    if config.council.daily_usd_cap.is_none() {
+        return Ok((0.0, None));
+    }
+    let bound = match home {
+        Some(home) => {
+            crate::providers::cost::council_tree_authorization_bound_usd_at(config, req, home)?
+        }
+        None => crate::providers::cost::council_tree_authorization_bound_usd(config, req)?,
+    };
+    tracing::debug!(
+        candidate_leaves = bound.candidate_leaf_count,
+        costed_leaves = bound.costed_leaf_count,
+        total_usd = bound.total_usd,
+        max_leaf_usd = bound.max_leaf_usd,
+        "Council smart-trigger bound resolved from active topology"
+    );
+    anyhow::ensure!(
+        bound.total_usd <= f64::from(f32::MAX) && bound.max_leaf_usd <= f64::from(f32::MAX),
+        "Council smart-trigger cost bound exceeds the supported range"
+    );
+    Ok((bound.max_leaf_usd as f32, Some(bound.total_usd as f32)))
+}
+
 /// K-Wire-3 v2 2026-05-17: evaluate the council smart-trigger using
 /// the same env-override + policy logic as `cli/chat.rs::run_chat_with`.
 /// Returns the `TriggerDecision` so callers can log + audit both the
@@ -7062,10 +7722,10 @@ async fn emit_council_transcripts(
 ///   - `NEOTH_COUNCIL_ENABLE=1`  → forced Convene (bypasses gates)
 ///   - unset / anything else     → AUTO via `council::should_convene`
 ///
-/// `estimated_single_call_eur` is the budget-gate input. Channels
-/// don't pre-compute a per-prompt cost like the CLI does; pass `0.01`
-/// as the floor so the gate scales cleanly when operators tune
-/// `policy.budget_multiplier` higher.
+/// `estimated_single_call_usd` and `estimated_council_cost_usd` come from
+/// [`council_trigger_cost_bound`]. The former preserves the operator's
+/// multiplier floor; the latter prevents recursive/mixed-provider fan-out
+/// from being reduced to a single flat estimate.
 ///
 /// `disabled` is the SPEC-03 persistent suppress flag
 /// (`freedom.yaml::council.disabled`); the channel caller reads it fresh
@@ -7082,7 +7742,9 @@ async fn emit_council_transcripts(
 pub(crate) fn evaluate_council_trigger(
     neoth_home: &std::path::Path,
     prompt: &str,
-    estimated_single_call_eur: f32,
+    estimated_single_call_usd: f32,
+    estimated_council_cost_usd: Option<f32>,
+    daily_usd_cap: Option<f32>,
     disabled: bool,
     policy: &crate::council::TriggerPolicy,
 ) -> crate::council::TriggerDecision {
@@ -7112,10 +7774,30 @@ pub(crate) fn evaluate_council_trigger(
     // gate.
     let now_unix_b3 = crate::council::last_ts::now_unix();
     let secs_since = crate::council::last_ts::seconds_since_last(neoth_home, now_unix_b3);
+    let remaining_budget_usd = match daily_usd_cap {
+        None => None,
+        Some(cap_usd) => match crate::council::daily_budget::remaining_daily_budget_usd(
+            neoth_home,
+            cap_usd,
+            now_unix_b3 as i64,
+        ) {
+            Ok(remaining) => Some(remaining),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "channel council daily-budget snapshot invalid — smart trigger skipped fail-closed"
+                );
+                return crate::council::TriggerDecision::Skip {
+                    reason: "council daily-budget state invalid — fail-closed".into(),
+                };
+            }
+        },
+    };
     let ctx = crate::council::TriggerContext {
         seconds_since_last_council: secs_since,
-        remaining_budget_eur: None,
-        estimated_single_call_eur,
+        remaining_budget_usd,
+        estimated_single_call_usd,
+        estimated_council_cost_usd,
     };
     crate::council::should_convene(prompt, &ctx, policy)
 }
@@ -7133,7 +7815,8 @@ pub(crate) fn evaluate_council_trigger(
 ///   2. Verdict::Consensus → return `winning_text()`.
 ///   3. Verdict::Split → A5 callosum recovery: build a fresh
 ///      Cerebellum, fetch `profile_block_for_callosum()` for CH-11
-///      operator-context injection, call `callosum::resolve_with_profile`,
+///      operator-context injection, call the shared-budget
+///      `callosum::resolve_with_profile_budget`,
 ///      emit COUNCIL_SYNTHESIS_ATTEMPTED (0x60) audit. Synthesis →
 ///      return the synthesised text; IrreconcilableConflict → fall back
 ///      to the "[council split — operator decision needed]" message.
@@ -7144,11 +7827,31 @@ pub(crate) fn evaluate_council_trigger(
 /// when MIF is enabled AND the prompt's intent is `Conflicted` (contradictory
 /// goals the council must NOT debate); `None` otherwise (disabled, or a
 /// `Stated`/`Inferred` prompt the council should answer normally).
-fn mif_disambiguation(config: &FreedomConfig, prompt: &str) -> Option<String> {
+pub(crate) fn mif_disambiguation(config: &FreedomConfig, prompt: &str) -> Option<String> {
     if !config.council.mif_enabled {
         return None;
     }
     crate::council::motive_ident::classify_motive(prompt).disambiguation_message()
+}
+
+struct CouncilBudgetOutcomeRecorder<'a> {
+    home: &'a std::path::Path,
+    budget: crate::council::BudgetToken,
+    enabled: bool,
+}
+
+impl Drop for CouncilBudgetOutcomeRecorder<'_> {
+    fn drop(&mut self) {
+        if self.enabled {
+            crate::council::budget::record_budget_outcome(
+                self.home,
+                self.budget.used(),
+                self.budget.cap(),
+                self.budget.was_denied(),
+                now_unix() as i64,
+            );
+        }
+    }
 }
 
 pub(crate) async fn dispatch_council_with_recovery(
@@ -7186,7 +7889,22 @@ async fn dispatch_council_with_recovery_for_turn(
         tracing::info!("MIF: conflicted intent — council skipped, disambiguation surfaced");
         return Ok(message);
     }
-    let outcome = run_council_debate(config, neoth_home, req, &authorizer, !incognito).await?;
+    let authorizer = authorizer.with_council_daily_cap(neoth_home, config.council.daily_usd_cap)?;
+    let council_budget = crate::council::BudgetToken::from_council(&config.council);
+    let _budget_recorder = CouncilBudgetOutcomeRecorder {
+        home: neoth_home,
+        budget: council_budget.clone(),
+        enabled: !incognito,
+    };
+    let outcome = run_council_debate(
+        config,
+        neoth_home,
+        req,
+        &authorizer,
+        !incognito,
+        council_budget.clone(),
+    )
+    .await?;
     // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
     // `neoth council replay` can show the actual prose. No-op unless
     // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
@@ -7297,10 +8015,11 @@ async fn dispatch_council_with_recovery_for_turn(
         {
             match build_hemisphere(config, neoth_home, winner.role, req, authorizer.clone()).await {
                 Ok(reflect_hemisphere) => {
-                    let refined = crate::council::self_reflect::refine(
+                    let refined = crate::council::self_reflect::refine_with_budget(
                         &req.prompt,
                         &winner.text,
                         &reflect_hemisphere,
+                        &council_budget,
                     )
                     .await;
                     refined.refined
@@ -7341,10 +8060,14 @@ async fn dispatch_council_with_recovery_for_turn(
                         .await
                     {
                         Ok(h) => {
-                            let cand =
-                                crate::council::self_reflect::refine(&req.prompt, &final_text, &h)
-                                    .await
-                                    .refined;
+                            let cand = crate::council::self_reflect::refine_with_budget(
+                                &req.prompt,
+                                &final_text,
+                                &h,
+                                &council_budget,
+                            )
+                            .await
+                            .refined;
                             let cand_score = crate::council::self_reflect::score_answer(&cand);
                             if cand_score.composite() > self_score.composite() {
                                 final_text = cand;
@@ -7439,34 +8162,36 @@ async fn dispatch_council_with_recovery_for_turn(
                 dissent = outcome.dissent.0,
                 "GOLD-LOOP-01: strong dissent detected — auto-invoking loop engine (1 round)"
             );
+            let winner_provider =
+                match crate::providers::from_config_for_role_at(config, winner.role, neoth_home)
+                    .await
+                {
+                    Ok(provider) => provider,
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "GOLD-LOOP-01: dissent-invoke: could not build winner provider"
+                        );
+                        let response_text = match partial_refusal_prefix(&outcome) {
+                            Some(prefix) => format!("{prefix}\n{final_text}"),
+                            None => final_text,
+                        };
+                        return Ok(response_text);
+                    }
+                };
+            let winner_model =
+                resolve_provider_call_wire_model(config, winner_provider.as_ref(), None)?;
+            let mut winner_req = req.clone();
+            winner_req.model = Some(winner_model);
             match crate::loop_engine::engine::run_loop(
                 &loop_cfg,
-                // Build a provider for the winning hemisphere to re-query.
-                // We use a simple approach: re-use the same provider path
-                // as the council winner. The loop engine will call
-                // run_mcp_dispatch_loop internally.
-                &*{
-                    match crate::providers::from_config_for_role(config, winner.role).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "GOLD-LOOP-01: dissent-invoke: could not build winner provider"
-                            );
-                            // Fall through to original final_text.
-                            let response_text = match partial_refusal_prefix(&outcome) {
-                                Some(prefix) => format!("{prefix}\n{final_text}"),
-                                None => final_text,
-                            };
-                            return Ok(response_text);
-                        }
-                    }
-                },
-                req.clone(),
+                winner_provider.as_ref(),
+                winner_req,
                 &crate::mcp::McpServers::default(),
                 writer,
                 config,
                 authorizer.clone(),
+                Some(&council_budget),
                 // P4 — interactive chat session: honour the elicitation gate.
                 if config.elicitation.enabled {
                     &crate::cli::elicitation::ElicitationHandler::Cli
@@ -7563,12 +8288,13 @@ async fn dispatch_council_with_recovery_for_turn(
                 .await
                 {
                     Ok(cere) => {
-                        let verdict = crate::council::callosum::resolve_with_profile(
+                        let verdict = crate::council::callosum::resolve_with_profile_budget(
                             &req.prompt,
                             left_text,
                             right_text,
                             profile_opt,
                             &cere,
+                            &council_budget,
                         )
                         .await;
                         match verdict {
@@ -7700,7 +8426,10 @@ fn fetch_council_assertions(
                 return None;
             }
             Some(crate::council::factual_check::FactualAssertion {
-                subject: subject.trim().to_string(),
+                // Optional retrieved context follows the same per-item bound as
+                // hemisphere recall; a pathological DB row must not allocate an
+                // unbounded Council prompt before leaf degradation runs.
+                subject: recall_snippet(subject),
                 expected_keyword: keyword
                     .trim_matches(|c: char| !c.is_alphanumeric())
                     .to_lowercase(),
@@ -7716,6 +8445,7 @@ async fn run_council_debate(
     req: &crate::providers::Request,
     authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     allow_persistent_context: bool,
+    budget: crate::council::BudgetToken,
 ) -> Result<crate::council::CouncilDebate> {
     use crate::config::inference::HemisphereRole;
     // Finding 2: once-per-process advisory when council topology
@@ -7759,21 +8489,10 @@ async fn run_council_debate(
     // `hemisphere_council_depth` through the orchestrator so recursive
     // hemispheres can read their own depth budget.
     let depth = config.inference.hemisphere_council_depth.get();
-    // Pick #19 F6 (Session 14) — single shared `BudgetToken` for this
-    // user-message-scoped council pass. Cap reads from
-    // `config.council.effective_max_calls()` (default 15). The token
-    // is shared across every hemisphere in this debate AND, via
-    // `ProviderHemisphere::ask_with_depth_budget`, across every
-    // recursive sub-debate — no operator-configurable knob can break
-    // the cap.
-    let budget = crate::council::BudgetToken::from_council(&config.council);
     // SP-4 embed-wire Phase 3 — feed the cosine-dissent path when an
     // embedding provider is configured; the orchestrator falls back to
     // Jaccard on any embed failure. `None` keeps the legacy heuristic.
     let dissent_embed = crate::providers::embed_provider_from_config(config).await;
-    // KF-08: probe-clone shares the `Arc<AtomicU32>` counter so we can
-    // read the final tally after the orchestrator consumes `budget`.
-    let budget_probe = budget.clone();
     // GOLD-G02-COUNCIL-01 — verified groundtruth flows into every
     // hemisphere prompt + the post-response contradiction check.
     let assertions = if allow_persistent_context && config.council.groundtruth_injection {
@@ -7793,17 +8512,6 @@ async fn run_council_debate(
         &assertions,
     )
     .await;
-    // Persist the council-budget posture for `neoth council budget`
-    // (best-effort, OUTSIDE the orchestrator hot path — one funnel for
-    // both the CLI + channel council paths).
-    if allow_persistent_context {
-        crate::council::budget::record_budget_outcome(
-            neoth_home,
-            budget_probe.used(),
-            budget_probe.cap(),
-            now_unix() as i64,
-        );
-    }
     Ok(outcome)
 }
 
@@ -7862,9 +8570,14 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // GOLD-ADAPT-HARNESS-01/04/06 — operator-tunable MCP dispatch-loop knobs
     // (`freedom.yaml::tools.harness`), threaded straight into the loop.
     harness_cfg: &crate::config::tools::McpHarnessConfig,
+    // One paid-summary allowance for the complete operator turn. Multi-round
+    // loops pass the same value into every round instead of resetting it.
+    compaction_budget: &mut crate::mcp::dispatch_loop::CompactionBudget,
     // Optional exact tool-call ceiling for the outer loop engine. Ordinary
     // chat/channel callers pass None; full-autonomy passes the remaining budget.
     max_tool_calls: Option<u64>,
+    // Exact instance root that owns leases, risk confirmations and traces.
+    instance_home: &std::path::Path,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -7936,6 +8649,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         }
     }
     let initial_prompt = base_req.prompt.clone();
+    let compaction = compaction.with_request_envelope(&base_req);
     let mut driver = ProviderDriver {
         provider,
         base: base_req,
@@ -7963,7 +8677,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
         elicitation_handler,
         // GOLD-ADAPT-HARNESS — thread operator harness knobs into the loop.
         harness_cfg,
+        compaction_budget,
         max_tool_calls,
+        instance_home,
     )
     .await
 }
@@ -8128,7 +8844,28 @@ mod tests {
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use async_trait::async_trait;
+    use std::sync::Arc;
     use std::time::Duration;
+
+    struct DefaultAliasProvider;
+
+    #[async_trait]
+    impl Provider for DefaultAliasProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("default-gpt4o-alias")
+        }
+
+        fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+            match requested_model {
+                "default-gpt4o-alias" => "gpt-4o".into(),
+                other => other.into(),
+            }
+        }
+    }
 
     fn test_mcp_server(id: &str, enabled: bool) -> crate::mcp::config::McpServerConfig {
         crate::mcp::config::McpServerConfig {
@@ -8143,6 +8880,202 @@ mod tests {
             smart_approve: false,
             autonomy_gate: None,
         }
+    }
+
+    #[tokio::test]
+    async fn final_budget_boundary_applies_single_d_degradation_to_request_bytes() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(home.path().join("budget.wal")).unwrap();
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 20_000;
+        let items = vec![
+            BlockItem::new(Block::A, "protected system"),
+            BlockItem::new(Block::D, "d".repeat(100_000)),
+            BlockItem::new(Block::E, "hello"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+
+        let result = finalize_provider_request(
+            items,
+            "hello",
+            system.as_deref(),
+            &config,
+            home.path(),
+            "test_provider",
+            None,
+            None,
+            &writer,
+        )
+        .await
+        .expect("single D item should be dropped and request should fit");
+        assert!(result.prompt_token_estimate <= result.effective_cap);
+        assert_eq!(result.prompt, "hello");
+        assert!(!result.system.unwrap().contains(&"d".repeat(1_000)));
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn final_budget_boundary_blocks_when_protected_blocks_exceed_cap() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(home.path().join("budget-block.wal")).unwrap();
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 1;
+        let items = vec![
+            BlockItem::new(Block::A, "protected system"),
+            BlockItem::new(Block::E, "protected user prompt"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+
+        let error = finalize_provider_request(
+            items,
+            "protected user prompt",
+            system.as_deref(),
+            &config,
+            home.path(),
+            "test_provider",
+            None,
+            None,
+            &writer,
+        )
+        .await
+        .expect_err("protected A/B/E over cap must fail closed");
+        assert!(error.to_string().contains("above the effective cap"));
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn cli_default_and_config_alias_are_resolved_before_model_budgeting() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        // Production CLI chat can place the fallback provider behind this
+        // compactor. The decorator must preserve default + alias resolution.
+        let provider = crate::providers::compactor::CompactingProvider::new(
+            Box::new(DefaultAliasProvider),
+            None,
+            200_000,
+            0.8,
+            1_024,
+            None,
+        );
+        let mut config = FreedomConfig::default();
+        let default_model = resolve_provider_call_wire_model(&config, &provider, None).unwrap();
+        assert_eq!(default_model, "gpt-4o");
+        config.provider_model = Some("@fast".into());
+        config
+            .models_aliases
+            .insert("@fast".into(), "gpt-4o".into());
+        let model =
+            resolve_provider_call_wire_model(&config, &provider, config.provider_model.as_deref())
+                .unwrap();
+        assert_eq!(model, "gpt-4o");
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) =
+            wal_spawn(home.path().join("default-model-budget.wal")).unwrap();
+        config.tokens.max_per_request = 200_000;
+        let items = vec![
+            BlockItem::new(Block::A, "protected system"),
+            BlockItem::new(Block::E, "hello"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+        let request = finalize_provider_request(
+            items,
+            "hello",
+            system.as_deref(),
+            &config,
+            home.path(),
+            provider.name(),
+            Some(&model),
+            None,
+            &writer,
+        )
+        .await
+        .unwrap();
+        assert_eq!(request.effective_cap, 108_800);
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[test]
+    fn routing_cap_reserves_a_longer_fallback_wire_model_before_dispatch() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 200_000;
+        config.council.disabled = Some(true);
+        config.fallback.max_hops = 1;
+
+        let primary_model = "p";
+        let primary_only =
+            routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+        let fallback_model = "fallback-deployment-with-a-materially-longer-wire-model-id";
+        // An empty/filtered entry before the usable slot must not consume the
+        // runtime hop budget in the static safety calculation.
+        config.fallback.chain.push(HemisphereSlot::default());
+        config.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some(fallback_model.to_owned()),
+            ..Default::default()
+        });
+
+        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+        assert_eq!(
+            primary_only - route_safe,
+            u32::try_from(fallback_model.len() - primary_model.len()).unwrap(),
+            "fallback's exact model-field bytes must reduce primary content capacity"
+        );
+    }
+
+    #[test]
+    fn routing_cap_normalizes_claude_cli_alias_before_window_lookup() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 200_000;
+        config.council.disabled = Some(true);
+        config.fallback.max_hops = 1;
+        config.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            model: Some("opusplan".to_owned()),
+            ..Default::default()
+        });
+
+        let primary_model = "p";
+        let route_safe = routing_safe_effective_cap(&config, "openai_compat", Some(primary_model));
+        let wire_model = "claude-opus-4-7[1m]";
+        let leaf_cap = crate::tokens::budget::effective_cap(
+            "claude_cli",
+            wire_model,
+            config.tokens.max_per_request,
+        );
+        let primary_reserve = crate::providers::token_cap::request_non_content_token_upper_bound(
+            &crate::providers::Request {
+                model: Some(primary_model.to_owned()),
+                ..Default::default()
+            },
+        );
+        let leaf_reserve = crate::providers::token_cap::request_non_content_token_upper_bound(
+            &crate::providers::Request {
+                model: Some(wire_model.to_owned()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            route_safe,
+            leaf_cap
+                .saturating_sub(leaf_reserve)
+                .saturating_add(primary_reserve)
+        );
+        assert!(route_safe < config.tokens.max_per_request);
     }
 
     #[test]
@@ -8334,6 +9267,8 @@ mod tests {
             std::path::Path::new(""),
             "should I use Rust or Go here?",
             0.01,
+            None,
+            None,
             true,
             &crate::council::TriggerPolicy::default(),
         );
@@ -8359,6 +9294,8 @@ mod tests {
             std::path::Path::new(""),
             "anything at all",
             0.01,
+            None,
+            None,
             true,
             &crate::council::TriggerPolicy::default(),
         );
@@ -8366,6 +9303,67 @@ mod tests {
         assert!(
             matches!(decision, crate::council::TriggerDecision::Skip { .. }),
             "a durably-suppressed council must not be force-convened by NEOTH_COUNCIL_ENABLE=1"
+        );
+    }
+
+    #[test]
+    fn evaluate_council_trigger_uses_configured_daily_usd_headroom() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::remove_var("NEOTH_COUNCIL_ENABLE");
+        }
+        let home = tempfile::tempdir().unwrap();
+        let decision = evaluate_council_trigger(
+            home.path(),
+            "Should I use Rust or Go for this detailed cross-platform service design? Please walk me through the tradeoffs.",
+            0.10,
+            None,
+            Some(0.01),
+            false,
+            &crate::council::TriggerPolicy::default(),
+        );
+        assert!(
+            matches!(
+                decision,
+                crate::council::TriggerDecision::Skip { ref reason }
+                    if reason.contains("budget") && reason.contains("$0.30")
+            ),
+            "configured daily headroom must activate the smart-trigger budget gate: {decision:?}"
+        );
+    }
+
+    #[test]
+    fn all_local_council_can_convene_with_zero_daily_usd_cap() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::remove_var("NEOTH_COUNCIL_ENABLE");
+        }
+        let mut config = crate::config::FreedomConfig::default();
+        config.provider_kind = Some(crate::cli::init::ProviderKind::LocalQwen);
+        config.council.daily_usd_cap = Some(0.0);
+        let req = crate::providers::Request {
+            prompt: "Should I use this local-only recursive architecture? Please walk me through the detailed tradeoffs across all components.".into(),
+            ..crate::providers::Request::default()
+        };
+        let (single, total) = council_trigger_cost_bound(&config, &req).unwrap();
+        assert_eq!(single, 0.0);
+        assert_eq!(total, Some(0.0));
+
+        let home = tempfile::tempdir().unwrap();
+        let decision = evaluate_council_trigger(
+            home.path(),
+            &req.prompt,
+            single,
+            total,
+            config.council.daily_usd_cap,
+            false,
+            &config.council.trigger.to_policy(),
+        );
+        assert!(
+            decision.should_convene(),
+            "a zero USD cap must not block a provably free Council: {decision:?}"
         );
     }
 
@@ -8397,6 +9395,8 @@ mod tests {
             std::path::Path::new(""),
             "a complex question that would normally trigger a council debate",
             0.001,
+            None,
+            None,
             disabled_combined,
             &policy,
         );
@@ -8484,6 +9484,8 @@ mod tests {
             std::path::Path::new(""),
             "anything at all",
             0.01,
+            None,
+            None,
             false,
             &crate::council::TriggerPolicy::default(),
         );
@@ -8655,6 +9657,78 @@ mod tests {
         }
     }
 
+    #[derive(Default)]
+    struct ConsentCountingProvider {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for ConsentCountingProvider {
+        fn name(&self) -> &'static str {
+            "openai_api"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("gpt-4o")
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Completion {
+                text: "must not dispatch".into(),
+                identity: Default::default(),
+                model: "gpt-4o".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn one_shot_chat_rechecks_revoked_consent_before_dispatch() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let segment = dir.path().join("chat-consent.wal");
+        let config = FreedomConfig {
+            provider_kind: Some(ProviderKind::OpenaiApi),
+            provider_model: Some("gpt-4o".into()),
+            language_primary: Some("en".into()),
+            ..Default::default()
+        };
+        let provider = ConsentCountingProvider::default();
+        let args = ChatArgs {
+            attach: Vec::new(),
+            message: Some("Reply with one short greeting.".into()),
+            model: None,
+            system: None,
+            edit: false,
+            config: Some(config_path),
+            wal_segment: Some(segment),
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+
+        let error = run_chat_with(args, config, &provider)
+            .await
+            .expect_err("missing live consent marker must stop the final dispatch");
+        assert!(error.to_string().contains("consent"));
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the provider leaf must not run after a live revoke"
+        );
+    }
+
     #[tokio::test]
     async fn recall_intent_short_circuits_without_provider_or_request_frame() {
         // GOLD-WIRE-02: "do you remember when we talked about X?" is answered
@@ -8730,6 +9804,7 @@ mod tests {
     async fn chat_writes_request_and_response_frames() {
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
@@ -8788,7 +9863,7 @@ mod tests {
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             temperature: None,
@@ -8906,6 +9981,7 @@ mod tests {
     async fn chat_emits_refusal_observed_on_hard_refusal_reply() {
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
@@ -8964,7 +10040,7 @@ mod tests {
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             temperature: None,
@@ -9180,6 +10256,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
             language_primary: None,
@@ -9232,7 +10309,7 @@ mod tests {
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: true,
             temperature: None,
@@ -9341,6 +10418,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
         let config = FreedomConfig {
             operator_id: Some("alice".into()),
             language_primary: None,
@@ -9393,7 +10471,7 @@ mod tests {
             model: None,
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             temperature: None,
@@ -9491,6 +10569,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
+        crate::consent::grant(dir.path(), ProviderKind::ClaudeCli).unwrap();
 
         let config = FreedomConfig {
             operator_id: Some("b22-check".into()),
@@ -9552,7 +10631,7 @@ mod tests {
             model: None, // no CLI override — freedom tier must win
             system: None,
             edit: false,
-            config: None,
+            config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
             temperature: None,
@@ -9680,6 +10759,41 @@ mod tests {
         }
     }
 
+    /// Captures the exact request model after the provider leaf's canonical
+    /// binding, so Council tests distinguish builder state from what actually
+    /// reaches the transport.
+    struct CouncilModelCapturingProvider {
+        seen_models: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Provider for CouncilModelCapturingProvider {
+        fn name(&self) -> &'static str {
+            "model-capture"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("capture-default")
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            let model = req
+                .model
+                .expect("authorized leaf request must bind a model");
+            self.seen_models.lock().unwrap().push(model.clone());
+            Ok(Completion {
+                text: "captured".into(),
+                identity: Default::default(),
+                model,
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
     #[tokio::test]
     async fn ask_with_depth_one_is_flat_no_recursion() {
         use crate::council::orchestrator::HemisphereProvider;
@@ -9697,6 +10811,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
         let result = ph.ask_with_depth("hi", 1).await.unwrap();
@@ -9722,6 +10837,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
         let result = ph.ask_with_depth("hi", 0).await.unwrap();
@@ -9752,6 +10868,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
         // depth=4 (MAX cap) + no config → still flat, one call.
@@ -9785,6 +10902,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(crate::config::inference::HemisphereRole::Left),
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
@@ -10057,6 +11175,192 @@ mod tests {
     // ── E-2 Phase 3 (Session 14) sub-slot routing ──────────────────────
 
     #[tokio::test]
+    async fn council_outer_roles_override_primary_model_with_alias_resolved_role_models() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, TopologyMode,
+        };
+        use crate::council::orchestrator::HemisphereProvider;
+
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.mode = TopologyMode::Custom;
+        cfg.models_aliases
+            .insert("@council-left".into(), "role-left-wire".into());
+        cfg.models_aliases
+            .insert("@council-right".into(), "role-right-wire".into());
+        cfg.models_aliases
+            .insert("@council-cerebellum".into(), "role-cerebellum-wire".into());
+        let slot = |model: &str| HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some(model.into()),
+            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            ..Default::default()
+        };
+        cfg.inference.left = slot("@council-left");
+        cfg.inference.right = slot("@council-right");
+        cfg.inference.cerebellum = slot("@council-cerebellum");
+
+        let config = Arc::new(cfg);
+        let primary_req = Request {
+            model: Some("primary-chat-wire".into()),
+            prompt: "outer question".into(),
+            ..Default::default()
+        };
+        let seen_models = Arc::new(std::sync::Mutex::new(Vec::new()));
+        for (role, expected) in [
+            (HemisphereRole::Left, "role-left-wire"),
+            (HemisphereRole::Right, "role-right-wire"),
+            (HemisphereRole::Cerebellum, "role-cerebellum-wire"),
+        ] {
+            let mut hemisphere = super::build_hemisphere_with_config(
+                Arc::clone(&config),
+                std::path::Path::new(""),
+                role,
+                &primary_req,
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Full,
+                ),
+                false,
+            )
+            .await
+            .expect("configured OpenAI-compatible role must build");
+            assert_eq!(
+                hemisphere.base_req.model.as_deref(),
+                Some(expected),
+                "role model must replace the primary request model before dispatch"
+            );
+            hemisphere.provider = Box::new(CouncilModelCapturingProvider {
+                seen_models: Arc::clone(&seen_models),
+            });
+            hemisphere
+                .ask("role question")
+                .await
+                .expect("capturing role leaf must dispatch");
+        }
+
+        assert_eq!(
+            *seen_models.lock().unwrap(),
+            vec![
+                "role-left-wire".to_string(),
+                "role-right-wire".to_string(),
+                "role-cerebellum-wire".to_string(),
+            ],
+            "each captured Council request must carry its own alias-resolved role model"
+        );
+    }
+
+    #[tokio::test]
+    async fn council_role_without_model_uses_its_provider_default_not_primary_model() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, TopologyMode,
+        };
+        use crate::council::orchestrator::HemisphereProvider;
+
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.mode = TopologyMode::Custom;
+        cfg.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            model: None,
+            ..Default::default()
+        };
+        let primary_req = Request {
+            model: Some("primary-chat-wire".into()),
+            ..Default::default()
+        };
+        let mut hemisphere = super::build_hemisphere_with_config(
+            Arc::new(cfg),
+            std::path::Path::new(""),
+            HemisphereRole::Left,
+            &primary_req,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            false,
+        )
+        .await
+        .expect("role provider with a declared default must build");
+        let expected = hemisphere
+            .provider
+            .default_model()
+            .expect("Claude CLI declares a concrete default")
+            .to_owned();
+        assert_ne!(expected, "primary-chat-wire");
+        assert_eq!(
+            hemisphere.base_req.model.as_deref(),
+            Some(expected.as_str())
+        );
+
+        let seen_models = Arc::new(std::sync::Mutex::new(Vec::new()));
+        hemisphere.provider = Box::new(CouncilModelCapturingProvider {
+            seen_models: Arc::clone(&seen_models),
+        });
+        hemisphere
+            .ask("default-model question")
+            .await
+            .expect("capturing default-model leaf must dispatch");
+        assert_eq!(*seen_models.lock().unwrap(), vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn recursive_council_subslot_overrides_parent_model_with_alias_resolved_model() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, SubHemisphereSlots, TopologyMode,
+        };
+        use crate::council::orchestrator::HemisphereProvider;
+
+        let mut cfg = FreedomConfig::default();
+        cfg.inference.mode = TopologyMode::Custom;
+        cfg.models_aliases
+            .insert("@inner-right".into(), "inner-right-wire".into());
+        let mut sub_slots = SubHemisphereSlots::default();
+        sub_slots.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            model: Some("@inner-right".into()),
+            endpoint: Some("http://127.0.0.1:1/v1".into()),
+            ..Default::default()
+        };
+        cfg.inference
+            .hemisphere_sub_slots
+            .insert(HemisphereRole::Left, sub_slots);
+
+        let parent_req = Request {
+            model: Some("outer-left-wire".into()),
+            prompt: "parent question".into(),
+            ..Default::default()
+        };
+        let seen_models = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut hemisphere = super::build_sub_hemisphere_with_config(
+            Arc::new(cfg),
+            std::path::Path::new(""),
+            HemisphereRole::Left,
+            HemisphereRole::Right,
+            &parent_req,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            false,
+        )
+        .await
+        .expect("configured recursive sub-slot must build");
+        assert_eq!(
+            hemisphere.base_req.model.as_deref(),
+            Some("inner-right-wire"),
+            "sub-slot model must replace the recursive parent request model"
+        );
+        hemisphere.provider = Box::new(CouncilModelCapturingProvider {
+            seen_models: Arc::clone(&seen_models),
+        });
+        hemisphere
+            .ask("inner question")
+            .await
+            .expect("capturing recursive leaf must dispatch");
+        assert_eq!(
+            *seen_models.lock().unwrap(),
+            vec!["inner-right-wire".to_string()],
+            "captured recursive request must carry the sub-slot model, not the parent model"
+        );
+    }
+
+    #[tokio::test]
     async fn ask_with_depth_routes_through_sub_slots_when_outer_role_set() {
         // When `outer_role: Some(Left)` AND the topology configures
         // `hemisphere_sub_slots[Left]`, recursion builds sub-hemispheres
@@ -10127,6 +11431,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(HemisphereRole::Left),
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
 
@@ -10173,6 +11478,7 @@ mod tests {
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: None,
             voice: None,
+            recall_fragment: None,
             allow_persistent_context: true,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
@@ -10318,6 +11624,7 @@ mod tests {
             config: None,
             outer_role: None,
             voice: Some(CouncilVoice::SecurityEngineer),
+            recall_fragment: None,
             allow_persistent_context: true,
         };
 
@@ -11106,6 +12413,9 @@ mod tests {
         fn name(&self) -> &'static str {
             "model-capture"
         }
+        fn default_model(&self) -> Option<&str> {
+            Some("model-capture-default")
+        }
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_model.lock().unwrap() = Some(req.model.clone());
             Ok(Completion {
@@ -11126,7 +12436,7 @@ mod tests {
     async fn run_dispatch_capture_model(
         override_model: Option<String>,
         args_model: Option<String>,
-    ) -> Option<String> {
+    ) -> Result<Option<String>> {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         let seg = dir.path().join("test.wal");
@@ -11156,15 +12466,8 @@ mod tests {
             until: vec![],
         };
 
-        let config = FreedomConfig::default();
-        let cost = crate::providers::cost::CostEstimate {
-            input_tokens: 1,
-            output_tokens_est: 1,
-            input_eur: 0.0,
-            output_eur: 0.0,
-            total_eur: 0.0,
-        };
-
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
         let (authorized_model, authorized_source) = {
             let (model, source) = crate::tweaks::resolve_effective_model(
                 override_model.as_deref(),
@@ -11192,7 +12495,7 @@ mod tests {
                     .expect("load test quota state"),
             ),
             "test prompt",
-            &cost,
+            config.tokens.max_per_request,
             &mcp_servers,
             None,
             "0000000000000001",
@@ -11207,25 +12510,28 @@ mod tests {
         )
         .await;
 
-        match result {
-            Ok(_) => {
-                // The provider recorded what model it saw.
-                seen.lock()
-                    .unwrap()
-                    .clone()
-                    .expect("provider must have been called")
-            }
-            // If dispatch_provider bails for an unrelated reason, fall
-            // through — tests below guard specific model values.
-            Err(_) => seen.lock().unwrap().clone().flatten(),
-        }
+        let DispatchOutput {
+            writer,
+            writer_join,
+            ..
+        } = result?;
+        drop(writer);
+        writer_join.await?;
+        let captured = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("provider must have been called");
+        Ok(captured)
     }
 
     #[tokio::test]
     async fn model_override_skill_wins_over_none_args_model() {
         // skill.manifest.model = Some("claude-haiku-4-5"), args.model = None
         // → Request.model == Some("claude-haiku-4-5")
-        let seen = run_dispatch_capture_model(Some("claude-haiku-4-5".to_string()), None).await;
+        let seen = run_dispatch_capture_model(Some("claude-haiku-4-5".to_string()), None)
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             seen.as_deref(),
             Some("claude-haiku-4-5"),
@@ -11237,7 +12543,9 @@ mod tests {
     async fn model_override_args_model_wins_when_no_override() {
         // override_model = None, args.model = Some("claude-opus-4-7")
         // → Request.model == Some("claude-opus-4-7")
-        let seen = run_dispatch_capture_model(None, Some("claude-opus-4-7".to_string())).await;
+        let seen = run_dispatch_capture_model(None, Some("claude-opus-4-7".to_string()))
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             seen.as_deref(),
             Some("claude-opus-4-7"),
@@ -11253,7 +12561,8 @@ mod tests {
             Some("claude-haiku-4-5".to_string()),
             Some("claude-opus-4-7".to_string()),
         )
-        .await;
+        .await
+        .expect("dispatch succeeds");
         assert_eq!(
             seen.as_deref(),
             Some("claude-haiku-4-5"),
@@ -11262,13 +12571,90 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_override_both_none_yields_none() {
-        // override_model = None, args.model = None → Request.model == None
-        // (backward compat: providers use their own default)
-        let seen = run_dispatch_capture_model(None, None).await;
+    async fn model_override_both_none_binds_provider_default() {
+        // B22 requires a concrete wire model before authorization. With no
+        // higher-precedence override, the leaf's declared default is bound and
+        // reaches the transport unchanged.
+        let seen = run_dispatch_capture_model(None, None)
+            .await
+            .expect("dispatch succeeds");
+        assert_eq!(seen.as_deref(), Some("model-capture-default"));
+    }
+
+    #[tokio::test]
+    async fn dispatch_provider_authorization_failure_drains_wal_without_deadlock() {
+        let dir = tempfile::tempdir().unwrap();
+        let quota_path = dir.path().join("quota.json");
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let provider = ModelCapturingProvider {
+            seen_model: Arc::clone(&seen),
+        };
+        let args = ChatArgs {
+            attach: Vec::new(),
+            message: Some("blocked prompt".to_string()),
+            model: Some("unknown-paid-model".to_string()),
+            system: None,
+            edit: false,
+            config: None,
+            wal_segment: None,
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+            incognito: false,
+            loop_mode: false,
+            iterations: None,
+            until: vec![],
+        };
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Strict;
+        let (writer, writer_join) =
+            wal_spawn(dir.path().join("authorization-failure.wal")).expect("wal_spawn");
+        let mcp_servers = crate::mcp::McpServers::default();
+
+        let dispatch = dispatch_provider(
+            "blocked prompt".to_string(),
+            None,
+            &args,
+            &provider,
+            &config,
+            dir.path(),
+            writer,
+            writer_join,
+            quota_path.clone(),
+            Some(
+                crate::providers::quota::QuotaTracker::load_from(&quota_path)
+                    .expect("load test quota state"),
+            ),
+            "blocked prompt",
+            config.tokens.max_per_request,
+            &mcp_servers,
+            None,
+            "0000000000000003",
+            Some("unknown-paid-model".to_string()),
+            None,
+            "cli",
+            crate::providers::cost_authorization::ProviderCallAuditContext::default(),
+            vec![],
+            vec![],
+        );
+
+        let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
+            .await
+            .expect("authorization failure must drain the WAL writer without hanging");
+        let error = match result {
+            Ok(_) => panic!("strict policy must block the unknown paid provider"),
+            Err(error) => error,
+        };
         assert!(
-            seen.is_none(),
-            "both None must yield None model in Request (backward compat)"
+            error.to_string().contains("authorization")
+                || error.to_string().contains("fail-closed"),
+            "unexpected error: {error}"
+        );
+        assert!(
+            seen.lock().unwrap().is_none(),
+            "the provider transport must not run after authorization is denied"
         );
     }
 
@@ -11284,6 +12670,9 @@ mod tests {
     impl Provider for EffortCapturingProvider {
         fn name(&self) -> &'static str {
             "effort-capture"
+        }
+        fn default_model(&self) -> Option<&str> {
+            Some("effort-capture-default")
         }
         fn request_controls(&self) -> crate::providers::ProviderRequestControls {
             crate::providers::ProviderRequestControls::THINKING_BUDGET
@@ -11307,7 +12696,7 @@ mod tests {
     /// `thinking_budget` the provider saw on the Request.
     async fn run_dispatch_capture_effort(
         override_effort: Option<crate::providers::effort_override::EffortBudget>,
-    ) -> Option<u32> {
+    ) -> Result<Option<u32>> {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         let seg = dir.path().join("effort_test.wal");
@@ -11337,15 +12726,8 @@ mod tests {
             until: vec![],
         };
 
-        let config = FreedomConfig::default();
-        let cost = crate::providers::cost::CostEstimate {
-            input_tokens: 1,
-            output_tokens_est: 1,
-            input_eur: 0.0,
-            output_eur: 0.0,
-            total_eur: 0.0,
-        };
-
+        let mut config = FreedomConfig::default();
+        config.autonomy = crate::permissions::AutonomyLevel::Full;
         let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
         let mcp_servers = crate::mcp::McpServers::default();
         let result = dispatch_provider(
@@ -11363,7 +12745,7 @@ mod tests {
                     .expect("load test quota state"),
             ),
             "effort test",
-            &cost,
+            config.tokens.max_per_request,
             &mcp_servers,
             None,
             "0000000000000002",
@@ -11377,19 +12759,26 @@ mod tests {
         )
         .await;
 
-        match result {
-            Ok(_) => seen
-                .lock()
-                .unwrap()
-                .expect("provider must have been called"),
-            Err(_) => seen.lock().unwrap().flatten(),
-        }
+        let DispatchOutput {
+            writer,
+            writer_join,
+            ..
+        } = result?;
+        drop(writer);
+        writer_join.await?;
+        let captured = seen
+            .lock()
+            .unwrap()
+            .expect("provider must have been called");
+        Ok(captured)
     }
 
     #[tokio::test]
     async fn effort_high_maps_to_16384_tokens_in_dispatch() {
         use crate::providers::effort_override::EffortBudget;
-        let budget = run_dispatch_capture_effort(Some(EffortBudget::High)).await;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::High))
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             budget,
             Some(16_384),
@@ -11400,7 +12789,9 @@ mod tests {
     #[tokio::test]
     async fn effort_low_maps_to_1024_tokens_in_dispatch() {
         use crate::providers::effort_override::EffortBudget;
-        let budget = run_dispatch_capture_effort(Some(EffortBudget::Low)).await;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Low))
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             budget,
             Some(1_024),
@@ -11411,7 +12802,9 @@ mod tests {
     #[tokio::test]
     async fn effort_medium_maps_to_4096_tokens_in_dispatch() {
         use crate::providers::effort_override::EffortBudget;
-        let budget = run_dispatch_capture_effort(Some(EffortBudget::Medium)).await;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Medium))
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             budget,
             Some(4_096),
@@ -11422,7 +12815,9 @@ mod tests {
     #[tokio::test]
     async fn effort_max_maps_to_32000_tokens_in_dispatch() {
         use crate::providers::effort_override::EffortBudget;
-        let budget = run_dispatch_capture_effort(Some(EffortBudget::Max)).await;
+        let budget = run_dispatch_capture_effort(Some(EffortBudget::Max))
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             budget,
             Some(32_000),
@@ -11432,7 +12827,9 @@ mod tests {
 
     #[tokio::test]
     async fn effort_none_yields_no_thinking_budget_in_dispatch() {
-        let budget = run_dispatch_capture_effort(None).await;
+        let budget = run_dispatch_capture_effort(None)
+            .await
+            .expect("dispatch succeeds");
         assert_eq!(
             budget, None,
             "override_effort=None must leave thinking_budget=None (backward compat)"

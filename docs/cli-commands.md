@@ -2916,7 +2916,7 @@ Verify an artifact against the public key pinned into this binary. CI uses this 
 
 ## `neoth reload`
 
-Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. Identity/provider fields (`operator_id`, `provider_kind`) are immutable and cause a `CONFIG_RELOAD_REJECTED` audit frame. Tunable fields and channel bindings such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter
+Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. `operator_id` and the complete constructed provider runtime are restart-bound. This includes provider kind, binary, key reference, endpoint, model, aliases, region/API version, inference/recursive-subslot topology, fallback chain, Claude CLI runtime, provider transport settings and provider decorators such as history compaction. Changing one of these fields emits a `CONFIG_RELOAD_REJECTED` audit frame and leaves the active provider graph on its previous generation. Tunable policy, prompt and channel fields such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter
 
 - `--home <DIR>` — Override `~/.neoth/` (mostly for tests)
 

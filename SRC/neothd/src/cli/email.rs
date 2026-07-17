@@ -375,6 +375,7 @@ async fn fetch_and_triage(
     // provider is configured. A provider error per-email is fail-safe (the
     // deterministic ReviewQueue verdict stands). No call is made for any
     // non-ReviewQueue email, so there is zero LLM cost on a clean inbox.
+    let neoth_home = crate::config::FreedomConfig::default_neoth_home();
     let fcfg = crate::config::FreedomConfig::load_from_default_path_or_default()?;
     if fcfg.email.llm_tiebreak
         && triaged
@@ -383,15 +384,18 @@ async fn fetch_and_triage(
     {
         // GOLD-ADOPT-21 — threat-level tiebreak is a classify-grade utility call;
         // route it to the fast/cheap `inference.utility_provider` when set.
-        match crate::providers::from_config_for_utility(&fcfg).await {
+        match crate::providers::from_config_for_utility_at(&fcfg, &neoth_home).await {
             Ok(provider) => {
+                let default_model =
+                    crate::providers::provider_default_wire_model(provider.as_ref());
                 let provider =
                     crate::providers::cost_authorization::AuthorizedProvider::from_box(
                         provider,
                         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
                             fcfg.autonomy_policy(),
+                            fcfg.tokens.max_per_request,
                         )?,
-                        crate::providers::utility_model_for_config(&fcfg),
+                        default_model,
                         "email.threat_tiebreak",
                     );
                 let allow = fcfg.email.llm_tiebreak_allow_downgrade;

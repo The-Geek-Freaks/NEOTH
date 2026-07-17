@@ -607,6 +607,7 @@ mod tests {
                 crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                     autonomy,
                     Some(writer),
+                    crate::config::TokensConfig::default_max_per_request(),
                 )
             }
             None => {

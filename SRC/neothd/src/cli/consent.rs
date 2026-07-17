@@ -157,8 +157,9 @@ fn render_list(home: &std::path::Path, output: OutputFormat) -> Result<()> {
 
 fn render_show(home: &std::path::Path, provider: ProviderKind, output: OutputFormat) -> Result<()> {
     let slug_s = consent::slug(provider);
-    let granted = consent::is_granted(home, provider);
+    let granted = consent::marker_path(home, provider).exists();
     let is_cloud = consent::is_cloud(provider);
+    let is_endpoint_conditional = provider == ProviderKind::LocalOllama;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
@@ -166,12 +167,26 @@ fn render_show(home: &std::path::Path, provider: ProviderKind, output: OutputFor
                 serde_json::to_string_pretty(&json!({
                     "provider": slug_s,
                     "is_cloud": is_cloud,
+                    "is_endpoint_conditional": is_endpoint_conditional,
                     "granted": granted,
                     "marker_path": consent::marker_path(home, provider).display().to_string(),
                 }))?
             );
         }
         OutputFormat::Table => {
+            if is_endpoint_conditional {
+                println!(
+                    "{slug_s}: endpoint-dependent — loopback needs no consent; LAN/DNS/public endpoints do."
+                );
+                if granted {
+                    println!("remote-endpoint consent: GRANTED");
+                    println!("marker: {}", consent::marker_path(home, provider).display());
+                } else {
+                    println!("remote-endpoint consent: NOT GRANTED");
+                    println!("run `neoth consent grant {slug_s}` before remote use.");
+                }
+                return Ok(());
+            }
             if !is_cloud {
                 println!("{slug_s}: not a cloud provider — no consent required.");
                 return Ok(());
@@ -253,13 +268,13 @@ pub(crate) async fn change_consent_at(
     provider: ProviderKind,
     grant: bool,
 ) -> Result<bool> {
-    if grant && !consent::is_cloud(provider) {
+    if grant && !consent::is_consent_managed_kind(provider) {
         anyhow::bail!(
-            "provider `{}` is not a cloud provider — no consent required",
+            "provider `{}` has no remote-egress consent marker",
             consent::slug(provider)
         );
     }
-    let was_granted = consent::is_cloud(provider) && consent::is_granted(home, provider);
+    let was_granted = consent::marker_path(home, provider).exists();
     let daemon_live = daemon_is_live(home);
     crate::daemon::audit_rpc::enforce_required_audit(
         consent_audit_required(home)?,

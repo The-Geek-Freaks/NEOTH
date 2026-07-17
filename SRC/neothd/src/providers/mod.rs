@@ -61,8 +61,10 @@ pub mod tmux_session;
 pub mod tmux_socket;
 pub mod tmux_sweeper;
 pub mod tmux_sweeper_task;
+pub mod token_cap;
 pub mod whisper;
 
+use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -128,7 +130,8 @@ pub struct Completion {
 /// its [`ProviderRequestControls`]; unsupported or malformed controls fail
 /// before authorization and transport. This prevents a CLI flag from looking
 /// active while a provider silently drops it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Request {
     pub prompt: String,
     pub system: Option<String>,
@@ -415,24 +418,268 @@ pub const DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING: u32 = 4096;
 ///
 /// let _forged = ProviderDispatchPermit { _private: () };
 /// ```
+#[derive(Clone)]
+struct ProviderRetryAuthorization {
+    authorizer: cost_authorization::ProviderCallAuthorizer,
+    provider: &'static str,
+    consent_route: Option<crate::consent::ConsentRoute>,
+    req: Request,
+    call_scope: &'static str,
+    output_token_ceiling: Option<u32>,
+}
+
+enum ProviderDispatchAuditState {
+    Active(cost_authorization::ProviderCallAuditGuard),
+    BetweenAttempts,
+    Closed,
+    TransportOnly,
+}
+
+/// A retry classification that represents another concrete transport send.
+/// Authentication failures intentionally have no variant: they must surface
+/// without another attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProviderRetryReason {
+    EmptyStdout,
+    SessionCollision,
+    Transient,
+}
+
+impl ProviderRetryReason {
+    fn terminal_kind(self) -> &'static str {
+        match self {
+            Self::EmptyStdout => "provider_retry_empty_stdout",
+            Self::SessionCollision => "provider_retry_session_collision",
+            Self::Transient => "provider_retry_transient",
+        }
+    }
+}
+
 pub struct ProviderDispatchPermit {
+    retry: Option<ProviderRetryAuthorization>,
+    audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
     _private: (),
+}
+
+impl ProviderDispatchPermit {
+    fn authorized(
+        audit: cost_authorization::ProviderCallAuditGuard,
+        authorizer: cost_authorization::ProviderCallAuthorizer,
+        provider: &'static str,
+        consent_route: Option<crate::consent::ConsentRoute>,
+        req: Request,
+        call_scope: &'static str,
+        output_token_ceiling: Option<u32>,
+    ) -> Self {
+        Self {
+            retry: Some(ProviderRetryAuthorization {
+                authorizer,
+                provider,
+                consent_route,
+                req,
+                call_scope,
+                output_token_ceiling,
+            }),
+            audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(audit)),
+            _private: (),
+        }
+    }
+
+    fn transport_only() -> Self {
+        Self {
+            retry: None,
+            audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
+            _private: (),
+        }
+    }
+
+    async fn complete_success(&self, completion: &Completion) -> Result<()> {
+        let mut state = self.audit.lock().await;
+        match &mut *state {
+            ProviderDispatchAuditState::Active(audit) => {
+                let result = audit.complete_success(completion).await;
+                *state = ProviderDispatchAuditState::Closed;
+                result
+            }
+            ProviderDispatchAuditState::BetweenAttempts => anyhow::bail!(
+                "provider completed while its retry permit was between authorized attempts"
+            ),
+            ProviderDispatchAuditState::Closed | ProviderDispatchAuditState::TransportOnly => {
+                Ok(())
+            }
+        }
+    }
+
+    async fn failure(&self, error_kind: &'static str) -> Result<()> {
+        let mut state = self.audit.lock().await;
+        match &mut *state {
+            ProviderDispatchAuditState::Active(audit) => {
+                let result = audit.failure(error_kind).await;
+                *state = ProviderDispatchAuditState::Closed;
+                result
+            }
+            // A retry-boundary failure has already emitted the terminal for
+            // the last real attempt. If the next authorization is denied,
+            // there is deliberately no second 0x20 to pair here.
+            ProviderDispatchAuditState::BetweenAttempts
+            | ProviderDispatchAuditState::Closed
+            | ProviderDispatchAuditState::TransportOnly => Ok(()),
+        }
+    }
+
+    async fn ensure_consent_before_send(&self) -> Result<()> {
+        let retry = self.retry.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("dispatch permit does not carry live-consent context")
+        })?;
+        if let Err(error) = retry
+            .authorizer
+            .ensure_live_consent(retry.consent_route.as_ref())
+        {
+            if let Err(audit_error) = self.failure("provider_consent_revoked").await {
+                return Err(anyhow::anyhow!(
+                    "provider consent was revoked and terminal audit failed: {audit_error}; consent error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Close the current leaf before any retry backoff or session repair. A
+    /// cancellation while waiting therefore leaves one paired lifecycle and
+    /// no phantom authorization for an attempt that never sent.
+    pub(crate) async fn finish_attempt_for_retry(&self, reason: ProviderRetryReason) -> Result<()> {
+        let mut state = self.audit.lock().await;
+        match &mut *state {
+            ProviderDispatchAuditState::Active(audit) => {
+                let result = audit.failure(reason.terminal_kind()).await;
+                *state = ProviderDispatchAuditState::BetweenAttempts;
+                result
+            }
+            ProviderDispatchAuditState::BetweenAttempts => {
+                anyhow::bail!("provider retry attempt was already closed")
+            }
+            ProviderDispatchAuditState::Closed => {
+                anyhow::bail!("provider retry requested after the dispatch permit was closed")
+            }
+            ProviderDispatchAuditState::TransportOnly => {
+                anyhow::bail!("transport-only dispatch permits cannot authorize retries")
+            }
+        }
+    }
+
+    /// Re-run the exact leaf's Council budget, cost, permission and durable
+    /// 0x20 boundary immediately before another transport send.
+    pub(crate) async fn begin_retry_attempt(&self) -> Result<()> {
+        {
+            let state = self.audit.lock().await;
+            if !matches!(&*state, ProviderDispatchAuditState::BetweenAttempts) {
+                anyhow::bail!("provider retry authorization requires a closed prior attempt");
+            }
+        }
+        let retry = self.retry.clone().ok_or_else(|| {
+            anyhow::anyhow!("dispatch permit does not carry retry authorization context")
+        })?;
+        let authorized = retry
+            .authorizer
+            .authorize_leaf(
+                retry.provider,
+                &retry.req,
+                retry.call_scope,
+                false,
+                retry.output_token_ceiling,
+            )
+            .await?;
+        let audit = authorized.begin_dispatch().await?;
+
+        let mut state = self.audit.lock().await;
+        if !matches!(&*state, ProviderDispatchAuditState::BetweenAttempts) {
+            drop(state);
+            drop(audit);
+            anyhow::bail!("provider retry permit changed while authorization was in flight");
+        }
+        *state = ProviderDispatchAuditState::Active(audit);
+        drop(state);
+        self.ensure_consent_before_send().await
+    }
+}
+
+/// Resolve the exact model identifier a provider's effective primary will put
+/// on the wire. Request assembly uses this before model-aware token budgeting;
+/// the authorization boundary calls the same helper again immediately before
+/// dispatch. Provider resolvers must therefore be idempotent for canonical
+/// model identifiers.
+pub(crate) fn resolve_request_model_for_wire<P: Provider + ?Sized>(
+    provider: &P,
+    requested_model: Option<&str>,
+) -> Result<String> {
+    let requested_model = requested_model
+        .filter(|model| !model.trim().is_empty())
+        .or_else(|| {
+            provider
+                .default_model()
+                .filter(|model| !model.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider `{}` has no explicit request model or declared default",
+                provider.name()
+            )
+        })?;
+    let wire_model = provider.resolve_model_for_wire(requested_model);
+    anyhow::ensure!(
+        !wire_model.trim().is_empty(),
+        "provider `{}` resolved `{requested_model}` to an empty wire model",
+        provider.name()
+    );
+    Ok(wire_model)
+}
+
+/// Resolve a configured/requested model through both model namespaces before
+/// any budgeting or authorization decision observes it: first the operator's
+/// global one-level alias map, then the concrete adapter's wire canonicalizer.
+///
+/// Keep this at the provider boundary so non-chat surfaces (n8n, background
+/// sessions, Cron, channel helpers) cannot accidentally re-bind a raw
+/// `freedom.yaml` alias after [`from_config`] already built a canonical adapter.
+pub(crate) fn resolve_configured_request_model_for_wire<P: Provider + ?Sized>(
+    config: &FreedomConfig,
+    provider: &P,
+    requested_model: Option<&str>,
+) -> Result<String> {
+    let requested_model = requested_model
+        .filter(|model| !model.trim().is_empty())
+        .or_else(|| {
+            provider
+                .default_model()
+                .filter(|model| !model.trim().is_empty())
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "provider `{}` has no explicit request model or declared default",
+                provider.name()
+            )
+        })?;
+    let aliased_model = config.resolve_model_alias(requested_model);
+    resolve_request_model_for_wire(provider, Some(aliased_model))
+}
+
+/// Canonical default advertised by an already-built adapter. Callers that
+/// wrap providers must prefer this over reusing raw configuration strings:
+/// `from_config` has already applied the global alias map and the adapter may
+/// have applied a second provider-native normalization step.
+pub(crate) fn provider_default_wire_model<P: Provider + ?Sized>(provider: &P) -> Option<String> {
+    provider
+        .default_model()
+        .map(|model| provider.resolve_model_for_wire(model))
+        .filter(|model| !model.trim().is_empty())
 }
 
 fn bind_wire_identity<P: Provider + ?Sized>(
     provider: &P,
     req: &mut Request,
 ) -> Result<CompletionIdentity> {
-    if req.model.is_none() {
-        req.model = provider.default_model().map(str::to_owned);
-    }
-    let requested_model = req.model.as_deref().ok_or_else(|| {
-        anyhow::anyhow!(
-            "provider `{}` has no explicit request model or declared default",
-            provider.name()
-        )
-    })?;
-    let wire_model = provider.resolve_model_for_wire(requested_model);
+    let wire_model = resolve_request_model_for_wire(provider, req.model.as_deref())?;
     req.model = Some(wire_model.clone());
     Ok(CompletionIdentity::new(provider.name(), &wire_model))
 }
@@ -488,6 +735,14 @@ pub trait Provider: Send + Sync {
     /// uses it to replace implicit wire defaults with an explicit request model.
     fn default_model(&self) -> Option<&str> {
         None
+    }
+
+    /// Concrete outbound route whose durable consent marker must still exist
+    /// immediately before every real transport attempt. Decorators that recurse
+    /// through `complete_authorized` naturally defer this to their leaf.
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        crate::consent::kind_from_slug(self.name())
+            .map(|kind| crate::consent::ConsentRoute::new(kind, None))
     }
 
     /// Resolve an operator/config alias to the exact model identifier that the
@@ -546,8 +801,17 @@ pub trait Provider: Send + Sync {
         let authorized = authorizer
             .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
             .await?;
-        let mut audit = authorized.begin_dispatch().await?;
-        let permit = ProviderDispatchPermit { _private: () };
+        let audit = authorized.begin_dispatch().await?;
+        let permit = ProviderDispatchPermit::authorized(
+            audit,
+            authorizer.clone(),
+            self.name(),
+            self.consent_route(),
+            req.clone(),
+            call_scope,
+            output_token_ceiling,
+        );
+        permit.ensure_consent_before_send().await?;
         match self.complete_raw(req, &permit).await {
             Ok(mut completion) => {
                 stamp_completion_identity(
@@ -555,11 +819,11 @@ pub trait Provider: Send + Sync {
                     &identity,
                     self.preserves_inner_response_identity(),
                 );
-                audit.complete_success(&completion).await?;
+                permit.complete_success(&completion).await?;
                 Ok(completion)
             }
             Err(error) => {
-                if let Err(audit_error) = audit.failure("provider_call_failed").await {
+                if let Err(audit_error) = permit.failure("provider_call_failed").await {
                     return Err(anyhow::anyhow!(
                         "provider call failed and terminal audit failed: {audit_error}; provider error: {error}"
                     ));
@@ -592,7 +856,15 @@ pub trait Provider: Send + Sync {
             )
             .await?;
         let mut audit = authorized.begin_dispatch().await?;
-        let permit = ProviderDispatchPermit { _private: () };
+        if let Err(error) = authorizer.ensure_live_consent(self.consent_route().as_ref()) {
+            if let Err(audit_error) = audit.failure("provider_consent_revoked").await {
+                return Err(anyhow::anyhow!(
+                    "provider stream consent was revoked and terminal audit failed: {audit_error}; consent error: {error}"
+                ));
+            }
+            return Err(error);
+        }
+        let permit = ProviderDispatchPermit::transport_only();
         match self.stream_raw(req, &permit).await {
             Ok(stream) => Ok(audit.wrap_stream(stamp_stream_identity(
                 stream,
@@ -631,7 +903,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit { _private: () };
+            let permit = ProviderDispatchPermit::transport_only();
             let mut completion = self.complete_raw(req, &permit).await?;
             stamp_completion_identity(&mut completion, &identity, false);
             return Ok(completion);
@@ -681,7 +953,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit { _private: () };
+            let permit = ProviderDispatchPermit::transport_only();
             let stream = self.stream_raw(req, &permit).await?;
             return Ok(stamp_stream_identity(stream, identity, false));
         }
@@ -741,9 +1013,32 @@ pub async fn from_config_for_role(
     config: &FreedomConfig,
     role: crate::config::inference::HemisphereRole,
 ) -> Result<Box<dyn Provider>> {
+    from_config_for_role_inner(config, role, None).await
+}
+
+/// Explicit-instance variant used by chat/serve roots. Live catalog defaults
+/// belong to that instance; the home-less API above intentionally uses only
+/// shipped defaults so process-global state cannot leak across configurations.
+pub async fn from_config_for_role_at(
+    config: &FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_role_inner(config, role, Some(home)).await
+}
+
+async fn from_config_for_role_inner(
+    config: &FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
     let slot = config.inference.slot_for(role);
     let Some(provider_kind) = slot.provider else {
-        return from_config(config).await;
+        let mut selected = config.clone();
+        if let Some(home) = home {
+            apply_instance_catalog_default(&mut selected, home);
+        }
+        return from_config(&selected).await;
     };
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
@@ -764,6 +1059,9 @@ pub async fn from_config_for_role(
     // for azure_openai; other providers ignore.
     if let Some(slot_ver) = slot.api_version.clone() {
         synthetic.provider_api_version = Some(slot_ver);
+    }
+    if let Some(home) = home {
+        apply_instance_catalog_default(&mut synthetic, home);
     }
     from_config(&synthetic).await
 }
@@ -799,7 +1097,15 @@ pub(crate) fn consented_fallback_slots<'a>(
                 tracing::warn!("fallback slot has no provider set; skipping");
                 None
             }
-            Some(inf) if crate::consent::is_granted(home, inf.to_provider_kind()) => {
+            Some(inf)
+                if crate::consent::is_route_granted(
+                    home,
+                    &crate::consent::ConsentRoute::new(
+                        inf.to_provider_kind(),
+                        slot.endpoint.as_deref(),
+                    ),
+                ) =>
+            {
                 Some((slot, inf))
             }
             Some(inf) => {
@@ -820,19 +1126,13 @@ pub async fn fallback_chain_from_config(
     wal_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<Box<dyn Provider>> {
     let primary =
-        from_config_for_role(config, crate::config::inference::HemisphereRole::Left).await?;
+        from_config_for_role_at(config, crate::config::inference::HemisphereRole::Left, home)
+            .await?;
     if config.fallback.chain.is_empty() {
         return Ok(primary);
     }
+    let mut configured_models = vec![provider_default_wire_model(primary.as_ref())];
     let mut chain: Vec<Box<dyn Provider>> = vec![primary];
-    let mut configured_models = vec![
-        config
-            .inference
-            .slot_for(crate::config::inference::HemisphereRole::Left)
-            .model
-            .clone()
-            .or_else(|| config.provider_model.clone()),
-    ];
     // CRITICAL consent gate (4-lens gremium) lives in
     // `consented_fallback_slots` — a regression there would leak operator
     // text to an un-consented cloud provider on every 429, so it is a pure
@@ -850,10 +1150,12 @@ pub async fn fallback_chain_from_config(
         if let Some(ver) = slot.api_version.clone() {
             synthetic.provider_api_version = Some(ver);
         }
+        apply_instance_catalog_default(&mut synthetic, home);
         match from_config(&synthetic).await {
             Ok(p) => {
+                let wire_model = provider_default_wire_model(p.as_ref());
                 chain.push(p);
-                configured_models.push(slot.model.clone());
+                configured_models.push(wire_model);
             }
             Err(e) => tracing::warn!(
                 provider = inf_provider.as_str(),
@@ -893,12 +1195,33 @@ pub async fn from_config_for_sub_role(
     outer_role: crate::config::inference::HemisphereRole,
     inner_role: crate::config::inference::HemisphereRole,
 ) -> Result<Box<dyn Provider>> {
+    from_config_for_sub_role_inner(config, outer_role, inner_role, None).await
+}
+
+pub async fn from_config_for_sub_role_at(
+    config: &FreedomConfig,
+    outer_role: crate::config::inference::HemisphereRole,
+    inner_role: crate::config::inference::HemisphereRole,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_sub_role_inner(config, outer_role, inner_role, Some(home)).await
+}
+
+async fn from_config_for_sub_role_inner(
+    config: &FreedomConfig,
+    outer_role: crate::config::inference::HemisphereRole,
+    inner_role: crate::config::inference::HemisphereRole,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
     let slot = config.inference.slot_for_sub(outer_role, inner_role);
     let Some(provider_kind) = slot.provider else {
         // Slot has no provider override at the sub-level → defer
         // to the outer-role path (which still consults sub-fall-
         // back-to-outer in `slot_for_sub` but lands the same way).
-        return from_config_for_role(config, inner_role).await;
+        return match home {
+            Some(home) => from_config_for_role_at(config, inner_role, home).await,
+            None => from_config_for_role(config, inner_role).await,
+        };
     };
     let mut synthetic = config.clone();
     synthetic.provider_kind = Some(provider_kind.to_provider_kind());
@@ -910,6 +1233,9 @@ pub async fn from_config_for_sub_role(
     }
     if let Some(slot_ver) = slot.api_version.clone() {
         synthetic.provider_api_version = Some(slot_ver);
+    }
+    if let Some(home) = home {
+        apply_instance_catalog_default(&mut synthetic, home);
     }
     from_config(&synthetic).await
 }
@@ -937,9 +1263,23 @@ pub async fn from_config_for_sub_role(
 ///      the error so the caller can decide to skip the learn pass
 ///      (default cheap-by-default posture).
 pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    from_config_for_learn_inner(config, None).await
+}
+
+pub async fn from_config_for_learn_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_learn_inner(config, Some(home)).await
+}
+
+async fn from_config_for_learn_inner(
+    config: &FreedomConfig,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
     let Some(learn_name) = config.profile.learn_provider.as_deref() else {
         // No explicit learn provider — use the main one.
-        return from_config(config).await;
+        return from_config_with_optional_home(config, home).await;
     };
     // ProviderKind derives serde rename_all="snake_case" so the
     // YAML scalar form parses directly. Saves an explicit from_slug
@@ -970,7 +1310,7 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
         synthetic.provider_model = None;
     }
     synthetic.provider_kind = Some(kind);
-    match from_config(&synthetic).await {
+    match from_config_with_optional_home(&synthetic, home).await {
         Ok(p) => Ok(p),
         Err(e) if config.profile.allow_cloud_fallback => {
             tracing::warn!(
@@ -978,7 +1318,7 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
                 learn_provider = learn_name,
                 "profile.learn_provider build failed; allow_cloud_fallback=true → falling back to main provider"
             );
-            from_config(config).await
+            from_config_with_optional_home(config, home).await
         }
         Err(e) => Err(e.context(format!(
             "profile.learn_provider `{learn_name}` build failed AND allow_cloud_fallback=false; \
@@ -1005,11 +1345,25 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
 ///      own deterministic path (cheap-by-default — never silently spends the
 ///      flagship model the operator was trying to avoid).
 pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    from_config_for_utility_inner(config, None).await
+}
+
+pub async fn from_config_for_utility_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_utility_inner(config, Some(home)).await
+}
+
+async fn from_config_for_utility_inner(
+    config: &FreedomConfig,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
     match build_utility_config(config) {
         // No `utility_provider` configured → use the operator's MAIN provider
         // (no routing change, no regression).
-        None => from_config(config).await,
-        Some(synthetic) => from_config(&synthetic).await,
+        None => from_config_with_optional_home(config, home).await,
+        Some(synthetic) => from_config_with_optional_home(&synthetic, home).await,
     }
 }
 
@@ -1018,9 +1372,12 @@ pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn P
 /// [`build_utility_config`] prevents utility cost authorization from drifting
 /// to the main/flagship model after routing selected a fast model.
 pub(crate) fn utility_model_for_config(config: &FreedomConfig) -> Option<String> {
-    build_utility_config(config)
-        .map(|synthetic| synthetic.provider_model)
-        .unwrap_or_else(|| config.provider_model.clone())
+    let effective = build_utility_config(config);
+    let effective = effective.as_ref().unwrap_or(config);
+    effective
+        .provider_model
+        .as_deref()
+        .map(|model| effective.resolve_model_alias(model).to_owned())
 }
 
 /// GOLD-ADAPT-ODY-08 — build the SOTA teacher provider for escalation when a
@@ -1042,9 +1399,23 @@ pub(crate) fn utility_model_for_config(config: &FreedomConfig) -> Option<String>
 /// fields (same isolation as `build_utility_config`). Same-vendor routing
 /// keeps the shared key.
 pub async fn from_config_for_teacher(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    from_config_for_teacher_inner(config, None).await
+}
+
+pub async fn from_config_for_teacher_at(
+    config: &FreedomConfig,
+    home: &Path,
+) -> Result<Box<dyn Provider>> {
+    from_config_for_teacher_inner(config, Some(home)).await
+}
+
+async fn from_config_for_teacher_inner(
+    config: &FreedomConfig,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
     let Some(inf_prov) = config.inference.teacher_provider else {
         // No explicit teacher provider — fall through to main provider.
-        return from_config(config).await;
+        return from_config_with_optional_home(config, home).await;
     };
     let teacher_str = inf_prov.as_str();
     if is_local_provider(teacher_str) || teacher_str == "recursive_mas" {
@@ -1066,7 +1437,7 @@ pub async fn from_config_for_teacher(config: &FreedomConfig) -> Result<Box<dyn P
         synthetic.provider_model = None;
     }
     synthetic.provider_kind = Some(teacher_kind);
-    from_config(&synthetic).await
+    from_config_with_optional_home(&synthetic, home).await
 }
 
 /// GR-027 — build the synthetic [`FreedomConfig`] for the utility provider, or
@@ -1131,25 +1502,37 @@ pub(crate) fn default_model(
     role: model_roles::ModelRole,
     hardcoded: &str,
 ) -> String {
-    // GOLD-PROG-14 / [neoth_model_version_agnostic] — for the Flagship role,
-    // prefer the live catalog's provider-preferred (first non-deprecated) model
-    // so a newly shipped flagship flows in WITHOUT hand-editing `default_table()`.
-    // The catalog carries no Balanced/Fast tier signal, so those roles keep the
-    // pinned defaults. Catalog absent/empty (fresh install, isolated tests) → the
-    // existing `default_table()`/`hardcoded` path, so behaviour is unchanged there.
-    if matches!(role, model_roles::ModelRole::Flagship) {
-        let path = crate::models::catalog::ModelsCatalog::default_path(
-            &FreedomConfig::default_neoth_home(),
-        );
-        let catalog = crate::models::catalog::ModelsCatalog::load_from(&path);
-        if let Some(id) = model_roles::flagship_from_catalog(&catalog, provider_id) {
-            return id;
-        }
-    }
     model_roles::default_table()
         .resolve(provider_id, role)
         .unwrap_or(hardcoded)
         .to_string()
+}
+
+/// Resolve a catalog-driven flagship only from an explicitly selected instance
+/// home. Provider construction without a home deliberately stays on the shipped
+/// table; it must never read another instance's process-global catalog.
+pub(crate) fn catalog_flagship_model_at(home: &Path, provider_id: &str) -> Option<String> {
+    let path = crate::models::catalog::ModelsCatalog::default_path(home);
+    let catalog = crate::models::catalog::ModelsCatalog::load_from(&path);
+    model_roles::flagship_from_catalog(&catalog, provider_id)
+}
+
+fn apply_instance_catalog_default(config: &mut FreedomConfig, home: &Path) {
+    if config.provider_model.is_some() {
+        return;
+    }
+    // These are exactly the from_config arms whose implicit default is the
+    // Flagship role. Anthropic intentionally defaults to Balanced; providers
+    // requiring an explicit deployment/model must continue to fail closed.
+    let provider_id = match config.provider_kind {
+        Some(ProviderKind::ClaudeCli) => "claude_cli",
+        Some(ProviderKind::OpenaiApi) => "openai_api",
+        Some(ProviderKind::GeminiApi) => "gemini_api",
+        Some(ProviderKind::Cohere) => "cohere_api",
+        Some(ProviderKind::GitHubCopilot) => "copilot_api",
+        _ => return,
+    };
+    config.provider_model = catalog_flagship_model_at(home, provider_id);
 }
 
 pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
@@ -1452,6 +1835,26 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
     }
 }
 
+/// Construct the configured provider using the selected instance's live model
+/// catalog for implicit Flagship defaults. Callers that know their NEOTH home
+/// must use this boundary; [`from_config`] is intentionally process-global-
+/// state free for tests and genuinely contextless consumers.
+pub async fn from_config_at(config: &FreedomConfig, home: &Path) -> Result<Box<dyn Provider>> {
+    let mut selected = config.clone();
+    apply_instance_catalog_default(&mut selected, home);
+    from_config(&selected).await
+}
+
+async fn from_config_with_optional_home(
+    config: &FreedomConfig,
+    home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
+    match home {
+        Some(home) => from_config_at(config, home).await,
+        None => from_config(config).await,
+    }
+}
+
 /// Day-14b Phase 2 — build the operator-configured embedding
 /// provider (if any). Returns `None` when:
 ///   - `freedom.yaml::inference.embedding_provider` is absent
@@ -1692,19 +2095,12 @@ mod tests {
 
     #[test]
     fn default_model_resolves_from_table_then_falls_back() {
-        // GOLD-WIRE-03 / GOLD-PROG-14: `default_model` is the from_config
-        // fallback path. With NO catalog present (isolated NEOTH_HOME below) the
-        // `default_table` value wins for every role; an absent provider falls
-        // back to the per-arm hardcoded string. PROG-14 layers a catalog
-        // override for Flagship ON TOP — exercised in the second half.
+        // GOLD-WIRE-03 / GOLD-PROG-14: home-less provider construction uses
+        // shipped defaults only. A live catalog is consulted exclusively via
+        // an explicit instance home, exercised in the second half.
         use model_roles::{ModelRole, default_table};
 
-        // PROG-14: isolate NEOTH_HOME to an empty dir so default_model's catalog
-        // read finds nothing → the pre-PROG-14 default_table behaviour holds. The
-        // crate env lock serialises this against any sibling env test (#4 gotcha).
-        let _env = crate::test_env::lock();
         let tmp = tempfile::TempDir::new().unwrap();
-        unsafe { std::env::set_var("NEOTH_HOME", tmp.path()) };
 
         // Present provider → table value, NOT the hardcoded fallback.
         assert_eq!(
@@ -1748,24 +2144,57 @@ mod tests {
                 ..Default::default()
             },
         );
-        let cat_path = crate::models::catalog::ModelsCatalog::default_path(
-            &FreedomConfig::default_neoth_home(),
-        );
+        let cat_path = crate::models::catalog::ModelsCatalog::default_path(tmp.path());
         std::fs::create_dir_all(cat_path.parent().unwrap()).unwrap();
         std::fs::write(&cat_path, serde_json::to_vec(&cat).unwrap()).unwrap();
 
         assert_eq!(
-            default_model("anthropic_api", ModelRole::Flagship, "IGNORED"),
-            "claude-opus-4-9-NEW",
+            catalog_flagship_model_at(tmp.path(), "anthropic_api").as_deref(),
+            Some("claude-opus-4-9-NEW"),
             "PROG-14: catalog flagship overrides the pinned default_table flagship"
+        );
+        assert_eq!(
+            default_model("anthropic_api", ModelRole::Flagship, "IGNORED"),
+            default_table()
+                .resolve("anthropic_api", ModelRole::Flagship)
+                .unwrap(),
+            "home-less construction must not read the instance catalog"
         );
         // Balanced is NOT catalog-driven → still the pinned default.
         assert_eq!(
             default_model("anthropic_api", ModelRole::Balanced, "x"),
             "claude-sonnet-4-6"
         );
+    }
 
-        unsafe { std::env::remove_var("NEOTH_HOME") };
+    #[test]
+    fn catalog_flagship_resolution_is_scoped_to_the_selected_instance_home() {
+        fn write_catalog(home: &Path, model: &str) {
+            let mut catalog = crate::models::catalog::ModelsCatalog::in_memory();
+            catalog.providers.insert(
+                "openai_api".to_owned(),
+                crate::models::catalog::ProviderCatalog {
+                    models: vec![crate::models::catalog::ModelEntry::new(model)],
+                    ..Default::default()
+                },
+            );
+            let path = crate::models::catalog::ModelsCatalog::default_path(home);
+            std::fs::write(path, serde_json::to_vec(&catalog).unwrap()).unwrap();
+        }
+
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        write_catalog(first.path(), "gpt-instance-one");
+        write_catalog(second.path(), "gpt-instance-two");
+
+        assert_eq!(
+            catalog_flagship_model_at(first.path(), "openai_api").as_deref(),
+            Some("gpt-instance-one")
+        );
+        assert_eq!(
+            catalog_flagship_model_at(second.path(), "openai_api").as_deref(),
+            Some("gpt-instance-two")
+        );
     }
 
     #[test]
@@ -1965,6 +2394,20 @@ mod tests {
         assert_eq!(
             t.resolve("gemini_api", ModelRole::Fast),
             Some("gemini-3-flash-lite")
+        );
+    }
+
+    #[test]
+    fn utility_model_resolves_global_alias_before_wrapper_binding() {
+        let mut cfg = base_config();
+        cfg.inference.utility_provider = None;
+        cfg.provider_model = Some("@utility".into());
+        cfg.models_aliases
+            .insert("@utility".into(), "claude-haiku-4-5-20251001".into());
+
+        assert_eq!(
+            utility_model_for_config(&cfg).as_deref(),
+            Some("claude-haiku-4-5-20251001")
         );
     }
 
@@ -2173,6 +2616,40 @@ mod tests {
             consented_fallback_slots(tmp.path(), &slots).len(),
             1,
             "local provider needs no consent"
+        );
+    }
+
+    #[test]
+    fn consented_slots_treats_ollama_by_endpoint_not_variant_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let slots = vec![
+            HemisphereSlot {
+                provider: Some(InferenceProvider::LocalOllama),
+                endpoint: Some("http://127.0.0.1:11434".into()),
+                ..Default::default()
+            },
+            HemisphereSlot {
+                provider: Some(InferenceProvider::LocalOllama),
+                endpoint: Some("http://192.168.1.25:11434".into()),
+                ..Default::default()
+            },
+        ];
+        let kept = consented_fallback_slots(tmp.path(), &slots);
+        assert_eq!(
+            kept.len(),
+            1,
+            "remote Ollama must be dropped without consent"
+        );
+        assert_eq!(
+            kept[0].0.endpoint.as_deref(),
+            Some("http://127.0.0.1:11434")
+        );
+
+        crate::consent::grant(tmp.path(), ProviderKind::LocalOllama).unwrap();
+        assert_eq!(
+            consented_fallback_slots(tmp.path(), &slots).len(),
+            2,
+            "explicit Ollama marker authorizes the remote fallback"
         );
     }
 

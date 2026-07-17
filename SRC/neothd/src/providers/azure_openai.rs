@@ -93,7 +93,7 @@ impl AzureOpenAiAdapter {
         let api_version = api_version
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_API_VERSION.to_string());
-        let http = super::http_client::build_client()?;
+        let http = super::http_client::build_client_no_redirect()?;
         Ok(Self {
             endpoint,
             api_key,

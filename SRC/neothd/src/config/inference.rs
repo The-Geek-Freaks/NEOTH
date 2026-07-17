@@ -693,10 +693,12 @@ pub struct CouncilConfig {
     pub max_calls_per_user_message: Option<u32>,
 
     /// Daily USD budget cap. `None` disables the budget check.
-    /// Enforced via `DailyBudget::charge()` immediately before
-    /// every outbound LLM call. Counter persists at
-    /// `~/.neoth/budget/daily.json`, keyed by UTC date, lazily
-    /// reset on first call after midnight.
+    /// Council provider leaves atomically reserve their reviewed worst-case
+    /// bound immediately before dispatch and settle actual cost at the
+    /// terminal edge. The cross-process ledger persists at
+    /// `~/.neoth/budget/daily.json`, keyed by UTC date and lazily reset on the
+    /// first reservation after midnight. Unknown price or an unbounded output
+    /// under an active cap fails closed.
     #[serde(default)]
     pub daily_usd_cap: Option<f32>,
 

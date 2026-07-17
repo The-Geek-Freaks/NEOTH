@@ -316,6 +316,19 @@ async fn summarize_consolidated_days(
     days: &[(String, Vec<(i64, String)>)],
     wal_writer: Option<&WalWriterHandle>,
 ) {
+    // Load the operator policy once so both the authorization cap and prompt
+    // layers are bound to the same validated configuration snapshot.
+    let config = match crate::config::FreedomConfig::load_from_path_or_default(config_path) {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "warm-summary pass blocked: freedom.yaml is invalid"
+            );
+            return;
+        }
+    };
+
     // B22: `provider` can be a composite whose public name is its local primary
     // while a fallback or compaction utility is remote. Bind the authorization
     // boundary here, immediately above the raw warm-summarize helper, so every
@@ -326,6 +339,7 @@ async fn summarize_consolidated_days(
         crate::permissions::AutonomyPolicySnapshot::builtin(AutonomyLevel::Strict)
             .expect("Strict is a built-in autonomy policy"),
         wal_writer.cloned(),
+        config.tokens.max_per_request,
     )
     .with_usage_home(
         config_path
@@ -339,16 +353,7 @@ async fn summarize_consolidated_days(
     // GOLD-ADAPT-SPEAKR-01 — load the operator's prompt-layer override once.
     // Missing config uses compiled defaults; existing malformed policy blocks
     // this unattended pass rather than silently changing its prompts.
-    let meeting_cfg = match crate::config::FreedomConfig::load_from_path_or_default(config_path) {
-        Ok(config) => config.skills.meeting_summary,
-        Err(error) => {
-            tracing::warn!(
-                error = %error,
-                "warm-summary pass blocked: freedom.yaml is invalid"
-            );
-            return;
-        }
-    };
+    let meeting_cfg = config.skills.meeting_summary;
     let layers = crate::memory::warm_summarize::summary_layers(Some(&meeting_cfg));
     for (day, _events_this_pass) in days {
         // Load the FULL retained set for this day (check + fetch in one open).

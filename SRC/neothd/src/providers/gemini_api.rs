@@ -25,7 +25,7 @@ pub struct GeminiAdapter {
 
 impl GeminiAdapter {
     pub fn new(api_key: SecretString, default_model: String) -> Result<Self> {
-        let http = crate::providers::http_client::build_client()?;
+        let http = crate::providers::http_client::build_client_no_redirect()?;
         Ok(Self {
             api_key,
             default_model,

@@ -107,8 +107,9 @@ pub fn derive_topic(cluster_name: &str) -> [u8; 32] {
 /// connection receiver alive so the accept loop actually sees peers.
 ///
 /// Teardown order on [`shutdown`](Self::shutdown): `leave(topic)` (unannounce)
-/// → drop the peeroxide handle (actor breaks its loop) → abort our accept loop
-/// → await the actor task so DHT sockets close before the process exits.
+/// → drop the peeroxide handle (actor breaks its loop) → signal + await our
+/// accept loop, which cancels and awaits every owned peer session → await the
+/// actor task so DHT sockets close before the process exits.
 pub struct SwarmHandle {
     /// peeroxide command handle. `Some` while live; dropping it stops the DHT.
     peer_handle: Option<peeroxide::SwarmHandle>,
@@ -118,6 +119,10 @@ pub struct SwarmHandle {
     swarm_task: Option<tokio::task::JoinHandle<()>>,
     /// Our per-peer connection-accept loop.
     accept_task: Option<tokio::task::JoinHandle<()>>,
+    /// Graceful stop signal for the accept loop. Unlike aborting its JoinHandle,
+    /// this lets it await cancellation of every peer session that owns WAL and
+    /// cluster-dispatch senders.
+    accept_shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     /// Stable authenticated origin used by every local gossip frame: the
     /// peeroxide Noise static public key in lowercase hex.
     own_peer_id: String,
@@ -143,9 +148,11 @@ impl SwarmHandle {
         // 2. Drop the command handle → last cmd_tx gone → actor breaks its loop
         //    → DHT destroyed + unannounced.
         self.peer_handle = None;
-        // 3. Abort our accept loop (it would otherwise observe a closed conn_rx).
+        // 3. Stop the accept loop and await its owned peer-session JoinSet.
+        if let Some(shutdown) = self.accept_shutdown.take() {
+            let _ = shutdown.send(());
+        }
         if let Some(t) = self.accept_task.take() {
-            t.abort();
             let _ = t.await;
         }
         // 4. Await the actor task so the DHT finishes closing its IO sockets
@@ -162,12 +169,41 @@ impl Drop for SwarmHandle {
         // RAII fallback (test cleanup / panics): dropping the peeroxide handle
         // stops the actor; abort our task handles so they don't leak.
         self.peer_handle = None;
+        if let Some(shutdown) = self.accept_shutdown.take() {
+            let _ = shutdown.send(());
+        }
         if let Some(t) = self.accept_task.take() {
             t.abort();
         }
         if let Some(t) = self.swarm_task.take() {
             t.abort();
         }
+    }
+}
+
+/// Owns every live peer session spawned by the accept loop. Explicit shutdown
+/// awaits cancellation so session-held WAL writers and task-dispatch senders
+/// are gone before [`SwarmHandle::shutdown`] returns.
+#[derive(Default)]
+struct PeerSessions {
+    tasks: tokio::task::JoinSet<()>,
+}
+
+impl PeerSessions {
+    fn spawn(&mut self, task: impl std::future::Future<Output = ()> + Send + 'static) {
+        self.tasks.spawn(task);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.tasks.is_empty()
+    }
+
+    async fn join_next(&mut self) -> Option<Result<(), tokio::task::JoinError>> {
+        self.tasks.join_next().await
+    }
+
+    async fn shutdown(&mut self) {
+        self.tasks.shutdown().await;
     }
 }
 
@@ -213,8 +249,30 @@ pub async fn spawn_discovery_with_wal(
     let cluster_name_owned = cluster_name.to_string();
     let own_peer_id = hex_encode(&own_noise_pk);
     let accept_peer_id = own_peer_id.clone();
+    let (accept_shutdown, mut accept_shutdown_rx) = tokio::sync::oneshot::channel();
     let accept_task = tokio::spawn(async move {
-        while let Some(conn) = conn_rx.recv().await {
+        let mut peer_sessions = PeerSessions::default();
+        loop {
+            let conn = tokio::select! {
+                biased;
+                _ = &mut accept_shutdown_rx => {
+                    debug!("hyperswarm: peer acceptor received shutdown");
+                    break;
+                }
+                joined = peer_sessions.join_next(), if !peer_sessions.is_empty() => {
+                    if let Some(Err(error)) = joined {
+                        warn!(%error, "hyperswarm: owned peer session task panicked");
+                    }
+                    continue;
+                }
+                conn = conn_rx.recv() => match conn {
+                    Some(conn) => conn,
+                    None => {
+                        warn!("hyperswarm: connection receiver closed — discovery loop exiting");
+                        break;
+                    }
+                },
+            };
             let peer_hex = hex_encode(conn.remote_public_key());
             // Acquire a session slot BEFORE spawning. `try_acquire_owned` is
             // non-blocking: at capacity we drop the connection immediately so a
@@ -244,7 +302,7 @@ pub async fn spawn_discovery_with_wal(
             let home = neoth_home.clone();
             let dtx = dispatch_tx.clone();
             let reload = Arc::clone(&reload_controller);
-            tokio::spawn(async move {
+            peer_sessions.spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
                 let peer_hex_for_wal = peer_hex.clone();
@@ -283,7 +341,8 @@ pub async fn spawn_discovery_with_wal(
                 }
             });
         }
-        warn!("hyperswarm: connection receiver closed — discovery loop exiting");
+        peer_sessions.shutdown().await;
+        debug!("hyperswarm: peer acceptor and all sessions stopped");
     });
 
     // SL-00(1b) review fix: announce on the DHT ONLY AFTER the accept loop is
@@ -306,6 +365,7 @@ pub async fn spawn_discovery_with_wal(
         topic,
         swarm_task: Some(swarm_task),
         accept_task: Some(accept_task),
+        accept_shutdown: Some(accept_shutdown),
         own_peer_id,
     })
 }
@@ -1650,6 +1710,34 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn owned_peer_sessions_release_wal_senders_on_shutdown() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(home.path().join("peer-session-shutdown.wal")).unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let held_writer = writer.clone();
+        let mut sessions = PeerSessions::default();
+        sessions.spawn(async move {
+            let _held_writer = held_writer;
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(3), started_rx)
+            .await
+            .expect("owned peer session never started")
+            .expect("owned peer session dropped its start signal");
+
+        drop(writer);
+        tokio::time::timeout(std::time::Duration::from_secs(3), sessions.shutdown())
+            .await
+            .expect("peer-session JoinSet shutdown did not await cancellation");
+        tokio::time::timeout(std::time::Duration::from_secs(3), writer_join)
+            .await
+            .expect("peer session retained its WAL sender after shutdown")
+            .expect("WAL writer task panicked");
+    }
 
     #[test]
     fn cluster_task_gate_truth_table() {

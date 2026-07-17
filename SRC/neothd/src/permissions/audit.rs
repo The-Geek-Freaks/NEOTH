@@ -70,6 +70,10 @@ pub struct AuditEntry {
     /// is the pointer the operator joins against `0xA5 LEASE_GRANTED` to
     /// prove the grant chain.
     pub lease_id: Option<String>,
+    /// Confirmation mechanism that upgraded an otherwise-confirmable action
+    /// (for example `explicit_request_capability`). `None` for direct policy
+    /// allows, denials, and historical frames.
+    pub confirmation_source: Option<String>,
 }
 
 /// Three-way decision discriminator. Pinned `serde(rename_all =
@@ -191,6 +195,7 @@ pub fn audit_segment(
         let reason = parsed.reason.clone();
         let subject = parsed.subject.clone();
         let lease_id = parsed.lease_id.clone();
+        let confirmation_source = parsed.confirmation_source.clone();
         let downstream = next_after
             .get(&event_id)
             .map(|(et, _)| describe_downstream(*et));
@@ -209,6 +214,7 @@ pub fn audit_segment(
             downstream,
             subject,
             lease_id,
+            confirmation_source,
         });
     }
 
@@ -248,6 +254,7 @@ struct ParsedPayload {
     decision_label: String,
     subject: Option<String>,
     lease_id: Option<String>,
+    confirmation_source: Option<String>,
 }
 
 fn parse_payload(bytes: &[u8]) -> ParsedPayload {
@@ -269,6 +276,7 @@ fn parse_payload(bytes: &[u8]) -> ParsedPayload {
         decision_label: pick("decision"),
         subject: pick_opt("subject"),
         lease_id: pick_opt("lease_id"),
+        confirmation_source: pick_opt("confirmation_source"),
     }
 }
 
@@ -451,7 +459,7 @@ mod tests {
     }
 
     #[test]
-    fn audit_surfaces_subject_and_lease_id_when_present() {
+    fn audit_surfaces_subject_lease_and_confirmation_source_when_present() {
         // SL-01a-b: a lease-upgraded GRANTED frame carries subject + lease_id;
         // the audit reader must surface them (the grant-chain proof) and leave
         // them None on a plain frame that has neither.
@@ -463,6 +471,7 @@ mod tests {
             "decision": "allow",
             "subject": "peerA",
             "lease_id": "0193f8a0-dead-7abc-9999-000000000001",
+            "confirmation_source": "capability_lease",
         }))
         .unwrap();
         write_segment(
@@ -480,9 +489,17 @@ mod tests {
             leased.lease_id.as_deref(),
             Some("0193f8a0-dead-7abc-9999-000000000001")
         );
+        assert_eq!(
+            leased.confirmation_source.as_deref(),
+            Some("capability_lease")
+        );
         let plain = &r.entries[1];
         assert!(plain.subject.is_none(), "no subject ⇒ None");
         assert!(plain.lease_id.is_none(), "no lease ⇒ None");
+        assert!(
+            plain.confirmation_source.is_none(),
+            "no confirmation source ⇒ None"
+        );
     }
 
     #[test]

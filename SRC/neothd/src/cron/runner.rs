@@ -110,11 +110,52 @@ pub async fn run_job_at(
     provider: &AuthorizedProvider,
     writer: &WalWriterHandle,
 ) -> Result<RunOutcome> {
+    run_job_at_inner(home, job, provider, writer, None).await
+}
+
+/// Daemon-scheduler entrypoint. `default_provider_routes` is captured from the
+/// same startup generation that constructed `provider`; an unvalidated or
+/// rejected on-disk freedom.yaml edit must never authorize a different,
+/// already-built transport graph.
+pub(crate) async fn run_job_at_with_default_provider_routes(
+    home: &Path,
+    job: &Job,
+    provider: &AuthorizedProvider,
+    writer: &WalWriterHandle,
+    default_provider_routes: &[crate::consent::ConsentRoute],
+) -> Result<RunOutcome> {
+    run_job_at_inner(home, job, provider, writer, Some(default_provider_routes)).await
+}
+
+async fn run_job_at_inner(
+    home: &Path,
+    job: &Job,
+    provider: &AuthorizedProvider,
+    writer: &WalWriterHandle,
+    default_provider_routes: Option<&[crate::consent::ConsentRoute]>,
+) -> Result<RunOutcome> {
     let config_path = home.join("freedom.yaml");
     let runtime = crate::config::load_runtime_config_pair_from_path_or_default(&config_path)
         .with_context(|| format!("load Cron runtime config {}", config_path.display()))?;
     let config = runtime.config;
     validate_delivery_target(home, job, &config, &runtime.credentials).await?;
+    if job.execution.provider.is_none() {
+        if job.execution.fallback.is_empty() {
+            match default_provider_routes {
+                Some(routes) => crate::consent::ensure_routes_still_granted(home, routes),
+                None => crate::consent::ensure_all_still_granted(home, &config),
+            }
+            .with_context(|| format!("Cron job `{}` default provider topology consent", job.id))?;
+        } else if let Some(route) =
+            crate::consent::route_for_role(&config, crate::config::inference::HemisphereRole::Left)
+        {
+            // A job-local fallback list builds a fresh provider chain below;
+            // its primary therefore follows the current validated config, not
+            // the daemon's borrowed startup graph.
+            crate::consent::ensure_route_still_granted(home, &route)
+                .with_context(|| format!("Cron job `{}` primary provider consent", job.id))?;
+        }
+    }
     let provider = resolve_job_provider(home, job, provider, writer, &config).await?;
     if job.execution.thinking_budget.is_some()
         && !provider.get().request_controls().supports_thinking_budget()
@@ -154,16 +195,13 @@ async fn resolve_job_provider<'a>(
     let mut scoped = config.clone();
     if let Some(primary) = job.execution.provider {
         let provider_kind = primary.to_provider_kind();
-        if !crate::consent::is_granted(home, provider_kind) {
-            anyhow::bail!(
-                "Cron job `{}` cannot use cloud provider `{}` without an explicit consent grant",
-                job.id,
-                primary.as_str()
-            );
-        }
         let mut primary_slot = configured_provider_slot(config, primary);
         primary_slot.provider = Some(primary);
         primary_slot.model = job.execution.model.clone().or(primary_slot.model);
+        let route =
+            crate::consent::ConsentRoute::new(provider_kind, primary_slot.endpoint.as_deref());
+        crate::consent::ensure_route_still_granted(home, &route)
+            .with_context(|| format!("Cron job `{}` provider consent", job.id))?;
 
         scoped.provider_kind = Some(provider_kind);
         if config.provider_kind != Some(provider_kind) {
@@ -197,18 +235,17 @@ async fn resolve_job_provider<'a>(
     let raw = crate::providers::fallback_chain_from_config(&scoped, home, Some(writer.clone()))
         .await
         .with_context(|| format!("build provider policy for Cron job `{}`", job.id))?;
+    let default_model = crate::providers::provider_default_wire_model(raw.as_ref());
     let authorized = AuthorizedProvider::from_box(
         raw,
         crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
             scoped.autonomy_policy(),
             Some(writer.clone()),
+            scoped.tokens.max_per_request,
         )
         .with_usage_home(home.to_path_buf())
         .with_usage_automated(true),
-        job.execution
-            .model
-            .clone()
-            .or_else(|| scoped.provider_model.clone()),
+        default_model,
         "cron.job",
     );
     Ok(JobProvider::Owned(Box::new(authorized)))
@@ -555,11 +592,21 @@ async fn run_job_with_paths(
         }
     }
 
+    // Resolve a per-job model through the live config alias namespace and the
+    // already-built effective provider before it reaches the authorization
+    // wrapper. An explicit raw job alias would otherwise outrank the wrapper's
+    // canonical default.
+    let request_model = crate::providers::resolve_configured_request_model_for_wire(
+        config,
+        provider,
+        job.execution.model.as_deref(),
+    )?;
+
     // ── Provider call (bounded by timeout_seconds) ─────────────────────────
     let req = Request {
         prompt: effective_prompt.clone(),
         system: system_prompt,
-        model: job.execution.model.clone(),
+        model: Some(request_model),
         thinking_budget: job.execution.thinking_budget,
         ..Default::default()
     };
@@ -1038,6 +1085,7 @@ async fn complete_cron_request(
         Some(&config.rollback),
         Some(&job.execution.tools),
         &config.security,
+        home,
     )
     .await?;
     Ok(crate::providers::Completion {
@@ -1442,6 +1490,57 @@ mod workstream_c_tests {
                 .contains("without an explicit consent grant")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn default_cron_revoked_fallback_route_blocks_before_provider_call() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+
+        let home = tempfile::tempdir().unwrap();
+        let mut startup_config = crate::config::FreedomConfig {
+            provider_kind: Some(crate::cli::init::ProviderKind::LocalQwen),
+            ..Default::default()
+        };
+        startup_config.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAi),
+            ..Default::default()
+        });
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            startup_config.public_yaml().unwrap(),
+        )
+        .unwrap();
+        let startup_routes = crate::consent::required_consent_routes(&startup_config);
+        assert!(
+            startup_routes
+                .iter()
+                .any(|route| route.kind == crate::cli::init::ProviderKind::OpenaiApi)
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = authorized(CountingProvider {
+            calls: Arc::clone(&calls),
+        });
+        let (writer, join) = crate::wal::spawn(home.path().join("cron-route-gate.wal")).unwrap();
+
+        let error = run_job_at_with_default_provider_routes(
+            home.path(),
+            &briefing_job(),
+            &provider,
+            &writer,
+            &startup_routes,
+        )
+        .await
+        .expect_err("revoked fallback consent must stop the borrowed provider topology");
+        assert!(error.to_string().contains("openai_api"));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "Cron must not call the primary when any reachable startup fallback is revoked"
+        );
 
         drop(writer);
         join.await.unwrap();

@@ -212,19 +212,24 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // handle (not spawning a second one) keeps the single-writer
     // invariant that the WAL segment depends on.
     #[cfg(feature = "wasm-plugin-host")]
-    {
+    let plugin_invoker_registration = {
         if config.plugins.wasm.enabled {
             crate::cli::serve_tasks::bootstrap_plugin_invoker(
                 &neoth_home,
                 writer.clone(),
                 reload_controller.clone(),
-            );
+            )
         } else {
             info!(
                 "freedom.yaml::plugins.wasm.enabled = false; skipping plugin discovery + invoker bootstrap"
             );
+            None
         }
-    }
+    };
+    #[cfg(not(feature = "wasm-plugin-host"))]
+    let plugin_invoker_registration: Option<
+        crate::hooks::dispatcher::GlobalInvokerRegistration,
+    > = None;
 
     // Resolve OnSessionStart after the optional plugin invoker exists, but
     // before any runtime service is primed. A Block is a real startup veto,
@@ -274,6 +279,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 .append(header, payload)
                 .await
                 .with_context(|| format!("append OnSessionStart HOOK_BLOCKED for `{name}`"))?;
+            drop(plugin_invoker_registration);
             drop(writer);
             if let Err(join_error) = writer_join.await {
                 warn!(
@@ -356,6 +362,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     if args.one_shot {
         info!("--one-shot: closing writer and exiting");
+        drop(plugin_invoker_registration);
         drop(writer);
         writer_join.await.ok();
         return Ok(());
@@ -695,7 +702,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
                 // Daemon path threads the WAL writer so every compaction event is auditable.
                 let arc: Arc<dyn Provider> = if config.tokens.history_compaction_enabled {
-                    let utility = providers::from_config_for_utility(&config).await.ok();
+                    let utility = providers::from_config_for_utility_at(&config, &neoth_home)
+                        .await
+                        .ok();
                     providers::compactor::arc_from_config(
                         Arc::from(p),
                         utility,
@@ -1464,7 +1473,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         };
         let mut gen_rx = reload_controller.subscribe_generation();
         let fleet = std::sync::Arc::clone(&cron_fleet);
-        let deps = spawn_deps.clone();
+        let deps = spawn_deps;
         let ctrl = reload_controller.clone();
         tokio::spawn(async move {
             // NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01 fix:
@@ -1732,7 +1741,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         credentials_path.clone(),
         neoth_home.clone(),
         writer.clone(),
-        shared_provider.clone(),
         provider_meter.clone(),
     );
 
@@ -2034,6 +2042,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     #[cfg(feature = "cluster")]
     let mut mdns_daemon: Option<mdns_sd::ServiceDaemon> = None;
     #[cfg(feature = "cluster")]
+    let mut cluster_executor: Option<crate::cluster::executor::ClusterExecutorHandle> = None;
+    #[cfg(feature = "cluster")]
     let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
         match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
             Some(identity) if !iroh_active => {
@@ -2122,10 +2132,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         ),
                     )
                 });
-                let dispatch_tx = crate::cluster::executor::spawn_cluster_executor(
+                let executor = crate::cluster::executor::spawn_cluster_executor(
                     cluster_provider,
                     std::sync::Arc::clone(&peer_streams),
+                    crate::cluster::executor::ClusterExecutionContext::new(
+                        std::sync::Arc::clone(&reload_controller),
+                        neoth_home.clone(),
+                    ),
                 );
+                let dispatch_tx = executor.dispatch_sender();
                 // SL-01b: the gossip send-tick cycles the complete live/sealed
                 // WAL history + broadcasts replicable frames to paired peers.
                 let gossip_streams = std::sync::Arc::clone(&peer_streams);
@@ -2145,6 +2160,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 .await
                 {
                     Ok(handle) => {
+                        // Retain the executor beside the swarm. Shutdown first
+                        // drains peer sessions (releasing sender clones), then
+                        // cancels/awaits any active inference before WAL drain.
+                        cluster_executor = Some(executor);
                         info!(
                             cluster = %identity.name,
                             "SL-00(1b): cluster transport ACTIVE — authenticated Hyperswarm discovery joined"
@@ -2160,6 +2179,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         Some(handle)
                     }
                     Err(e) => {
+                        executor.shutdown().await;
                         return Err(e).context("start configured peeroxide cluster transport");
                     }
                 }
@@ -2417,6 +2437,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // _audit_rpc_guard stay bound HERE so their Drop fires at fn-end AFTER the
     // writer drain), then run the verbatim teardown + writer drain in the fn.
     let bg = crate::cli::serve_tasks::BackgroundHandles {
+        plugin_invoker_registration,
+        shared_provider,
+        companion_state,
         worker_watch_handle,
         channel_tasks,
         channel_supervisor_task,
@@ -2444,6 +2467,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         iroh_transport_handle,
         #[cfg(feature = "cluster")]
         cluster_swarm,
+        #[cfg(feature = "cluster")]
+        cluster_executor,
         #[cfg(feature = "cluster")]
         mdns_daemon,
         installer_audit_task,

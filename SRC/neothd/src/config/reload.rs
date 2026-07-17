@@ -2,10 +2,10 @@
 //!
 //! Agent #4 design consensus (2026-05-19): when the operator edits
 //! `freedom.yaml` mid-session, NEOTH must pick up the changes without
-//! a daemon restart. Some fields (`operator_id`, `provider_kind`) and the
-//! cluster lifecycle are IMMUTABLE post-init — reloading them would require
-//! rebuilding the provider Arc + channel adapters that hold derived state, which
-//! isn't worth the complexity for a solo-operator daemon. Those
+//! a daemon restart. Some fields (`operator_id`, the complete provider runtime
+//! graph) and the cluster lifecycle are IMMUTABLE post-init — reloading them
+//! would require rebuilding the provider Arc + channel adapters that hold
+//! derived state. Those
 //! fields cause the reload to be rejected with a reason logged at
 //! warn level + audited via WAL.
 //!
@@ -69,6 +69,9 @@ pub enum ReloadRejectionReason {
         old: Option<crate::cli::init::ProviderKind>,
         new: Option<crate::cli::init::ProviderKind>,
     },
+    /// A provider Arc, fallback/compaction decorator, route, credential, or
+    /// adapter setting would diverge from the newly published config snapshot.
+    ProviderRuntimeChanged { changed_fields: Vec<&'static str> },
     /// Cluster transports own sockets, discovery registrations and gossip
     /// tasks, so their lifecycle remains restart-bound until one supervisor
     /// owns those resources.
@@ -84,6 +87,7 @@ impl ReloadRejectionReason {
         match self {
             Self::OperatorIdChanged { .. } => "operator_id_changed",
             Self::ProviderKindChanged { .. } => "provider_kind_changed",
+            Self::ProviderRuntimeChanged { .. } => "provider_runtime_changed",
             Self::ClusterLifecycleChanged { .. } => "cluster_lifecycle_changed",
             Self::SovereignBuddyCeremonyRequired => "sovereign_buddy_ceremony_required",
         }
@@ -96,6 +100,7 @@ impl ReloadRejectionReason {
             self,
             Self::OperatorIdChanged { .. }
                 | Self::ProviderKindChanged { .. }
+                | Self::ProviderRuntimeChanged { .. }
                 | Self::ClusterLifecycleChanged { .. }
         )
     }
@@ -111,6 +116,11 @@ impl std::fmt::Display for ReloadRejectionReason {
             Self::ProviderKindChanged { old, new } => write!(
                 f,
                 "provider_kind is immutable post-init (old={old:?}, new={new:?}); restart NEOTH to switch provider — the provider Arc + consent gate are built once at startup"
+            ),
+            Self::ProviderRuntimeChanged { changed_fields } => write!(
+                f,
+                "provider runtime fields cannot be hot-reloaded yet (changed: {}); the active provider Arc, route/fallback graph and compaction decorators remain on the startup generation; restart NEOTH to apply these fields",
+                changed_fields.join(", ")
             ),
             Self::ClusterLifecycleChanged { changed_fields } => write!(
                 f,
@@ -337,9 +347,10 @@ impl ReloadController {
 ///
 /// Immutable post-init:
 ///   - `operator_id` — the daemon's identity is pinned at first init
-///   - `provider_kind` — the provider Arc is built once at startup
-///     from this kind; reloading would require rebuilding it +
-///     re-issuing consent
+///   - provider runtime fields — the provider Arc, endpoint, credentials,
+///     per-role topology, fallbacks and compaction decorators are built once at
+///     startup. Publishing a different config without rebuilding that graph
+///     would make live consent checks authorize the wrong route generation.
 ///   - cluster lifecycle fields — the active carrier, DHT membership,
 ///     mDNS registration and gossip handles are built as one runtime unit.
 ///     A restart is required until that unit has a generation-bound supervisor.
@@ -361,6 +372,12 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRej
             new: new.provider_kind,
         });
     }
+    let provider_runtime_changes = changed_provider_runtime_fields(old, new);
+    if !provider_runtime_changes.is_empty() {
+        reasons.push(ReloadRejectionReason::ProviderRuntimeChanged {
+            changed_fields: provider_runtime_changes,
+        });
+    }
     let cluster_changes = changed_cluster_lifecycle_fields(old, new);
     if !cluster_changes.is_empty() {
         reasons.push(ReloadRejectionReason::ClusterLifecycleChanged {
@@ -375,6 +392,84 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRej
         reasons.push(ReloadRejectionReason::SovereignBuddyCeremonyRequired);
     }
     ReloadRejection::from_reasons(reasons)
+}
+
+fn serialized_fragment_changed<T: serde::Serialize>(old: &T, new: &T) -> bool {
+    let old = serde_yaml::to_string(old).map(zeroize::Zeroizing::new);
+    let new = serde_yaml::to_string(new).map(zeroize::Zeroizing::new);
+    match (old, new) {
+        (Ok(old), Ok(new)) => old.as_str() != new.as_str(),
+        // A fragment that cannot be compared safely must stay on the active
+        // generation. Failing closed here is preferable to publishing a
+        // snapshot that no longer describes the constructed provider graph.
+        _ => true,
+    }
+}
+
+fn provider_secret_changed(
+    old: &Option<crate::secret::SecretString>,
+    new: &Option<crate::secret::SecretString>,
+) -> bool {
+    old.as_ref().map(crate::secret::SecretString::expose)
+        != new.as_ref().map(crate::secret::SecretString::expose)
+}
+
+/// Exact config fragments captured by the long-lived provider runtime.
+/// Keep this list next to the reload validator: adding a new provider builder
+/// input requires either a generation-bound rebuild supervisor or a new entry
+/// here. Dynamic policy/prompt fields remain hot-reloadable.
+fn changed_provider_runtime_fields(old: &FreedomConfig, new: &FreedomConfig) -> Vec<&'static str> {
+    let mut changed = Vec::new();
+    if old.secrets_backend != new.secrets_backend {
+        changed.push("secrets_backend");
+    }
+    if old.provider_binary != new.provider_binary {
+        changed.push("provider_binary");
+    }
+    if provider_secret_changed(&old.provider_key, &new.provider_key) {
+        changed.push("provider_key");
+    }
+    if old.provider_endpoint != new.provider_endpoint {
+        changed.push("provider_endpoint");
+    }
+    if old.provider_model != new.provider_model {
+        changed.push("provider_model");
+    }
+    if serialized_fragment_changed(&old.models_aliases, &new.models_aliases) {
+        changed.push("models_aliases");
+    }
+    if old.provider_region != new.provider_region {
+        changed.push("provider_region");
+    }
+    if old.provider_api_version != new.provider_api_version {
+        changed.push("provider_api_version");
+    }
+    if serialized_fragment_changed(&old.inference, &new.inference) {
+        changed.push("inference");
+    }
+    if serialized_fragment_changed(&old.fallback, &new.fallback) {
+        changed.push("fallback");
+    }
+    if serialized_fragment_changed(&old.claude_cli, &new.claude_cli) {
+        changed.push("claude_cli");
+    }
+    if old.tokens.max_per_request != new.tokens.max_per_request
+        || old.tokens.history_compaction_enabled != new.tokens.history_compaction_enabled
+        || old.tokens.history_compaction_threshold != new.tokens.history_compaction_threshold
+        || old.tokens.history_keep_recent_chars != new.tokens.history_keep_recent_chars
+    {
+        changed.push("tokens.provider_runtime");
+    }
+    if serialized_fragment_changed(&old.hysteria, &new.hysteria) {
+        changed.push("hysteria");
+    }
+    if serialized_fragment_changed(&old.ssh_tunnels, &new.ssh_tunnels) {
+        changed.push("ssh_tunnels");
+    }
+    if serialized_fragment_changed(&old.recursive_mas, &new.recursive_mas) {
+        changed.push("recursive_mas");
+    }
+    changed
 }
 
 /// Exact cluster fields whose values own long-lived runtime resources.
@@ -554,6 +649,52 @@ mod tests {
         assert_eq!(rejection.reason_codes(), ["provider_kind_changed"]);
         assert!(rejection.restart_required());
         assert!(rejection.to_string().contains("provider_kind"));
+    }
+
+    #[test]
+    fn provider_endpoint_reload_is_restart_bound() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.provider_endpoint = Some("http://127.0.0.1:11434".into());
+
+        let rejection = validate_reload(&old, &new).expect("provider route must not diverge");
+        assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
+        assert!(rejection.restart_required());
+        assert!(rejection.to_string().contains("provider_endpoint"));
+        assert!(rejection.to_string().contains("restart NEOTH"));
+    }
+
+    #[test]
+    fn fallback_and_recursive_sub_slot_reload_are_restart_bound() {
+        use crate::config::inference::{
+            HemisphereRole, HemisphereSlot, InferenceProvider, SubHemisphereSlots,
+        };
+
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAi),
+            ..Default::default()
+        });
+        new.inference.hemisphere_sub_slots.insert(
+            HemisphereRole::Left,
+            SubHemisphereSlots {
+                right: HemisphereSlot {
+                    provider: Some(InferenceProvider::Gemini),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let rejection = validate_reload(&old, &new).expect("provider graph edit must reject");
+        assert_eq!(rejection.reasons().len(), 1);
+        match &rejection.reasons()[0] {
+            ReloadRejectionReason::ProviderRuntimeChanged { changed_fields } => {
+                assert_eq!(changed_fields, &["inference", "fallback"]);
+            }
+            other => panic!("unexpected rejection: {other:?}"),
+        }
     }
 
     #[test]
@@ -753,6 +894,28 @@ mod tests {
         }
         // Critically: latest() still returns the ORIGINAL config.
         assert_eq!(ctrl.latest().operator_id, Some("sam".into()));
+    }
+
+    #[test]
+    fn try_reload_rejects_provider_route_without_swapping_generation() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let initial = fresh_config();
+        let mut changed = initial.clone();
+        changed.provider_endpoint = Some("https://provider.example.invalid".into());
+        write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
+
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+        match ctrl.try_reload().expect("reload validation succeeds") {
+            ReloadResult::Rejected { rejection } => {
+                assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
+                assert!(rejection.restart_required());
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+        assert!(ctrl.latest().provider_endpoint.is_none());
+        assert_eq!(*generation.borrow(), 0);
     }
 
     #[test]

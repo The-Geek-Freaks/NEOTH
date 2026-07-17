@@ -220,9 +220,16 @@ pub(crate) fn provider_terminal_event(
 ) -> UsageEvent {
     let reviewed_price = crate::providers::cost::lookup_price(provider, model);
     let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
-        (Some(input), Some(output), Some(_)) => Some(crate::providers::cost::actual_cost_usd(
-            provider, model, input, output,
-        )),
+        (Some(input), Some(output), Some(_)) => {
+            Some(crate::providers::cost::actual_cost_usd_with_cache(
+                provider,
+                model,
+                input,
+                output,
+                cache_creation_tokens.unwrap_or_default(),
+                cache_read_tokens.unwrap_or_default(),
+            ))
+        }
         (_, _, Some(price))
             if price.input_eur_per_mtok == 0.0 && price.output_eur_per_mtok == 0.0 =>
         {
@@ -345,9 +352,16 @@ pub fn record_provider_call(
 ) -> std::io::Result<UsageEvent> {
     let reviewed_price = crate::providers::cost::lookup_price(provider, model);
     let cost_usd = match (input_tokens, output_tokens, reviewed_price) {
-        (Some(input), Some(output), Some(_)) => Some(crate::providers::cost::actual_cost_usd(
-            provider, model, input, output,
-        )),
+        (Some(input), Some(output), Some(_)) => {
+            Some(crate::providers::cost::actual_cost_usd_with_cache(
+                provider,
+                model,
+                input,
+                output,
+                cache_creation_tokens.unwrap_or_default(),
+                cache_read_tokens.unwrap_or_default(),
+            ))
+        }
         (_, _, Some(price))
             if price.input_eur_per_mtok == 0.0 && price.output_eur_per_mtok == 0.0 =>
         {
@@ -815,6 +829,39 @@ mod tests {
         append(dir.path(), &ev).unwrap();
         let body = std::fs::read_to_string(jsonl_file_for_ts(dir.path(), ev.ts_unix)).unwrap();
         assert_eq!(body.lines().count(), 2);
+    }
+
+    #[test]
+    fn terminal_cost_includes_reported_prompt_cache_usage() {
+        let event = provider_terminal_event(
+            1_779_494_400,
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            Some(100),
+            Some(50),
+            200,
+            true,
+            Some(200),
+            Some(300),
+            true,
+            &"a".repeat(64),
+            "complete",
+            "council_leaf",
+            Some("council"),
+            Some("hemisphere"),
+            false,
+        );
+        let expected = crate::providers::cost::actual_cost_usd_with_cache(
+            "anthropic_api",
+            "claude-sonnet-4-6",
+            100,
+            50,
+            200,
+            300,
+        );
+        assert_eq!(event.cost_usd, Some(expected));
+        assert_eq!(event.cache_creation_tokens, Some(200));
+        assert_eq!(event.cache_read_tokens, Some(300));
     }
 
     #[test]

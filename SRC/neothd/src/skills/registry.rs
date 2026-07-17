@@ -26,7 +26,10 @@
 //! ## Watcher
 //!
 //! [`SkillRegistry::watch`] spawns a tokio task that owns a
-//! `notify::RecommendedWatcher` over the user skills directory. On
+//! `notify::RecommendedWatcher` over the user skills directory. When that
+//! directory does not exist yet, the nearest existing ancestor is watched
+//! non-recursively until the missing path appears; the watcher then binds the
+//! skills directory recursively without a daemon restart. On
 //! `Create | Modify | Remove` events affecting `*/skill.yaml` it calls
 //! [`SkillRegistry::reload_now`], validates the complete Skill/Mode snapshot,
 //! and only then publishes the new Vec atomically.
@@ -151,19 +154,12 @@ impl SkillRegistry {
         Ok((prev, new_count))
     }
 
-    /// Spawn the watcher task. Best-effort — if the skills dir doesn't
-    /// exist or the watcher can't bind, log + return `Ok(None)` so the
-    /// daemon stays bootable. The returned `WatcherHandle` keeps the
-    /// underlying `notify::RecommendedWatcher` alive; drop it to stop
-    /// watching.
-    pub fn watch(self: &Arc<Self>) -> Option<WatcherHandle> {
-        if !self.skills_dir.exists() {
-            debug!(
-                dir = %self.skills_dir.display(),
-                "skills dir missing; hot-reload watcher not started"
-            );
-            return None;
-        }
+    /// Spawn the watcher task. A missing skills directory is a supported
+    /// first-run state: the nearest existing ancestor is watched until the
+    /// directory appears. Watch construction and initial registration fail
+    /// loudly so daemon startup never reports a watcher that is not active.
+    /// Drop the returned handle to stop watching.
+    pub fn watch(self: &Arc<Self>) -> Result<WatcherHandle> {
         watcher::spawn(Arc::clone(self))
     }
 }
@@ -172,7 +168,7 @@ impl SkillRegistry {
 /// Production callers usually leak this for daemon lifetime; tests drop it
 /// to assert the watcher tears down cleanly.
 pub struct WatcherHandle {
-    _watcher: notify::RecommendedWatcher,
+    _watcher: Arc<std::sync::Mutex<notify::RecommendedWatcher>>,
     /// Sender end of the cancellation channel — drop signals the
     /// debounce loop to exit.
     _cancel: tokio::sync::oneshot::Sender<()>,
@@ -181,58 +177,53 @@ pub struct WatcherHandle {
 mod watcher {
     use super::*;
     use notify::{Event, EventKind, RecursiveMode, Watcher};
+    use std::collections::BTreeMap;
     use tokio::sync::mpsc;
 
     /// Debounce window — skills/<id>/skill.yaml edits commonly fire 2-3
     /// events back-to-back (editor saves a temp file + renames + chmods).
     /// We collapse them into a single reload.
     const DEBOUNCE: Duration = Duration::from_millis(250);
+    const REBIND_RETRY: Duration = Duration::from_secs(1);
 
-    pub fn spawn(registry: Arc<SkillRegistry>) -> Option<WatcherHandle> {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum WatchDepth {
+        NonRecursive,
+        Recursive,
+    }
+
+    impl WatchDepth {
+        fn notify_mode(self) -> RecursiveMode {
+            match self {
+                Self::NonRecursive => RecursiveMode::NonRecursive,
+                Self::Recursive => RecursiveMode::Recursive,
+            }
+        }
+    }
+
+    pub fn spawn(registry: Arc<SkillRegistry>) -> Result<WatcherHandle> {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
 
         // `notify` callbacks run on the watcher's own thread — bounce
         // each event onto the tokio runtime via unbounded mpsc so the
         // debounce loop can `select!` on it alongside cancellation.
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<Event>| match res {
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(ev) => {
                     let _ = event_tx.send(ev);
                 }
                 Err(e) => warn!(error = %e, "skill watcher reported error"),
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    warn!(error = %e, "failed to construct skill watcher; hot-reload disabled");
-                    return None;
-                }
-            };
-
-        if let Err(e) = watcher.watch(&registry.skills_dir, RecursiveMode::Recursive) {
-            warn!(
-                dir = %registry.skills_dir.display(),
-                error = %e,
-                "failed to start watching skills dir; hot-reload disabled"
-            );
-            return None;
-        }
-
-        // GR-049: also watch freedom.yaml (it lives next to skills_dir) so an
-        // edit to skills.{disabled,enabled,enable_all_bundled} hot-reloads the
-        // registry — `load_all` re-reads freedom.yaml on every `reload_now`, so
-        // this watch makes those operator edits take effect WITHOUT a restart.
-        // Best-effort + NonRecursive: a failed watch leaves skill.yaml hot-
-        // reload working (unlike the mandatory skills_dir watch above).
-        if let Some(parent) = registry.skills_dir.parent()
-            && let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive)
-        {
-            warn!(
-                dir = %parent.display(),
-                error = %e,
-                "could not watch freedom.yaml dir; skills.* edits need a restart to apply"
-            );
-        }
+            })
+            .context("construct skill filesystem watcher")?;
+        let mut active_watches = BTreeMap::new();
+        reconcile_watches(&mut watcher, &registry.skills_dir, &mut active_watches)
+            .with_context(|| {
+                format!(
+                    "register skill filesystem watcher for {}",
+                    registry.skills_dir.display()
+                )
+            })?;
+        let watcher = Arc::new(std::sync::Mutex::new(watcher));
 
         info!(
             dir = %registry.skills_dir.display(),
@@ -240,6 +231,7 @@ mod watcher {
         );
 
         let registry = Arc::clone(&registry);
+        let task_watcher = Arc::clone(&watcher);
         tokio::spawn(async move {
             // Debounce loop: drain events; whenever a relevant event
             // lands, wait DEBOUNCE for the dust to settle, then reload
@@ -267,6 +259,25 @@ mod watcher {
                     }
                     _ = sleep_until_opt(pending) => {
                         pending = None;
+                        let rebound = {
+                            let mut watcher = task_watcher
+                                .lock()
+                                .unwrap_or_else(|poisoned| poisoned.into_inner());
+                            reconcile_watches(
+                                &mut watcher,
+                                &registry.skills_dir,
+                                &mut active_watches,
+                            )
+                        };
+                        if let Err(e) = rebound {
+                            warn!(
+                                dir = %registry.skills_dir.display(),
+                                error = %e,
+                                "skill watcher rebind failed; retaining prior watch and retrying"
+                            );
+                            pending = Some(tokio::time::Instant::now() + REBIND_RETRY);
+                            continue;
+                        }
                         match registry.reload_now().await {
                             Ok((prev, new)) => info!(
                                 prev_count = prev,
@@ -280,10 +291,121 @@ mod watcher {
             }
         });
 
-        Some(WatcherHandle {
+        Ok(WatcherHandle {
             _watcher: watcher,
             _cancel: cancel_tx,
         })
+    }
+
+    fn reconcile_watches(
+        watcher: &mut notify::RecommendedWatcher,
+        skills_dir: &Path,
+        active: &mut BTreeMap<PathBuf, WatchDepth>,
+    ) -> Result<()> {
+        let desired = desired_watches(skills_dir)?;
+
+        // Add the replacement watch before dropping an obsolete ancestor so
+        // directory creation/removal never opens an observation gap.
+        for (path, depth) in &desired {
+            if active.get(path) == Some(depth) {
+                continue;
+            }
+            if active.contains_key(path) {
+                watcher
+                    .unwatch(path)
+                    .with_context(|| format!("replace skill watch at {}", path.display()))?;
+                active.remove(path);
+            }
+            watcher
+                .watch(path, depth.notify_mode())
+                .with_context(|| format!("watch skill path {}", path.display()))?;
+            active.insert(path.clone(), *depth);
+        }
+
+        let obsolete: Vec<PathBuf> = active
+            .keys()
+            .filter(|path| !desired.contains_key(*path))
+            .cloned()
+            .collect();
+        for path in obsolete {
+            // Backends may automatically forget a watch when its directory is
+            // deleted. Failure to unwatch is therefore observable but harmless:
+            // the new ancestor watch is already active.
+            if let Err(error) = watcher.unwatch(&path) {
+                debug!(path = %path.display(), error = %error, "obsolete skill watch already absent");
+            }
+            active.remove(&path);
+        }
+        Ok(())
+    }
+
+    fn desired_watches(skills_dir: &Path) -> Result<BTreeMap<PathBuf, WatchDepth>> {
+        let mut desired = BTreeMap::new();
+        match std::fs::metadata(skills_dir) {
+            Ok(metadata) => {
+                if !metadata.is_dir() {
+                    anyhow::bail!(
+                        "skill watch path exists but is not a directory: {}",
+                        skills_dir.display()
+                    );
+                }
+                desired.insert(skills_dir.to_path_buf(), WatchDepth::Recursive);
+                let parent = skills_dir.parent().ok_or_else(|| {
+                    anyhow::anyhow!("skill directory has no parent: {}", skills_dir.display())
+                })?;
+                let parent_metadata = std::fs::metadata(parent).with_context(|| {
+                    format!("inspect skill directory parent {}", parent.display())
+                })?;
+                if !parent_metadata.is_dir() {
+                    anyhow::bail!(
+                        "skill directory parent is not a directory: {}",
+                        parent.display()
+                    );
+                }
+                // GR-049: this parent watch also observes freedom.yaml.
+                desired.insert(parent.to_path_buf(), WatchDepth::NonRecursive);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let parent = skills_dir.parent().ok_or_else(|| {
+                    anyhow::anyhow!("missing skill directory has no parent: {}", skills_dir.display())
+                })?;
+                desired.insert(nearest_existing_directory(parent)?, WatchDepth::NonRecursive);
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect skill watch path {}", skills_dir.display())
+                });
+            }
+        }
+        Ok(desired)
+    }
+
+    fn nearest_existing_directory(start: &Path) -> Result<PathBuf> {
+        let mut candidate = start;
+        loop {
+            match std::fs::metadata(candidate) {
+                Ok(metadata) if metadata.is_dir() => return Ok(candidate.to_path_buf()),
+                Ok(_) => {
+                    anyhow::bail!(
+                        "skill watch ancestor is not a directory: {}",
+                        candidate.display()
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    candidate = candidate.parent().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "no existing directory ancestor for skill path {}",
+                            start.display()
+                        )
+                    })?;
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("inspect skill watch ancestor {}", candidate.display())
+                    });
+                }
+            }
+        }
     }
 
     /// Filter — we care about `skill.yaml` create/modify/remove, a `skill`
@@ -301,14 +423,21 @@ mod watcher {
         if !kind_matches {
             return false;
         }
-        ev.paths.iter().any(|p| {
-            match p.file_name().and_then(|s| s.to_str()) {
-                // skill.yaml anywhere under the watch, or freedom.yaml (GR-049).
-                Some("skill.yaml") | Some("freedom.yaml") => true,
-                // A skill-folder create/remove — but ONLY under skills_dir, so a
-                // home-dir directory event from the freedom.yaml watch is noise.
-                _ => p.is_dir() && p.starts_with(skills_dir),
+        let freedom_path = skills_dir.parent().map(|parent| parent.join("freedom.yaml"));
+        ev.paths.iter().any(|path| {
+            if freedom_path.as_ref() == Some(path) {
+                return true;
             }
+            // Either side of this prefix relation can be relevant while a
+            // missing parent chain is being created or the skills tree is being
+            // removed. This does not rely on `is_dir()`, which is false after a
+            // remove/rename event on every platform.
+            if path == skills_dir || skills_dir.starts_with(path) {
+                return true;
+            }
+            path.starts_with(skills_dir)
+                && (path.file_name().and_then(|name| name.to_str()) == Some("skill.yaml")
+                    || path.parent() == Some(skills_dir))
         })
     }
 
@@ -333,6 +462,19 @@ mod tests {
         let sd = dir.join(id);
         create_dir_all(&sd).await.unwrap();
         write(sd.join("skill.yaml"), body).await.unwrap();
+    }
+
+    async fn wait_for_skill(registry: &SkillRegistry, id: &str, present: bool) {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if registry.snapshot().iter().any(|skill| skill.id() == id) == present {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("skill `{id}` did not reach present={present}"));
     }
 
     fn skill_with_mode(id: &str, mode_id: &str) -> String {
@@ -489,26 +631,98 @@ system_prompt: "ok"
     }
 
     #[tokio::test]
-    async fn watch_returns_none_when_dir_missing() {
+    async fn missing_dir_watcher_publishes_skill_created_after_start() {
         let dir = tempdir().unwrap();
-        let nope = dir.path().join("does-not-exist");
-        let reg = SkillRegistry::load(&nope).await.unwrap();
-        let handle = reg.watch();
-        assert!(
-            handle.is_none(),
-            "watcher must decline to start on a missing dir instead of panicking"
-        );
+        let skills_dir = dir.path().join("missing-parent").join("skills");
+        let reg = SkillRegistry::load(&skills_dir).await.unwrap();
+        let _watcher = reg
+            .watch()
+            .expect("nearest existing ancestor must bootstrap the watcher");
+
+        write_skill(
+            &skills_dir,
+            "created-after-start",
+            r#"
+id: created-after-start
+description: watcher bootstrap regression
+trigger_keywords: ["created-after-start"]
+system_prompt: "live"
+"#,
+        )
+        .await;
+        wait_for_skill(&reg, "created-after-start", true).await;
     }
 
     #[tokio::test]
     async fn watch_returns_handle_when_dir_exists() {
         let dir = tempdir().unwrap();
         let reg = SkillRegistry::load(dir.path()).await.unwrap();
-        let handle = reg.watch();
+        reg.watch()
+            .expect("watcher must bind on an existing dir even when empty");
+    }
+
+    #[tokio::test]
+    async fn invalid_first_publication_keeps_snapshot_and_later_fix_goes_live() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let reg = SkillRegistry::load(&skills_dir).await.unwrap();
+        let pinned = reg.snapshot_owned();
+        let _watcher = reg.watch().expect("bootstrap watcher");
+
+        write_skill(&skills_dir, "initially-broken", "id: [not-valid\n").await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
         assert!(
-            handle.is_some(),
-            "watcher must bind on an existing dir even when empty"
+            Arc::ptr_eq(&pinned, &reg.snapshot_owned()),
+            "invalid first publication must retain the exact prior snapshot"
         );
+
+        write_skill(
+            &skills_dir,
+            "initially-broken",
+            r#"
+id: initially-broken
+description: corrected watcher publication
+trigger_keywords: ["corrected"]
+system_prompt: "live"
+"#,
+        )
+        .await;
+        wait_for_skill(&reg, "initially-broken", true).await;
+    }
+
+    #[tokio::test]
+    async fn deleted_and_recreated_skills_dir_remains_observed() {
+        let dir = tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let reg = SkillRegistry::load(&skills_dir).await.unwrap();
+        let _watcher = reg.watch().expect("bootstrap watcher");
+
+        write_skill(
+            &skills_dir,
+            "before-recreate",
+            r#"
+id: before-recreate
+description: pre-delete watcher fixture
+system_prompt: "before"
+"#,
+        )
+        .await;
+        wait_for_skill(&reg, "before-recreate", true).await;
+
+        tokio::fs::remove_dir_all(&skills_dir).await.unwrap();
+        wait_for_skill(&reg, "before-recreate", false).await;
+
+        write_skill(
+            &skills_dir,
+            "after-recreate",
+            r#"
+id: after-recreate
+description: post-delete watcher fixture
+system_prompt: "after"
+"#,
+        )
+        .await;
+        wait_for_skill(&reg, "after-recreate", true).await;
     }
 
     #[tokio::test]

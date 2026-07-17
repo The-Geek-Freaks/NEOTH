@@ -418,6 +418,13 @@ impl Provider for FallbackProvider {
             .or_else(|| self.chain.first().and_then(|p| p.default_model()))
     }
 
+    fn resolve_model_for_wire(&self, requested_model: &str) -> String {
+        self.chain.first().map_or_else(
+            || requested_model.to_owned(),
+            |provider| provider.resolve_model_for_wire(requested_model),
+        )
+    }
+
     fn output_token_ceiling(&self, req: &Request) -> Option<u32> {
         self.chain
             .first()
@@ -837,6 +844,7 @@ mod tests {
             crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
                 crate::permissions::AutonomyLevel::Full,
                 Some(writer.clone()),
+                crate::config::TokensConfig::default_max_per_request(),
             )
             .with_usage_home(dir.path()),
             None,
@@ -953,6 +961,82 @@ mod tests {
         assert_eq!(usage[1].model, "fallback-config");
         assert!(usage[1].ok);
         assert_ne!(usage[0].invocation_id, usage[1].invocation_id);
+    }
+
+    #[tokio::test]
+    async fn active_council_cap_reserves_and_settles_each_fallback_leaf() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("council-fallback-budget.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let fallback = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "openai_api",
+                    default_model: "gpt-4o",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Quota,
+                    requests: Default::default(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "anthropic_api",
+                    default_model: "claude-sonnet-4-6",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: Default::default(),
+                }),
+            ],
+            vec![Some("gpt-4o".into()), Some("claude-sonnet-4-6".into())],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_council_daily_cap(dir.path(), Some(1.0))
+        .unwrap();
+
+        let attempt_budget = crate::council::BudgetToken::new(2);
+        attempt_budget
+            .charge()
+            .expect("Council caller pre-charges the primary leaf");
+        let completion = crate::providers::cost_authorization::precharged_council_attempt_scope(
+            attempt_budget.clone(),
+            fallback.complete_authorized(Request::default(), &authorizer, "council_leaf"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(completion.identity.provider, "anthropic_api");
+        assert_eq!(
+            attempt_budget.used(),
+            2,
+            "primary and fallback must each consume exactly one Council call"
+        );
+
+        drop(authorizer);
+        drop(fallback);
+        drop(writer);
+        join.await.unwrap();
+        let lifecycle = lifecycle_frames(&segment);
+        assert_eq!(
+            lifecycle.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ]
+        );
+        let ledger: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(dir.path().join("budget").join("daily.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(ledger["pending"].as_object().unwrap().len(), 0);
+        assert!(ledger["settled_usd_nanos"].as_u64().unwrap() > 0);
     }
 
     #[tokio::test]

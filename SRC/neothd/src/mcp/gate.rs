@@ -222,6 +222,340 @@ fn load_lease_store_for_mcp(home: &std::path::Path) -> Option<LeaseStore> {
     LeaseStore::load(&path).ok()
 }
 
+/// Opaque result of the static MCP authorization layers. Dispatchers use the
+/// decision class only to decide whether a SmartApprove snapshot is relevant;
+/// the complete decision is consumed exactly once by
+/// [`authorize_preflight_with_audit`].
+#[derive(Debug)]
+pub(crate) struct McpInvocationPreflight {
+    server_id: String,
+    tool: String,
+    action: Action,
+    decision: Decision,
+    policy_snapshot: crate::permissions::AutonomyPolicySnapshot,
+}
+
+impl McpInvocationPreflight {
+    pub(crate) fn requires_confirmation(&self) -> bool {
+        matches!(&self.decision, Decision::Confirm(_))
+    }
+
+    fn matches(&self, cfg: &McpServerConfig, tool: &str) -> bool {
+        self.server_id == cfg.id && self.tool == tool
+    }
+}
+
+/// Opaque proof that the exact preflighted invocation may touch the wire.
+#[derive(Debug)]
+pub(crate) struct AuthorizedMcpInvocation {
+    server_id: String,
+    tool: String,
+}
+
+impl AuthorizedMcpInvocation {
+    fn matches(&self, cfg: &McpServerConfig, tool: &str) -> bool {
+        self.server_id == cfg.id && self.tool == tool
+    }
+}
+
+/// Run every static layer before an MCP process is started or queried.
+/// Rejections are audited here exactly once. `Confirm` remains unresolved so
+/// the dispatcher can initialize SmartApprove only for calls whose policy
+/// decision could actually be upgraded by declared read-only metadata.
+pub(crate) async fn preflight_with_audit<P: PolicyArgument + Copy>(
+    cfg: &McpServerConfig,
+    tool: &str,
+    policy: P,
+    writer: Option<&WalWriterHandle>,
+    now_unix: i64,
+) -> Result<McpInvocationPreflight, GateError> {
+    let policy_snapshot = policy.policy_snapshot();
+    let autonomy = policy_snapshot.level();
+
+    if let Some(list) = cfg.allow_tools.as_ref() {
+        if !list.iter().any(|candidate| candidate == tool) {
+            if let Some(writer) = writer {
+                emit_reject(
+                    writer,
+                    &cfg.id,
+                    tool,
+                    "tool not in allow_tools allowlist",
+                    now_unix,
+                )
+                .await
+                .map_err(GateError::Wal)?;
+            }
+            return Err(GateError::NotInAllowlist {
+                server: cfg.id.clone(),
+                tool: tool.to_string(),
+            });
+        }
+    } else if !cfg.trust_all_tools {
+        if let Some(writer) = writer {
+            emit_reject(
+                writer,
+                &cfg.id,
+                tool,
+                "no allow_tools list AND trust_all_tools=false (secure-by-default)",
+                now_unix,
+            )
+            .await
+            .map_err(GateError::Wal)?;
+        }
+        return Err(GateError::MissingAllowlistSecureDefault {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+        });
+    }
+
+    if let Some(required) = cfg.autonomy_gate
+        && !autonomy.meets_gate(required)
+    {
+        if let Some(writer) = writer {
+            emit_reject(
+                writer,
+                &cfg.id,
+                tool,
+                &format!(
+                    "server autonomy_gate requires ≥ {} (current {})",
+                    required.as_str(),
+                    autonomy.as_str()
+                ),
+                now_unix,
+            )
+            .await
+            .map_err(GateError::Wal)?;
+        }
+        return Err(GateError::AutonomyGate {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            required,
+            current: autonomy,
+        });
+    }
+
+    let action = Action::McpToolInvocation {
+        server_id: cfg.id.clone(),
+        tool: tool.to_string(),
+    };
+    let decision = evaluate(&action, policy);
+    if let Decision::Deny(reason) = &decision {
+        if let Some(writer) = writer {
+            emit_reject(writer, &cfg.id, tool, &format!("deny: {reason}"), now_unix)
+                .await
+                .map_err(GateError::Wal)?;
+        }
+        return Err(GateError::PermissionDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            reason: reason.clone(),
+        });
+    }
+
+    Ok(McpInvocationPreflight {
+        server_id: cfg.id.clone(),
+        tool: tool.to_string(),
+        action,
+        decision,
+        policy_snapshot,
+    })
+}
+
+/// Resolve one preflight decision without touching the MCP transport. A
+/// SmartApprove grant can only upgrade `Confirm`; `Allow` ignores it and a
+/// static `Deny` never reaches this function. Lease-backed confirmation is
+/// resolved here as well, so an uncovered confirmation fails before spawn.
+pub(crate) async fn authorize_preflight_with_audit(
+    preflight: McpInvocationPreflight,
+    cfg: &McpServerConfig,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    smart_approve: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
+    now_unix: i64,
+    subject: Option<&str>,
+    instance_home: &std::path::Path,
+) -> Result<AuthorizedMcpInvocation, GateError> {
+    if !preflight.matches(cfg, tool) {
+        return Err(GateError::PermissionDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            reason: "internal MCP preflight binding mismatch".to_string(),
+        });
+    }
+
+    match preflight.decision {
+        Decision::Allow => {}
+        Decision::Deny(reason) => {
+            // `preflight_with_audit` consumes every Deny. Keep this branch
+            // fail-closed for forward compatibility without emitting a second
+            // decision record.
+            return Err(GateError::PermissionDenied {
+                server: cfg.id.clone(),
+                tool: tool.to_string(),
+                reason,
+            });
+        }
+        Decision::Confirm(reason) => {
+            if cfg.smart_approve && smart_approve_is_readonly(smart_approve, cfg, tool) {
+                if let Some(writer) = writer {
+                    emit_readonly_allow(writer, &cfg.id, tool, now_unix)
+                        .await
+                        .map_err(GateError::Wal)?;
+                }
+                tracing::info!(
+                    server = %cfg.id, tool = %tool,
+                    "SmartApprove auto-approved a Confirm-gated read-only tool (declared effect)"
+                );
+            } else if let Some(subject) = subject {
+                if let Some(store) = load_lease_store_for_mcp(instance_home) {
+                    let gate = Gate::for_policy(preflight.policy_snapshot)
+                        .with_confirm(ConfirmStrategy::FailClosed)
+                        .with_lease_snapshot(&store, subject, now_unix);
+                    match gate.check(&preflight.action, writer).await {
+                        Ok(()) => {
+                            tracing::info!(
+                                server = %cfg.id, tool = %tool, subject = %subject,
+                                "GOLD-ADAPT-AWE-CODE-01: McpTool lease upgraded Confirm → Allow"
+                            );
+                        }
+                        Err(
+                            crate::permissions::gate::GateError::Denied(_)
+                            | crate::permissions::gate::GateError::Aborted(_)
+                            | crate::permissions::gate::GateError::Unavailable(_),
+                        ) => {
+                            emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                            return Err(GateError::ConfirmRequired {
+                                server: cfg.id.clone(),
+                                tool: tool.to_string(),
+                                reason,
+                            });
+                        }
+                    }
+                } else {
+                    emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                    return Err(GateError::ConfirmRequired {
+                        server: cfg.id.clone(),
+                        tool: tool.to_string(),
+                        reason,
+                    });
+                }
+            } else {
+                emit_confirm_reject(writer, &cfg.id, tool, &reason, now_unix).await?;
+                return Err(GateError::ConfirmRequired {
+                    server: cfg.id.clone(),
+                    tool: tool.to_string(),
+                    reason,
+                });
+            }
+        }
+    }
+
+    Ok(AuthorizedMcpInvocation {
+        server_id: cfg.id.clone(),
+        tool: tool.to_string(),
+    })
+}
+
+/// Invoke an already-authorized call on the exact client selected by the
+/// dispatcher. SmartApprove passes the retained client that supplied the
+/// grant; ordinary Allow/lease paths may pass an ephemeral client. No policy
+/// decision is repeated here.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn invoke_authorized_with_audit(
+    client: &mut McpClient,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    authorized: AuthorizedMcpInvocation,
+    writer: Option<&WalWriterHandle>,
+    rollback_policy: Option<&crate::config::RollbackConfig>,
+    now_unix: i64,
+) -> Result<ToolCallResult, GateError> {
+    if !authorized.matches(cfg, tool) {
+        return Err(GateError::PermissionDenied {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+            reason: "internal MCP authorization binding mismatch".to_string(),
+        });
+    }
+
+    let args_bytes = serde_json::to_vec(&arguments)
+        .map_err(|error| GateError::Mcp(McpError::Protocol(cfg.id.clone(), error.to_string())))?;
+    let arguments_hash = format!("{:016x}", xxh3_64(&args_bytes));
+
+    if let (Some(policy), Some(writer)) = (rollback_policy, writer)
+        && policy.should_capture("mcp_tool_invoke")
+    {
+        let target = format!("{}:{}", cfg.id, tool);
+        let emit = crate::wal::snapshot::emit_if_policy_allows(
+            writer,
+            policy,
+            crate::wal::snapshot::MutationKind::McpToolInvoke,
+            target,
+            &args_bytes,
+            now_unix,
+            Some(format!(
+                "MCP tool invocation snapshot (args xxh3={arguments_hash})"
+            )),
+        )
+        .await;
+        if let Err(error) = emit {
+            tracing::warn!(
+                error = %error,
+                server = %cfg.id,
+                tool = %tool,
+                "MCP pre-call snapshot emit failed — tool call proceeds without rollback coverage"
+            );
+        }
+    }
+
+    call_tool_with_success_audit(
+        client,
+        cfg,
+        tool,
+        arguments,
+        &arguments_hash,
+        writer,
+        now_unix,
+    )
+    .await
+}
+
+async fn call_tool_with_success_audit(
+    client: &mut McpClient,
+    cfg: &McpServerConfig,
+    tool: &str,
+    arguments: Value,
+    arguments_hash: &str,
+    writer: Option<&WalWriterHandle>,
+    now_unix: i64,
+) -> Result<ToolCallResult, GateError> {
+    let result = client.call_tool(tool, arguments).await?;
+    if let Some(writer) = writer {
+        let content_bytes: usize = result
+            .content
+            .iter()
+            .map(|content| match content {
+                crate::mcp::client::McpContent::Text { text } => text.len(),
+                crate::mcp::client::McpContent::Image { data, .. } => data.len(),
+                crate::mcp::client::McpContent::Other => 0,
+            })
+            .sum();
+        emit_called(
+            writer,
+            &cfg.id,
+            tool,
+            arguments_hash,
+            content_bytes,
+            result.is_error,
+            now_unix,
+        )
+        .await
+        .map_err(GateError::Wal)?;
+    }
+    Ok(result)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
     client: &mut McpClient,
@@ -231,7 +565,7 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
     policy: P,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
-    smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
+    smart_approve: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
     now_unix: i64,
     // GOLD-ADAPT-AWE-CODE-01 — pre-authenticated caller identity for
     // `LeaseScope::McpTool` consent-gate upgrade. MUST be the
@@ -239,6 +573,9 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
     // value lifted from an LLM response or untrusted tool argument.
     // `None` = no lease upgrade possible (interactive CLI path).
     subject: Option<&str>,
+    // Instance root that owns `leases.json`. Never infer this from the
+    // process-global default when a channel/daemon supplied a custom home.
+    instance_home: &std::path::Path,
 ) -> Result<ToolCallResult, GateError> {
     let policy_snapshot = policy.policy_snapshot();
     let autonomy = policy_snapshot.level();
@@ -344,12 +681,10 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
             // GR-018 — per-server gate: only THIS server's own opt-in
             // (`cfg.smart_approve`) lets a Confirm be auto-approved. The global
             // master switch (`security.smart_approve`) merely allocates the
-            // ReadOnlyCache upstream; without the per-server flag we fall through
+            // lazy session upstream; without the per-server flag we fall through
             // to the normal confirm path even for a declared read-only tool, so
             // trusting one server never bypasses confirmation for the others.
-            if cfg.smart_approve
-                && smart_approve_is_readonly(smart_approve, client, &cfg.id, tool).await
-            {
+            if cfg.smart_approve && smart_approve_is_readonly(smart_approve, cfg, tool) {
                 if let Some(w) = writer {
                     emit_readonly_allow(w, &cfg.id, tool, now_unix)
                         .await
@@ -374,8 +709,7 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
                 // (Confirm decisions are rare); matching the precedent of the
                 // risk-gate lease check in dispatch_loop.rs (check_risk_leases).
                 if let Some(sub) = subject {
-                    let home = crate::config::FreedomConfig::default_neoth_home();
-                    if let Some(store) = load_lease_store_for_mcp(&home) {
+                    if let Some(store) = load_lease_store_for_mcp(instance_home) {
                         let gate = Gate::for_policy(policy_snapshot.clone())
                             .with_confirm(ConfirmStrategy::FailClosed)
                             .with_lease_snapshot(&store, sub, now_unix);
@@ -463,33 +797,16 @@ pub async fn invoke_with_audit<P: PolicyArgument + Copy>(
         }
     }
 
-    let result = client.call_tool(tool, arguments).await?;
-
-    // Layer 3 — success audit.
-    if let Some(w) = writer {
-        let content_bytes: usize = result
-            .content
-            .iter()
-            .map(|c| match c {
-                crate::mcp::client::McpContent::Text { text } => text.len(),
-                crate::mcp::client::McpContent::Image { data, .. } => data.len(),
-                crate::mcp::client::McpContent::Other => 0,
-            })
-            .sum();
-        emit_called(
-            w,
-            &cfg.id,
-            tool,
-            &arguments_hash,
-            content_bytes,
-            result.is_error,
-            now_unix,
-        )
-        .await
-        .map_err(GateError::Wal)?;
-    }
-
-    Ok(result)
+    call_tool_with_success_audit(
+        client,
+        cfg,
+        tool,
+        arguments,
+        &arguments_hash,
+        writer,
+        now_unix,
+    )
+    .await
 }
 
 #[derive(Serialize)]
@@ -538,33 +855,16 @@ async fn emit_called(
 
 /// GOLD-ADOPT-22 SmartApprove — is `tool` read-only by its DECLARED EFFECT?
 ///
-/// Returns `false` when SmartApprove is disabled (cache `None`), when the tool's
-/// annotations don't decisively mark it read-only, or when the tool list can't
-/// be fetched (fail-closed to the confirm path). On a cache miss the live
-/// `tools/list` is consulted and its annotations seeded — so the verdict comes
-/// from the server's CURRENT effect metadata, never from a (possibly
-/// repurposed) tool name. Session-scoped: the cache is rebuilt per loop, so a
-/// tool whose annotation changes is re-classified next session.
-async fn smart_approve_is_readonly(
-    cache: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
-    client: &mut McpClient,
-    server: &str,
+/// Returns `false` when SmartApprove supplied no grant, when the tool's
+/// annotations did not decisively mark it read-only, or when the server config
+/// no longer matches the immutable grant. Cache misses and drift never issue an
+/// invocation-time `tools/list`; they stay on the normal confirmation path.
+fn smart_approve_is_readonly(
+    grant: Option<&crate::mcp::smart_approve::SmartApproveGrant>,
+    cfg: &McpServerConfig,
     tool: &str,
 ) -> bool {
-    let Some(cache) = cache else { return false };
-    if let Some(readonly) = cache.is_readonly(server, tool) {
-        return readonly;
-    }
-    // Cache miss — populate from the live tool annotations. Review F1: go
-    // through `list_tools_sanitized` (NOT the raw `client.list_tools()`) so the
-    // injection-name/description sanitiser still drops hostile tools before any
-    // are seeded into the auto-approve cache. A list failure leaves the tool
-    // uncached → not auto-approved (fail-closed).
-    if let Ok(sanitized) = list_tools_sanitized(client).await {
-        let tools: Vec<McpTool> = sanitized.into_iter().map(|s| s.tool).collect();
-        cache.seed_from_tools(server, &tools);
-    }
-    cache.is_readonly(server, tool) == Some(true)
+    grant.is_some_and(|grant| grant.authorizes(cfg, tool))
 }
 
 /// GOLD-ADOPT-22 — audit a SmartApprove auto-approval
@@ -1079,9 +1379,38 @@ mod tests {
             "non-opted server must not be auto-approve-eligible"
         );
         // Operator opts THIS server in — only now is it eligible (still gated
-        // by the live read-only annotation check at dispatch time).
+        // by the immutable session-start annotation snapshot).
         cfg.smart_approve = true;
         assert!(cfg.smart_approve, "an opted-in server becomes eligible");
+    }
+
+    #[test]
+    fn smart_approve_cache_miss_stays_on_the_confirm_path() {
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        assert!(!smart_approve_is_readonly(None, &cfg, "read_graph"));
+    }
+
+    #[test]
+    fn smart_approve_requires_the_bound_config_snapshot() {
+        let mut cfg = base_cfg(Some(vec!["read_graph"]));
+        cfg.smart_approve = true;
+        let tool = McpTool {
+            name: "read_graph".into(),
+            description: None,
+            input_schema: serde_json::json!({}),
+            annotations: Some(crate::mcp::client::ToolAnnotations {
+                read_only_hint: Some(true),
+                destructive_hint: Some(false),
+            }),
+        };
+        let mut cache = crate::mcp::smart_approve::ReadOnlyCache::new();
+        assert!(cache.seed_from_tools(&cfg, &[tool]));
+        let grant = cache.grant_for(&cfg, "read_graph").unwrap();
+        assert!(smart_approve_is_readonly(Some(&grant), &cfg, "read_graph"));
+
+        cfg.command = "different-server".into();
+        assert!(!smart_approve_is_readonly(Some(&grant), &cfg, "read_graph"));
     }
 
     #[test]

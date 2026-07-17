@@ -170,6 +170,40 @@ fn sidecar_guard_removes_on_drop() {
 }
 
 #[tokio::test]
+async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("idle-shutdown.wal");
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
+    let cooldown = Arc::new(AuthCooldown::new());
+    let state = AuditRpcState {
+        token: "idle-test".into(),
+        writer: writer.clone(),
+        cooldown: Arc::clone(&cooldown),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let mut idle = TcpStream::connect(addr).await.unwrap();
+    idle.write_all(b"P").await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        while Arc::strong_count(&cooldown) < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("audit-RPC never accepted the idle connection");
+
+    task.abort();
+    let _ = task.await;
+    drop(writer);
+    tokio::time::timeout(std::time::Duration::from_secs(3), wal_join)
+        .await
+        .expect("idle audit-RPC connection retained its WAL sender")
+        .expect("WAL writer task panicked");
+
+    drop(idle);
+}
+
+#[tokio::test]
 async fn valid_token_appends_allowed_frame_and_emits_accept() {
     use crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH;
     let segdir = tempdir().unwrap();

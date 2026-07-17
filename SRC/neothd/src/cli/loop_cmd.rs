@@ -176,6 +176,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
             provider_policy,
             Some(writer.clone()),
+            config.tokens.max_per_request,
         );
 
     let req = crate::providers::Request {
@@ -206,6 +207,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         &writer,
         &config,
         provider_call_authorizer,
+        None,
         &elicitation,
     )
     .await;

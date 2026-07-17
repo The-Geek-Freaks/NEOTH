@@ -534,7 +534,7 @@ Common environment variables:
 | Change | Reload |
 | :-- | :-- |
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
-| Provider config | Daemon reload or restart depending on provider. |
+| Provider config | Restart-bound. `neoth reload` rejects changes to the constructed provider runtime (kind, binary, key reference, endpoint, model/aliases, region/API version, inference and recursive-subslot topology, fallback chain, Claude CLI runtime, transport settings and provider decorators such as history compaction). The running provider graph remains on its previous generation until the supervised daemon restarts. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |
 | OMI | `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers; an invalid reload preserves the last valid runtime. |
 | Cluster | `neoth cluster configure` saves one complete typed snapshot. Enabled lifecycle changes, and changes while a daemon owns the prior state, return `restart_required: true`; restart the supervised daemon to activate transport, mDNS or carrier changes. Gossip privacy/replay policy is hot-reloadable on Peeroxide and Iroh. Disabled plus stopped is already inert and returns `false`. |

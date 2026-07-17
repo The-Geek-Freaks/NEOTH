@@ -255,6 +255,16 @@ where
                 segment_path.display()
             )
         })?;
+        // The payload, REDACTED flag and CRC form one logical rewrite. Make
+        // that complete frame durable before evaluating the next predicate;
+        // otherwise a power loss between frames could leave an old CRC over a
+        // zeroed payload and make the rest of the segment unreadable.
+        file.sync_data().with_context(|| {
+            format!(
+                "fsync redacted frame at offset {cursor} in {}",
+                segment_path.display()
+            )
+        })?;
         report.frames_redacted.push(cursor);
         report.bytes_redacted += payload_len as u64;
         cursor += total_len;
@@ -576,6 +586,8 @@ pub fn redact_frame_in_place(
         .context("seek to CRC slot")?;
     file.write_all(&new_crc.to_le_bytes())
         .context("write new CRC")?;
+    file.flush()
+        .context("flush completed payload/flag/CRC frame rewrite")?;
 
     Ok(())
 }

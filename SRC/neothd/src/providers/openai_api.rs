@@ -153,6 +153,18 @@ impl Provider for OpenAiAdapter {
         Some(&self.default_model)
     }
 
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        let kind = match self.name {
+            "openai_compat" => crate::cli::init::ProviderKind::OpenaiCompat,
+            "copilot_api" => crate::cli::init::ProviderKind::GitHubCopilot,
+            _ => crate::cli::init::ProviderKind::OpenaiApi,
+        };
+        Some(crate::consent::ConsentRoute::new(
+            kind,
+            Some(&self.endpoint),
+        ))
+    }
+
     fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
         Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
     }

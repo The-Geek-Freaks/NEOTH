@@ -195,19 +195,21 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         args.source_channel
     );
 
-    let provider = providers::from_config_for_role(&cfg, HemisphereRole::Cerebellum)
-        .await
-        .context("resolve cerebellum hemisphere provider")?;
+    let provider = providers::from_config_for_role_at(
+        &cfg,
+        HemisphereRole::Cerebellum,
+        &FreedomConfig::default_neoth_home(),
+    )
+    .await
+    .context("resolve cerebellum hemisphere provider")?;
+    let default_model = providers::provider_default_wire_model(provider.as_ref());
     let provider = providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
             cfg.autonomy_policy(),
+            cfg.tokens.max_per_request,
         )?,
-        cfg.inference
-            .slot_for(HemisphereRole::Cerebellum)
-            .model
-            .clone()
-            .or_else(|| cfg.provider_model.clone()),
+        default_model,
         "coding.decomposer",
     );
     let llm = CerebellumDecomposer::new(provider);
@@ -549,30 +551,27 @@ async fn build_worker_set(
             "cerebellum",
         ),
     ] {
-        match providers::from_config_for_role(cfg, role).await {
+        match providers::from_config_for_role_at(cfg, role, &patch_root).await {
             Ok(p) => {
                 let provider_name = p.name();
                 // ARCH-22: intern the `{hemisphere}/{provider}` label so the
                 // `&'static str` the Worker trait needs is leaked once per
                 // unique label, not once per dispatch.
                 let label: &'static str = intern_label(&format!("{name}/{provider_name}"));
-                // GOLD-WIRE-01: hand the worker the operator-configured
-                // model so it can pick the tool-router profile. Empty when
-                // the slot left it unset → unknown-default (Direct).
-                let model_name = cfg
-                    .inference
-                    .slot_for(role)
-                    .model
-                    .clone()
-                    .unwrap_or_default();
+                // GOLD-WIRE-01: use the built adapter's canonical default for
+                // both authorization and tool-router selection. The raw slot
+                // may still contain an alias or provider shorthand.
+                let default_model = providers::provider_default_wire_model(p.as_ref());
+                let model_name = default_model.clone().unwrap_or_default();
                 let provider =
                     Arc::new(providers::cost_authorization::AuthorizedProvider::from_box(
                         p,
                         providers::cost_authorization::ProviderCallAuthorizer::interactive(
                             cfg.autonomy_policy(),
                             wal_writer.as_ref().map(|writer| writer.as_ref().clone()),
+                            cfg.tokens.max_per_request,
                         ),
-                        (!model_name.is_empty()).then(|| model_name.clone()),
+                        default_model,
                         "coding.worker",
                     ));
                 let worker = ProviderWorker::new(label, provider, model_name, patch_root.clone());

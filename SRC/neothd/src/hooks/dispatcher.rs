@@ -49,27 +49,100 @@ fn compile_cached(pattern: &str) -> Result<Regex, regex::Error> {
     Ok(re)
 }
 
-/// Process-wide registered plugin invoker. The daemon's startup
-/// bootstrap (cli::serve) builds a `CompiledPluginInvoker` from
-/// discovered plugins + registers it once. Existing `run_stage`
-/// call sites automatically pick it up — no per-call-site wiring.
-static GLOBAL_INVOKER: OnceLock<Arc<dyn PluginInvoker>> = OnceLock::new();
-
-/// Register the process-wide PluginInvoker. Called exactly once by
-/// the daemon bootstrap after discovery + compile complete. Returns
-/// the prior value's existence — if non-None, the daemon already
-/// registered an invoker and the caller chose not to overwrite
-/// (OnceLock semantics).
-pub fn register_global_invoker(inv: Arc<dyn PluginInvoker>) -> bool {
-    GLOBAL_INVOKER.set(inv).is_ok()
+/// Resettable process-wide invoker slot. The static proxy below never owns the
+/// concrete invoker; the daemon-scoped [`GlobalInvokerRegistration`] does.
+#[derive(Default)]
+struct PluginInvokerRegistry {
+    current: Mutex<Option<Arc<dyn PluginInvoker>>>,
 }
 
-/// Read the current process-wide invoker. `None` before
-/// register_global_invoker fires (early startup, slim daemon,
-/// tests). Hook actions of kind `Plugin` degrade to Allow + warn in
-/// that case.
+impl PluginInvokerRegistry {
+    fn register(&self, invoker: Arc<dyn PluginInvoker>) -> bool {
+        let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+        if current.is_some() {
+            return false;
+        }
+        *current = Some(invoker);
+        true
+    }
+
+    fn current(&self) -> Option<Arc<dyn PluginInvoker>> {
+        self.current
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn clear_if(&self, expected: &Arc<dyn PluginInvoker>) {
+        let removed = {
+            let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
+            if current
+                .as_ref()
+                .is_some_and(|registered| Arc::ptr_eq(registered, expected))
+            {
+                current.take()
+            } else {
+                None
+            }
+        };
+        drop(removed);
+    }
+}
+
+static GLOBAL_INVOKER: OnceLock<Arc<PluginInvokerRegistry>> = OnceLock::new();
+static GLOBAL_INVOKER_PROXY: OnceLock<Arc<dyn PluginInvoker>> = OnceLock::new();
+
+fn global_invoker_registry() -> &'static Arc<PluginInvokerRegistry> {
+    GLOBAL_INVOKER.get_or_init(|| Arc::new(PluginInvokerRegistry::default()))
+}
+
+/// Daemon-scoped ownership of one global invoker registration.
+///
+/// Dropping this guard unregisters only the exact invoker it installed. This
+/// releases the plugin's WAL sender before the daemon waits for the writer task
+/// and also makes a later daemon instance in the same process registerable.
+pub struct GlobalInvokerRegistration {
+    registry: Arc<PluginInvokerRegistry>,
+    invoker: Arc<dyn PluginInvoker>,
+}
+
+impl Drop for GlobalInvokerRegistration {
+    fn drop(&mut self) {
+        self.registry.clear_if(&self.invoker);
+    }
+}
+
+struct GlobalInvokerProxy;
+
+impl PluginInvoker for GlobalInvokerProxy {
+    fn invoke(&self, plugin_id: &str) -> Result<()> {
+        let invoker = global_invoker_registry()
+            .current()
+            .ok_or_else(|| anyhow::anyhow!("no global PluginInvoker is currently registered"))?;
+        invoker.invoke(plugin_id)
+    }
+}
+
+/// Register the process-wide PluginInvoker and return its ownership guard.
+/// A live registration is never overwritten.
+pub fn register_global_invoker(
+    invoker: Arc<dyn PluginInvoker>,
+) -> Option<GlobalInvokerRegistration> {
+    let registry = Arc::clone(global_invoker_registry());
+    if !registry.register(Arc::clone(&invoker)) {
+        return None;
+    }
+    Some(GlobalInvokerRegistration { registry, invoker })
+}
+
+/// Read the current process-wide invoker through a non-owning static proxy.
+/// `None` before registration and after its guard is dropped.
 pub fn current_global_invoker() -> Option<&'static Arc<dyn PluginInvoker>> {
-    GLOBAL_INVOKER.get()
+    global_invoker_registry().current()?;
+    Some(GLOBAL_INVOKER_PROXY.get_or_init(|| {
+        let proxy: Arc<dyn PluginInvoker> = Arc::new(GlobalInvokerProxy);
+        proxy
+    }))
 }
 
 /// What the dispatcher decided after running every applicable hook.
@@ -368,6 +441,42 @@ pub fn run_stage_with_config_returning_blocks(
 mod tests {
     use super::*;
     use crate::hooks::schema::{HookAction, HookMatcher};
+
+    struct DropTrackingInvoker(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl Drop for DropTrackingInvoker {
+        fn drop(&mut self) {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl PluginInvoker for DropTrackingInvoker {
+        fn invoke(&self, _plugin_id: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn plugin_invoker_registry_releases_and_accepts_replacement() {
+        let registry = Arc::new(PluginInvokerRegistry::default());
+        let first_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let first: Arc<dyn PluginInvoker> = Arc::new(DropTrackingInvoker(Arc::clone(&first_drops)));
+
+        assert!(registry.register(Arc::clone(&first)));
+        let registration = GlobalInvokerRegistration {
+            registry: Arc::clone(&registry),
+            invoker: Arc::clone(&first),
+        };
+        drop(first);
+        drop(registration);
+        assert_eq!(first_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let replacement: Arc<dyn PluginInvoker> = Arc::new(CountingInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+        });
+        assert!(registry.register(Arc::clone(&replacement)));
+        assert!(!registry.register(replacement));
+    }
 
     #[test]
     fn compile_cached_returns_equivalent_regex_and_caches_by_pattern() {

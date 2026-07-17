@@ -26,7 +26,9 @@ use chrono::{DateTime, Utc};
 use tokio::time::interval;
 use tracing::{debug, info, warn};
 
-use crate::cron::runner::{RunOutcome, run_job_at};
+#[cfg(test)]
+use crate::cron::runner::RunOutcome;
+use crate::cron::runner::run_job_at_with_default_provider_routes;
 use crate::cron::schema::{Job, JobsFile};
 use crate::cron::state::RuntimeState;
 use crate::permissions::AutonomyLevel;
@@ -237,6 +239,7 @@ pub async fn run_scheduler(
     jobs_path: PathBuf,
     jobs_file: JobsFile,
     provider: Arc<AuthorizedProvider>,
+    default_provider_routes: Arc<Vec<crate::consent::ConsentRoute>>,
     writer: WalWriterHandle,
     reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> Result<()> {
@@ -373,17 +376,19 @@ pub async fn run_scheduler(
                 let retired_for_task = state.retired_running.clone();
                 let job_id = job.id.clone();
                 let home_for_task = home.clone();
+                let default_provider_routes = Arc::clone(&default_provider_routes);
                 tokio::spawn(async move {
                     let _running_guard = RunningJobGuard {
                         job_id: job_id.clone(),
                         running: running_for_task,
                         retired_running: retired_for_task.clone(),
                     };
-                    match run_job_at(
+                    match run_job_at_with_default_provider_routes(
                         &home_for_task,
                         &job_for_task,
                         provider_for_task.as_ref(),
                         &writer_for_task,
+                        default_provider_routes.as_slice(),
                     )
                     .await
                     {

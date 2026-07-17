@@ -412,8 +412,9 @@ impl SkillsConfig {
 // f32 field (history_compaction_threshold) means Eq is not derivable.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct TokensConfig {
-    /// Total token cap per provider request before
-    /// `tokens::budget::enforce_budget` degradation policy fires.
+    /// Hard input-token ceiling per provider request. Typed degradation uses
+    /// a tokenizer-independent UTF-8 upper bound; the final leaf additionally
+    /// reserves model/message-envelope overhead before dispatch.
     #[serde(default = "TokensConfig::default_max_per_request")]
     pub max_per_request: u32,
     /// GOLD-PROG-09 (OP-01) — when true, `neoth edit` emits the compact
