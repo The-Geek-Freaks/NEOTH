@@ -419,10 +419,12 @@ export component StatusFooter inherits Rectangle {
             alignment: end; spacing: 10px;
             Text {
                 text: root.cluster-id != "" ? "cluster " + root.cluster-id : "cluster off";
+                overflow: elide;
                 color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
             }
             Text {
                 text: root.peers > 0 ? "· \{root.peers} peers" : "";
+                overflow: elide;
                 color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; vertical-alignment: center;
             }
             Rectangle {

@@ -184,6 +184,7 @@ export component CronView inherits Rectangle {
                         text: root.cron-jobs.length == 1
                             ? "1 job"
                             : root.cron-jobs.length + " jobs";
+                        overflow: elide;
                         color: Theme.text-secondary;
                         font-size: Theme.font-size-sm;
                         vertical-alignment: center;

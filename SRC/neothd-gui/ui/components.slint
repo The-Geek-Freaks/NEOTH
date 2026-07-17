@@ -369,6 +369,7 @@ export component ProgressIndicator inherits Rectangle {
                 spacing: Theme.space-base;
                 Text {
                     text: root.step-label;
+                    overflow: elide;
                     font-family: Theme.font-display;
                     font-size: Theme.font-size-caption;
                     font-weight: Theme.weight-regular;
@@ -378,6 +379,7 @@ export component ProgressIndicator inherits Rectangle {
                 }
                 Text {
                     text: "Step " + root.current-step + " of " + root.total-steps;
+                    overflow: elide;
                     font-family: Theme.font-mono;
                     font-size: Theme.font-size-caption;
                     color: Theme.text-dim;
@@ -754,6 +756,7 @@ export component NeothComboBox inherits Rectangle {
             text: root.model.length > 0 && root.current-index >= 0 && root.current-index < root.model.length
                 ? root.model[root.current-index]
                 : "—";
+            overflow: elide;
             font-family: Theme.font-display;
             font-size: Theme.font-size-body;
             color: Theme.text-primary;
@@ -997,6 +1000,7 @@ export component NeothLineEdit inherits Rectangle {
                 x: 0;
                 width: parent.width;
                 text: root.placeholder-text;
+                overflow: elide;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
                 color: Theme.text-dim;
@@ -1085,6 +1089,7 @@ export component InfoRow inherits Rectangle {
         }
         Text {
             text: root.value != "" ? root.value : "—";
+            overflow: elide;
             color: root.value-color;
             font-family: Theme.font-mono;
             font-size: Theme.font-size-sm;
@@ -1536,6 +1541,7 @@ export component ConfirmDialog inherits Rectangle {
                     confirm-lbl := Text {
                         width: parent.width; height: parent.height;
                         text: root.confirm-label;
+                        overflow: elide;
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-body;
                         font-weight: Theme.weight-medium;
@@ -1801,6 +1807,7 @@ export component EmptyState inherits Rectangle {
                 width: parent.width;
                 height: parent.height;
                 text: root.action-label;
+                overflow: elide;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
                 font-weight: Theme.weight-medium;

@@ -308,6 +308,7 @@ component KanbanTaskCard inherits Rectangle {
                                                        Theme.border-subtle;
                 Text {
                     text: root.hemisphere == "unassigned" ? "—" : root.hemisphere;
+                    overflow: elide;
                     font-family: Theme.font-display;
                     font-size: 9px;
                     font-weight: Theme.weight-bold;
@@ -418,6 +419,7 @@ component ActivityFeedEntry inherits HorizontalLayout {
     }
     Text {
         text: root.actor;
+        overflow: elide;
         font-family: Theme.font-display;
         font-size: Theme.font-size-caption;
         font-weight: Theme.weight-bold;
@@ -460,6 +462,7 @@ component PanelHeader inherits VerticalLayout {
     }
     if root.mirrors-slash != "": Text {
         text: "CLI mirror: " + root.mirrors-slash;
+        overflow: elide;
         font-family: Theme.font-mono;
         font-size: Theme.font-size-caption;
         color: Theme.accent-green;
@@ -1184,6 +1187,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: root.hemispheres-mode == "" ? "—" : root.hemispheres-mode;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
@@ -1533,7 +1537,7 @@ export component SettingsView inherits Rectangle {
                         // matrix: encrypted by default; access token or password
                         if selected-channel-type == "matrix": VerticalBox {
                             spacing: Theme.space-tight;
-                            Text { text: "Matrix homeserver + bot user; encrypted rooms required unless explicitly disabled"; color: Theme.text-muted; font-size: Theme.font-size-caption; }
+                            Text { text: "Matrix homeserver + bot user; encrypted rooms required unless explicitly disabled"; wrap: word-wrap; color: Theme.text-muted; font-size: Theme.font-size-caption; }
                             NeothLineEdit { placeholder-text: "Homeserver URL (--url)"; password: ch-f1-secret; text <=> ch-f1; }
                             NeothLineEdit { placeholder-text: "Bot user ID, @user:server (--nick)"; password: ch-f2-secret; text <=> ch-f2; }
                             NeothLineEdit { placeholder-text: "Access token (--token, preferred)"; password: ch-f3-secret; text <=> ch-f3; }
@@ -1974,6 +1978,7 @@ export component SettingsView inherits Rectangle {
                         spacing: Theme.space-tight;
                         Text {
                             text: root.skills-total + " skill(s) installed";
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -2106,6 +2111,7 @@ export component SettingsView inherits Rectangle {
                         spacing: Theme.space-tight;
                         Text {
                             text: root.plugins.length + " plugin(s) discovered";
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -2147,6 +2153,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: "permission: " + p.requested-permission;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-2xs;
                                 color: p.requested-permission == "dangerous"
@@ -2204,6 +2211,7 @@ export component SettingsView inherits Rectangle {
                                 text: root.plugin-detail-title != ""
                                     ? root.plugin-detail-title
                                     : root.plugin-detail-id;
+                                overflow: elide;
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 font-weight: 600;
@@ -2283,6 +2291,7 @@ export component SettingsView inherits Rectangle {
                         spacing: Theme.space-tight;
                         Text {
                             text: "total " + root.memory-total;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -2593,6 +2602,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: "runtime " + root.omi-runtime-state + " · pending " + root.omi-pending-audits;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: root.omi-runtime-state == "healthy" ? Theme.accent-green : Theme.accent-amber;
@@ -2738,6 +2748,7 @@ export component SettingsView inherits Rectangle {
                         // freedom.yaml, even when the combo below is mid-select).
                         Text {
                             text: root.autonomy-current;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -2862,6 +2873,7 @@ export component SettingsView inherits Rectangle {
                         spacing: Theme.space-base;
                         Text {
                             text: "active level: " + root.cfg-perm-level;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs;
                             color: Theme.text-tertiary;
@@ -3042,12 +3054,14 @@ export component SettingsView inherits Rectangle {
                         }
                         if root.usage-available: Text {
                             text: root.usage-responses;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
                         }
                         if root.usage-available: Text {
                             text: root.usage-tokens;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
@@ -3080,6 +3094,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: root.rails-engaged-count + " / " + root.rails-total + " engaged";
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
@@ -3632,18 +3647,21 @@ export component SettingsView inherits Rectangle {
                         }
                         if root.hw-cpu != "": Text {
                             text: "mem:  " + root.hw-memory;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
                         }
                         if root.hw-cpu != "": Text {
                             text: "accel: " + root.hw-accelerator;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
                         }
                         if root.hw-cpu != "": Text {
                             text: "vram: " + root.hw-vram;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
@@ -3667,6 +3685,7 @@ export component SettingsView inherits Rectangle {
                         }
                         if root.hw-cpu != "": Text {
                             text: "disk: " + root.hw-disk;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
@@ -3794,6 +3813,7 @@ export component SettingsView inherits Rectangle {
                         }
                         Text {
                             text: root.cluster-listen-port + "  (default 49737)";
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -4065,6 +4085,7 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-base;
                             Text {
                                 text: root.kanban-selected-task-id + "  " + root.kanban-selected-title;
+                                overflow: elide;
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-h2;
                                 font-weight: Theme.weight-light;
@@ -4083,6 +4104,7 @@ export component SettingsView inherits Rectangle {
                             spacing: Theme.space-loose;
                             Text {
                                 text: "Status: " + root.kanban-selected-status;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.accent-green;
@@ -4090,6 +4112,7 @@ export component SettingsView inherits Rectangle {
                             }
                             Text {
                                 text: "Hemisphere: " + root.kanban-selected-hemisphere;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: root.kanban-selected-hemisphere == "right"
@@ -4122,6 +4145,7 @@ export component SettingsView inherits Rectangle {
                         }
                         if root.kanban-selected-comments.length > 0: Text {
                             text: "COMMENTS (" + root.kanban-selected-comments.length + ")";
+                            overflow: elide;
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-bold;
@@ -4516,12 +4540,14 @@ export component SettingsView inherits Rectangle {
                         }
                         if root.council-cap != "": Text {
                             text: "cap:   " + root.council-cap;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
                         }
                         if root.council-cap != "": Text {
                             text: "daily: " + root.council-daily-usd;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;

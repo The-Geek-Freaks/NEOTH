@@ -35,6 +35,7 @@ component EventRow inherits Rectangle {
         // Date/time badge
         Text {
             text: root.datetime;
+            overflow: elide;
             color: Theme.accent;
             font-family: Theme.font-mono;
             font-size: 10px;

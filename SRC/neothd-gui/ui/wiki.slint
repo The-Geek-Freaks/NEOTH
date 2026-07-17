@@ -239,6 +239,7 @@ export component WikiView inherits Rectangle {
                         text: root.wiki-total > 0
                             ? "\{root.wiki-total} capabilities registered"
                             : "capability self-map";
+                        overflow: elide;
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;

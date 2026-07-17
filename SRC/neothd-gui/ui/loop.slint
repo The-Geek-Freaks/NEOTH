@@ -67,6 +67,7 @@ component RoundRow inherits Rectangle {
         }
         Text {
             text: root.entry.duration;
+            overflow: elide;
             color: Theme.text-tertiary; font-family: Theme.font-mono;
             font-size: Theme.font-size-2xs; vertical-alignment: center;
             horizontal-stretch: 1; horizontal-alignment: right;
@@ -243,6 +244,7 @@ export component LoopPanel inherits Rectangle {
                         }
                         Text {
                             text: root.stop-reason != "" ? root.stop-reason : (root.running ? "running…" : "—");
+                            overflow: elide;
                             color: Theme.text-secondary; font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs; vertical-alignment: center;
                             horizontal-stretch: 1; horizontal-alignment: right;
@@ -277,6 +279,7 @@ export component LoopPanel inherits Rectangle {
                             text: root.tool-call-budget > 0
                                 ? "\{root.tool-calls} / \{root.tool-call-budget} tool calls"
                                 : "\{root.tool-calls} tool calls · no cap";
+                            overflow: elide;
                             color: Theme.text-secondary; font-family: Theme.font-mono;
                             font-size: Theme.font-size-2xs; vertical-alignment: center;
                         }
@@ -293,6 +296,7 @@ export component LoopPanel inherits Rectangle {
                         text: root.running
                             ? "Loop running — rounds land here when the record is written."
                             : "Select a run on the left, or start one above.";
+                        wrap: word-wrap;
                         color: Theme.text-tertiary; font-family: Theme.font-mono;
                         font-size: Theme.font-size-sm;
                     }

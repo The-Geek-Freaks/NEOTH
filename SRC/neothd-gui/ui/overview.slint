@@ -238,6 +238,7 @@ export component OverviewView inherits Rectangle {
                                 // Hero: total output (primary scannable number)
                                 Text {
                                     text: root.ov-tokens-out != "" ? root.ov-tokens-out : "—";
+                                    overflow: elide;
                                     color: Theme.accent;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-display-sm;
@@ -254,6 +255,7 @@ export component OverviewView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: root.ov-tokens-in != "" ? root.ov-tokens-in : "—";
+                                            overflow: elide;
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
@@ -278,6 +280,7 @@ export component OverviewView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: root.ov-tokens-out != "" ? root.ov-tokens-out : "—";
+                                            overflow: elide;
                                             color: Theme.memory;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
@@ -325,6 +328,7 @@ export component OverviewView inherits Rectangle {
                                     Rectangle { horizontal-stretch: 1; }
                                     if root.ov-agents-count != "": Text {
                                         text: root.ov-agents-count;
+                                        overflow: elide;
                                         color: Theme.memory;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-xs;
@@ -445,6 +449,7 @@ export component OverviewView inherits Rectangle {
                                 // Sparkline caption (e.g. "eur 0.42 this week")
                                 if root.ov-usage-days-label != "": Text {
                                     text: root.ov-usage-days-label;
+                                    overflow: elide;
                                     color: Theme.text-tertiary;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-2xs;
@@ -657,6 +662,7 @@ export component OverviewView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: root.ov-skills-active != "" ? root.ov-skills-active : "—";
+                                            overflow: elide;
                                             color: Theme.memory;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-lg;
@@ -682,6 +688,7 @@ export component OverviewView inherits Rectangle {
                                         spacing: 2px;
                                         Text {
                                             text: root.ov-plugins-active != "" ? root.ov-plugins-active : "—";
+                                            overflow: elide;
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-lg;

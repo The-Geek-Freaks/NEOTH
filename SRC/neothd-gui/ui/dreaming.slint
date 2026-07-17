@@ -288,6 +288,7 @@ export component DreamingView inherits Rectangle {
                                         Rectangle { horizontal-stretch: 1; }
                                         Text {
                                             text: root.dr-selected-day;
+                                            overflow: elide;
                                             color: Theme.audit;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-2xs;

@@ -2139,6 +2139,7 @@ export component MainWindow inherits Window {
                 }
                 Text {
                     text: root.autonomy-choice;
+                    overflow: elide;
                     font-family: Theme.font-mono;
                     font-size: Theme.font-size-body;
                     color: Theme.accent-green;
@@ -2772,6 +2773,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: root.operator-id;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -2813,6 +2815,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: root.autonomy-choice;
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -2833,6 +2836,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: "cli" + (root.enable-telegram ? ", telegram" : "");
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -2872,6 +2876,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: root.wz-omi-enabled ? root.wz-omi-mode + " · opt-in" : "disabled";
+                            overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-body;
                             color: Theme.text-primary;
@@ -4237,6 +4242,7 @@ export component MainWindow inherits Window {
                         }
                         Text {
                             text: root.app-version-line + " · local-first · fail-closed";
+                            overflow: elide;
                             color: Theme.text-tertiary;
                             font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                             letter-spacing: Theme.letter-spacing-mono-caps;

@@ -157,6 +157,7 @@ component SelfReprogRow inherits Rectangle {
                 border-color: Theme.border-subtle;
                 Text {
                     text: root.row-kind;
+                    overflow: elide;
                     color: Theme.accent;
                     font-family: Theme.font-mono;
                     font-size: 9px;
@@ -168,6 +169,7 @@ component SelfReprogRow inherits Rectangle {
             // confidence
             Text {
                 text: root.row-confidence;
+                overflow: elide;
                 color: Theme.text-secondary;
                 font-family: Theme.font-mono;
                 font-size: 10px;

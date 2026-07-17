@@ -26,6 +26,7 @@ component StatRow inherits Rectangle {
             }
             Text {
                 text: root.value != "" ? root.value : "—";
+                overflow: elide;
                 color: Theme.text-primary; font-family: Theme.font-sans; font-size: Theme.font-size-base;
             }
         }
@@ -69,7 +70,8 @@ export component ResourcesView inherits Rectangle {
                     Text { text: "VRAM"; color: Theme.text-tertiary; font-family: Theme.font-mono;
                            font-size: Theme.font-size-2xs; letter-spacing: Theme.letter-spacing-wide; }
                     Text { text: root.vram != "" ? root.vram : "—"; color: Theme.text-primary;
-                           font-family: Theme.font-sans; font-size: Theme.font-size-base; }
+                           font-family: Theme.font-sans; font-size: Theme.font-size-base;
+                           overflow: elide; }
                 }
                 // GOLD-ADAPT-GUI-03 — stepped SegBar replaces the continuous
                 // fill: 12 segments read like an instrument meter.
@@ -108,6 +110,7 @@ export component ProbeView inherits Rectangle {
             Text {
                 text: root.blurb; color: Theme.text-secondary;
                 font-family: Theme.font-sans; font-size: Theme.font-size-md; vertical-alignment: center;
+                wrap: word-wrap;
             }
             Rectangle {
                 width: btn.width + 32px; height: 38px; border-radius: Theme.radius-pill;

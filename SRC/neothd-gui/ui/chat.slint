@@ -189,6 +189,7 @@ component ChatBubble inherits Rectangle {
                     alignment: start;
                     Text {
                         text: root.message.timestamp;
+                        overflow: elide;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-dim;
@@ -281,6 +282,7 @@ component ChatBubble inherits Rectangle {
                             // text-transform, so extra letter-spacing approximates it).
                             Text {
                                 text: root.message.code-lang;
+                                overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-2xs;
                                 color: Theme.text-muted;
@@ -682,6 +684,7 @@ component Composer inherits Rectangle {
                     padding-left: 10px; padding-right: 6px; spacing: 6px;
                     att-txt := Text {
                         text: "📎 " + name;
+                        overflow: elide;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;
                         color: Theme.accent;
@@ -1087,6 +1090,7 @@ export component ChatView inherits Rectangle {
                         text: root.active-channel-index >= 0 && root.active-channel-index < root.channels.length
                             ? root.channels[root.active-channel-index]
                             : "—";
+                        overflow: elide;
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-body;
                         font-weight: Theme.weight-medium;
@@ -1221,6 +1225,7 @@ export component ChatView inherits Rectangle {
                     }
                     Text {
                         text: root.consent-mode;
+                        overflow: elide;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-2xs;
                         color: Theme.text-muted;

@@ -66,6 +66,7 @@ component GranRow inherits Rectangle {
         }
         Text {
             text: root.last-ts-end;
+            overflow: elide;
             color: Theme.text-disabled;
             font-family: Theme.font-mono;
             font-size: 10px;
@@ -136,6 +137,7 @@ component WindowRow inherits Rectangle {
             y: (parent.height - self.height) / 2;
             Text {
                 text: root.collapse-kind;
+                overflow: elide;
                 color: Theme.text-primary;
                 font-family: Theme.font-mono;
                 font-size: 9px;
