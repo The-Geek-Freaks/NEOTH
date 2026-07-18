@@ -41,56 +41,31 @@ enum Surface {
 }
 use Surface::{CliOnly, Gui};
 
-/// Nav keys that exist in `neothd-gui/ui/app_shell.slint` (`root.nav("…")`).
-/// Kept in sync by hand; [`gui_targets_reference_real_nav_keys`] fails if an
-/// INVENTORY `Gui(k)` names a key not in this set (typo guard). Source of
-/// truth: `grep -oE 'root\.nav\("[a-z0-9-]+"\)' app_shell.slint`.
-const NAV_KEYS: &[&str] = &[
-    "adr-browser",
-    "agents",
-    "automation",
-    "babel",
-    "bg-jobs",
-    "buddyconfig",
-    "calendar",
-    "catalog",
-    "channels",
-    "chat",
-    "cluster",
-    "coding",
-    "companion",
-    "config",
-    "council-weights",
-    "doctor",
-    "dreaming",
-    "evolve",
-    "groundtruth",
-    "hemispheres",
-    "hooks",
-    "loops",
-    "mcp",
-    "memgraph",
-    "memory",
-    "mesh",
-    "migrate-history",
-    "mode-registry",
-    "n8n",
-    "obsidian",
-    "overview",
-    "plugins",
-    "privacy",
-    "quota",
-    "resources",
-    "selfdev",
-    "tweaks",
-    "wal",
-    "wiki",
-];
+/// Extract the real `root.nav("...")` keys from the compiled GUI source. This
+/// deliberately avoids a second hand-maintained navigation inventory: a new,
+/// renamed or removed panel changes the test input in the same commit.
+fn live_gui_nav_keys() -> HashSet<&'static str> {
+    const APP_SHELL: &str = include_str!("../../../neothd-gui/ui/app_shell.slint");
+    APP_SHELL
+        .split("root.nav(\"")
+        .skip(1)
+        .filter_map(|tail| tail.split_once("\")").map(|(key, _)| key))
+        .collect()
+}
+
+/// One CLI capability can legitimately own more than one product view. The
+/// cluster command owns the configuration/control panel and the operational
+/// mesh view; keeping that relationship explicit prevents `mesh` from being a
+/// permanently unowned exception in the reverse drift guard.
+const ADDITIONAL_GUI_NAV_OWNERS: &[(&str, &str)] = &[("mesh", "cluster")];
 
 /// The canonical capability inventory: every non-hidden CLI verb → its surface.
 /// Adding a `neoth` subcommand without adding a row here fails the drift test.
 const INVENTORY: &[(&str, Surface)] = &[
-    ("init", CliOnly("first-run setup wizard; GUI has its own onboarding")),
+    (
+        "init",
+        CliOnly("first-run setup wizard; GUI has its own onboarding"),
+    ),
     ("serve", CliOnly("daemon foreground process")),
     ("chat", Gui("chat")),
     ("fact-check", CliOnly("one-shot verification pipe")),
@@ -113,7 +88,7 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("dream", Gui("dreaming")),
     ("transfer", CliOnly("identity transfer pipe")),
     ("identity", Gui("config")),
-    ("credential", Gui("config")),
+    ("credential", Gui("credentials")),
     ("computer-use", CliOnly("headless computer-use driver")),
     ("self-improve", Gui("evolve")),
     ("self-knowledge", Gui("selfdev")),
@@ -199,7 +174,7 @@ const INVENTORY: &[(&str, Surface)] = &[
     ("quota", Gui("quota")),
     ("hooks", Gui("hooks")),
     ("agents", Gui("agents")),
-    ("slash", Gui("agents")),
+    ("slash", Gui("slash")),
     ("tweaks", Gui("tweaks")),
     ("permissions", Gui("privacy")),
     ("refusal", Gui("privacy")),
@@ -307,7 +282,7 @@ fn inventory_has_no_stale_verbs() {
 
 #[test]
 fn gui_targets_reference_real_nav_keys() {
-    let navset: HashSet<&str> = NAV_KEYS.iter().copied().collect();
+    let navset = live_gui_nav_keys();
     let bad: Vec<(&str, &str)> = full_inventory()
         .iter()
         .filter_map(|(verb, surface)| match surface {
@@ -319,5 +294,35 @@ fn gui_targets_reference_real_nav_keys() {
         bad.is_empty(),
         "INVENTORY Gui() targets that match no app_shell.slint nav key \
          (typo, or panel was renamed/removed) — (verb, bad-key): {bad:?}"
+    );
+}
+
+#[test]
+fn every_gui_nav_key_has_a_capability_owner() {
+    let inventory = full_inventory();
+    let mut represented: HashSet<&str> = inventory
+        .iter()
+        .filter_map(|(_, surface)| match surface {
+            Gui(key) => Some(*key),
+            CliOnly(_) => None,
+        })
+        .collect();
+    let live_verbs: HashSet<String> = live_verbs().into_iter().collect();
+    for (nav_key, owner_verb) in ADDITIONAL_GUI_NAV_OWNERS {
+        assert!(
+            live_verbs.contains(*owner_verb),
+            "GUI nav alias `{nav_key}` references missing CLI owner `{owner_verb}`"
+        );
+        represented.insert(nav_key);
+    }
+
+    let unowned: Vec<&str> = live_gui_nav_keys()
+        .into_iter()
+        .filter(|key| !represented.contains(key))
+        .collect();
+    assert!(
+        unowned.is_empty(),
+        "GUI nav key(s) have no CLI capability owner — classify the matching \
+         verb in INVENTORY or ADDITIONAL_GUI_NAV_OWNERS: {unowned:?}"
     );
 }
