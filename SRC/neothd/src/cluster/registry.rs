@@ -232,23 +232,19 @@ pub fn load(home: &Path) -> Result<ClusterRegistry> {
     Ok(reg)
 }
 
-/// Write the registry atomically via `.tmp` + rename.
+/// Write the registry atomically and durably with private operator-data
+/// permissions. The shared helper fsyncs the staged bytes before publication
+/// and commits the parent directory entry on Unix.
 pub fn save(home: &Path, reg: &ClusterRegistry) -> Result<()> {
     let path = default_path(home);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create cluster registry dir {}", parent.display()))?;
-    }
     // Sort before write so on-disk order is stable across runs.
     let mut sorted = reg.clone();
     sorted
         .peers
         .sort_by(|a, b| a.pub_key_hex.cmp(&b.pub_key_hex));
-    let tmp = path.with_extension("yaml.tmp");
     let body = serde_yaml::to_string(&sorted).with_context(|| "serialize cluster registry")?;
-    std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    crate::util::atomic_write::atomic_write_private(&path, body.as_bytes())
+        .with_context(|| format!("durably write cluster registry at {}", path.display()))?;
     Ok(())
 }
 
@@ -267,14 +263,14 @@ pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
     save(home, &reg)
 }
 
-/// Remove a peer by pub_key_hex (or unique prefix). Returns Ok(true)
-/// when a peer was removed, Ok(false) when no match found (idempotent
-/// `revoke` on a ghost is a no-op).
+/// Remove a peer by pub_key_hex (or unique prefix). Returns the exact removed
+/// peer when the durable registry changed and `None` when no match exists
+/// (idempotent `revoke` on a ghost is a no-op).
 ///
 /// Prefix matching: when `key_or_prefix` is shorter than 64 chars,
 /// matches any peer whose `pub_key_hex` starts with it. Errors on
 /// ambiguous match (multiple peers with that prefix).
-pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
+pub fn remove_resolved(home: &Path, key_or_prefix: &str) -> Result<Option<PairedPeer>> {
     let _guard = lock_registry();
     let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
@@ -286,14 +282,20 @@ pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
         .map(|(i, _)| i)
         .collect();
     match matches.len() {
-        0 => Ok(false),
+        0 => Ok(None),
         1 => {
-            reg.peers.remove(matches[0]);
+            let removed = reg.peers.remove(matches[0]);
             save(home, &reg)?;
-            Ok(true)
+            Ok(Some(removed))
         }
         n => anyhow::bail!("prefix `{key_or_prefix}` matches {n} peers — use a longer prefix"),
     }
+}
+
+/// Compatibility boolean wrapper for callers that only need to know whether
+/// the durable registry changed.
+pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
+    Ok(remove_resolved(home, key_or_prefix)?.is_some())
 }
 
 /// True when a peer with the given pub_key_hex (or unique prefix)
@@ -489,10 +491,15 @@ mod tests {
     #[test]
     fn remove_short_prefix_works_when_unique() {
         let dir = tempdir().unwrap();
-        upsert(dir.path(), sample_peer("ab", "alpha")).unwrap();
+        let alpha = sample_peer("ab", "alpha");
+        let canonical = alpha.pub_key_hex.clone();
+        upsert(dir.path(), alpha).unwrap();
         upsert(dir.path(), sample_peer("cd", "charlie")).unwrap();
-        // Short prefix "ab" unique → removes alpha.
-        assert!(remove(dir.path(), "ab").unwrap());
+        // Short prefix "ab" unique → returns the exact durable identity that
+        // was removed so receipt/audit callers never mistake the prefix for a
+        // canonical peer key.
+        let removed = remove_resolved(dir.path(), "ab").unwrap().unwrap();
+        assert_eq!(removed.pub_key_hex, canonical);
         let reg = load(dir.path()).unwrap();
         assert_eq!(reg.peers.len(), 1);
         assert_eq!(reg.peers[0].instance_label, "charlie");

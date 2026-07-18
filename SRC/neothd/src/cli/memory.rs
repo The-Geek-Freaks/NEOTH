@@ -996,6 +996,31 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
             );
         }
     }
+    // Bind the machine-readable acknowledgement to evidence that can be
+    // independently inspected after this process exits. The returned
+    // connection proves the SQLite transaction committed; re-reading the
+    // sentinel proves the anti-resurrection leg survived that commit. Joining
+    // the single WAL writer above means the segment bytes were flushed before
+    // we hash and acknowledge them.
+    let sentinel_field = forget::tombstone_sentinel_field(topic);
+    let sentinel =
+        crate::profile::redaction::lookup_active(&conn, &sentinel_field)?.ok_or_else(|| {
+            anyhow::anyhow!("forget committed without an active anti-resurrection sentinel")
+        })?;
+    if !sentinel.never_recreate {
+        anyhow::bail!("forget anti-resurrection sentinel is not permanent");
+    }
+    let audit_bytes = std::fs::read(&segment).with_context(|| {
+        format!(
+            "read committed forget audit segment at {}",
+            segment.display()
+        )
+    })?;
+    if audit_bytes.is_empty() {
+        anyhow::bail!("forget audit segment is empty after WAL writer shutdown");
+    }
+    use sha2::Digest as _;
+    let audit_sha256 = hex::encode(sha2::Sha256::digest(&audit_bytes));
     info!(
         topic = topic,
         total = report.total(),
@@ -1020,12 +1045,41 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let mut body = serde_json::to_value(&report).context("serialize forget report")?;
-            body.as_object_mut()
-                .expect("ForgetReport serializes to an object")
-                .insert(
-                    "communication_profile".to_owned(),
-                    communication_profile_topic_forget_metadata(),
-                );
+            let object = body
+                .as_object_mut()
+                .expect("ForgetReport serializes to an object");
+            object.insert("operation".to_owned(), serde_json::json!("memory.forget"));
+            object.insert("confirmed".to_owned(), serde_json::json!(true));
+            object.insert(
+                "commit".to_owned(),
+                serde_json::json!({
+                    "database_path": db_path.display().to_string(),
+                    "sqlite_cascade_committed": true,
+                }),
+            );
+            object.insert(
+                "anti_resurrection_sentinel".to_owned(),
+                serde_json::json!({
+                    "field": sentinel.field,
+                    "active": sentinel.revoked_at.is_none(),
+                    "never_recreate": sentinel.never_recreate,
+                    "asserted_by": sentinel.asserted_by,
+                    "asserted_at": sentinel.asserted_at,
+                }),
+            );
+            object.insert(
+                "audit".to_owned(),
+                serde_json::json!({
+                    "event_type": "TOMBSTONE_REQUESTED",
+                    "segment_path": segment.display().to_string(),
+                    "segment_sha256": audit_sha256,
+                    "persisted": true,
+                }),
+            );
+            object.insert(
+                "communication_profile".to_owned(),
+                communication_profile_topic_forget_metadata(),
+            );
             match args.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&body)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&body)?),

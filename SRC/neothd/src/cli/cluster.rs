@@ -11,7 +11,7 @@ use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac as _};
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
 use subtle::ConstantTimeEq as _;
 use zeroize::Zeroize as _;
 
@@ -372,7 +372,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
                 run_confirm(&pub_key, &label, &addr, &via, hostname.as_deref())
             }
         }
-        ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
+        ClusterAction::Revoke { pub_key } => run_revoke(&pub_key, &args.output),
         ClusterAction::Configure {
             enabled,
             name,
@@ -971,19 +971,27 @@ fn run_confirm(
     Ok(())
 }
 
-/// Best-effort sidecar drop for the WAL `0xE7` PeerRevoked audit frame.
-/// Sidecar write failure is non-fatal — the registry change already
-/// landed; the daemon emits the frame on its next tick when it can.
-fn emit_revoke_sidecar(home: &std::path::Path, pub_key_hex: &str) {
-    let payload = serde_json::json!({});
-    if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
+/// Durably hand a committed revoke to the single WAL writer. A confirmed
+/// mutation is not acknowledged without this sidecar; callers roll the
+/// registry back if the handoff cannot be persisted.
+fn emit_revoke_sidecar(
+    home: &std::path::Path,
+    requested_peer: &str,
+    pub_key_hex: &str,
+) -> Result<std::path::PathBuf> {
+    let payload = serde_json::json!({
+        "requested_peer": requested_peer,
+        "canonical_peer": pub_key_hex,
+        "removed": true,
+        "phase": "committed",
+    });
+    crate::cluster::audit_sidecar::write_sidecar(
         home,
         crate::cluster::audit_sidecar::ClusterAuditKind::PeerRevoked,
         pub_key_hex,
         payload,
-    ) {
-        tracing::warn!(error = %e, "cluster revoke sidecar write failed (non-fatal)");
-    }
+    )
+    .context("persist cluster revoke audit handoff")
 }
 
 /// What a revoke resolved to. Lets `revoke_peer` stay a pure
@@ -992,12 +1000,16 @@ fn emit_revoke_sidecar(home: &std::path::Path, pub_key_hex: &str) {
 #[derive(Debug, PartialEq, Eq)]
 enum RevokeOutcome {
     /// Removed by pub_key (full or unique prefix).
-    ByKey(String),
+    ByKey {
+        key: String,
+        audit_sidecar: std::path::PathBuf,
+    },
     /// SL-01c: removed by resolving a recorded hostname → pub_key.
     ByHostname {
         label: String,
         hostname: String,
         key: String,
+        audit_sidecar: std::path::PathBuf,
     },
     /// Nothing matched by either key or hostname.
     NoMatch,
@@ -1009,41 +1021,177 @@ enum RevokeOutcome {
 /// to resolving the arg as a recorded hostname (SL-01c).
 fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
     let key = arg.trim().to_ascii_lowercase();
-    if crate::cluster::registry::remove(home, &key)? {
-        emit_revoke_sidecar(home, &key);
-        return Ok(RevokeOutcome::ByKey(key));
+    if let Some(peer) = crate::cluster::registry::remove_resolved(home, &key)? {
+        let canonical = peer.pub_key_hex.clone();
+        let audit_sidecar = match emit_revoke_sidecar(home, arg, &canonical) {
+            Ok(path) => path,
+            Err(error) => {
+                crate::cluster::registry::upsert(home, peer).with_context(|| {
+                    format!("{error:#}; additionally failed to roll back peer `{canonical}`")
+                })?;
+                return Err(error.context(format!(
+                    "revoke of peer `{canonical}` was rolled back because its audit handoff failed"
+                )));
+            }
+        };
+        return Ok(RevokeOutcome::ByKey {
+            key: canonical,
+            audit_sidecar,
+        });
     }
-    if let Some(peer) = crate::cluster::registry::find_by_hostname(home, arg.trim())
-        && crate::cluster::registry::remove(home, &peer.pub_key_hex)?
+    if let Some(resolved) = crate::cluster::registry::find_by_hostname(home, arg.trim())
+        && let Some(peer) = crate::cluster::registry::remove_resolved(home, &resolved.pub_key_hex)?
     {
-        emit_revoke_sidecar(home, &peer.pub_key_hex);
+        let audit_sidecar = match emit_revoke_sidecar(home, arg, &peer.pub_key_hex) {
+            Ok(path) => path,
+            Err(error) => {
+                crate::cluster::registry::upsert(home, peer.clone()).with_context(|| {
+                    format!(
+                        "{error:#}; additionally failed to roll back peer `{}`",
+                        peer.pub_key_hex
+                    )
+                })?;
+                return Err(error.context(format!(
+                    "revoke of peer `{}` was rolled back because its audit handoff failed",
+                    peer.pub_key_hex
+                )));
+            }
+        };
         return Ok(RevokeOutcome::ByHostname {
             label: peer.instance_label,
             hostname: arg.trim().to_string(),
             key: peer.pub_key_hex,
+            audit_sidecar,
         });
     }
     Ok(RevokeOutcome::NoMatch)
 }
 
-fn run_revoke(pub_key: &str) -> Result<()> {
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+struct ClusterPeerRevokePostStateReceipt {
+    registry_path: String,
+    registry_file_present: bool,
+    registry_sha256: Option<String>,
+    peer_count: usize,
+    canonical_peer_absent: bool,
+    verified: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+struct ClusterPeerRevokeAuditReceipt {
+    required: bool,
+    state: &'static str,
+    event_type: Option<&'static str>,
+    sidecar_path: Option<String>,
+    durable_handoff_persisted: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
+struct ClusterPeerRevokeReceipt {
+    operation: &'static str,
+    requested_peer: String,
+    canonical_peer: Option<String>,
+    removed: bool,
+    noop: bool,
+    post_state: ClusterPeerRevokePostStateReceipt,
+    audit: ClusterPeerRevokeAuditReceipt,
+}
+
+fn revoke_post_state(
+    home: &std::path::Path,
+    canonical_peer: Option<&str>,
+) -> Result<ClusterPeerRevokePostStateReceipt> {
+    let registry = crate::cluster::registry::load(home)?;
+    let canonical_peer_absent = canonical_peer
+        .map(|expected| {
+            registry
+                .peers
+                .iter()
+                .all(|peer| peer.pub_key_hex != expected)
+        })
+        .unwrap_or(true);
+    if !canonical_peer_absent {
+        anyhow::bail!("revoked peer remained present in the durable registry readback");
+    }
+    let registry_path = crate::cluster::registry::default_path(home);
+    let registry_file_present = registry_path.is_file();
+    let registry_sha256 = if registry_file_present {
+        let bytes = std::fs::read(&registry_path)
+            .with_context(|| format!("read committed registry at {}", registry_path.display()))?;
+        Some(hex::encode(Sha256::digest(&bytes)))
+    } else {
+        None
+    };
+    Ok(ClusterPeerRevokePostStateReceipt {
+        registry_path: registry_path.display().to_string(),
+        registry_file_present,
+        registry_sha256,
+        peer_count: registry.peers.len(),
+        canonical_peer_absent,
+        verified: true,
+    })
+}
+
+fn build_revoke_receipt(
+    home: &std::path::Path,
+    requested_peer: &str,
+    outcome: &RevokeOutcome,
+) -> Result<ClusterPeerRevokeReceipt> {
+    let (canonical_peer, audit_sidecar) = match outcome {
+        RevokeOutcome::ByKey { key, audit_sidecar }
+        | RevokeOutcome::ByHostname {
+            key, audit_sidecar, ..
+        } => (Some(key.clone()), Some(audit_sidecar.clone())),
+        RevokeOutcome::NoMatch => (None, None),
+    };
+    let removed = canonical_peer.is_some();
+    Ok(ClusterPeerRevokeReceipt {
+        operation: "cluster.peer.revoke",
+        requested_peer: requested_peer.to_string(),
+        canonical_peer: canonical_peer.clone(),
+        removed,
+        noop: !removed,
+        post_state: revoke_post_state(home, canonical_peer.as_deref())?,
+        audit: ClusterPeerRevokeAuditReceipt {
+            required: removed,
+            state: if removed {
+                "sidecar_committed_for_wal_ingest"
+            } else {
+                "not_required_noop"
+            },
+            event_type: removed.then_some("CLUSTER_PEER_REVOKED"),
+            sidecar_path: audit_sidecar.map(|path| path.display().to_string()),
+            durable_handoff_persisted: removed,
+        },
+    })
+}
+
+fn run_revoke(pub_key: &str, output: &OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    match revoke_peer(&home, pub_key)? {
-        RevokeOutcome::ByKey(key) => println!("revoked peer `{key}`"),
-        RevokeOutcome::ByHostname {
-            label,
-            hostname,
-            key,
-        } => {
-            let short = &key[..16.min(key.len())];
-            println!("revoked peer `{label}` (resolved hostname `{hostname}` → {short})");
-        }
-        RevokeOutcome::NoMatch => {
-            println!(
-                "no peer matched `{}` by pub_key or hostname (no-op)",
-                pub_key.trim().to_ascii_lowercase()
-            );
-        }
+    let outcome = revoke_peer(&home, pub_key)?;
+    let receipt = build_revoke_receipt(&home, pub_key, &outcome)?;
+
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        OutputFormat::Table => match outcome {
+            RevokeOutcome::ByKey { key, .. } => println!("revoked peer `{key}`"),
+            RevokeOutcome::ByHostname {
+                label,
+                hostname,
+                key,
+                ..
+            } => {
+                let short = &key[..16.min(key.len())];
+                println!("revoked peer `{label}` (resolved hostname `{hostname}` → {short})");
+            }
+            RevokeOutcome::NoMatch => {
+                println!(
+                    "no peer matched `{}` by pub_key or hostname (no-op)",
+                    pub_key.trim().to_ascii_lowercase()
+                );
+            }
+        },
     }
     Ok(())
 }
@@ -4322,9 +4470,15 @@ mod tests {
         crate::cluster::registry::upsert(dir.path(), peer.clone()).unwrap();
         // "workstation-7" is not hex → key path misses → hostname resolves.
         match revoke_peer(dir.path(), "workstation-7").unwrap() {
-            RevokeOutcome::ByHostname { label, key, .. } => {
+            RevokeOutcome::ByHostname {
+                label,
+                key,
+                audit_sidecar,
+                ..
+            } => {
                 assert_eq!(label, "the-laptop");
                 assert_eq!(key, peer.pub_key_hex);
+                assert!(audit_sidecar.is_file());
             }
             other => panic!("expected ByHostname, got {other:?}"),
         }
@@ -4368,7 +4522,10 @@ mod tests {
         crate::cluster::registry::upsert(dir.path(), a.clone()).unwrap();
         crate::cluster::registry::upsert(dir.path(), b.clone()).unwrap();
         match revoke_peer(dir.path(), "abab").unwrap() {
-            RevokeOutcome::ByKey(k) => assert_eq!(k, "abab"),
+            RevokeOutcome::ByKey { key, audit_sidecar } => {
+                assert_eq!(key, a.pub_key_hex);
+                assert!(audit_sidecar.is_file());
+            }
             other => panic!("expected ByKey precedence, got {other:?}"),
         }
         // A removed (key prefix), B survives (hostname not consulted).
@@ -4380,6 +4537,65 @@ mod tests {
             dir.path(),
             &b.pub_key_hex
         ));
+    }
+
+    #[test]
+    fn revoke_receipt_binds_requested_peer_to_canonical_durable_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let peer = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "ab".repeat(32),
+            instance_label: "receipt-peer".into(),
+            addr: "192.0.2.1:1".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Manual,
+            paired_at_unix: 1,
+            last_seen_unix: 1,
+            ..Default::default()
+        };
+        crate::cluster::registry::upsert(dir.path(), peer.clone()).unwrap();
+        let outcome = revoke_peer(dir.path(), "abab").unwrap();
+        let receipt = build_revoke_receipt(dir.path(), "abab", &outcome).unwrap();
+
+        assert_eq!(receipt.operation, "cluster.peer.revoke");
+        assert_eq!(receipt.requested_peer, "abab");
+        assert_eq!(
+            receipt.canonical_peer.as_deref(),
+            Some(peer.pub_key_hex.as_str())
+        );
+        assert!(receipt.removed);
+        assert!(!receipt.noop);
+        assert!(receipt.post_state.verified);
+        assert!(receipt.post_state.canonical_peer_absent);
+        assert_eq!(receipt.post_state.peer_count, 0);
+        assert_eq!(
+            receipt.post_state.registry_sha256.as_deref().unwrap().len(),
+            64
+        );
+        assert!(receipt.audit.durable_handoff_persisted);
+        assert_eq!(receipt.audit.event_type, Some("CLUSTER_PEER_REVOKED"));
+
+        let value = serde_json::to_value(&receipt).unwrap();
+        assert_eq!(value["requested_peer"], "abab");
+        assert_eq!(value["canonical_peer"], peer.pub_key_hex);
+        assert_eq!(value["post_state"]["canonical_peer_absent"], true);
+        assert_eq!(value["audit"]["state"], "sidecar_committed_for_wal_ingest");
+    }
+
+    #[test]
+    fn revoke_noop_receipt_cannot_claim_mutation_or_audit() {
+        let dir = tempfile::tempdir().unwrap();
+        let receipt =
+            build_revoke_receipt(dir.path(), "missing-host", &RevokeOutcome::NoMatch).unwrap();
+        assert!(!receipt.removed);
+        assert!(receipt.noop);
+        assert!(receipt.canonical_peer.is_none());
+        assert_eq!(receipt.post_state.peer_count, 0);
+        assert!(!receipt.post_state.registry_file_present);
+        assert!(receipt.post_state.registry_sha256.is_none());
+        assert!(!receipt.audit.required);
+        assert!(!receipt.audit.durable_handoff_persisted);
+        assert!(receipt.audit.event_type.is_none());
+        assert!(receipt.audit.sidecar_path.is_none());
+        assert_eq!(receipt.audit.state, "not_required_noop");
     }
 
     // ── SL-02 topology view ───────────────────────────────────────────────
