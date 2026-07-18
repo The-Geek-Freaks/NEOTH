@@ -21,7 +21,7 @@ import { AboutSlint, Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } fr
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, NeothCheckBox, SovereignFade, NeothLineEdit, EntranceFade, SideIn, ToastData, ToastStack, PaletteItem, CommandPalette, ContextMenu, MenuItem, ConfirmDialog } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, PluginEventRow, MemoryRow, ChannelRow, ChannelActivityRow, PresetRow, ProfilePresetRow, PermRow } from "settings.slint";
-import { ChatView, ChatMessage, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
+import { ChatView, ChatMessage, ChatChannelRow, SessionRow, LinkChip, ConsentGrant } from "chat.slint";
 import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
@@ -50,7 +50,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow, MeshSyncRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow }
+export { SettingsTab, ChatMessage, ChatChannelRow, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -989,10 +989,9 @@ export component MainWindow inherits Window {
     /// GOLD-ADAPT-GUI-07 — a reply subprocess is streaming; the Send
     /// button spins and re-sends are blocked until it settles.
     in property <bool> chat-send-in-flight: false;
-    /// GOLD-ADAPT-ODY-01 — recent sessions for the chat sidebar.
+    /// GOLD-ADAPT-ODY-01 — read-only recent-session summaries. Transcript
+    /// loading is intentionally absent until the session controller lands.
     in property <[SessionRow]> chat-session-history: [];
-    in property <string> chat-active-session-id: "";
-    callback chat-session-selected(string);
     /// GOLD-ADAPT-ODY-04 — stall watchdog banner state + actions.
     in property <bool> chat-stall-active: false;
     callback chat-stall-continue();
@@ -1010,11 +1009,8 @@ export component MainWindow inherits Window {
     callback activity-toggle();
     callback chat-attach-clicked();
     callback chat-remove-attachment(int);
-    /// Channel labels for the chat sidebar. CLI is always first
-    /// + always available; the rest reflect the operator's
-    /// configured channels from freedom.yaml.
-    in property <[string]> chat-channels: ["CLI", "Telegram", "WhatsApp"];
-    in-out property <int> chat-active-channel: 0;
+    /// Local CLI route plus read-only configured-channel discovery rows.
+    in property <[ChatChannelRow]> chat-channels: [];
     in property <[int]> chat-unread-counts: [0, 0, 0];
     /// Rust sets this from the composer-draft via a text-edited
     /// callback (Slint can't run `starts-with` in expressions). When
@@ -1034,8 +1030,6 @@ export component MainWindow inherits Window {
     /// Operator pressed ArrowUp with an empty composer — Rust writes the
     /// last operator body back into `chat-composer-draft`.
     callback chat-composer-recall-requested();
-    /// Operator switched channels in the sidebar.
-    callback chat-channel-switched(int);
 
     // ── Chat-surface consent strip ────────────────────────────────────
     /// Current operating-mode string for the consent strip pill.
@@ -3604,10 +3598,8 @@ export component MainWindow inherits Window {
                     send-in-flight: root.chat-send-in-flight;
                     slash-active: root.chat-slash-active;
                     channels: root.chat-channels;
-                    active-channel-index <=> root.chat-active-channel;
                     unread-counts: root.chat-unread-counts;
                     session-history: root.chat-session-history;
-                    active-session-id: root.chat-active-session-id;
                     stall-active: root.chat-stall-active;
                     pending-attachments: root.chat-pending-attachments;
                     link-chips: root.chat-link-chips;
@@ -3616,8 +3608,6 @@ export component MainWindow inherits Window {
                     attach-clicked => { root.chat-attach-clicked(); }
                     remove-attachment(i) => { root.chat-remove-attachment(i); }
                     recall-requested => { root.chat-composer-recall-requested(); }
-                    channel-switched(idx) => { root.chat-channel-switched(idx); }
-                    session-selected(id) => { root.chat-session-selected(id); }
                     stall-continue-clicked => { root.chat-stall-continue(); }
                     stall-stop-clicked => { root.chat-stall-stop(); }
                     open-settings => { root.nav-active = "config"; }

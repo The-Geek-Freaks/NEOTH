@@ -79,6 +79,18 @@ export struct ChatMessage {
     code-lang: string,
 }
 
+/// A chat-sidebar channel is either the real local CLI route or a read-only
+/// discovery row for a configured external channel.  Keeping route state in
+/// the model prevents a configured channel from looking selected while Send
+/// still targets the local CLI.
+export struct ChatChannelRow {
+    id: string,
+    label: string,
+    detail: string,
+    route-bound: bool,
+    configurable: bool,
+}
+
 /// GOLD-ADAPT-ODY-01 — one recent session in the sidebar (from the
 /// hindsight cards). `label` = display-name or one-line summary.
 export struct SessionRow {
@@ -531,18 +543,19 @@ component ConversationItem inherits Rectangle {
     in property <string> last-message: "";
     in property <int> unread-count: 0;
     in property <bool> active: false;
+    in property <bool> route-bound: false;
+    in property <bool> configurable: false;
     // GOLD-ADAPT-GUI-06 — focus-dim (nullframe .focus .dimmable): when any
     // channel is selected, the non-selected rows recede to 0.6 opacity so
     // the active conversation visually owns the sidebar.
     in property <bool> any-active: false;
-    callback clicked();
     callback context-menu(string /*channel*/, length /*x*/, length /*y*/);
 
     accessible-role: list-item;
+    accessible-enabled: root.route-bound;
     accessible-label: root.unread-count > 0
         ? "\{root.label}: \{root.last-message} (\{root.unread-count} unread)"
         : "\{root.label}: \{root.last-message}";
-    accessible-action-default => { root.clicked(); }
 
     height: 64px;
     background: root.active ? Theme.bg-card : transparent;
@@ -611,9 +624,8 @@ component ConversationItem inherits Rectangle {
     }
 
     touch := TouchArea {
-        clicked => { root.clicked(); }
         pointer-event(ev) => {
-            if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
+            if (root.configurable && ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
                 root.context-menu(root.label,
                     self.absolute-position.x + self.mouse-x,
                     self.absolute-position.y + self.mouse-y);
@@ -910,15 +922,13 @@ export component ChatView inherits Rectangle {
     /// Slint can't run `.starts-with()` in property expressions, so
     /// the host owns the boolean.
     in property <bool> slash-active: false;
-    /// Channel labels for the sidebar. Keep operator-readable
-    /// (Telegram / WhatsApp / CLI etc.).
-    in property <[string]> channels: ["CLI", "Telegram", "WhatsApp"];
-    in-out property <int> active-channel-index: 0;
+    /// The local CLI route plus read-only configured-channel discovery rows.
+    /// Only a row whose `route-bound` flag is true may look active.
+    in property <[ChatChannelRow]> channels: [];
     /// Per-channel unread count, parallel-indexed with `channels`.
     in property <[int]> unread-counts: [0, 0, 0];
     /// GOLD-ADAPT-ODY-01 — recent sessions (hindsight cards, newest first).
     in property <[SessionRow]> session-history: [];
-    in property <string> active-session-id: "";
     /// GOLD-ADAPT-ODY-04 — stream stall watchdog banner (60s without a
     /// chunk while a reply is in flight).
     in property <bool> stall-active: false;
@@ -936,10 +946,8 @@ export component ChatView inherits Rectangle {
     in property <[string]> starter-prompts: ["What can you do?", "Show me a demo", "Help me get started"];
 
     callback send-clicked(string);
-    callback channel-switched(int);
     callback channel-ctx(string /*channel*/, length /*x*/, length /*y*/);
     callback open-settings();
-    callback session-selected(string);
     callback attach-clicked();
     callback remove-attachment(int);
     /// Stall banner actions: keep waiting (reset the watchdog clock) or
@@ -1037,16 +1045,15 @@ export component ChatView inherits Rectangle {
                 // Render one ConversationItem per channel. Slint's
                 // `for ... in` iterates the model reactively.
                 for ch[idx] in root.channels: ConversationItem {
-                    label: ch;
-                    last-message: "";
+                    label: ch.label;
+                    last-message: ch.detail;
                     unread-count: idx < root.unread-counts.length ? root.unread-counts[idx] : 0;
-                    active: idx == root.active-channel-index;
-                    // GUI-06: one selected channel dims the rest.
-                    any-active: root.active-channel-index >= 0;
-                    clicked => {
-                        root.active-channel-index = idx;
-                        root.channel-switched(idx);
-                    }
+                    active: ch.route-bound;
+                    route-bound: ch.route-bound;
+                    configurable: ch.configurable;
+                    // The real local route owns the surface. Configured remote
+                    // channels remain visible but cannot acquire selection.
+                    any-active: true;
                     context-menu(name, x, y) => { root.channel-ctx(name, x, y); }
                 }
 
@@ -1062,6 +1069,13 @@ export component ChatView inherits Rectangle {
                     letter-spacing: Theme.letter-spacing-extra-wide;
                     color: Theme.text-dim;
                 }
+                if root.session-history.length > 0: Text {
+                    text: "Read-only history · transcript loading unavailable";
+                    font-family: Theme.font-display;
+                    font-size: 10px;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
                 Flickable {
                     vertical-stretch: 1;
                     VerticalLayout {
@@ -1070,19 +1084,10 @@ export component ChatView inherits Rectangle {
                             height: 46px;
                             border-radius: Theme.radius-button;
                             accessible-role: list-item;
-                            accessible-label: "\{s.label}: \{s.meta}";
-                            accessible-action-default => { root.session-selected(s.id); }
-                            background: s.id == root.active-session-id ? Theme.bg-card
-                                : (sess-touch.has-hover ? Theme.surface-2 : transparent);
-                            animate background { duration: Theme.duration-micro; easing: ease-out; }
-                            Rectangle {
-                                x: 0; width: 3px;
-                                height: s.id == root.active-session-id ? parent.height - 14px : 0px;
-                                y: (parent.height - self.height) / 2;
-                                background: Theme.accent-green;
-                                border-radius: 2px;
-                                animate height { duration: Theme.duration-base; easing: cubic-bezier(0.16, 1, 0.3, 1); }
-                            }
+                            accessible-enabled: false;
+                            accessible-label: "\{s.label}: \{s.meta}. Read-only history; transcript loading is not available in this build.";
+                            background: transparent;
+                            opacity: 0.72;
                             VerticalLayout {
                                 x: Theme.space-base;
                                 width: parent.width - Theme.space-base * 2;
@@ -1103,9 +1108,6 @@ export component ChatView inherits Rectangle {
                                     overflow: elide;
                                 }
                             }
-                            sess-touch := TouchArea {
-                                clicked => { root.session-selected(s.id); }
-                            }
                         }
                     }
                 }
@@ -1114,11 +1116,9 @@ export component ChatView inherits Rectangle {
 
         // ── Main pane: scrollback + composer ─────────────────────
         VerticalLayout {
-            // G-10 fix: thin active-channel header so the operator
-            // always sees which channel they're viewing. Without this
-            // the scrollback area carries no breadcrumb — switching
-            // sidebar channels would only update the green accent bar
-            // (which is outside the reading area).
+            // The only route currently bound to this composer is the local
+            // CLI. Remote configured channels are discovery rows until the
+            // Plan-001/003 route controller can bind send + transcript state.
             Rectangle {
                 height: 44px;
                 background: Theme.bg-base;
@@ -1142,9 +1142,7 @@ export component ChatView inherits Rectangle {
                         vertical-alignment: center;
                     }
                     Text {
-                        text: root.active-channel-index >= 0 && root.active-channel-index < root.channels.length
-                            ? root.channels[root.active-channel-index]
-                            : "—";
+                        text: "Local CLI chat";
                         overflow: elide;
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-body;

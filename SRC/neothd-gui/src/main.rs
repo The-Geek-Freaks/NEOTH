@@ -2827,7 +2827,8 @@ fn main() -> Result<()> {
     };
 
     // GOLD-ADAPT-ODY-01 — chat-sidebar session history (hindsight cards).
-    // Off-thread startup load; click sets the active marker + a footer note.
+    // These are deliberately read-only summaries until the session controller
+    // can load the selected transcript and bind subsequent sends to it.
     {
         let weak_sessions = window.as_weak();
         std::thread::spawn(move || {
@@ -2846,13 +2847,6 @@ fn main() -> Result<()> {
                     w.set_chat_session_history(ModelRc::new(VecModel::from(model)));
                 }
             });
-        });
-        let weak_sel = window.as_weak();
-        window.on_chat_session_selected(move |id| {
-            if let Some(w) = weak_sel.upgrade() {
-                w.set_chat_active_session_id(id.clone());
-                w.set_status_line(format!("session {id} selected").into());
-            }
         });
     }
 
@@ -2876,13 +2870,6 @@ fn main() -> Result<()> {
             }
         });
     }
-
-    // H-1 fix — chat-channel-switched was likewise unbound. Now logged
-    // so the operator's sidebar click reaches the daemon-facing layer
-    // when channel-specific scrollback wiring lands.
-    window.on_chat_channel_switched(|idx| {
-        info!(channel_index = idx, "chat: channel-switched");
-    });
 
     // Wave-2 — activity sidecar toggle: flip open↔closed.
     {
@@ -13339,6 +13326,29 @@ fn apply_memory(window: &MainWindow, snap: panel_logic::MemorySnapshot) {
 /// GOLD-R3-04 — push the canonical per-channel probe state onto MainWindow.
 /// Errors clear stale rows and remain visible in-panel instead of degrading to
 /// a false "not connected" state. UI-thread only.
+fn build_chat_sidebar_channels(channels: &[panel_logic::ChannelStatus]) -> Vec<ChatChannelRow> {
+    let mut rows = vec![ChatChannelRow {
+        id: "cli".into(),
+        label: "Local CLI".into(),
+        detail: "Local chat · ready".into(),
+        route_bound: true,
+        configurable: false,
+    }];
+    rows.extend(
+        channels
+            .iter()
+            .filter(|channel| channel.configured)
+            .map(|channel| ChatChannelRow {
+                id: channel.name.as_str().into(),
+                label: channel.name.as_str().into(),
+                detail: "Configured · chat routing not available yet".into(),
+                route_bound: false,
+                configurable: true,
+            }),
+    );
+    rows
+}
+
 fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::ChannelStatus>, String>) {
     use slint::{ModelRc, VecModel};
     let (channels, error) = match channels {
@@ -13349,18 +13359,10 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
         .iter()
         .map(|channel| slint::SharedString::from(channel.name.as_str()))
         .collect::<Vec<_>>();
-    // Chat sidebar surface: the always-available local CLI first, then every
-    // CONFIGURED channel by canonical id. Unconfigured channels are excluded —
-    // there is no conversation to hold over a channel with no credentials. The
-    // canonical id (lowercase, e.g. "telegram") is the real channel identity the
-    // right-click Copy Name / Remove Channel context menu then operates on.
-    let mut chat_channels = vec![slint::SharedString::from("cli")];
-    chat_channels.extend(
-        channels
-            .iter()
-            .filter(|channel| channel.configured)
-            .map(|channel| slint::SharedString::from(channel.name.as_str())),
-    );
+    // The chat composer has exactly one bound route today: local CLI. External
+    // configured channels remain visible for truthful discovery and management,
+    // but their typed rows cannot acquire selection or inherit local sends.
+    let chat_channels = build_chat_sidebar_channels(&channels);
     let rows = channels
         .into_iter()
         .map(|channel| ChannelRow {
@@ -13380,14 +13382,9 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
     window.set_channels(ModelRc::new(VecModel::from(rows)));
     window.set_channel_status_error(error.into());
 
-    // Wire the chat sidebar to real channel state. unread-counts stays
-    // parallel-indexed + length-matched with chat-channels (no real unread
-    // tracking yet → zeros). Clamp the active index in case a removed channel
-    // shrank the list past the current selection, so no stale row stays lit.
+    // unread-counts stays parallel-indexed + length-matched with chat-channels
+    // (there is no routed unread stream yet, so every value is zero).
     let unread = vec![0i32; chat_channels.len()];
-    if window.get_chat_active_channel() as usize >= chat_channels.len() {
-        window.set_chat_active_channel(0);
-    }
     window.set_chat_channels(ModelRc::new(VecModel::from(chat_channels)));
     window.set_chat_unread_counts(ModelRc::new(VecModel::from(unread)));
 }
@@ -15273,6 +15270,84 @@ mod chat_subprocess_tests {
             compact.contains("cmd.arg(\"chat\").arg(\"--stream\").arg(\"--\").arg(&body_clone);")
         );
         assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
+    }
+
+    #[test]
+    fn chat_sidebar_treats_only_local_cli_as_a_bound_route() {
+        let channels = vec![
+            panel_logic::ChannelStatus {
+                name: "telegram".to_string(),
+                status: "connected".to_string(),
+                configured: true,
+                detail: "healthy".to_string(),
+                setup_secret_mask: [false; 6],
+            },
+            panel_logic::ChannelStatus {
+                name: "whatsapp".to_string(),
+                status: "unconfigured".to_string(),
+                configured: false,
+                detail: "missing credentials".to_string(),
+                setup_secret_mask: [false; 6],
+            },
+        ];
+
+        let rows = build_chat_sidebar_channels(&channels);
+        assert_eq!(rows.len(), 2, "unconfigured channels are not chat rows");
+        assert_eq!(rows[0].id.as_str(), "cli");
+        assert!(rows[0].route_bound);
+        assert!(!rows[0].configurable);
+        assert_eq!(rows[1].id.as_str(), "telegram");
+        assert!(!rows[1].route_bound);
+        assert!(rows[1].configurable);
+        assert!(rows[1].detail.contains("routing not available"));
+        assert_eq!(rows.iter().filter(|row| row.route_bound).count(), 1);
+    }
+
+    #[test]
+    fn chat_sidebar_cannot_regress_to_cosmetic_route_or_session_selection() {
+        let rust_source = include_str!("main.rs");
+        let shell_source = include_str!("../ui/main.slint");
+        let chat_source = include_str!("../ui/chat.slint");
+        let forbidden_rust_handlers = [
+            ["on_chat_", "channel_switched"].concat(),
+            ["on_chat_", "session_selected"].concat(),
+        ];
+        let forbidden_shell_callbacks = [
+            ["callback chat-", "channel-switched"].concat(),
+            ["callback chat-", "session-selected"].concat(),
+        ];
+        let forbidden_chat_callbacks = [
+            ["callback channel-", "switched"].concat(),
+            ["callback session-", "selected"].concat(),
+        ];
+
+        for handler in forbidden_rust_handlers {
+            assert!(
+                !rust_source.contains(&handler),
+                "cosmetic Rust handler returned without a route/session binding: {handler}"
+            );
+        }
+        for callback in forbidden_shell_callbacks {
+            assert!(
+                !shell_source.contains(&callback),
+                "shell exposes a cosmetic selection callback: {callback}"
+            );
+        }
+        for callback in forbidden_chat_callbacks {
+            assert!(
+                !chat_source.contains(&callback),
+                "chat view exposes a cosmetic selection callback: {callback}"
+            );
+        }
+
+        assert!(chat_source.contains("active: ch.route-bound;"));
+        assert!(chat_source.contains("accessible-enabled: root.route-bound;"));
+        assert!(chat_source.contains("transcript loading is not available"));
+        assert!(chat_source.contains("chat routing not available"));
+        assert!(
+            rust_source.contains("cmd.arg(\"chat\").arg(\"--stream\")"),
+            "truthful sidebar must not remove the working local CLI chat"
+        );
     }
 
     #[test]
