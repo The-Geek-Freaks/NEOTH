@@ -490,11 +490,7 @@ fn duplicate_server_ids(configs: &[&McpServerConfig]) -> HashSet<String> {
 /// authorization posture. `HashMap` environment order is canonicalized first;
 /// only the digest is retained in the snapshot.
 fn config_binding(cfg: &McpServerConfig) -> [u8; 32] {
-    let env = cfg
-        .env
-        .iter()
-        .map(|(key, value)| (key, value))
-        .collect::<BTreeMap<_, _>>();
+    let env = cfg.env.iter().collect::<BTreeMap<_, _>>();
     let bytes = serde_json::to_vec(&serde_json::json!({
         "id": cfg.id,
         "description": cfg.description,

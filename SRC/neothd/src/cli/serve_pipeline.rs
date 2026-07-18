@@ -1011,7 +1011,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &hooks,
                 None,
                 false,
-                &*session_fired_once,
+                &session_fired_once,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -1327,7 +1327,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             channel_asker.as_ref().map(Arc::clone),
                             false,
                             None,
-                            &*session_fired_once,
+                            &session_fired_once,
                         )
                         .await;
                     }
@@ -1629,11 +1629,20 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
                 // when a mode is active (mode inherits parent effort setting).
                 let skill_effort = parent.and_then(|s| s.manifest.effort);
+                let skill_delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
                 crate::analytics::babel::signals::emit(
                     crate::analytics::babel::signals::SignalKind::SkillMode,
                 );
-                // Mode paths never carry delegate_to (mirrors cli/chat.rs comment).
-                (layer, None, allowlist, skill_model, skill_effort, None)
+                // Modes inherit the parent's delegation boundary along with its
+                // model, effort and tool allowlist.
+                (
+                    layer,
+                    None,
+                    allowlist,
+                    skill_model,
+                    skill_effort,
+                    skill_delegate_to,
+                )
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
                 // now-fully-populated skill library can't false-activate on a
@@ -1701,10 +1710,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let skill_effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
                 // BUG-W2-P1-CHANNEL-DELEGATION: capture delegate_to from the matched
                 // skill manifest — mirrors GOLD-ADAPT-OH-13 in cli/chat.rs (~line 1234).
-                let skill_delegate_to =
-                    skill_match.as_ref().and_then(|m| m.skill.manifest.delegate_to.clone());
+                let skill_delegate_to = skill_match
+                    .as_ref()
+                    .and_then(|m| m.skill.manifest.delegate_to.clone());
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
-                (layer, id, allowlist, skill_model, skill_effort, skill_delegate_to)
+                (
+                    layer,
+                    id,
+                    allowlist,
+                    skill_model,
+                    skill_effort,
+                    skill_delegate_to,
+                )
             };
 
             let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
@@ -2158,6 +2175,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     (sanitized_text.clone(), channel_enriched_system)
                 }
             };
+            let mut channel_tool_scope =
+                crate::mcp::McpToolScope::from_skill_allowlist(channel_skill_allowlist);
 
             // BUG-W2-P1-CHANNEL-DELEGATION: apply the matched skill's delegate_to.
             // The channel path previously dropped this field between routing and
@@ -2165,48 +2184,43 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // before PreProviderCall hooks so every hook sees the final system.
             // Mirrors GOLD-ADAPT-OH-13 Part B in cli/chat.rs without the full
             // enrichment-rebuild path (channel path has no omit-flags layer rebuild).
-            // Fail-safe: unknown agent name → tracing::warn + normal path continues.
-            // Guard: when slash_set_system is true the slash command already rendered
-            // its own system prompt this turn; skip substitution to avoid clobbering it.
+            // Security boundary: once a skill declares `delegate_to`, failure to
+            // load or resolve that agent must abort the turn. Falling back to the
+            // unrestricted normal path would silently drop the agent's tool policy.
+            // A slash command may keep its rendered system prompt, but it still
+            // inherits the delegated agent's allow/deny scope.
             let system_override = if let Some(ref agent_name) = channel_skill_delegate_to {
+                let agents_dir = neoth_home.join("agents");
+                let agents = crate::sub_agents::load_all(&agents_dir)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "channel delegate_to `{agent_name}`: load agents from {}",
+                            agents_dir.display()
+                        )
+                    })?;
+                let agent = require_delegate_agent(agent_name, &agents).with_context(|| {
+                    format!(
+                        "channel delegate_to `{agent_name}`: resolve agent from {}",
+                        agents_dir.display()
+                    )
+                })?;
+                channel_tool_scope.set_agent(agent.tools.clone(), agent.disallowed_tools.clone());
+
                 if slash_set_system {
                     tracing::debug!(
                         channel = channel_str,
                         skill_agent = %agent_name,
-                        "channel delegate_to: slash command wins — delegation skipped"
+                        "channel delegate_to: slash system retained with delegated tool scope"
                     );
                     system_override
                 } else {
-                    let agents = crate::sub_agents::load_all(&neoth_home.join("agents"))
-                        .await
-                        .inspect_err(|error| {
-                            // A FS error here silently bypasses delegation — the
-                            // operator must be able to tell "agent misspelled"
-                            // apart from "agents dir unreadable" (review P1).
-                            warn!(
-                                error = %error,
-                                dir = %neoth_home.join("agents").display(),
-                                "channel delegate_to: failed to load agents dir — delegation skipped"
-                            );
-                        })
-                        .unwrap_or_default();
-                    if let Some(agent_system) =
-                        find_delegate_system(Some(agent_name.as_str()), &agents)
-                    {
-                        info!(
-                            channel = channel_str,
-                            skill_agent = %agent_name,
-                            "channel delegate_to: substituting sub-agent system prompt"
-                        );
-                        Some(agent_system.to_owned())
-                    } else {
-                        warn!(
-                            channel = channel_str,
-                            skill_agent = %agent_name,
-                            "channel delegate_to: agent not found — continuing on normal path"
-                        );
-                        system_override
-                    }
+                    info!(
+                        channel = channel_str,
+                        skill_agent = %agent_name,
+                        "channel delegate_to: substituting sub-agent system prompt"
+                    );
+                    Some(agent.system.clone())
                 }
             } else {
                 system_override
@@ -2272,7 +2286,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &hooks,
                 None,
                 false,
-                &*session_fired_once,
+                &session_fired_once,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -2353,10 +2367,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         continue;
                     }
                 };
-                let header = crate::wal::make_header(
-                    crate::wal::events::EVENT_TYPE_HOOK_FIRED,
-                    &payload,
-                );
+                let header =
+                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload);
                 if let Err(e) = writer.append(header, payload).await {
                     tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
                 }
@@ -2457,17 +2469,19 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 channel_budget_items,
                 &final_prompt,
                 system_override.as_deref(),
-                config_for_handler.as_ref(),
-                &neoth_home,
-                provider.name(),
-                channel_effective_model.as_deref(),
-                Some(crate::cli::chat::routing_safe_effective_cap_at(
-                    config_for_handler.as_ref(),
-                    provider.name(),
-                    channel_effective_model.as_deref(),
-                    &neoth_home,
-                )),
-                &writer,
+                crate::cli::chat::ProviderRequestBoundary {
+                    config: config_for_handler.as_ref(),
+                    home: &neoth_home,
+                    provider_name: provider.name(),
+                    effective_model: channel_effective_model.as_deref(),
+                    route_cap: Some(crate::cli::chat::routing_safe_effective_cap_at(
+                        config_for_handler.as_ref(),
+                        provider.name(),
+                        channel_effective_model.as_deref(),
+                        &neoth_home,
+                    )),
+                    writer: &writer,
+                },
             )
             .await
             {
@@ -2735,6 +2749,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     &neoth_home,
                     &writer,
                     provider_call_authorizer.clone(),
+                    &channel_tool_scope,
                 )
                 .await
                 {
@@ -2804,6 +2819,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &config_for_handler,
                         provider_call_authorizer.clone(),
                         None,
+                        &channel_tool_scope,
                         // P4 — channel path is headless (no TTY): elicitation off.
                         &crate::cli::elicitation::ElicitationHandler::Disabled,
                     )
@@ -2849,20 +2865,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &autonomy_policy,
                         &writer,
                         None,
-                        // SC-11 (Session 28d) — the matched skill's
-                        // tool_allowlist now scopes the channel MCP gate the
-                        // same way it does on `neoth chat`. None only when no
-                        // skill matched this inbound (gate allows all);
-                        // Some(empty) also allows all; Some(non-empty)
-                        // enforces.
-                        channel_skill_allowlist.as_deref(),
+                        &channel_tool_scope,
                         // GM-01 — operator-tunable dispatch-loop ceiling.
                         goal_max_turns,
                         // GOLD-ADOPT-23 P0 — risk policy gate (live config snapshot).
                         &config_for_handler.security,
-                        // GOLD-CCPARITY-SA-DENY-01 — no sub-agent dispatch on
-                        // the channel path today; denylist is always None here.
-                        None,
                         // GOLD-ADOPT-22 — Goal/Grind nudge context (live snapshot).
                         crate::mcp::goal_tracker::GoalContext {
                             goal: config_for_handler.goal.goal.clone(),
@@ -3628,8 +3635,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // PreProviderCall, then run PostProviderCall hooks so operators
             // get the same last-chance reply mutation / block capability on
             // channel turns as on CLI turns.
-            let restored_reply =
-                crate::hooks::restore_blocks(&completion.text, &pending_blocks);
+            let restored_reply = crate::hooks::restore_blocks(&completion.text, &pending_blocks);
             let post_ts = crate::time::now_unix_secs();
             let post_result = match crate::hooks::run_stage_with_once_guard(
                 crate::hooks::HookStage::PostProviderCall,
@@ -3637,7 +3643,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 &hooks,
                 None,
                 false,
-                &*session_fired_once,
+                &session_fired_once,
             ) {
                 Ok(r) => r,
                 Err(e) => {
@@ -3719,7 +3725,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 channel_asker,
                 live_send_preauthorized,
                 live_delivery.as_mut(),
-                &*session_fired_once,
+                &session_fired_once,
             )
             .await
         })
@@ -3957,16 +3963,17 @@ pub(crate) async fn handle_media_attachment(
     Ok(synthesised)
 }
 
-/// BUG-W2-P1-CHANNEL-DELEGATION — pure lookup: given an optional delegate-to
-/// target name and a loaded agent set, return the matched agent's system prompt
-/// string slice. No I/O; fully unit-testable. Called by the channel pipeline
-/// when a matched skill carries `delegate_to: <name>` in its manifest.
-fn find_delegate_system<'a>(
-    target: Option<&str>,
+/// Resolve an explicitly delegated channel agent. Once `delegate_to` is set,
+/// absence is an execution error rather than permission to fall back to the
+/// unrestricted base turn.
+fn require_delegate_agent<'a>(
+    target: &str,
     agents: &'a [crate::sub_agents::SubAgent],
-) -> Option<&'a str> {
-    let name = target?;
-    agents.iter().find(|a| a.name == name).map(|a| a.system.as_str())
+) -> Result<&'a crate::sub_agents::SubAgent> {
+    agents
+        .iter()
+        .find(|agent| agent.name == target)
+        .ok_or_else(|| anyhow::anyhow!("delegated agent `{target}` is not installed or enabled"))
 }
 
 #[cfg(test)]
@@ -4018,12 +4025,14 @@ mod tests {
             items,
             "after hook",
             system.as_deref(),
-            &config,
-            home.path(),
-            "test_provider",
-            None,
-            None,
-            &writer,
+            crate::cli::chat::ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .expect("discardable D context should be degraded before channel dispatch");
@@ -4092,12 +4101,14 @@ mod tests {
             items,
             "hello",
             system.as_deref(),
-            &config,
-            home.path(),
-            provider.name(),
-            Some(&model),
-            None,
-            &writer,
+            crate::cli::chat::ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: provider.name(),
+                effective_model: Some(&model),
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .unwrap();
@@ -4628,69 +4639,45 @@ mod tests {
     }
 
     #[test]
-    fn delegate_system_returns_agent_system_when_name_matches() {
+    fn delegated_agent_resolves_when_name_matches() {
         let agents = vec![
             make_agent("code-reviewer", "You are a code reviewer."),
             make_agent("planner", "You are a planner."),
         ];
         assert_eq!(
-            find_delegate_system(Some("code-reviewer"), &agents),
-            Some("You are a code reviewer."),
+            require_delegate_agent("code-reviewer", &agents)
+                .unwrap()
+                .system,
+            "You are a code reviewer.",
             "named agent found — system prompt returned"
         );
     }
 
     #[test]
-    fn delegate_system_returns_none_for_unknown_agent() {
+    fn delegated_agent_is_fail_closed_when_unknown() {
         let agents = vec![make_agent("planner", "You are a planner.")];
-        assert_eq!(
-            find_delegate_system(Some("ghost"), &agents),
-            None,
-            "unknown agent name → None (caller warns + falls back to normal path)"
+        let error = require_delegate_agent("ghost", &agents)
+            .expect_err("unknown delegate must abort instead of dropping its tool policy");
+        assert!(
+            error.to_string().contains("not installed or enabled"),
+            "unexpected error: {error:#}"
         );
     }
 
     #[test]
-    fn delegate_system_returns_none_when_target_is_none() {
-        let agents = vec![make_agent("planner", "You are a planner.")];
-        assert_eq!(
-            find_delegate_system(None, &agents),
-            None,
-            "no delegate_to set → None (normal path unchanged)"
-        );
-    }
-
-    #[test]
-    fn delegate_system_returns_none_for_empty_agent_set() {
+    fn delegated_agent_is_fail_closed_for_empty_agent_set() {
         let agents: Vec<crate::sub_agents::SubAgent> = vec![];
-        assert_eq!(
-            find_delegate_system(Some("any-agent"), &agents),
-            None,
-            "empty agent set → None (fail-safe: message is never dropped)"
-        );
+        assert!(require_delegate_agent("any-agent", &agents).is_err());
     }
 
-    // FOLLOW-UP-DELEGATION-SLASH-CLOBBER guard — coverage note:
-    // The guard (`slash_set_system` bool) lives in the async handle_channel_message
-    // path and requires a full pipeline harness to exercise end-to-end; it is not
-    // directly unit-testable here.  The test below confirms that find_delegate_system
-    // resolves the agent that the guard conditionally skips, so the only difference
-    // between clobber and correct behaviour is whether slash_set_system is true.
     #[test]
-    fn delegate_system_guard_skips_known_agent_when_slash_set_system() {
-        let agents = vec![
-            make_agent("writer", "You are a writer agent."),
-            make_agent("coder", "You are a coder agent."),
-        ];
-        // Without the guard the delegation would substitute this system prompt.
-        // With slash_set_system == true the caller skips find_delegate_system entirely.
-        assert_eq!(
-            find_delegate_system(Some("writer"), &agents),
-            Some("You are a writer agent."),
-            "find_delegate_system resolves correctly; the guard in \
-             handle_channel_message prevents this call when slash_set_system is true"
-        );
-        // None target → delegation never applied regardless of guard.
-        assert_eq!(find_delegate_system(None, &agents), None);
+    fn delegated_agent_exposes_allow_and_deny_scope_for_slash_turns_too() {
+        let mut agent = make_agent("writer", "You are a writer agent.");
+        agent.tools = vec!["fetch".into()];
+        agent.disallowed_tools = vec!["shell_exec".into()];
+        let agents = vec![agent];
+        let resolved = require_delegate_agent("writer", &agents).unwrap();
+        assert_eq!(resolved.tools, vec!["fetch".to_string()]);
+        assert_eq!(resolved.disallowed_tools, vec!["shell_exec".to_string()]);
     }
 }

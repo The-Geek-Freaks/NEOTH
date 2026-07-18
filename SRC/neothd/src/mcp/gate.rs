@@ -64,6 +64,12 @@ pub enum GateError {
     #[error("MCP `{server}::{tool}` blocked by the active skill's tool_allowlist")]
     SkillAllowlistBlocked { server: String, tool: String },
 
+    /// The active sub-agent exposes an explicit `tools` allowlist and this
+    /// tool is not present. Unlike a skill's empty allowlist, an active
+    /// agent's empty `tools` list is fail-closed and permits no MCP tools.
+    #[error("MCP `{server}::{tool}` blocked by the active sub-agent's tools allowlist")]
+    AgentAllowlistBlocked { server: String, tool: String },
+
     /// GOLD-CCPARITY-SA-DENY-01 — the active sub-agent's `disallowedTools`
     /// denylist explicitly forbids this tool. This check runs BEFORE the
     /// server-level allowlist so a denied tool never reaches the wire even
@@ -129,6 +135,73 @@ pub enum GateError {
 pub struct SanitizedTool {
     pub tool: McpTool,
     pub verdict: SanitizerVerdict,
+}
+
+/// Immutable MCP tool scope for one resolved provider turn.
+///
+/// Skill and sub-agent allowlists are independent gates, so a tool must be in
+/// both whenever both are active. The agent denylist always wins. Keeping the
+/// resolved scope as one owned value prevents CLI, channel and multi-round loop
+/// paths from accidentally dropping one of the policy layers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct McpToolScope {
+    skill_allowlist: Option<Vec<String>>,
+    agent: Option<AgentToolScope>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AgentToolScope {
+    allowed: Vec<String>,
+    disallowed: Vec<String>,
+}
+
+impl McpToolScope {
+    /// Build a scope from the matched skill. `None` and `Some(empty)` retain
+    /// the existing skill semantics: no skill-level restriction.
+    pub fn from_skill_allowlist(skill_allowlist: Option<Vec<String>>) -> Self {
+        Self {
+            skill_allowlist,
+            agent: None,
+        }
+    }
+
+    /// Add the active sub-agent policy. An empty `allowed` list deliberately
+    /// means provider-only: every MCP tool call is denied.
+    pub fn with_agent(mut self, allowed: Vec<String>, disallowed: Vec<String>) -> Self {
+        self.set_agent(allowed, disallowed);
+        self
+    }
+
+    /// Attach an active sub-agent policy to an already resolved skill scope.
+    pub fn set_agent(&mut self, allowed: Vec<String>, disallowed: Vec<String>) {
+        self.agent = Some(AgentToolScope {
+            allowed,
+            disallowed,
+        });
+    }
+
+    /// Enforce the complete resolved scope. This must run before inspectors,
+    /// leases, server lookup, SmartApprove or any transport initialization.
+    pub async fn enforce(
+        &self,
+        server: &str,
+        tool: &str,
+        writer: Option<&WalWriterHandle>,
+        now_unix: i64,
+    ) -> Result<(), GateError> {
+        if let Some(agent) = &self.agent {
+            enforce_agent_denylist(Some(&agent.disallowed), server, tool, writer, now_unix).await?;
+            enforce_agent_allowlist(Some(&agent.allowed), server, tool, writer, now_unix).await?;
+        }
+        enforce_skill_allowlist(
+            self.skill_allowlist.as_deref(),
+            server,
+            tool,
+            writer,
+            now_unix,
+        )
+        .await
+    }
 }
 
 /// Fetch + sanitize the server's tool catalogue.
@@ -685,6 +758,39 @@ pub async fn enforce_skill_allowlist(
     })
 }
 
+/// Enforce the active sub-agent's `tools` allowlist. `None` means no agent is
+/// active. `Some(empty)` is intentionally fail-closed: an agent that declares
+/// no tools is provider-only and may not invoke MCP.
+pub async fn enforce_agent_allowlist(
+    allowed: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    now_unix: i64,
+) -> Result<(), GateError> {
+    let Some(list) = allowed else {
+        return Ok(());
+    };
+    if list.iter().any(|allowed_tool| allowed_tool == tool) {
+        return Ok(());
+    }
+    if let Some(w) = writer {
+        emit_reject(
+            w,
+            server,
+            tool,
+            "tool not in active sub-agent tools allowlist",
+            now_unix,
+        )
+        .await
+        .map_err(GateError::Wal)?;
+    }
+    Err(GateError::AgentAllowlistBlocked {
+        server: server.to_string(),
+        tool: tool.to_string(),
+    })
+}
+
 /// GOLD-CCPARITY-SA-DENY-01 — enforce the active sub-agent's
 /// `disallowedTools` denylist. Called from the dispatch loop BEFORE
 /// [`enforce_skill_allowlist`] and before the MCP server is even spawned
@@ -912,6 +1018,47 @@ mod tests {
             msg.contains("myserver") && msg.contains("shell_exec"),
             "error message must name server and tool: {msg}"
         );
+    }
+
+    #[tokio::test]
+    async fn active_agent_with_empty_tools_denies_every_tool() {
+        let scope = McpToolScope::default().with_agent(vec![], vec![]);
+        let error = scope
+            .enforce("srv", "read_file", None, 0)
+            .await
+            .expect_err("an active provider-only agent must deny MCP");
+        assert!(matches!(
+            error,
+            GateError::AgentAllowlistBlocked { ref server, ref tool }
+                if server == "srv" && tool == "read_file"
+        ));
+    }
+
+    #[tokio::test]
+    async fn skill_and_agent_allowlists_intersect() {
+        let scope =
+            McpToolScope::from_skill_allowlist(Some(vec!["shared".into(), "skill_only".into()]))
+                .with_agent(vec!["shared".into(), "agent_only".into()], vec![]);
+
+        assert!(scope.enforce("srv", "shared", None, 0).await.is_ok());
+        assert!(matches!(
+            scope.enforce("srv", "skill_only", None, 0).await,
+            Err(GateError::AgentAllowlistBlocked { .. })
+        ));
+        assert!(matches!(
+            scope.enforce("srv", "agent_only", None, 0).await,
+            Err(GateError::SkillAllowlistBlocked { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn agent_denylist_wins_over_both_allowlists() {
+        let scope = McpToolScope::from_skill_allowlist(Some(vec!["shared".into()]))
+            .with_agent(vec!["shared".into()], vec!["shared".into()]);
+        assert!(matches!(
+            scope.enforce("srv", "shared", None, 0).await,
+            Err(GateError::AgentDenylistBlocked { .. })
+        ));
     }
 
     #[test]

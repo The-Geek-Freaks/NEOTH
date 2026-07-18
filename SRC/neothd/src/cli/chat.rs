@@ -526,18 +526,31 @@ fn prompt_bundle_hash_for_items(items: &[crate::tokens::budget::BlockItem]) -> S
 /// preambles), enforce the effective model cap against the real typed bundle,
 /// and render the exact Request pair.  No provider path may assemble additional
 /// prompt bytes after this boundary.
+pub(super) struct ProviderRequestBoundary<'a> {
+    pub(super) config: &'a FreedomConfig,
+    pub(super) home: &'a std::path::Path,
+    pub(super) provider_name: &'a str,
+    pub(super) effective_model: Option<&'a str>,
+    pub(super) route_cap: Option<u32>,
+    pub(super) writer: &'a crate::wal::writer::WalWriterHandle,
+}
+
 pub(super) async fn finalize_provider_request(
     mut items: Vec<crate::tokens::budget::BlockItem>,
     preflight_prompt: &str,
     preflight_system: Option<&str>,
-    config: &FreedomConfig,
-    home: &std::path::Path,
-    provider_name: &str,
-    effective_model: Option<&str>,
-    route_cap: Option<u32>,
-    writer: &crate::wal::writer::WalWriterHandle,
+    boundary: ProviderRequestBoundary<'_>,
 ) -> Result<BudgetedProviderRequest> {
     use crate::tokens::budget::{Block, BlockItem};
+
+    let ProviderRequestBoundary {
+        config,
+        home,
+        provider_name,
+        effective_model,
+        route_cap,
+        writer,
+    } = boundary;
 
     let (typed_prompt, typed_system) =
         crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
@@ -1168,14 +1181,18 @@ async fn build_prompt_bundle(
         // GOLD-CCPARITY-EFFORT-03: parent skill's effort override also applies
         // when a mode is active — mode inherits parent effort setting.
         let effort = parent.and_then(|s| s.manifest.effort);
+        // A mode is a behaviour variant of its parent skill, not a separate
+        // security principal. Preserve the parent's delegation boundary just
+        // like its model, effort and tool allowlist.
+        let delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
         crate::analytics::babel::signals::emit(
             crate::analytics::babel::signals::SignalKind::SkillMode,
         );
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
-        // `_skill_match` discard). Mode paths never carry delegate_to.
-        (layer, None, None, model, effort)
+        // `_skill_match` discard).
+        (layer, None, delegate_to, model, effort)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
         // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
@@ -1586,15 +1603,10 @@ enum PreflightOutcome {
         effective_model: Option<String>,
         /// Priority layer that selected `effective_model`.
         model_source: &'static str,
-        /// GOLD-CCPARITY-SA-DENY-01 — agent allow-list extracted from
-        /// `Dispatch.allowed_tools` before `d` is moved. Empty vec when no
-        /// sub-agent fired this turn; overrides the skill allow-list in the
-        /// use_loop branch of dispatch_provider when non-empty.
-        agent_allowed_tools: Vec<String>,
-        /// GOLD-CCPARITY-SA-DENY-01 — agent denylist extracted from
-        /// `Dispatch.disallowed_tools` before `d` is moved. Empty vec when
-        /// no sub-agent fired or agent has no denylist.
-        agent_disallowed_tools: Vec<String>,
+        /// Active sub-agent tool policy. `None` means no agent fired;
+        /// `Some((empty, _))` is deliberately distinct and denies every MCP
+        /// tool because an agent with `tools: []` is provider-only.
+        agent_tool_policy: Option<(Vec<String>, Vec<String>)>,
         /// GOLD-ADAPT-SKILL-09 — FilteredBlocks produced by `block_filter`
         /// hooks at `PreProviderCall`. Empty when no BlockFilter hooks fired.
         /// Threaded to `run_post_reply_pipelines` where `restore_blocks`
@@ -1862,19 +1874,13 @@ async fn enforce_preflight(
     // in the merged registry (built-ins + `~/.neoth/commands/*.toml`).
     // Matched commands replace the system prompt; the args become the
     // user-facing prompt body. Non-commands pass through untouched.
-    // GOLD-CCPARITY-SA-DENY-01 — capture agent tool lists BEFORE d is moved,
-    // mirroring the GOLD-CCPARITY-MODEL-02 precedent for d.model. These flow
-    // into the use_loop branch below to:
-    //   (a) override the effective skill_allowlist with the agent's own allow-list
-    //       when the agent declares one (narrower is safer);
-    //   (b) pass the agent denylist slice into run_mcp_dispatch_loop.
-    let mut agent_allowed_tools: Vec<String> = vec![];
-    let mut agent_disallowed_tools: Vec<String> = vec![];
+    // Preserve whether an agent is active separately from its lists: an active
+    // agent with `tools: []` must deny every MCP tool, while no active agent
+    // imposes no agent-level restriction.
+    let mut agent_tool_policy: Option<(Vec<String>, Vec<String>)> = None;
     let (final_prompt, final_system, mut final_budget_items) = if let Some(d) = agent_dispatch {
         info!(agent = %d.agent_name, "sub-agent dispatch");
-        // GOLD-CCPARITY-SA-DENY-01: capture tool lists BEFORE d is moved.
-        agent_allowed_tools = d.allowed_tools.clone();
-        agent_disallowed_tools = d.disallowed_tools.clone();
+        agent_tool_policy = Some((d.allowed_tools.clone(), d.disallowed_tools.clone()));
         // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
         {
             let f = &d.omit_flags;
@@ -2036,12 +2042,14 @@ async fn enforce_preflight(
                                 request_items,
                                 &preflight_prompt,
                                 preflight_system.as_deref(),
-                                config,
-                                home,
-                                provider.name(),
-                                effective_model.as_deref(),
-                                Some(route_cap),
-                                &writer,
+                                ProviderRequestBoundary {
+                                    config,
+                                    home,
+                                    provider_name: provider.name(),
+                                    effective_model: effective_model.as_deref(),
+                                    route_cap: Some(route_cap),
+                                    writer: &writer,
+                                },
                             )
                             .await?;
                             let thinking_budget = skill_effort_for_request
@@ -2326,8 +2334,7 @@ async fn enforce_preflight(
         hooks,
         effective_model,
         model_source,
-        agent_allowed_tools,
-        agent_disallowed_tools,
+        agent_tool_policy,
         pending_block_restorations,
         budget_items: final_budget_items,
     })
@@ -2366,6 +2373,32 @@ struct DispatchOutput {
     mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord>,
 }
 
+struct ProviderDispatchResult {
+    response_text: String,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    provider: String,
+    model: String,
+}
+
+impl ProviderDispatchResult {
+    fn new(
+        response_text: String,
+        input_tokens: Option<u32>,
+        output_tokens: Option<u32>,
+        provider: String,
+        model: String,
+    ) -> Self {
+        Self {
+            response_text,
+            input_tokens,
+            output_tokens,
+            provider,
+            model,
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_provider(
     final_prompt: String,
@@ -2381,7 +2414,7 @@ async fn dispatch_provider(
     prompt: &str,
     request_token_cap: u32,
     mcp_servers: &crate::mcp::McpServers,
-    skill_tool_allowlist: Option<Vec<String>>,
+    tool_scope: crate::mcp::McpToolScope,
     turn_id: &str,
     // B22 — exact model already bound to PaidProviderCall authorization.
     // This value is copied into Request.model without another precedence fold.
@@ -2395,14 +2428,6 @@ async fn dispatch_provider(
     // Per-turn metadata copied into every concrete provider-leaf lifecycle
     // frame. Exact provider/model/request hashes are added centrally.
     provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
-    // GOLD-CCPARITY-SA-DENY-01 — sub-agent allow-list and denylist. Both
-    // propagated from enforce_preflight via PreflightOutcome::Continue.
-    // `agent_allowed_tools`: when non-empty, overrides skill_tool_allowlist
-    // in the use_loop branch (agent's own scope is narrower/safer).
-    // `agent_disallowed_tools`: threaded into run_mcp_dispatch_loop as the
-    // denylist; empty = no denylist restriction.
-    agent_allowed_tools: Vec<String>,
-    agent_disallowed_tools: Vec<String>,
 ) -> Result<DispatchOutput> {
     // Startup prompting proves consent only at provider construction time.
     // Re-read the durable markers at the final one-shot dispatch boundary so
@@ -2590,7 +2615,7 @@ async fn dispatch_provider(
     // MCP-dispatch branch from `outcome.tool_call_records`; empty otherwise.
     let mut mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord> = Vec::new();
 
-    let dispatch_result: Result<(String, Option<u32>, Option<u32>, String, String)> = async {
+    let dispatch_result: Result<ProviderDispatchResult> = async {
         Ok(if args.stream {
             // B-1 follow-up (Session 13) — streaming-branch audit gap.
             // Council never fans out on the streaming path (council needs
@@ -2814,7 +2839,13 @@ async fn dispatch_provider(
                     "links": crate::cli::deep_links::extract_deep_links(&acc),
                 })
             );
-            (acc, input_tokens, output_tokens, provider_used, model_used)
+            ProviderDispatchResult::new(
+                acc,
+                input_tokens,
+                output_tokens,
+                provider_used,
+                model_used,
+            )
         } else {
             // Non-streaming: existing behavior. START frame already emitted
             // above the branch; END frame fires after both arms converge.
@@ -3051,7 +3082,7 @@ async fn dispatch_provider(
             let use_loop = !council_enable && autoroute_decision.is_on();
             if let Some(response_text) = council_mif_message {
                 println!("{response_text}");
-                (
+                ProviderDispatchResult::new(
                     response_text,
                     None,
                     None,
@@ -3076,6 +3107,7 @@ async fn dispatch_provider(
                     home,
                     &writer,
                     call_authorizer.clone(),
+                    &tool_scope,
                     args.incognito,
                 )
                 .await
@@ -3090,7 +3122,7 @@ async fn dispatch_provider(
                     }
                 };
                 println!("{response_text}");
-                (
+                ProviderDispatchResult::new(
                     response_text,
                     None,
                     None,
@@ -3099,28 +3131,8 @@ async fn dispatch_provider(
                 )
             } else if use_loop {
                 info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
-                // SC-11 — scope the MCP gate to the matched skill's
-                // tool_allowlist (empty/None ⇒ no skill-level restriction).
-                // GOLD-CCPARITY-SA-DENY-01: when a sub-agent is active and
-                // declares its own allow-list, that list OVERRIDES the skill
-                // allow-list (the agent's scope is narrower; secure-by-default).
-                // An empty agent allow-list means "no tool restriction" — do NOT
-                // replace a non-empty skill allowlist with an empty agent one.
-                let effective_skill_allowlist: Option<Vec<String>> =
-                    if !agent_allowed_tools.is_empty() {
-                        Some(agent_allowed_tools.clone())
-                    } else {
-                        skill_tool_allowlist.clone()
-                    };
-                let skill_allowlist = effective_skill_allowlist.as_deref();
-                // GOLD-CCPARITY-SA-DENY-01: denylist slice — None when empty so
-                // the gate fn fast-paths on the None branch (no iteration).
-                let agent_disallowed_slice: Option<&[String]> = if agent_disallowed_tools.is_empty()
-                {
-                    None
-                } else {
-                    Some(&agent_disallowed_tools)
-                };
+                // The complete resolved skill/agent scope is immutable for the
+                // turn and is reused by both the single and multi-round paths.
                 // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
                 // (which compacts tool-results/context via the CompressionRuntime
                 // below) so `compaction_guard::restore_latest` / `neoth recover` can
@@ -3214,6 +3226,7 @@ async fn dispatch_provider(
                         config,
                         call_authorizer.clone(),
                         None,
+                        &tool_scope,
                         // P4 — elicitation is live in loop mode too on the interactive
                         // TTY (same gate as the single-dispatch path below).
                         if config.elicitation.enabled {
@@ -3269,12 +3282,9 @@ async fn dispatch_provider(
                         &config.autonomy_policy(),
                         &writer,
                         Some(&config.rollback),
-                        skill_allowlist,
+                        &tool_scope,
                         config.goal.max_turns,
                         &config.security,
-                        // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist (None
-                        // when no sub-agent fired this turn or agent has no denylist).
-                        agent_disallowed_slice,
                         crate::mcp::goal_tracker::GoalContext {
                             goal: config.goal.goal.clone(),
                             grind: config.goal.grind.clone(),
@@ -3367,7 +3377,7 @@ async fn dispatch_provider(
                 // A multi-round/tool response may span several providers and wire
                 // models. Keep the envelope identity explicit instead of falsely
                 // attributing the composed result to the configured primary.
-                (
+                ProviderDispatchResult::new(
                     outcome.final_text,
                     None,
                     None,
@@ -3443,7 +3453,7 @@ async fn dispatch_provider(
                                     resolved_elapsed_ms,
                                 );
                                 println!("{}", resolved.text);
-                                (
+                                ProviderDispatchResult::new(
                                     resolved.text,
                                     resolved.input_tokens,
                                     resolved.output_tokens,
@@ -3458,7 +3468,7 @@ async fn dispatch_provider(
                             }
                             None => {
                                 println!("{}", completion.text);
-                                (
+                                ProviderDispatchResult::new(
                                     completion.text,
                                     completion.input_tokens,
                                     completion.output_tokens,
@@ -3487,17 +3497,22 @@ async fn dispatch_provider(
         })
     }
     .await;
-    let (response_text, final_input_tokens, final_output_tokens, provider_used, model_used) =
-        match dispatch_result {
-            Ok(output) => output,
-            Err(error) => {
-                drop(authorized_provider);
-                drop(call_authorizer);
-                drop(writer);
-                let _ = writer_join.await;
-                return Err(error);
-            }
-        };
+    let ProviderDispatchResult {
+        response_text,
+        input_tokens: final_input_tokens,
+        output_tokens: final_output_tokens,
+        provider: provider_used,
+        model: model_used,
+    } = match dispatch_result {
+        Ok(output) => output,
+        Err(error) => {
+            drop(authorized_provider);
+            drop(call_authorizer);
+            drop(writer);
+            let _ = writer_join.await;
+            return Err(error);
+        }
+    };
 
     // SL-00(1c): the provider work is done — release the in-flight slot and
     // feed the cluster local-load gauge the REAL measured throughput so our
@@ -5051,8 +5066,7 @@ pub async fn run_chat_with(
         hooks,
         effective_model,
         model_source,
-        agent_allowed_tools,
-        agent_disallowed_tools,
+        agent_tool_policy,
         pending_block_restorations,
         budget_items,
     ) = match enforce_preflight(
@@ -5088,8 +5102,7 @@ pub async fn run_chat_with(
             hooks,
             effective_model,
             model_source,
-            agent_allowed_tools,
-            agent_disallowed_tools,
+            agent_tool_policy,
             pending_block_restorations,
             budget_items,
         } => (
@@ -5104,12 +5117,16 @@ pub async fn run_chat_with(
             hooks,
             effective_model,
             model_source,
-            agent_allowed_tools,
-            agent_disallowed_tools,
+            agent_tool_policy,
             pending_block_restorations,
             budget_items,
         ),
     };
+
+    let mut mcp_tool_scope = crate::mcp::McpToolScope::from_skill_allowlist(skill_tool_allowlist);
+    if let Some((allowed, disallowed)) = agent_tool_policy {
+        mcp_tool_scope = mcp_tool_scope.with_agent(allowed, disallowed);
+    }
 
     let route_cap =
         routing_safe_effective_cap_at(&config, provider.name(), effective_model.as_deref(), &home);
@@ -5117,12 +5134,14 @@ pub async fn run_chat_with(
         budget_items,
         &final_prompt,
         final_system.as_deref(),
-        &config,
-        &home,
-        provider.name(),
-        effective_model.as_deref(),
-        Some(route_cap),
-        &writer,
+        ProviderRequestBoundary {
+            config: &config,
+            home: &home,
+            provider_name: provider.name(),
+            effective_model: effective_model.as_deref(),
+            route_cap: Some(route_cap),
+            writer: &writer,
+        },
     )
     .await
     {
@@ -5190,7 +5209,7 @@ pub async fn run_chat_with(
         &prompt,
         request_token_cap,
         &mcp_servers,
-        skill_tool_allowlist,
+        mcp_tool_scope,
         // F4/D21 — turn id = the WAL event id, hex; filesystem-safe + unique/turn.
         &turn_id,
         effective_model,
@@ -5198,9 +5217,6 @@ pub async fn run_chat_with(
         skill_effort,
         model_source,
         provider_audit_context,
-        // GOLD-CCPARITY-SA-DENY-01: agent tool lists from enforce_preflight.
-        agent_allowed_tools,
-        agent_disallowed_tools,
     )
     .await?;
 
@@ -7872,9 +7888,12 @@ pub(crate) async fn dispatch_council_with_recovery(
     neoth_home: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    tool_scope: &crate::mcp::McpToolScope,
 ) -> Result<String> {
-    dispatch_council_with_recovery_for_turn(req, config, neoth_home, writer, authorizer, false)
-        .await
+    dispatch_council_with_recovery_for_turn(
+        req, config, neoth_home, writer, authorizer, tool_scope, false,
+    )
+    .await
 }
 
 async fn dispatch_council_with_recovery_for_turn(
@@ -7883,6 +7902,7 @@ async fn dispatch_council_with_recovery_for_turn(
     neoth_home: &std::path::Path,
     writer: &crate::wal::writer::WalWriterHandle,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
+    tool_scope: &crate::mcp::McpToolScope,
     incognito: bool,
 ) -> Result<String> {
     // Pick #8 F8 (Session 14 Pick #20) — channel-path pre-flight
@@ -7926,12 +7946,11 @@ async fn dispatch_council_with_recovery_for_turn(
     }
     // B-3 (Session 13) — record this debate's wall-clock so the NEXT
     // inbound's trigger eval honours the rate cooldown.
-    if !incognito {
-        if let Err(e) =
+    if !incognito
+        && let Err(e) =
             crate::council::last_ts::record(neoth_home, crate::council::last_ts::now_unix())
-        {
-            warn!(error = %e, "could not persist council_last.json (channel path)");
-        }
+    {
+        warn!(error = %e, "could not persist council_last.json (channel path)");
     }
     // B-2 (Session 13): role-keyed provider lookup — `outcome.responses` can
     // hold <3 entries when K-Perf-1 early-exit cancels a slow hemisphere;
@@ -8204,6 +8223,7 @@ async fn dispatch_council_with_recovery_for_turn(
                 config,
                 authorizer.clone(),
                 Some(&council_budget),
+                tool_scope,
                 // P4 — interactive chat session: honour the elicitation gate.
                 if config.elicitation.enabled {
                     &crate::cli::elicitation::ElicitationHandler::Cli
@@ -8544,19 +8564,13 @@ pub(crate) async fn run_mcp_dispatch_loop(
     autonomy_policy: &crate::permissions::AutonomyPolicySnapshot,
     writer: &crate::wal::writer::WalWriterHandle,
     rollback_policy: Option<&crate::config::RollbackConfig>,
-    // SC-11 — the active skill's tool_allowlist (None when no skill
-    // matched this turn). Threaded down to the MCP gate so a matched
-    // skill scopes which tools the model may call.
-    skill_allowlist: Option<&[String]>,
+    // Complete skill/agent tool scope resolved once for this provider turn.
+    tool_scope: &crate::mcp::McpToolScope,
     // GM-01 — operator-tunable hard ceiling on dispatch-loop iterations
     // (`freedom.yaml::goal.max_turns`, default 5).
     max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command risk policy gate.
     security_policy: &crate::config::SecurityPolicy,
-    // GOLD-CCPARITY-SA-DENY-01 — active sub-agent denylist. `None` when
-    // no sub-agent fired (channel path) or agent has no denylist. Threaded
-    // into run_tool_loop_with_cap → dispatch_one → enforce_agent_denylist.
-    agent_disallowed_tools: Option<&[String]>,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (freedom.yaml::hints.enabled).
@@ -8673,11 +8687,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
         autonomy_policy,
         Some(writer),
         rollback_policy,
-        skill_allowlist,
+        tool_scope,
         max_iterations.max(1),
         security_policy,
-        // GOLD-CCPARITY-SA-DENY-01 — thread the denylist through.
-        agent_disallowed_tools,
         // GOLD-ADAPT-AWE-CODE-01 — thread the caller identity for lease gate.
         subject,
         goal_context,
@@ -8913,12 +8925,14 @@ mod tests {
             items,
             "hello",
             system.as_deref(),
-            &config,
-            home.path(),
-            "test_provider",
-            None,
-            None,
-            &writer,
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .expect("single D item should be dropped and request should fit");
@@ -8948,12 +8962,14 @@ mod tests {
             items,
             "protected user prompt",
             system.as_deref(),
-            &config,
-            home.path(),
-            "test_provider",
-            None,
-            None,
-            &writer,
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .expect_err("protected A/B/E over cap must fail closed");
@@ -9002,12 +9018,14 @@ mod tests {
             items,
             "hello",
             system.as_deref(),
-            &config,
-            home.path(),
-            provider.name(),
-            Some(&model),
-            None,
-            &writer,
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: provider.name(),
+                effective_model: Some(&model),
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .unwrap();
@@ -9066,20 +9084,28 @@ mod tests {
             items,
             "hello",
             system.as_deref(),
-            &config,
-            home.path(),
-            "test_provider",
-            None,
-            None,
-            &writer,
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
         )
         .await
         .expect("A/B/E are protected; C/D can absorb the cap hit from the preset wrap");
 
         // Protected blocks must survive.
         let sys = result.system.as_deref().unwrap_or("");
-        assert!(sys.contains("protected-a"), "Block A must survive degradation");
-        assert!(sys.contains("protected-b"), "Block B must survive degradation");
+        assert!(
+            sys.contains("protected-a"),
+            "Block A must survive degradation"
+        );
+        assert!(
+            sys.contains("protected-b"),
+            "Block B must survive degradation"
+        );
         // Degradable blocks must be dropped.
         assert!(!sys.contains(&"c".repeat(10)), "Block C must be degraded");
         assert!(!sys.contains(&"d".repeat(10)), "Block D must be degraded");

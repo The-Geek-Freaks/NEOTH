@@ -188,6 +188,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     } else {
         crate::cli::elicitation::ElicitationHandler::Disabled
     };
+    let tool_scope = crate::mcp::McpToolScope::default();
 
     eprintln!(
         "loop: rounds≤{} autonomy={} budget={} critique={}",
@@ -208,6 +209,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         &config,
         provider_call_authorizer,
         None,
+        &tool_scope,
         &elicitation,
     )
     .await;

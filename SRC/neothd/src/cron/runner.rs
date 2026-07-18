@@ -1085,6 +1085,8 @@ async fn complete_cron_request(
     let initial_prompt = request.prompt.clone();
     let mut driver = CronCompletionDriver { provider, request };
     let policy = config.autonomy_policy();
+    let tool_scope =
+        crate::mcp::McpToolScope::from_skill_allowlist(Some(job.execution.tools.clone()));
     let outcome = crate::mcp::dispatch_loop::run_tool_loop(
         &mut driver,
         initial_prompt,
@@ -1092,7 +1094,7 @@ async fn complete_cron_request(
         &policy,
         Some(writer),
         Some(&config.rollback),
-        Some(&job.execution.tools),
+        &tool_scope,
         &config.security,
         home,
     )
@@ -1821,8 +1823,15 @@ mod workstream_c_tests {
             &queue_path,
             &dir.path().join("hooks"),
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )
@@ -1869,8 +1878,15 @@ mod workstream_c_tests {
             &queue_path,
             &dir.path().join("hooks"),
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )
@@ -1932,8 +1948,15 @@ mod workstream_c_tests {
             &queue_path,
             &dir.path().join("hooks"),
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )
@@ -1990,8 +2013,15 @@ mod workstream_c_tests {
             &queue_path,
             &dir.path().join("hooks"),
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )
@@ -2035,8 +2065,15 @@ mod workstream_c_tests {
             &dir.path().join("queue.json"),
             &hook_dir,
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )
@@ -2077,8 +2114,15 @@ mod workstream_c_tests {
             &dir.path().join("queue.json"),
             &hook_dir,
             |stage, body, hooks| {
-                crate::hooks::run_stage_with_once_guard(stage, body, hooks, None, false, &once_guard)
-                    .map(|r| r.outcome)
+                crate::hooks::run_stage_with_once_guard(
+                    stage,
+                    body,
+                    hooks,
+                    None,
+                    false,
+                    &once_guard,
+                )
+                .map(|r| r.outcome)
             },
             &crate::config::FreedomConfig::default(),
         )

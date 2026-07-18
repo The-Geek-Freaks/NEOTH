@@ -702,7 +702,9 @@ impl BeforeDispatchReservation {
         tokio::task::spawn_blocking(move || self.release())
             .await
             .unwrap_or_else(|join| {
-                Err(anyhow::anyhow!("daily-budget release task panicked: {join}"))
+                Err(anyhow::anyhow!(
+                    "daily-budget release task panicked: {join}"
+                ))
             })
     }
 }

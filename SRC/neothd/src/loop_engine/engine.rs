@@ -349,6 +349,7 @@ pub async fn run_loop(
     freedom: &crate::config::FreedomConfig,
     authorizer: crate::providers::cost_authorization::ProviderCallAuthorizer,
     council_budget: Option<&crate::council::BudgetToken>,
+    tool_scope: &crate::mcp::McpToolScope,
     elicitation: &crate::cli::elicitation::ElicitationHandler,
 ) -> Result<LoopRunRecord> {
     config.validate_safety()?;
@@ -468,12 +469,9 @@ pub async fn run_loop(
             &freedom.autonomy_policy(),
             writer,
             Some(rollback),
-            // No skill allowlist at the loop-engine level; the inner dispatch
-            // loop applies skill scoping based on skill matching at call time.
-            None,
+            tool_scope,
             freedom.goal.max_turns,
             security,
-            None, // no sub-agent denylist at loop level
             goal_context.clone(),
             freedom.hints.enabled,
             compaction,
