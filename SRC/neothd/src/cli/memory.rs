@@ -1309,6 +1309,17 @@ fn physical_erasure_incomplete(summary: &PhysicalRedactSummary) -> bool {
 /// warm = idx_consolidated, cold = idx_longterm; a node whose id no
 /// longer resolves anywhere is labelled by id (links outlive rows
 /// until the decay pass prunes them).
+fn memory_graph_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|character| match character {
+            '\r' | '\n' => ' ',
+            _ => character,
+        })
+        .take(80)
+        .collect()
+}
+
 fn run_memory_graph(args: &MemoryArgs) -> Result<()> {
     use crate::memory::{assoc_graph, store};
     use std::collections::{BTreeSet, HashMap};
@@ -1364,7 +1375,7 @@ fn run_memory_graph(args: &MemoryArgs) -> Result<()> {
             } else {
                 (format!("event {id}"), "fact")
             };
-            let one_line: String = label.replace('\n', " ").chars().take(80).collect();
+            let one_line = memory_graph_label(&label);
             serde_json::json!({
                 "id": id,
                 "label": one_line,
@@ -1764,6 +1775,19 @@ async fn run_memory_pin(args: &MemoryArgs, event_id: i64, pinned: bool) -> Resul
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn memory_graph_label_normalizes_cross_platform_line_endings_and_caps_length() {
+        let label = format!("alpha\r\nbeta\ngamma\r{}", "x".repeat(100));
+        let normalized = memory_graph_label(&label);
+        assert!(
+            !normalized
+                .chars()
+                .any(|character| matches!(character, '\r' | '\n'))
+        );
+        assert!(normalized.starts_with("alpha  beta gamma "));
+        assert_eq!(normalized.chars().count(), 80);
+    }
 
     fn seed_communication_profile(
         home: &std::path::Path,
