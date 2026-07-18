@@ -3472,9 +3472,11 @@ mod tests {
         let (reader_tx, reader_rx) = mpsc::channel();
         let reader_path = freedom_path.clone();
         let reader = std::thread::spawn(move || {
-            reader_tx.send(crate::config::load_runtime_config_pair_from_path(
-                &reader_path,
-            ))
+            reader_tx
+                .send(crate::config::load_runtime_config_pair_from_path(
+                    &reader_path,
+                ))
+                .expect("coherent reader receiver must remain connected");
         });
         assert!(
             reader_rx.recv_timeout(Duration::from_millis(150)).is_err(),
@@ -3487,7 +3489,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .unwrap()
             .unwrap();
-        reader.join().unwrap().unwrap();
+        reader.join().unwrap();
         assert_eq!(pair.config.operator_id.as_deref(), Some("new-generation"));
         assert_eq!(
             pair.raw_credentials
@@ -3826,7 +3828,7 @@ mod tests {
             serde_yaml::Value::String("top-level-keep".to_string()),
         );
         let loop_config = raw["loop_config"].as_mapping_mut().unwrap();
-        loop_config.remove(&serde_yaml::Value::String("tool_call_budget".to_string()));
+        loop_config.remove(serde_yaml::Value::String("tool_call_budget".to_string()));
         loop_config.insert(
             serde_yaml::Value::String("token_budget".to_string()),
             serde_yaml::Value::Number(17_u64.into()),

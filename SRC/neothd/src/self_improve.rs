@@ -1651,12 +1651,8 @@ fn find_ascii_word(haystack: &str, needle: &str) -> Option<usize> {
     haystack.match_indices(needle).find_map(|(start, _)| {
         let end = start + needle.len();
         let bytes = haystack.as_bytes();
-        let before_is_word = bytes[..start]
-            .last()
-            .is_some_and(u8::is_ascii_alphabetic);
-        let after_is_word = bytes[end..]
-            .first()
-            .is_some_and(u8::is_ascii_alphabetic);
+        let before_is_word = bytes[..start].last().is_some_and(u8::is_ascii_alphabetic);
+        let after_is_word = bytes[end..].first().is_some_and(u8::is_ascii_alphabetic);
         (!before_is_word && !after_is_word).then_some(start)
     })
 }
@@ -2391,7 +2387,7 @@ mod tests {
                     Ok(())
                 })?,
                 ConcurrentProposalMutation::SetStatus(status) => {
-                    let status = status.clone();
+                    let status = *status;
                     update_proposals(&self.home, move |all| {
                         let proposal = all
                             .iter_mut()

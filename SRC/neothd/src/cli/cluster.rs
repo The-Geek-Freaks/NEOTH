@@ -3240,7 +3240,7 @@ mod tests {
             serde_yaml::Value::String("keep-me".to_string()),
         );
         let cluster = root
-            .get_mut(&serde_yaml::Value::String("cluster".to_string()))
+            .get_mut(serde_yaml::Value::String("cluster".to_string()))
             .and_then(serde_yaml::Value::as_mapping_mut)
             .expect("cluster mapping");
         cluster.insert(
@@ -3248,7 +3248,7 @@ mod tests {
             serde_yaml::Value::String("keep-cluster-extension".to_string()),
         );
         let gossip = cluster
-            .get_mut(&serde_yaml::Value::String("gossip".to_string()))
+            .get_mut(serde_yaml::Value::String("gossip".to_string()))
             .and_then(serde_yaml::Value::as_mapping_mut)
             .expect("gossip mapping");
         gossip.insert(

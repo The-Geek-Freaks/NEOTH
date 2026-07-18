@@ -1214,11 +1214,9 @@ fn sync_parent_best_effort(target: &Path) {
     let _ = target;
 }
 
-/// Atomic private write: stage under the final file's directory, fsync, replace
-/// in one operation, then fsync the parent on Unix. The staged file receives
-/// its private ACL/mode before the first byte; replacing it preserves that
-/// protection without a remove-before-rename visibility gap.
-#[cfg_attr(not(test), allow(dead_code))] // retained: exercised by unit tests; prod caller removed in Wave-3 refactor
+/// Windows-only regression seam for exercising replace failures while the
+/// destination is held open. Production writes use the journalled publisher.
+#[cfg(all(test, windows))]
 pub(crate) fn write_atomically(target: &std::path::Path, contents: &[u8]) -> Result<()> {
     publish_private_replace_commit(target, contents)
         .with_context(|| format!("atomically replace private file {}", target.display()))

@@ -3052,8 +3052,8 @@ mod tests {
         };
         let first_writer = writer.clone();
         let second_writer = writer.clone();
-        let first_policy = policy.clone();
-        let second_policy = policy.clone();
+        let first_policy = policy;
+        let second_policy = policy;
         let first = tokio::spawn(async move {
             let mut driver = ScriptedDriver::new(vec!["first summary"]);
             let mut budget = CompactionBudget::default();
