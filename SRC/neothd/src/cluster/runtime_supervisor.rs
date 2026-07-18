@@ -1265,7 +1265,10 @@ pub(crate) async fn spawn_runtime_supervisor(
             last_credentials = credentials.clone();
             observed = desired.clone();
 
-            match core.reconcile(desired.runtime).await {
+            // Keep the observed input snapshot intact for the post-start
+            // health/ACK decision below. `reconcile` owns its candidate spec
+            // so the active generation cannot borrow reload-loop state.
+            match core.reconcile(desired.runtime.clone()).await {
                 ReconcileOutcome::Unchanged | ReconcileOutcome::Applied => {
                     match acknowledge_runtime(&deps, &config, &credentials, core.active_status())
                         .await
