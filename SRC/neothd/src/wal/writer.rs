@@ -690,10 +690,20 @@ fn spawn_with_policy_and_compression_at_home(
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    // Acquire before spawning so callers never receive an apparently-live
+    // writer handle when another process owns the segment for redaction (or a
+    // second writer accidentally targets the same path). The guard moves into
+    // WriterState and remains held through every append/finalize until rotation
+    // or shutdown durably closes this segment.
+    let initial_segment_lock =
+        super::redact::lock_segment_for_rewrite(&segment_path).map_err(|error| {
+            std::io::Error::other(format!("lock WAL segment for writer: {error:#}"))
+        })?;
     let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
     let join = tokio::spawn(async move {
         if let Err(e) = run_writer(
             segment_path,
+            initial_segment_lock,
             rx,
             policy,
             compression,
@@ -722,6 +732,9 @@ fn spawn_with_policy_and_compression_at_home(
 struct OpenedSegment {
     file: File,
     is_new: bool,
+    /// Cross-process rewrite exclusion. Kept beside `file` so callers cannot
+    /// accidentally retain one without the other.
+    segment_rewrite_lock: std::fs::File,
 }
 
 /// Pick #36 (Session 14): bookkeeping for the deferred
@@ -738,6 +751,19 @@ struct PendingRecovery {
 }
 
 async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
+    let segment_rewrite_lock = super::redact::lock_segment_for_rewrite(path).map_err(|error| {
+        std::io::Error::other(format!("lock WAL segment for writer: {error:#}"))
+    })?;
+    open_segment_with_lock(path, segment_rewrite_lock).await
+}
+
+/// Open a segment after its stable sidecar lock has already been acquired.
+/// The initial writer path locks synchronously before spawning; rotation uses
+/// [`open_segment`] to acquire the next segment while the old guard is held.
+async fn open_segment_with_lock(
+    path: &Path,
+    segment_rewrite_lock: std::fs::File,
+) -> Result<OpenedSegment, WalError> {
     let is_new = !path.exists();
 
     let mut opts = OpenOptions::new();
@@ -781,7 +807,11 @@ async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
         }
     }
 
-    Ok(OpenedSegment { file, is_new })
+    Ok(OpenedSegment {
+        file,
+        is_new,
+        segment_rewrite_lock,
+    })
 }
 
 /// Extract the trailing segment sequence from either `NNNNNN.wal` or a
@@ -802,6 +832,10 @@ fn segment_seq_from_path(path: &Path) -> u64 {
 struct WriterState {
     /// Open active segment.
     file: File,
+    /// Stable sidecar exclusion held for the active segment's complete
+    /// lifecycle. It deliberately outlives atomic inode replacement during
+    /// compression finalization and is swapped only after the old file closes.
+    segment_rewrite_lock: std::fs::File,
     /// Path of the active segment on disk.
     path: PathBuf,
     /// Bytes already written to the active segment (including its header).
@@ -894,8 +928,12 @@ async fn rotate(
     );
 
     let opened = open_segment(&next_path).await?;
+    let is_new = opened.is_new;
+    // Declare the guard before the append handle: locals drop in reverse
+    // declaration order, so every early-return path closes `new_file` first.
+    let next_segment_lock = opened.segment_rewrite_lock;
     let mut new_file = opened.file;
-    debug_assert!(opened.is_new, "rotation target should always be a new file");
+    debug_assert!(is_new, "rotation target should always be a new file");
 
     let now_ns = current_ns();
     let header_len = match state.compression {
@@ -922,7 +960,10 @@ async fn rotate(
     };
     new_file.sync_data().await?;
 
+    // Close the old append handle before releasing its rewrite guard. The next
+    // guard is already held, so no segment is ever active without exclusion.
     state.file = new_file;
+    state.segment_rewrite_lock = next_segment_lock;
     state.path = next_path;
     state.seq = next_seq;
     state.opened_at_ns = now_ns;
@@ -955,13 +996,18 @@ fn current_ns() -> u64 {
 
 async fn run_writer(
     segment_path: PathBuf,
+    initial_segment_lock: std::fs::File,
     mut rx: mpsc::Receiver<WriteRequest>,
     policy: RotationPolicy,
     compression: CompressionPolicy,
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
 ) -> Result<(), WalError> {
-    let opened = open_segment(&segment_path).await?;
+    let opened = open_segment_with_lock(&segment_path, initial_segment_lock).await?;
+    let is_new = opened.is_new;
+    // Declare the guard before the append handle: until WriterState owns both,
+    // an initialization error must close `file` before unlocking the segment.
+    let segment_rewrite_lock = opened.segment_rewrite_lock;
     let mut file = opened.file;
     let seq = segment_seq_from_path(&segment_path);
 
@@ -981,7 +1027,7 @@ async fn run_writer(
     // reopen, or 0 for a fresh segment.
     let mut initial_compaction_epoch: u32 = 0;
 
-    let (offset, opened_at_ns) = if opened.is_new {
+    let (offset, opened_at_ns) = if is_new {
         let ts_ns = current_ns();
         let header_len = match compression {
             CompressionPolicy::None => {
@@ -1117,6 +1163,7 @@ async fn run_writer(
 
     let mut state = WriterState {
         file,
+        segment_rewrite_lock,
         path: segment_path,
         offset,
         seq,
@@ -1803,6 +1850,111 @@ mod tests {
 
         drop(cloned);
         join.await.expect("join");
+    }
+
+    #[tokio::test]
+    async fn writer_holds_segment_rewrite_lock_until_shutdown() {
+        // P1 regression: physical redaction must never snapshot/replace an
+        // active segment underneath its append handle. `spawn` acquires the
+        // stable sidecar before returning and WriterState releases it only
+        // after the writer task has durably shut down.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (handle, join) = spawn(seg.clone()).expect("spawn");
+        // Awaiting an acknowledged append forces the spawned future through
+        // initialization and into its receive loop. Without this barrier a
+        // current-thread Tokio test could probe the lock while it was merely
+        // captured by an as-yet-unpolled future, missing an early-drop bug.
+        handle
+            .append(header_for(1, 1), b"x".to_vec())
+            .await
+            .expect("writer reaches live append loop");
+        let lock_path = super::super::redact::segment_rewrite_lock_path(&seg);
+
+        let competing =
+            crate::util::locked_file::try_lock_file_once(&lock_path, "writer exclusion regression")
+                .expect("probe writer-held segment lock");
+        assert!(
+            competing.is_none(),
+            "active writer must exclude a redactor for the same segment"
+        );
+
+        // Exercise the real public redaction path as well as the primitive.
+        // It must time out fail-closed while the append handle is live rather
+        // than snapshotting/replacing underneath that handle.
+        let active_seg = seg.clone();
+        let refused = tokio::task::spawn_blocking(move || {
+            super::super::redact::scan_and_redact(&active_seg, |_| true)
+        })
+        .await
+        .expect("active-writer redaction probe task");
+        let error = refused.expect_err("active WAL segment redaction must fail closed");
+        assert!(
+            format!("{error:#}").contains("cannot exclusively redact WAL segment"),
+            "refusal must identify the writer exclusion boundary: {error:#}"
+        );
+
+        drop(handle);
+        join.await.expect("join");
+        let after_shutdown =
+            crate::util::locked_file::try_lock_file_once(&lock_path, "writer exclusion regression")
+                .expect("probe released segment lock");
+        assert!(
+            after_shutdown.is_some(),
+            "writer shutdown must release the segment for a physical redactor"
+        );
+        drop(after_shutdown);
+
+        let report = super::super::redact::scan_and_redact(&seg, |_| true)
+            .expect("redaction proceeds after writer shutdown");
+        assert_eq!(report.frames_redacted_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn rotation_hands_rewrite_lock_from_old_segment_to_new_segment() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("000001.wal");
+        let second = dir.path().join("000002.wal");
+        let policy = RotationPolicy {
+            // The freshly written segment header already exceeds this, so the
+            // first caller frame deterministically rotates into `000002.wal`.
+            max_bytes: 1,
+            max_age_ns: RotationPolicy::DEFAULT_MAX_AGE_NS,
+        };
+        let (handle, join) = spawn_with_policy(first.clone(), policy).expect("spawn");
+        handle
+            .append(header_for(1, 1), b"x".to_vec())
+            .await
+            .expect("append after deterministic rotation");
+
+        let first_lock = super::super::redact::segment_rewrite_lock_path(&first);
+        let released_old =
+            crate::util::locked_file::try_lock_file_once(&first_lock, "old rotation segment")
+                .expect("probe old segment lock");
+        assert!(
+            released_old.is_some(),
+            "rotation must close the old append handle and release its guard"
+        );
+        drop(released_old);
+
+        let second_lock = super::super::redact::segment_rewrite_lock_path(&second);
+        let held_new =
+            crate::util::locked_file::try_lock_file_once(&second_lock, "new rotation segment")
+                .expect("probe new segment lock");
+        assert!(
+            held_new.is_none(),
+            "the rotated writer must hold the new segment guard before acknowledging the frame"
+        );
+
+        drop(handle);
+        join.await.expect("join");
+        let released_new =
+            crate::util::locked_file::try_lock_file_once(&second_lock, "new rotation segment")
+                .expect("probe released new segment lock");
+        assert!(
+            released_new.is_some(),
+            "shutdown after rotation must release the new segment guard"
+        );
     }
 
     // ── Phase 33b SP-1: rotation ───────────────────────────────────────────

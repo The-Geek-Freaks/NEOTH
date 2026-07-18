@@ -49,7 +49,7 @@
 //! right-to-erasure: intent + execution + invariant proof.
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -62,6 +62,32 @@ use super::types::EventFlags;
 /// FLAGS_OFFSET_IN_HEADER_BODY`. Single source of truth so the two sites can't
 /// drift if the header layout ever changes (see `EventHeaderV2` field order).
 const FLAGS_OFFSET_IN_HEADER_BODY: usize = 4;
+
+/// Stable sibling lock shared by the WAL writer and physical redactors.
+///
+/// Locking the segment file itself is not sufficient: both redaction paths
+/// atomically replace that inode, while a writer on Unix can keep appending to
+/// the unlinked predecessor. The sidecar identity survives replacement and is
+/// therefore the one exclusion point for the complete segment lifecycle.
+pub(crate) fn segment_rewrite_lock_path(segment_path: &Path) -> PathBuf {
+    let mut lock_path = segment_path.as_os_str().to_os_string();
+    lock_path.push(".rewrite.lock");
+    PathBuf::from(lock_path)
+}
+
+/// Acquire exclusive ownership of a WAL segment's bytes.
+///
+/// The writer holds this guard from before its first open until the segment is
+/// durably closed/rotated. A redactor holds it from before its snapshot read
+/// through tmp fsync, atomic replacement, and the platform namespace-durability
+/// barrier. This closes both append-vs-replace data loss and concurrent-redactor
+/// resurrection.
+pub(crate) fn lock_segment_for_rewrite(segment_path: &Path) -> Result<std::fs::File> {
+    crate::util::locked_file::lock_file_blocking(
+        &segment_rewrite_lock_path(segment_path),
+        "WAL segment rewrite",
+    )
+}
 
 /// Outcome of one redaction pass over one segment.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -96,6 +122,22 @@ pub fn scan_and_redact<F>(segment_path: &Path, mut predicate: F) -> Result<Redac
 where
     F: FnMut(&[u8]) -> bool,
 {
+    // P1 concurrency boundary: take the stable sidecar lock BEFORE the first
+    // open/stat/snapshot and retain it until this function returns. In the
+    // rewrite case that is after tmp fsync + rename + the platform namespace
+    // durability barrier. The WAL writer takes the same lock for the active
+    // segment's entire lifecycle.
+    // Consequently a redactor can never replace underneath an appending writer,
+    // and a second redactor cannot publish a stale snapshot that resurrects
+    // payloads scrubbed by the first.
+    let _segment_rewrite_guard = lock_segment_for_rewrite(segment_path).with_context(|| {
+        format!(
+            "cannot exclusively redact WAL segment {} — an active writer holds this lock until \
+             rotation/shutdown, or another redaction is still completing; retry after it releases",
+            segment_path.display()
+        )
+    })?;
+
     let mut file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -266,9 +308,10 @@ where
 }
 
 /// Atomically replace `segment_path` with `header_bytes ++ body`:
-/// write to a unique owner-private `.redact.tmp`, fsync, rename over the
-/// original, then fsync the parent directory (Unix only — NTFS journals
-/// metadata so the dentry update is already durable there).
+/// write to a unique owner-private `.redact.tmp`, fsync, then durably replace
+/// the original. Unix commits the renamed directory entry with a mandatory
+/// parent-directory fsync; Windows uses `MoveFileExW` with both
+/// `MOVEFILE_REPLACE_EXISTING` and `MOVEFILE_WRITE_THROUGH`.
 ///
 /// Used by both the live-segment and sealed-compressed redaction paths so
 /// the crash-consistency contract is enforced in one place.  A
@@ -307,25 +350,71 @@ fn write_tmp_and_rename(segment_path: &Path, header_bytes: &[u8], body: &[u8]) -
             .context("write redacted body to redact tmp")?;
         tmp.sync_all().context("fsync redact tmp")?;
     } // handle dropped here — closed before rename (required on Windows)
-    if let Err(e) = std::fs::rename(&tmp_path, segment_path) {
-        // Original is untouched until the rename: clean failure.
+    if let Err(e) = durable_replace(&tmp_path, segment_path) {
+        // Before replacement the original is untouched. If the namespace
+        // durability step fails after Unix rename, the redacted target stays
+        // in place but the caller still fails closed and emits no success
+        // marker because crash persistence is unconfirmed.
         let _ = std::fs::remove_file(&tmp_path);
         return Err(anyhow::Error::new(e).context(format!(
-            "atomic-rename redacted segment over {}",
+            "durably replace redacted segment over {}",
             segment_path.display()
         )));
     }
-    // GDPR durability: fsync the parent directory so the rename (dentry now
-    // pointing at scrubbed bytes) survives a crash.  Without it a crash after
-    // rename but before the dir-entry is journalled could resurrect the pre-
-    // redaction file while the caller has already emitted a REDACTION_MARKER.
-    // Unix only — NTFS journals metadata natively.
-    #[cfg(unix)]
-    if let Some(parent) = segment_path.parent()
-        && let Ok(dir) = std::fs::File::open(parent)
+    Ok(())
+}
+
+/// Commit an already-fsynced sibling over `target` without a crash window.
+///
+/// A successful return is the boundary after which the caller may emit its
+/// `REDACTION_MARKER`. Namespace-durability errors therefore propagate even
+/// when the replacement itself already landed: reporting an incomplete
+/// erasure is safer than claiming a rename that a power loss could undo.
+fn durable_replace(staged: &Path, target: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
     {
-        let _ = dir.sync_all();
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
+        };
+
+        let staged_wide = staged
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let target_wide = target
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        // SAFETY: both UTF-16 buffers are NUL-terminated and remain alive for
+        // the call; `staged` is a sibling of `target`, so this is a same-volume
+        // atomic replacement rather than the API's copy/delete fallback.
+        if unsafe {
+            MoveFileExW(
+                staged_wide.as_ptr(),
+                target_wide.as_ptr(),
+                MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
     }
+
+    #[cfg(not(windows))]
+    {
+        std::fs::rename(staged, target)?;
+        #[cfg(unix)]
+        if let Some(parent) = target
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::File::open(parent)?.sync_all()?;
+        }
+    }
+
     Ok(())
 }
 
@@ -810,8 +899,7 @@ mod tests {
         // hole. With the header-length fix the matching frame is scrubbed.
         let (_dir, path, offsets) =
             write_v2_live_segment_with_frames(&[b"hello world", b"AcmeCorp is a secret"]);
-        let report =
-            scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
+        let report = scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
         assert_eq!(report.frames_redacted_count(), 1, "v2 frame must be found");
         assert_eq!(report.frames_redacted, vec![offsets[1]]);
         assert_eq!(report.frames_skipped, 1);
@@ -1140,8 +1228,7 @@ mod tests {
             b"keep this too",
         ]);
         let dir_path = path.parent().unwrap().to_owned();
-        let report =
-            scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
+        let report = scan_and_redact(&path, payload_contains_topic("acmecorp")).expect("redact");
         assert_eq!(report.frames_redacted_count(), 1);
         assert_eq!(report.frames_redacted, vec![offsets[1]]);
 
@@ -1187,6 +1274,101 @@ mod tests {
         assert_eq!(report.frames_skipped, 3);
         let after = std::fs::read(&path).unwrap();
         assert_eq!(before, after, "no-match live segment must not be rewritten");
+    }
+
+    #[test]
+    fn concurrent_redactors_serialize_without_resurrecting_prior_scrubs() {
+        // P1 regression: before the sidecar exclusion, two redactors could both
+        // snapshot the original segment, scrub disjoint frames, then publish in
+        // opposite order. The last rename resurrected the first scrub. Hold the
+        // first redactor inside its predicate so the second definitely attempts
+        // the same segment while the first transaction is still open.
+        let (_dir, path, offsets) =
+            write_segment_with_frames(&[b"Alpha private row", b"Beta private row"]);
+
+        let (first_entered_tx, first_entered_rx) = std::sync::mpsc::channel();
+        let (release_first_tx, release_first_rx) = std::sync::mpsc::channel();
+        let first_path = path.clone();
+        let first = std::thread::spawn(move || {
+            let mut entered = Some(first_entered_tx);
+            let mut release = Some(release_first_rx);
+            scan_and_redact(&first_path, move |payload| {
+                if let Some(tx) = entered.take() {
+                    tx.send(()).expect("announce first redactor snapshot");
+                    release
+                        .take()
+                        .expect("one release receiver")
+                        .recv()
+                        .expect("release first redactor");
+                }
+                payload
+                    .windows(b"Alpha".len())
+                    .any(|window| window == b"Alpha")
+            })
+        });
+        first_entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("first redactor reached its snapshot predicate");
+
+        let (second_probe_tx, second_probe_rx) = std::sync::mpsc::channel();
+        let second_start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let second_start_thread = second_start.clone();
+        let second_path = path.clone();
+        let second = std::thread::spawn(move || {
+            // Observe the real OS lock directly while the first redactor is
+            // blocked inside its predicate. This is deterministic; unlike a
+            // sleep/timeout assertion it cannot pass merely because this
+            // thread was descheduled before entering `scan_and_redact`.
+            let competing = crate::util::locked_file::try_lock_file_once(
+                &segment_rewrite_lock_path(&second_path),
+                "concurrent redactor exclusion regression",
+            )
+            .expect("probe first redactor lock");
+            second_probe_tx
+                .send(competing.is_none())
+                .expect("report first redactor lock ownership");
+            drop(competing);
+            second_start_thread.wait();
+            scan_and_redact(&second_path, move |payload| {
+                payload
+                    .windows(b"Beta".len())
+                    .any(|window| window == b"Beta")
+            })
+        });
+        let first_owned_lock = second_probe_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .expect("second redactor observed the live lock");
+        // Put the second public redaction call at the lock boundary before
+        // releasing the first transaction. The final frame assertions prove
+        // that whichever thread the scheduler runs first, no stale snapshot
+        // can resurrect the other redactor's payload.
+        second_start.wait();
+        release_first_tx
+            .send(())
+            .expect("release first redactor after exclusion probe");
+
+        first
+            .join()
+            .expect("first redactor thread")
+            .expect("first redaction succeeds");
+        second
+            .join()
+            .expect("second redactor thread")
+            .expect("second redaction succeeds");
+        assert!(
+            first_owned_lock,
+            "the first redactor must own the stable sidecar before publication"
+        );
+
+        let bytes = std::fs::read(&path).expect("read twice-redacted segment");
+        for offset in offsets {
+            let frame = decode_frame(&bytes[offset as usize..]).expect("decode redacted frame");
+            assert!(
+                frame.header.flags.contains(EventFlags::REDACTED),
+                "both disjoint scrubs must survive the second atomic replacement"
+            );
+            assert!(frame.payload.iter().all(|byte| *byte == 0));
+        }
     }
 
     #[test]

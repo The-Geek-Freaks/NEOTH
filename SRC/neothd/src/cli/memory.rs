@@ -1150,6 +1150,15 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
 /// authorised rather than adversarial tampering.
 ///
 /// Aggregates per-segment reports into one operator-readable summary.
+///
+/// Availability contract: the active writer intentionally holds its segment's
+/// rewrite lock until rotation or shutdown. If that lock cannot be acquired,
+/// this pass records an error and the `--physical` caller exits non-zero. It
+/// must never skip the live segment and print a successful GDPR-erasure claim.
+fn physical_redaction_audit_segment_path(wal_dir: &std::path::Path) -> std::path::PathBuf {
+    crate::wal::writer::unique_standalone_segment_path(wal_dir, "memory-redact")
+}
+
 async fn run_physical_redaction(
     wal_dir: &std::path::Path,
     topic: &str,
@@ -1160,7 +1169,7 @@ async fn run_physical_redaction(
     let mut summary = PhysicalRedactSummary::default();
     let entries = match std::fs::read_dir(wal_dir) {
         Ok(it) => it,
-        Err(e) => {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             // WAL dir might not exist yet (fresh install, no daemon run).
             // Treat as zero-frames-redacted rather than an error.
             tracing::debug!(
@@ -1170,16 +1179,37 @@ async fn run_physical_redaction(
             );
             return Ok(summary);
         }
+        Err(e) => {
+            return Err(e).with_context(|| {
+                format!("open WAL directory {} for redaction", wal_dir.display())
+            });
+        }
     };
 
     // Open a dedicated audit-only segment for the REDACTION_MARKER
     // frames. Same pattern as the TOMBSTONE_REQUESTED segment.
     std::fs::create_dir_all(wal_dir).context("create WAL dir for redaction audit")?;
-    let audit_segment = wal_dir.join(format!("memory-redact-{now_unix}.wal"));
+    // Concurrent invocations can share the same `now_unix` second. A
+    // deterministic name let their audit writers target one segment, which is
+    // both a lock collision and an audit-integrity failure. Reuse the writer's
+    // UUIDv7 standalone namespace; rotation remains namespace-safe.
+    let audit_segment = physical_redaction_audit_segment_path(wal_dir);
     let (audit_writer, audit_join) = crate::wal::writer::spawn(audit_segment.clone())
         .context("spawn WAL writer for redaction audit")?;
 
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                tracing::warn!(
+                    wal_dir = %wal_dir.display(),
+                    error = %e,
+                    "WAL directory entry could not be inspected; physical erasure is incomplete"
+                );
+                summary.errors += 1;
+                continue;
+            }
+        };
         let path = entry.path();
         if path.extension().and_then(|s| s.to_str()) != Some("wal") {
             continue;
@@ -1234,7 +1264,14 @@ async fn run_physical_redaction(
     }
 
     drop(audit_writer);
-    let _ = audit_join.await;
+    if let Err(e) = audit_join.await {
+        tracing::warn!(
+            audit_segment = %audit_segment.display(),
+            error = %e,
+            "redaction audit WAL writer task failed to join; audit completion is unconfirmed"
+        );
+        summary.errors += 1;
+    }
     summary.audit_segment = Some(audit_segment.display().to_string());
     Ok(summary)
 }
@@ -2155,6 +2192,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn physical_redaction_propagates_non_not_found_directory_errors() {
+        // Only a genuinely absent WAL directory is a benign fresh-install
+        // no-op. A configured path that cannot be enumerated must never turn
+        // into a zero-error GDPR success report.
+        let dir = tempdir().unwrap();
+        let not_a_directory = dir.path().join("wal-is-a-file");
+        std::fs::write(&not_a_directory, b"not a directory").unwrap();
+
+        let error = run_physical_redaction(&not_a_directory, "anything", 1700)
+            .await
+            .expect_err("non-directory WAL root must fail closed");
+        assert!(
+            format!("{error:#}").contains("open WAL directory"),
+            "error must identify the unreadable WAL root: {error:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn physical_redaction_skips_non_wal_files_in_dir() {
         // Operators occasionally drop notes / `.bak` files into
         // `~/.neoth/wal/`. The scanner must ignore them (no extension
@@ -2168,6 +2223,32 @@ mod tests {
         // No `.wal` files → nothing touched.
         assert_eq!(summary.segments_touched, 0);
         assert_eq!(summary.frames_redacted, 0);
+    }
+
+    #[test]
+    fn physical_redaction_audit_segments_are_collision_resistant() {
+        // Two operator invocations inside the same wall-clock second used to
+        // target `memory-redact-{now_unix}.wal`. The second writer could collide
+        // with the first and leave both the erasure result and its audit trail
+        // incomplete. UUIDv7 standalone namespaces make the path unique while
+        // preserving the normal `.wal` rotation contract.
+        let dir = tempdir().unwrap();
+        let first = physical_redaction_audit_segment_path(dir.path());
+        let second = physical_redaction_audit_segment_path(dir.path());
+        assert_ne!(
+            first, second,
+            "concurrent audit writers need distinct paths"
+        );
+        for path in [first, second] {
+            assert_eq!(path.extension().and_then(|ext| ext.to_str()), Some("wal"));
+            assert!(
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|stem| stem.ends_with("-memory-redact-000001")),
+                "audit segment must retain the standalone writer namespace: {}",
+                path.display()
+            );
+        }
     }
 
     #[tokio::test]
