@@ -511,6 +511,8 @@ export component MainWindow inherits Window {
     // I14 — structured slash-command browser model.
     in property <[SlashCmdRow]> slash-cmds-model: [];
     in property <string> slash-refreshed-at: "";
+    in property <bool> slash-valid: true;
+    in property <string> slash-error: "";
     in property <string> gt-output: "";
     in property <bool> gt-running: false;
     callback gt-run-clicked();
@@ -549,6 +551,8 @@ export component MainWindow inherits Window {
     in property <[BgJobRow]> bg-jobs-model: [];
     in property <bool> bg-jobs-submitting: false;
     in property <string> bg-jobs-refreshed-at: "";
+    in property <bool> bg-jobs-valid: true;
+    in property <string> bg-jobs-error: "";
     callback bg-jobs-submit-clicked(string /*command*/, string /*label*/);
     in property <string> migrate-history-output: "";
     in property <bool> migrate-history-running: false;
@@ -877,6 +881,8 @@ export component MainWindow inherits Window {
     // F2 — durable per-peer sync state rows.
     in property <[MeshSyncRow]> mesh-sync-rows: [];
     in property <string>          mesh-syncing-peer: "";
+    in property <bool>            mesh-sync-valid: true;
+    in property <string>          mesh-sync-error: "";
     in property <int>             mesh-foreign-total: 0;
     in property <string>          mesh-foreign-bytes: "";
     in property <int>             mesh-foreign-peers: 0;
@@ -3783,6 +3789,8 @@ export component MainWindow inherits Window {
                     slash-cmds: root.slash-cmds-model;
                     slash-loading: root.slash-running;
                     slash-refreshed-at: root.slash-refreshed-at;
+                    slash-valid: root.slash-valid;
+                    slash-error: root.slash-error;
                     slash-refresh => { root.slash-run-clicked(); }
                     init => { if (root.slash-cmds-model.length == 0) { root.slash-run-clicked(); } }
                 }
@@ -3941,6 +3949,8 @@ export component MainWindow inherits Window {
                     bg-running: root.bg-jobs-running;
                     bg-submitting: root.bg-jobs-submitting;
                     bg-refreshed-at: root.bg-jobs-refreshed-at;
+                    bg-valid: root.bg-jobs-valid;
+                    bg-error: root.bg-jobs-error;
                     bg-refresh => { root.bg-jobs-run-clicked(); }
                     bg-run(cmd, label) => { root.bg-jobs-submit-clicked(cmd, label); }
                     init => { if (root.bg-jobs-model.length == 0) { root.bg-jobs-run-clicked(); } }
@@ -4210,6 +4220,8 @@ export component MainWindow inherits Window {
                     mesh-foreign-rows: root.mesh-foreign-rows;
                     mesh-sync-rows: root.mesh-sync-rows;
                     syncing-peer: root.mesh-syncing-peer;
+                    mesh-sync-valid: root.mesh-sync-valid;
+                    mesh-sync-error: root.mesh-sync-error;
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;

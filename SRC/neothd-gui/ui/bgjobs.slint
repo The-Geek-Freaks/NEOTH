@@ -72,6 +72,8 @@ export component BgJobsView inherits Rectangle {
     in property <bool>   bg-running: false;      // refresh probe in flight
     in property <bool>   bg-submitting: false;   // --run spawn in flight
     in property <string> bg-refreshed-at: "";
+    in property <bool>   bg-valid: true;
+    in property <string> bg-error: "";
     in-out property <string> bg-command-draft: "";
     in-out property <string> bg-label-draft: "";
 
@@ -150,7 +152,26 @@ export component BgJobsView inherits Rectangle {
             }
 
             // ── JOB LIST ──────────────────────────────────────────────
-            if root.bg-jobs.length == 0: EmptyState {
+            if !root.bg-valid: Rectangle {
+                min-height: 54px;
+                border-radius: Theme.radius-sm;
+                background: Theme.consent-tint;
+                border-width: 1px;
+                border-color: Theme.consent;
+                Text {
+                    text: "Background jobs could not be loaded: " + root.bg-error;
+                    color: Theme.consent;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    wrap: word-wrap;
+                    x: 10px;
+                    y: 10px;
+                    width: parent.width - 20px;
+                }
+                accessible-role: AccessibleRole.text;
+                accessible-label: "Background jobs invalid: " + root.bg-error;
+            }
+            if root.bg-valid && root.bg-jobs.length == 0: EmptyState {
                 glyph: "⊛";
                 title: "No background jobs";
                 hint: "start one with the form above or `neoth jobs --run \"<command>\"`";

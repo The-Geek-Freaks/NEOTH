@@ -3682,29 +3682,49 @@ pub fn now_hhmm() -> String {
 /// Parse `neoth jobs --bg --output json` → (id, status, exit_code_string) rows.
 ///
 /// Expected shape: `[{"id":"build-1721...","status":"completed","exit_code":0}]`.
-/// `exit_code` is null while running → rendered as "". Malformed input or a
-/// non-array yields an empty Vec (panel shows its empty state, never crashes).
-pub fn parse_bg_jobs(json: &str) -> Vec<(String, String, String)> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let Some(arr) = v.as_array() else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter_map(|row| {
-            let id = row.get("id")?.as_str()?.to_string();
-            let status = row
-                .get("status")
-                .and_then(|s| s.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-            let exit = row
-                .get("exit_code")
-                .and_then(|c| c.as_i64())
-                .map(|c| c.to_string())
-                .unwrap_or_default();
-            Some((id, status, exit))
+/// `exit_code` is null while running. Malformed or inconsistent input is an
+/// explicit error and must never become the panel's honest empty state.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BgJobWire {
+    id: String,
+    status: String,
+    exit_code: Option<i32>,
+}
+
+pub fn bg_job_rows(rows: Vec<BgJobWire>) -> Result<Vec<(String, String, String)>, String> {
+    let mut ids = std::collections::HashSet::with_capacity(rows.len());
+    rows.into_iter()
+        .map(|row| {
+            if row.id.trim().is_empty() || !ids.insert(row.id.clone()) {
+                return Err("background jobs returned an empty or duplicate id".to_string());
+            }
+            let exit = match (row.status.as_str(), row.exit_code) {
+                ("running", None) => String::new(),
+                ("completed", Some(code)) => code.to_string(),
+                ("completed", None) => "unknown".to_string(),
+                ("running", Some(_)) => {
+                    return Err(format!(
+                        "background job `{}` is running but already has an exit code",
+                        row.id
+                    ));
+                }
+                (status, _) => {
+                    return Err(format!(
+                        "background job `{}` returned unknown status `{status}`",
+                        row.id
+                    ));
+                }
+            };
+            Ok((row.id, row.status, exit))
         })
         .collect()
+}
+
+pub fn parse_bg_jobs(json: &str) -> Result<Vec<(String, String, String)>, String> {
+    let rows = serde_json::from_str::<Vec<BgJobWire>>(json)
+        .map_err(|error| format!("invalid background-jobs response: {error}"))?;
+    bg_job_rows(rows)
 }
 
 // ── H16 kanban bulk-selection store ──────────────────────────────────────────
@@ -3791,69 +3811,123 @@ pub struct MeshSyncData {
     pub last_error: String,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MeshSyncWire {
+    peer_pk: String,
+    cursor_segment: Option<String>,
+    cursor_offset: u64,
+    acked_origin_seq: u64,
+    pending_origin_seq: Option<u64>,
+    pending_attempts: Option<u64>,
+    inbound_next_expected_seq: Option<u64>,
+    request_state: Option<String>,
+    request_requested_at: Option<i64>,
+    request_updated_at: Option<i64>,
+    request_expires_at: Option<i64>,
+    request_send_attempts: Option<u64>,
+    request_last_error: Option<String>,
+}
+
 /// Parse the sync-state JSON array. Optional u64s render as "-";
 /// `pending` folds attempts in ("12 (3×)"); cursor shows the segment file
-/// name plus offset. Malformed input yields an empty Vec.
-pub fn parse_mesh_sync(json: &str) -> Vec<MeshSyncData> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let Some(arr) = v.as_array() else {
-        return Vec::new();
-    };
-    let opt = |row: &serde_json::Value, key: &str| -> String {
-        row.get(key)
-            .and_then(|x| x.as_u64())
-            .map(|x| x.to_string())
-            .unwrap_or_else(|| "-".to_string())
-    };
-    arr.iter()
-        .filter_map(|row| {
-            let pk = row.get("peer_pk")?.as_str()?;
-            let peer_short = if pk.len() > 16 {
-                format!("{}…", &pk[..16])
+/// name plus offset. Malformed or inconsistent input is explicit Invalid.
+pub fn mesh_sync_rows(rows: Vec<MeshSyncWire>) -> Result<Vec<MeshSyncData>, String> {
+    let mut peers = std::collections::HashSet::with_capacity(rows.len());
+    rows.into_iter()
+        .map(|row| {
+            if row.peer_pk.trim().is_empty() || !peers.insert(row.peer_pk.clone()) {
+                return Err("mesh sync state returned an empty or duplicate peer id".to_string());
+            }
+            if row.pending_origin_seq.is_some() != row.pending_attempts.is_some() {
+                return Err(format!(
+                    "mesh sync state for `{}` has incomplete pending progress",
+                    row.peer_pk
+                ));
+            }
+            let request_present = row.request_state.is_some();
+            if [
+                row.request_requested_at.is_some(),
+                row.request_updated_at.is_some(),
+                row.request_expires_at.is_some(),
+                row.request_send_attempts.is_some(),
+            ]
+            .into_iter()
+            .any(|present| present != request_present)
+                || (!request_present && row.request_last_error.is_some())
+            {
+                return Err(format!(
+                    "mesh sync state for `{}` has incomplete request progress",
+                    row.peer_pk
+                ));
+            }
+            if let Some(state) = row.request_state.as_deref() {
+                if !matches!(
+                    state,
+                    "queued" | "active" | "waiting_peer" | "complete" | "expired"
+                ) {
+                    return Err(format!(
+                        "mesh sync state for `{}` returned unknown request state `{state}`",
+                        row.peer_pk
+                    ));
+                }
+                let requested = row.request_requested_at.unwrap_or_default();
+                let updated = row.request_updated_at.unwrap_or_default();
+                let expires = row.request_expires_at.unwrap_or_default();
+                if requested <= 0 || updated < requested || expires <= requested {
+                    return Err(format!(
+                        "mesh sync state for `{}` contains invalid request timestamps",
+                        row.peer_pk
+                    ));
+                }
+            }
+
+            let peer_short = if row.peer_pk.chars().count() > 16 {
+                format!("{}…", row.peer_pk.chars().take(16).collect::<String>())
             } else {
-                pk.to_string()
+                row.peer_pk.clone()
             };
-            let pending = match (
-                row.get("pending_origin_seq").and_then(|x| x.as_u64()),
-                row.get("pending_attempts").and_then(|x| x.as_u64()),
-            ) {
+            let pending = match (row.pending_origin_seq, row.pending_attempts) {
                 (Some(seq), Some(att)) if att > 1 => format!("{seq} ({att}×)"),
                 (Some(seq), _) => seq.to_string(),
                 (None, _) => "-".to_string(),
             };
-            let cursor = match (
-                row.get("cursor_segment").and_then(|x| x.as_str()),
-                row.get("cursor_offset").and_then(|x| x.as_u64()),
-            ) {
-                (Some(seg), off) => {
+            let cursor = match row.cursor_segment.as_deref() {
+                Some(seg) if !seg.is_empty() => {
                     let name = std::path::Path::new(seg)
                         .file_name()
                         .and_then(std::ffi::OsStr::to_str)
                         .unwrap_or(seg);
-                    format!("{name}:{}", off.unwrap_or(0))
+                    format!("{name}:{}", row.cursor_offset)
                 }
-                (None, Some(off)) => off.to_string(),
-                (None, None) => "-".to_string(),
+                Some(_) => {
+                    return Err(format!(
+                        "mesh sync state for `{}` contains an empty cursor segment",
+                        row.peer_pk
+                    ));
+                }
+                None => row.cursor_offset.to_string(),
             };
-            Some(MeshSyncData {
+            Ok(MeshSyncData {
                 peer_short,
-                acked: opt(row, "acked_origin_seq"),
+                acked: row.acked_origin_seq.to_string(),
                 pending,
-                inbound_next: opt(row, "inbound_next_expected_seq"),
+                inbound_next: row
+                    .inbound_next_expected_seq
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
                 cursor,
-                request: row
-                    .get("request_state")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("-")
-                    .to_string(),
-                last_error: row
-                    .get("request_last_error")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or_default()
-                    .to_string(),
+                request: row.request_state.unwrap_or_else(|| "-".to_string()),
+                last_error: row.request_last_error.unwrap_or_default(),
             })
         })
         .collect()
+}
+
+pub fn parse_mesh_sync(json: &str) -> Result<Vec<MeshSyncData>, String> {
+    let rows = serde_json::from_str::<Vec<MeshSyncWire>>(json)
+        .map_err(|error| format!("invalid mesh sync-state response: {error}"))?;
+    mesh_sync_rows(rows)
 }
 
 #[cfg(test)]
@@ -3866,17 +3940,19 @@ mod mesh_sync_parse_tests {
             {"peer_pk":"abcdef0123456789deadbeef","cursor_segment":"C:\\wal\\seg-0007.wal",
              "cursor_offset":4096,"acked_origin_seq":120,"pending_origin_seq":121,
              "pending_attempts":3,"inbound_next_expected_seq":88,
-             "request_state":"pending","request_last_error":"peer unreachable"},
+             "request_state":"waiting_peer","request_requested_at":1700000000,
+             "request_updated_at":1700000001,"request_expires_at":1700000030,
+             "request_send_attempts":1,"request_last_error":"peer unreachable"},
             {"peer_pk":"short","cursor_segment":null,"cursor_offset":0,
              "acked_origin_seq":0,"pending_origin_seq":null,"pending_attempts":null,
              "inbound_next_expected_seq":null,"request_state":null,"request_last_error":null}
         ]"#;
-        let rows = parse_mesh_sync(json);
+        let rows = parse_mesh_sync(json).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].peer_short, "abcdef0123456789…");
         assert_eq!(rows[0].pending, "121 (3×)");
         assert_eq!(rows[0].cursor, "seg-0007.wal:4096");
-        assert_eq!(rows[0].request, "pending");
+        assert_eq!(rows[0].request, "waiting_peer");
         assert_eq!(rows[0].last_error, "peer unreachable");
         assert_eq!(rows[1].peer_short, "short");
         assert_eq!(rows[1].pending, "-");
@@ -3885,9 +3961,28 @@ mod mesh_sync_parse_tests {
     }
 
     #[test]
-    fn malformed_input_yields_empty() {
-        assert!(parse_mesh_sync("not json").is_empty());
-        assert!(parse_mesh_sync("{}").is_empty());
+    fn empty_is_distinct_from_malformed_or_inconsistent() {
+        assert!(parse_mesh_sync("[]").unwrap().is_empty());
+        assert!(parse_mesh_sync("not json").is_err());
+        assert!(parse_mesh_sync("{}").is_err());
+        assert!(
+            parse_mesh_sync(
+                r#"[{"peer_pk":"peer","cursor_segment":null,"cursor_offset":0,
+                 "acked_origin_seq":0,"pending_origin_seq":1,"pending_attempts":null,
+                 "inbound_next_expected_seq":null,"request_state":null,
+                 "request_last_error":null}]"#
+            )
+            .is_err()
+        );
+        assert!(
+            parse_mesh_sync(
+                r#"[{"peer_pk":"peer","cursor_segment":null,"cursor_offset":0,
+                 "acked_origin_seq":0,"pending_origin_seq":null,"pending_attempts":null,
+                 "inbound_next_expected_seq":null,"request_state":null,
+                 "request_last_error":null,"unexpected":true}]"#
+            )
+            .is_err()
+        );
     }
 }
 
@@ -3897,32 +3992,56 @@ mod mesh_sync_parse_tests {
 /// enabled) rows. Expected shape:
 /// `{"count":24,"commands":[{"name":"/help","source":"builtin",
 ///   "description":"…","enabled":true}]}`.
-/// Malformed input yields an empty Vec (panel shows its empty state).
-pub fn parse_slash_cmds(json: &str) -> Vec<(String, String, String, bool)> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let Some(arr) = v.get("commands").and_then(|c| c.as_array()) else {
-        return Vec::new();
-    };
-    arr.iter()
-        .filter_map(|row| {
-            let name = row.get("name")?.as_str()?.to_string();
-            let source = row
-                .get("source")
-                .and_then(|s| s.as_str())
-                .unwrap_or("builtin")
-                .to_string();
-            let description = row
-                .get("description")
-                .and_then(|s| s.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let enabled = row
-                .get("enabled")
-                .and_then(|e| e.as_bool())
-                .unwrap_or(true);
-            Some((name, source, description, enabled))
+/// Malformed or internally inconsistent input is explicit Invalid.
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlashCommandsWire {
+    count: usize,
+    commands: Vec<SlashCommandWire>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SlashCommandWire {
+    name: String,
+    source: String,
+    description: String,
+    enabled: bool,
+}
+
+pub fn slash_cmd_rows(
+    snapshot: SlashCommandsWire,
+) -> Result<Vec<(String, String, String, bool)>, String> {
+    if snapshot.count != snapshot.commands.len() {
+        return Err(format!(
+            "slash command response reports {} rows but returned {}",
+            snapshot.count,
+            snapshot.commands.len()
+        ));
+    }
+    let mut names = std::collections::HashSet::with_capacity(snapshot.commands.len());
+    snapshot
+        .commands
+        .into_iter()
+        .map(|row| {
+            if row.name.trim().is_empty() || !names.insert(row.name.clone()) {
+                return Err("slash commands returned an empty or duplicate name".to_string());
+            }
+            if !matches!(row.source.as_str(), "builtin" | "operator") {
+                return Err(format!(
+                    "slash command `{}` returned unknown source `{}`",
+                    row.name, row.source
+                ));
+            }
+            Ok((row.name, row.source, row.description, row.enabled))
         })
         .collect()
+}
+
+pub fn parse_slash_cmds(json: &str) -> Result<Vec<(String, String, String, bool)>, String> {
+    let snapshot = serde_json::from_str::<SlashCommandsWire>(json)
+        .map_err(|error| format!("invalid slash-command response: {error}"))?;
+    slash_cmd_rows(snapshot)
 }
 
 #[cfg(test)]
@@ -3935,7 +4054,7 @@ mod slash_cmds_parse_tests {
             {"name":"/help","source":"builtin","description":"list commands","enabled":true},
             {"name":"/deploy","source":"operator","description":"","enabled":false}
         ]}"#;
-        let rows = parse_slash_cmds(json);
+        let rows = parse_slash_cmds(json).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -3951,10 +4070,23 @@ mod slash_cmds_parse_tests {
     }
 
     #[test]
-    fn malformed_input_yields_empty() {
-        assert!(parse_slash_cmds("not json").is_empty());
-        assert!(parse_slash_cmds("[]").is_empty());
-        assert!(parse_slash_cmds("{\"count\":0}").is_empty());
+    fn empty_is_distinct_from_malformed_or_inconsistent() {
+        assert!(
+            parse_slash_cmds(r#"{"count":0,"commands":[]}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(parse_slash_cmds("not json").is_err());
+        assert!(parse_slash_cmds("[]").is_err());
+        assert!(parse_slash_cmds("{\"count\":0}").is_err());
+        assert!(parse_slash_cmds(
+            r#"{"count":2,"commands":[{"name":"help","source":"builtin","description":"","enabled":true}]}"#
+        )
+        .is_err());
+        assert!(parse_slash_cmds(
+            r#"{"count":1,"commands":[{"name":"help","source":"builtin","description":"","enabled":true,"unexpected":1}]}"#
+        )
+        .is_err());
     }
 }
 
@@ -3969,7 +4101,7 @@ mod bg_jobs_parse_tests {
             {"id":"scan-2","status":"running","exit_code":null},
             {"id":"fail-3","status":"completed","exit_code":101}
         ]"#;
-        let rows = parse_bg_jobs(json);
+        let rows = parse_bg_jobs(json).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -3981,10 +4113,68 @@ mod bg_jobs_parse_tests {
     }
 
     #[test]
-    fn malformed_input_yields_empty() {
-        assert!(parse_bg_jobs("not json").is_empty());
-        assert!(parse_bg_jobs("{}").is_empty());
-        assert!(parse_bg_jobs("[{\"status\":\"running\"}]").is_empty());
+    fn empty_is_distinct_from_malformed_or_inconsistent() {
+        assert!(parse_bg_jobs("[]").unwrap().is_empty());
+        assert!(parse_bg_jobs("not json").is_err());
+        assert!(parse_bg_jobs("{}").is_err());
+        assert!(parse_bg_jobs("[{\"status\":\"running\"}]").is_err());
+        assert!(parse_bg_jobs(r#"[{"id":"build-1","status":"running","exit_code":0}]"#).is_err());
+        assert!(
+            parse_bg_jobs(
+                r#"[{"id":"build-1","status":"running","exit_code":null,"unexpected":1}]"#
+            )
+            .is_err()
+        );
+    }
+}
+
+#[cfg(test)]
+mod structured_load_truth_tests {
+    #[test]
+    fn cli_failures_and_invalid_payloads_are_wired_to_visible_invalid_states() {
+        let rust = include_str!("main.rs");
+        let slash_start = rust.find("GOLD-R4-05 — slash-command probe").unwrap();
+        let slash_end = rust[slash_start..]
+            .find("Research P0 — groundtruth probe")
+            .map(|offset| slash_start + offset)
+            .unwrap();
+        let slash = &rust[slash_start..slash_end];
+        assert!(slash.contains("run_neothd_json_action::<panel_logic::SlashCommandsWire>"));
+        assert!(slash.contains(".and_then(panel_logic::slash_cmd_rows)"));
+        assert!(slash.contains("set_slash_valid(true)"));
+        assert!(slash.contains("set_slash_valid(false)"));
+
+        let jobs_start = rust.find("CLI-parity — Background Jobs probe").unwrap();
+        let jobs_end = rust[jobs_start..]
+            .find("I13 — background-job submission")
+            .map(|offset| jobs_start + offset)
+            .unwrap();
+        let jobs = &rust[jobs_start..jobs_end];
+        assert!(jobs.contains("run_neothd_json_action::<Vec<panel_logic::BgJobWire>>"));
+        assert!(jobs.contains(".and_then(panel_logic::bg_job_rows)"));
+        assert!(jobs.contains("set_bg_jobs_valid(true)"));
+        assert!(jobs.contains("set_bg_jobs_valid(false)"));
+
+        let mesh_start = rust.find("fn refresh_mesh(").unwrap();
+        let mesh_end = rust[mesh_start..]
+            .find("Chat-surface consent strip probe")
+            .map(|offset| mesh_start + offset)
+            .unwrap();
+        let mesh = &rust[mesh_start..mesh_end];
+        assert!(mesh.contains("run_neothd_json_action::<Vec<panel_logic::MeshSyncWire>>"));
+        assert!(mesh.contains(".and_then(panel_logic::mesh_sync_rows)"));
+        assert!(mesh.contains("set_mesh_sync_valid(true)"));
+        assert!(mesh.contains("set_mesh_sync_valid(false)"));
+
+        let tabs = include_str!("../ui/tabs.slint");
+        assert!(tabs.contains("if !root.slash-valid"));
+        assert!(tabs.contains("if root.slash-valid && root.slash-cmds.length == 0"));
+        let bg = include_str!("../ui/bgjobs.slint");
+        assert!(bg.contains("if !root.bg-valid"));
+        assert!(bg.contains("if root.bg-valid && root.bg-jobs.length == 0"));
+        let mesh_ui = include_str!("../ui/mesh.slint");
+        assert!(mesh_ui.contains("if !root.mesh-sync-valid"));
+        assert!(mesh_ui.contains("if root.mesh-sync-valid && root.mesh-sync-rows.length == 0"));
     }
 }
 

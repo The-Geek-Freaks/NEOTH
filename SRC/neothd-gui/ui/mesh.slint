@@ -385,9 +385,11 @@ export component MeshView inherits Rectangle {
 
     // ── Typed conflict ledger ────────────────────────────────────────────────
     in property <[MeshConflictRow]> mesh-conflicts: [];
-    // F2 — durable per-peer sync rows (empty hides the card).
+    // F2 — durable per-peer sync rows with explicit valid/empty/invalid state.
     in property <[MeshSyncRow]> mesh-sync-rows: [];
     in property <string> syncing-peer: "";
+    in property <bool> mesh-sync-valid: true;
+    in property <string> mesh-sync-error: "";
     in property <int> mesh-conflict-count: 0;
     in property <bool> mesh-conflicts-valid: true;
     in property <string> mesh-conflicts-error: "";
@@ -819,7 +821,38 @@ export component MeshView inherits Rectangle {
                     }
 
                     // ── F2 — DURABLE SYNC STATE (per-peer WAL catch-up) ─────
-                    if root.mesh-sync-rows.length > 0: Card {
+                    if !root.mesh-sync-valid: Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Kicker { label: "SYNC STATE"; }
+                            Text {
+                                text: "Durable mesh sync state could not be loaded: " + root.mesh-sync-error;
+                                color: Theme.consent;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                wrap: word-wrap;
+                            }
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Durable mesh sync state invalid: " + root.mesh-sync-error;
+                        }
+                    }
+                    if root.mesh-sync-valid && root.mesh-sync-rows.length == 0: Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Kicker { label: "SYNC STATE"; }
+                            Text {
+                                text: "No durable mesh peer state yet.";
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                            }
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "Durable mesh sync state is empty";
+                        }
+                    }
+                    if root.mesh-sync-valid && root.mesh-sync-rows.length > 0: Card {
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;

@@ -503,6 +503,8 @@ export component SlashCmdsView inherits Rectangle {
     in property <[SlashCmdRow]> slash-cmds: [];
     in property <bool>   slash-loading: false;
     in property <string> slash-refreshed-at: "";
+    in property <bool>   slash-valid: true;
+    in property <string> slash-error: "";
 
     callback slash-refresh();
 
@@ -539,10 +541,29 @@ export component SlashCmdsView inherits Rectangle {
                 }
             }
 
-            if root.slash-cmds.length == 0: EmptyState {
+            if !root.slash-valid: Rectangle {
+                min-height: 54px;
+                border-radius: Theme.radius-sm;
+                background: Theme.consent-tint;
+                border-width: 1px;
+                border-color: Theme.consent;
+                Text {
+                    text: "Slash commands could not be loaded: " + root.slash-error;
+                    color: Theme.consent;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-2xs;
+                    wrap: word-wrap;
+                    x: 10px;
+                    y: 10px;
+                    width: parent.width - 20px;
+                }
+                accessible-role: AccessibleRole.text;
+                accessible-label: "Slash commands invalid: " + root.slash-error;
+            }
+            if root.slash-valid && root.slash-cmds.length == 0: EmptyState {
                 glyph: "⧸";
                 title: "No slash commands loaded";
-                hint: "hit Refresh — builtins alone should list 24 commands";
+                hint: "The CLI returned a valid empty command registry.";
             }
             for c in root.slash-cmds: SlashCmdCard { cmd: c; }
 

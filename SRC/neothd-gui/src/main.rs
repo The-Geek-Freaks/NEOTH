@@ -3954,50 +3954,43 @@ fn main() -> Result<()> {
         w0.set_slash_running(true);
         let weak = weak_slash.clone();
         std::thread::spawn(move || {
-            let output = match which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("slash")
-                    .arg("list")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .ok()
-            }) {
-                Some(o) => {
-                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    if !err.trim().is_empty() {
-                        s.push('\n');
-                        s.push_str(&err);
-                    }
-                    if s.trim().is_empty() {
-                        "no slash commands registered.".to_string()
-                    } else {
-                        s
-                    }
-                }
-                None => "neothd binary not on PATH — cannot list slash commands.".to_string(),
-            };
-            // I14 — structured model beside the raw dump (SlashCmdsView).
-            let rows = panel_logic::parse_slash_cmds(&output);
+            let result = run_neothd_json_action::<panel_logic::SlashCommandsWire>(
+                &["slash", "list"],
+                "Slash command list",
+            )
+            .and_then(panel_logic::slash_cmd_rows);
             let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
                 use slint::VecModel;
                 if let Some(w) = weak.upgrade() {
-                    let model: Vec<SlashCmdRow> = rows
-                        .into_iter()
-                        .map(|(name, source, description, enabled)| SlashCmdRow {
-                            name: name.into(),
-                            source: source.into(),
-                            description: description.into(),
-                            enabled,
-                        })
-                        .collect();
-                    w.set_slash_cmds_model(slint::ModelRc::new(std::rc::Rc::new(
-                        VecModel::from(model),
-                    )));
-                    w.set_slash_refreshed_at(ts.as_str().into());
-                    w.set_slash_output(output.into());
+                    match result {
+                        Ok(rows) => {
+                            let count = rows.len();
+                            let model: Vec<SlashCmdRow> = rows
+                                .into_iter()
+                                .map(|(name, source, description, enabled)| SlashCmdRow {
+                                    name: name.into(),
+                                    source: source.into(),
+                                    description: description.into(),
+                                    enabled,
+                                })
+                                .collect();
+                            w.set_slash_cmds_model(slint::ModelRc::new(std::rc::Rc::new(
+                                VecModel::from(model),
+                            )));
+                            w.set_slash_refreshed_at(ts.as_str().into());
+                            w.set_slash_output(format!("{count} slash command(s) loaded").into());
+                            w.set_slash_valid(true);
+                            w.set_slash_error("".into());
+                        }
+                        Err(error) => {
+                            // Preserve the last verified model; an invalid
+                            // refresh is not evidence that the registry is empty.
+                            w.set_slash_output(error.as_str().into());
+                            w.set_slash_valid(false);
+                            w.set_slash_error(error.into());
+                        }
+                    }
                     w.set_slash_running(false);
                 }
             });
@@ -4509,49 +4502,44 @@ fn main() -> Result<()> {
         w0.set_bg_jobs_running(true);
         let weak = weak_bg_jobs.clone();
         std::thread::spawn(move || {
-            let output = match which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("jobs")
-                    .arg("--bg")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .ok()
-            }) {
-                Some(o) => {
-                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    if !err.trim().is_empty() {
-                        s.push('\n');
-                        s.push_str(&err);
-                    }
-                    if s.trim().is_empty() {
-                        "no background jobs (start one: neoth jobs --run \"<command>\").".to_string()
-                    } else {
-                        s
-                    }
-                }
-                None => "neothd binary not on PATH — cannot load background jobs.".to_string(),
-            };
-            // I13 — structured model beside the raw dump (BgJobsView cards).
-            let rows = panel_logic::parse_bg_jobs(&output);
+            let result = run_neothd_json_action::<Vec<panel_logic::BgJobWire>>(
+                &["jobs", "--bg"],
+                "Background job list",
+            )
+            .and_then(panel_logic::bg_job_rows);
             let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
                 use slint::VecModel;
                 if let Some(w) = weak.upgrade() {
-                    let model: Vec<BgJobRow> = rows
-                        .into_iter()
-                        .map(|(id, status, exit)| BgJobRow {
-                            id: id.into(),
-                            status: status.into(),
-                            exit_code: exit.into(),
-                        })
-                        .collect();
-                    w.set_bg_jobs_model(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
-                        model,
-                    ))));
-                    w.set_bg_jobs_refreshed_at(ts.as_str().into());
-                    w.set_bg_jobs_output(output.into());
+                    match result {
+                        Ok(rows) => {
+                            let count = rows.len();
+                            let model: Vec<BgJobRow> = rows
+                                .into_iter()
+                                .map(|(id, status, exit)| BgJobRow {
+                                    id: id.into(),
+                                    status: status.into(),
+                                    exit_code: exit.into(),
+                                })
+                                .collect();
+                            w.set_bg_jobs_model(slint::ModelRc::new(std::rc::Rc::new(
+                                VecModel::from(model),
+                            )));
+                            w.set_bg_jobs_refreshed_at(ts.as_str().into());
+                            w.set_bg_jobs_output(
+                                format!("{count} background job(s) loaded").into(),
+                            );
+                            w.set_bg_jobs_valid(true);
+                            w.set_bg_jobs_error("".into());
+                        }
+                        Err(error) => {
+                            // Preserve the last verified model; a failed CLI
+                            // read must not masquerade as an empty registry.
+                            w.set_bg_jobs_output(error.as_str().into());
+                            w.set_bg_jobs_valid(false);
+                            w.set_bg_jobs_error(error.into());
+                        }
+                    }
                     w.set_bg_jobs_running(false);
                 }
             });
@@ -15675,9 +15663,13 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     let swarm_out = run_neothd_probe(&["cluster", "swarm", "--output", "json"]);
     let swarm_nodes = panel_logic::parse_swarm_nodes(&swarm_out);
     let gossip_lines = panel_logic::format_gossip_lines(&foreign_out, 60);
-    // F2 — durable per-peer sync cursors/ACKs (empty on non-cluster builds).
-    let sync_out = run_neothd_probe(&["cluster", "sync-state", "--output", "json"]);
-    let sync_rows = panel_logic::parse_mesh_sync(&sync_out);
+    // F2 — durable per-peer sync cursors/ACKs. Process, schema and row
+    // invariants stay separate from the honest empty state.
+    let sync_result = run_neothd_json_action::<Vec<panel_logic::MeshSyncWire>>(
+        &["cluster", "sync-state"],
+        "Mesh sync state",
+    )
+    .and_then(panel_logic::mesh_sync_rows);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -15795,22 +15787,33 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                 .as_str()
                 .into(),
         );
-        // F2 — durable sync-state table.
-        let sync_model: Vec<MeshSyncRow> = sync_rows
-            .into_iter()
-            .map(|r| MeshSyncRow {
-                peer: r.peer_short.into(),
-                acked: r.acked.into(),
-                pending: r.pending.into(),
-                inbound_next: r.inbound_next.into(),
-                cursor: r.cursor.into(),
-                request: r.request.into(),
-                last_error: r.last_error.into(),
-            })
-            .collect();
-        w.set_mesh_sync_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
-            sync_model,
-        ))));
+        // F2 — durable sync-state table. Retain the last verified rows when
+        // the CLI or schema fails; invalid is never rendered as empty.
+        match sync_result {
+            Ok(sync_rows) => {
+                let sync_model: Vec<MeshSyncRow> = sync_rows
+                    .into_iter()
+                    .map(|r| MeshSyncRow {
+                        peer: r.peer_short.into(),
+                        acked: r.acked.into(),
+                        pending: r.pending.into(),
+                        inbound_next: r.inbound_next.into(),
+                        cursor: r.cursor.into(),
+                        request: r.request.into(),
+                        last_error: r.last_error.into(),
+                    })
+                    .collect();
+                w.set_mesh_sync_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                    sync_model,
+                ))));
+                w.set_mesh_sync_valid(true);
+                w.set_mesh_sync_error("".into());
+            }
+            Err(error) => {
+                w.set_mesh_sync_valid(false);
+                w.set_mesh_sync_error(error.into());
+            }
+        }
         w.set_mesh_refreshed_at(ts.as_str().into());
     });
 }
