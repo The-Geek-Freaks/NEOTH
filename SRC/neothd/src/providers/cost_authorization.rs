@@ -3935,6 +3935,9 @@ mod tests {
         while let Some(item) = stream.next().await {
             item.unwrap();
         }
+        // The decorator owns an authorizer clone and therefore a WAL sender.
+        // Release it before this test joins the writer shutdown below.
+        drop(done_provider);
 
         let eof_inner = ScriptedStreamProvider {
             behavior: StreamBehavior::Eof,
@@ -3949,6 +3952,7 @@ mod tests {
         assert!(stream.next().await.unwrap().is_ok());
         assert!(stream.next().await.unwrap().is_err());
         assert!(stream.next().await.is_none());
+        drop(eof_provider);
 
         let error_inner = ScriptedStreamProvider {
             behavior: StreamBehavior::Error,
