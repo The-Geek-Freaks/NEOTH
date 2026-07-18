@@ -876,6 +876,7 @@ export component MainWindow inherits Window {
     in property <[MeshForeignRow]> mesh-foreign-rows: [];
     // F2 — durable per-peer sync state rows.
     in property <[MeshSyncRow]> mesh-sync-rows: [];
+    in property <string>          mesh-syncing-peer: "";
     in property <int>             mesh-foreign-total: 0;
     in property <string>          mesh-foreign-bytes: "";
     in property <int>             mesh-foreign-peers: 0;
@@ -4208,6 +4209,7 @@ export component MainWindow inherits Window {
                     mesh-gossip-note: root.mesh-gossip-note;
                     mesh-foreign-rows: root.mesh-foreign-rows;
                     mesh-sync-rows: root.mesh-sync-rows;
+                    syncing-peer: root.mesh-syncing-peer;
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;

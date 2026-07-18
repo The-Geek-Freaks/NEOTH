@@ -82,6 +82,7 @@ component PeerCard inherits Rectangle {
     in property <string> version;
     in property <int>    staleness-secs;
     in property <bool>   expanded;
+    in property <bool>   syncing: false;
 
     callback sync-clicked();
     callback expand-clicked();
@@ -271,9 +272,10 @@ component PeerCard inherits Rectangle {
                 height: 28px;
 
                 NeothButton {
-                    label: "Request Sync";
+                    label: root.syncing ? "Queuing…" : "Request Sync";
                     size: "sm";
                     primary: false;
+                    enabled: !root.syncing;
                     clicked => { root.sync-clicked(); }
                 }
 
@@ -385,6 +387,7 @@ export component MeshView inherits Rectangle {
     in property <[MeshConflictRow]> mesh-conflicts: [];
     // F2 — durable per-peer sync rows (empty hides the card).
     in property <[MeshSyncRow]> mesh-sync-rows: [];
+    in property <string> syncing-peer: "";
     in property <int> mesh-conflict-count: 0;
     in property <bool> mesh-conflicts-valid: true;
     in property <string> mesh-conflicts-error: "";
@@ -770,6 +773,7 @@ export component MeshView inherits Rectangle {
                                 version: peer.version;
                                 staleness-secs: peer.staleness-secs;
                                 expanded: root.expanded-peer == peer.id;
+                                syncing: root.syncing-peer == peer.id;
                                 sync-clicked => { root.peer-sync-clicked(peer.id); }
                                 expand-clicked => { root.peer-expanded(peer.id); }
                                 context-menu(id, x, y) => { root.mesh-peer-ctx(id, x, y); }

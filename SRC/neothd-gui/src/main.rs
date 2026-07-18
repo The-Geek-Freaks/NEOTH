@@ -6666,28 +6666,59 @@ fn main() -> Result<()> {
             }
         });
 
-        // Wave 5 — per-peer sync-state query: vector-clock delta for one
-        // authenticated peer, surfaced as a toast (read-only probe).
+        // Force Sync — enqueue one exact paired peer through the typed CLI
+        // mutation contract. The durable queue already coalesces requests;
+        // this GUI singleflight also prevents duplicate subprocesses/clicks.
         let weak_mesh_sync = window.as_weak();
+        let mesh_sync_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         window.on_mesh_peer_sync_clicked(move |peer_id| {
-            let weak = weak_mesh_sync.clone();
             let peer = peer_id.to_string();
+            if mesh_sync_in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                push_toast(
+                    &weak_mesh_sync,
+                    "info",
+                    "Mesh sync already running",
+                    "Wait for the current peer request to finish.",
+                );
+                return;
+            }
+            if let Some(w) = weak_mesh_sync.upgrade() {
+                w.set_mesh_syncing_peer(peer.as_str().into());
+            }
+            let weak = weak_mesh_sync.clone();
+            let done = mesh_sync_in_flight.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&[
-                    "cluster",
-                    "sync-state",
-                    "--peer",
-                    peer.as_str(),
-                    "--output",
-                    "json",
-                ]);
-                let summary: String = out.trim().chars().take(160).collect();
-                let body = if summary.is_empty() {
-                    "no sync state reported".to_string()
-                } else {
-                    summary
-                };
-                push_toast(&weak, "info", "Peer sync state", &body);
+                let result = run_neothd_json_action::<gui_action::ClusterRequestSyncAck>(
+                    &["cluster", "request-sync", "--peer", peer.as_str()],
+                    "Mesh sync request",
+                )
+                .and_then(|ack| {
+                    ack.verify(&peer)?;
+                    Ok(ack)
+                });
+                match result {
+                    Ok(ack) => {
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Mesh sync queued",
+                            &format!(
+                                "Queued exact peer {} until {}.",
+                                ack.peer_pk, ack.expires_at
+                            ),
+                        );
+                        // Refresh only after exit status, schema and exact
+                        // operation/peer/state binding were all verified.
+                        refresh_mesh(weak.clone());
+                    }
+                    Err(error) => push_toast(&weak, "error", "Mesh sync failed", &error),
+                }
+                done.store(false, std::sync::atomic::Ordering::Release);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_mesh_syncing_peer("".into());
+                    }
+                });
             });
         });
 

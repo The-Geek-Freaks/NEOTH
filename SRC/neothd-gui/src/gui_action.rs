@@ -819,6 +819,56 @@ impl ClusterConflictResolveAck {
     }
 }
 
+/// Exact `neoth cluster request-sync --peer <peer> --output json` receipt.
+/// The GUI may refresh mesh state only after this receipt is bound to the
+/// requested peer and the durable queue's initial state.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterRequestSyncAck {
+    pub operation: String,
+    pub peer_pk: String,
+    pub state: String,
+    pub requested_at: i64,
+    pub expires_at: i64,
+    pub updated_at: i64,
+    pub last_attempt_at: Option<i64>,
+    pub send_attempts: u64,
+    pub last_error: Option<String>,
+}
+
+impl ClusterRequestSyncAck {
+    pub fn verify(&self, expected_peer: &str) -> Result<(), String> {
+        if self.operation != "cluster.request-sync" {
+            return Err(format!(
+                "mesh sync receipt has unexpected operation `{}`",
+                self.operation
+            ));
+        }
+        if self.peer_pk != expected_peer {
+            return Err(format!(
+                "mesh sync receipt peer `{}` does not match requested peer `{expected_peer}`",
+                self.peer_pk
+            ));
+        }
+        if self.state != "queued" {
+            return Err(format!(
+                "mesh sync receipt has unexpected state `{}`",
+                self.state
+            ));
+        }
+        if self.requested_at <= 0
+            || self.updated_at != self.requested_at
+            || self.expires_at <= self.requested_at
+        {
+            return Err("mesh sync receipt contains invalid timestamps".to_string());
+        }
+        if self.last_attempt_at.is_some() || self.send_attempts != 0 || self.last_error.is_some() {
+            return Err("mesh sync receipt contains impossible queue progress".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterMdnsAck {
@@ -3146,6 +3196,67 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn cluster_request_sync_receipt_binds_operation_peer_state_and_queue_progress() {
+        let peer = "ab".repeat(32);
+        let raw = format!(
+            r#"{{"operation":"cluster.request-sync","peer_pk":"{peer}","state":"queued","requested_at":1700000000,"expires_at":1700000030,"updated_at":1700000000,"last_attempt_at":null,"send_attempts":0,"last_error":null}}"#
+        );
+        let ack: ClusterRequestSyncAck = serde_json::from_str(&raw).unwrap();
+        ack.verify(&peer).unwrap();
+
+        for invalid in [
+            raw.replacen("cluster.request-sync", "cluster.sync-state", 1),
+            raw.replacen(&peer, &"cd".repeat(32), 1),
+            raw.replacen("\"queued\"", "\"active\"", 1),
+            raw.replacen("\"send_attempts\":0", "\"send_attempts\":1", 1),
+        ] {
+            let invalid_ack: ClusterRequestSyncAck = serde_json::from_str(&invalid).unwrap();
+            assert!(invalid_ack.verify(&peer).is_err());
+        }
+        assert!(
+            serde_json::from_str::<ClusterRequestSyncAck>(&raw.replacen(
+                "}",
+                ",\"unexpected\":true}",
+                1
+            ))
+            .is_err(),
+            "mesh sync receipts must reject uncontracted fields"
+        );
+    }
+
+    #[test]
+    fn mesh_force_sync_gui_is_singleflight_and_refreshes_only_after_verified_receipt() {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("Force Sync — enqueue one exact paired peer")
+            .expect("mesh request callback marker");
+        let end = source[start..]
+            .find("L73 — mesh peer context menu: copy peer ID")
+            .map(|offset| start + offset)
+            .expect("mesh request callback end marker");
+        let callback = &source[start..end];
+
+        assert!(callback.contains("AtomicBool::new(false)"));
+        assert!(callback.contains("swap(true, std::sync::atomic::Ordering::AcqRel)"));
+        assert!(callback.contains("run_neothd_json_action::<gui_action::ClusterRequestSyncAck>"));
+        assert!(callback.contains("\"request-sync\""));
+        assert!(callback.contains("ack.verify(&peer)?"));
+        assert!(callback.contains("done.store(false"));
+        let verified = callback.find("ack.verify(&peer)?").unwrap();
+        let refresh = callback.find("refresh_mesh(weak.clone())").unwrap();
+        assert!(
+            verified < refresh,
+            "refresh must follow receipt verification"
+        );
+        for stale_path in ["\"sync-state\"", "run_neothd_probe("] {
+            assert!(
+                !callback.contains(stale_path),
+                "force sync regressed to the old read-only path: {stale_path}"
+            );
+        }
     }
 
     #[test]
