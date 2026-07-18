@@ -12625,9 +12625,6 @@ mod tests {
             None,
             authorized_source,
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
-            // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
-            vec![],
-            vec![],
         )
         .await;
 
@@ -12757,8 +12754,6 @@ mod tests {
             None,
             "cli",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
-            vec![],
-            vec![],
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
@@ -12874,9 +12869,6 @@ mod tests {
             override_effort,
             "provider_default",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
-            // GOLD-CCPARITY-SA-DENY-01: no sub-agent in test helper.
-            vec![],
-            vec![],
         )
         .await;
 
