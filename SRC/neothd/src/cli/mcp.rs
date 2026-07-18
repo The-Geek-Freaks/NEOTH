@@ -347,6 +347,13 @@ async fn run_call(
         Err(GateError::SkillAllowlistBlocked { .. }) => {
             anyhow::bail!("MCP `{server_id}::{tool}` blocked by an active skill's tool_allowlist");
         }
+        // GOLD-CCPARITY-SA-ALLOW-01 — the direct CLI call has no
+        // sub-agent context, so this is unreachable here. Keep the
+        // fail-closed diagnostic explicit when the gate grows a new
+        // agent-scoped allowlist outcome.
+        Err(GateError::AgentAllowlistBlocked { .. }) => {
+            anyhow::bail!("MCP `{server_id}::{tool}` blocked by sub-agent allowedTools allowlist");
+        }
         // GOLD-CCPARITY-SA-DENY-01 — `neoth mcp call` has no sub-agent
         // context, so this variant is unreachable here; arm keeps the
         // match exhaustive after the variant was added for the
