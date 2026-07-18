@@ -27,6 +27,7 @@ use base64::Engine;
 /// then immediately spawns the `neoth autonomy full-auto --gui-token <t>` call,
 /// so a couple of minutes is generous while keeping the pre-bake window tiny.
 pub const FULLAUTO_TOKEN_TTL: Duration = Duration::from_secs(120);
+pub const JOBS_RUN_TOKEN_TTL: Duration = Duration::from_secs(120);
 
 #[derive(Debug)]
 struct StoredToken {
@@ -34,17 +35,31 @@ struct StoredToken {
     expires: Instant,
 }
 
-/// At-most-one outstanding FULL-AUTO token. A fresh `mint` replaces any prior
-/// (un-consumed) token, so a token is never reusable and never accumulates.
+#[derive(Debug)]
+struct StoredBoundToken {
+    token: String,
+    request_binding_sha256: String,
+    expires: Instant,
+}
+
+#[derive(Debug, Default)]
+struct TokenSlots {
+    fullauto: Option<StoredToken>,
+    jobs_run: Option<StoredBoundToken>,
+}
+
+/// At most one outstanding token per approval domain. A fresh mint replaces
+/// only the prior token in that domain, so tokens never accumulate while a
+/// jobs confirmation cannot invalidate a simultaneous FULL-AUTO confirmation.
 #[derive(Debug, Default)]
 pub struct FullAutoTokenStore {
-    inner: Mutex<Option<StoredToken>>,
+    inner: Mutex<TokenSlots>,
 }
 
 impl FullAutoTokenStore {
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(None),
+            inner: Mutex::new(TokenSlots::default()),
         }
     }
 
@@ -60,7 +75,7 @@ impl FullAutoTokenStore {
         }
         let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
         let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = Some(StoredToken {
+        guard.fullauto = Some(StoredToken {
             token: token.clone(),
             expires: Instant::now() + ttl,
         });
@@ -74,21 +89,84 @@ impl FullAutoTokenStore {
     /// legitimate pending token).
     pub fn consume(&self, candidate: &str, now: Instant) -> bool {
         let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let Some(stored) = guard.as_ref() else {
+        let Some(stored) = guard.fullauto.as_ref() else {
             return false;
         };
         if now >= stored.expires {
             // Expired → clear it (no point keeping a dead token) + reject.
-            *guard = None;
+            guard.fullauto = None;
             return false;
         }
         if crate::n8n_api::constant_time_token_eq(candidate, &stored.token) {
-            *guard = None; // single-use
+            guard.fullauto = None; // single-use
             true
         } else {
             false // wrong guess — keep the legitimate pending token
         }
     }
+
+    /// Mint a short-lived, single-use GUI confirmation token bound to one
+    /// exact `jobs --run` request digest. It occupies a separate slot from the
+    /// FULL-AUTO token, so independent confirmation dialogs cannot invalidate
+    /// each other.
+    pub fn mint_jobs_run(&self, request_binding_sha256: &str, ttl: Duration) -> Option<String> {
+        if !valid_sha256_hex(request_binding_sha256) {
+            return None;
+        }
+        let mut raw = [0u8; 32];
+        if getrandom::getrandom(&mut raw).is_err() {
+            tracing::error!("OS RNG unavailable — refusing to mint a weak jobs-run token");
+            return None;
+        }
+        let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
+        let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        guard.jobs_run = Some(StoredBoundToken {
+            token: token.clone(),
+            request_binding_sha256: request_binding_sha256.to_owned(),
+            expires: Instant::now() + ttl,
+        });
+        Some(token)
+    }
+
+    /// Consume the jobs-run token only when both the token and exact request
+    /// binding match. A wrong token or binding does not burn the legitimate
+    /// pending approval; a successful match is single-use.
+    pub fn consume_jobs_run(
+        &self,
+        candidate: &str,
+        request_binding_sha256: &str,
+        now: Instant,
+    ) -> bool {
+        if !valid_sha256_hex(request_binding_sha256) {
+            return false;
+        }
+        let mut guard = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let Some(stored) = guard.jobs_run.as_ref() else {
+            return false;
+        };
+        if now >= stored.expires {
+            guard.jobs_run = None;
+            return false;
+        }
+        if crate::n8n_api::constant_time_token_eq(candidate, &stored.token)
+            && crate::n8n_api::constant_time_token_eq(
+                request_binding_sha256,
+                &stored.request_binding_sha256,
+            )
+        {
+            guard.jobs_run = None;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+fn valid_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -139,5 +217,34 @@ mod tests {
         // The OLD token is dead after a re-mint.
         assert!(!store.consume(&old, Instant::now()));
         assert!(store.consume(&new, Instant::now()));
+    }
+
+    #[test]
+    fn jobs_token_is_request_bound_single_use_and_separate_from_fullauto() {
+        let store = FullAutoTokenStore::new();
+        let fullauto = store.mint(FULLAUTO_TOKEN_TTL).expect("fullauto mint");
+        let binding = "ab".repeat(32);
+        let jobs = store
+            .mint_jobs_run(&binding, FULLAUTO_TOKEN_TTL)
+            .expect("jobs mint");
+
+        assert!(!store.consume_jobs_run(&jobs, &"cd".repeat(32), Instant::now()));
+        assert!(store.consume_jobs_run(&jobs, &binding, Instant::now()));
+        assert!(!store.consume_jobs_run(&jobs, &binding, Instant::now()));
+        assert!(
+            store.consume(&fullauto, Instant::now()),
+            "jobs approval must not replace the independent FULL-AUTO token"
+        );
+    }
+
+    #[test]
+    fn jobs_token_rejects_malformed_binding() {
+        let store = FullAutoTokenStore::new();
+        assert!(
+            store
+                .mint_jobs_run("not-a-sha256", FULLAUTO_TOKEN_TTL)
+                .is_none()
+        );
+        assert!(!store.consume_jobs_run("token", "A".repeat(64).as_str(), Instant::now()));
     }
 }

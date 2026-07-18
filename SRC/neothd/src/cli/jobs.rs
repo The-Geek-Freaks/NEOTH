@@ -8,15 +8,19 @@
 //! For now operators can drop a job into jobs.yaml and `neoth serve` picks it
 //! up on next restart.
 
+use std::io::{ErrorKind, IsTerminal};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tracing::info;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::cron::JobsFile;
+use crate::permissions::{Action, ConfirmStrategy, Decision, Gate, PermissionAuditSink, evaluate};
 
 #[derive(Args, Debug, Clone)]
 pub struct JobsArgs {
@@ -52,9 +56,24 @@ pub struct JobsArgs {
     pub run: Option<String>,
 
     /// Optional label for the `--run` job id (sanitised to `[a-z0-9_-]`;
-    /// default `job`). The on-disk id is `<label>-<unix_ts>`.
+    /// default `job`). The on-disk id is `<label>-<unix_ts>-<random>`.
     #[arg(long, value_name = "NAME", requires = "run")]
     pub label: Option<String>,
+
+    /// Internal GUI handshake: after the graphical confirmation dialog, re-read
+    /// live policy and mint a mandatory-audited short-lived approval for the
+    /// exact `--run` request. Same-UID operator authority; never overrides Deny.
+    #[arg(
+        long,
+        requires = "run",
+        conflicts_with = "gui_approval_token",
+        hide = true
+    )]
+    pub approve_run: bool,
+
+    /// Internal GUI handshake token returned by `--approve-run`.
+    #[arg(long, value_name = "TOKEN", requires = "run", hide = true)]
+    pub gui_approval_token: Option<String>,
 
     /// GOLD-ADAPT-ODY-07b — list the detached background jobs in
     /// `~/.neoth/bgjobs/` with their status (running / completed + exit code).
@@ -72,7 +91,17 @@ pub async fn run_jobs(args: JobsArgs) -> Result<()> {
     // bg_monitor watches (NOT jobs.yaml), so handle them before the jobs.yaml
     // load + existence check.
     if let Some(command) = args.run.as_deref() {
-        return run_bg_job(command, args.label.as_deref().unwrap_or("job"), &args.output);
+        let label = args.label.as_deref().unwrap_or("job");
+        if args.approve_run {
+            return approve_bg_job(command, label, &args.output).await;
+        }
+        return run_bg_job(
+            command,
+            label,
+            args.gui_approval_token.as_deref(),
+            &args.output,
+        )
+        .await;
     }
     if args.bg {
         return list_bg_jobs(&args.output);
@@ -333,14 +362,22 @@ fn bg_wrapper_argv(command: &str, log: &Path, exit: &Path) -> (String, Vec<Strin
     }
 }
 
+const BG_COMMAND_MAX_BYTES: usize = 32 * 1024;
+const BG_LABEL_MAX_BYTES: usize = 64;
+const BG_ID_RANDOM_BYTES: usize = 16;
+const BG_ID_RESERVATION_ATTEMPTS: usize = 16;
+const BG_JOB_ACTION: &str = "jobs_run";
+const BG_JOB_AUDIT_REQUIRED: bool = true;
+
 /// Sanitise a job label to the `[a-z0-9_-]` shape the registry uses as a file
-/// stem (a label becomes part of `<label>-<ts>.log`). Empty → `job`.
+/// stem (a label becomes part of `<label>-<ts>-<random>.log`). Empty → `job`.
 fn sanitise_label(label: &str) -> String {
     let s: String = label
+        .trim()
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
+                c.to_ascii_lowercase()
             } else {
                 '-'
             }
@@ -349,68 +386,415 @@ fn sanitise_label(label: &str) -> String {
     if s.is_empty() { "job".to_string() } else { s }
 }
 
+#[derive(Debug, Clone)]
+struct BgJobRequest {
+    command: String,
+    label: String,
+    instance: String,
+    request_binding_sha256: String,
+}
+
+#[derive(Serialize)]
+struct BgJobRequestBinding<'a> {
+    action: &'static str,
+    command: &'a str,
+    label: &'a str,
+    instance: &'a str,
+}
+
+impl BgJobRequest {
+    fn new(command: &str, label: &str, instance_home: &Path) -> Result<Self> {
+        let command = command.trim();
+        anyhow::ensure!(!command.is_empty(), "--run requires a non-empty command");
+        anyhow::ensure!(
+            command.len() <= BG_COMMAND_MAX_BYTES,
+            "--run command is {} bytes; maximum is {BG_COMMAND_MAX_BYTES}",
+            command.len()
+        );
+        anyhow::ensure!(!command.contains('\0'), "--run command contains a NUL byte");
+        anyhow::ensure!(
+            label.len() <= BG_LABEL_MAX_BYTES,
+            "--label is {} bytes; maximum is {BG_LABEL_MAX_BYTES}",
+            label.len()
+        );
+
+        let command = command.to_owned();
+        let label = sanitise_label(label);
+        let instance = canonical_instance(instance_home)?;
+        let request_binding_sha256 = request_binding_sha256(&command, &label, &instance)?;
+        Ok(Self {
+            command,
+            label,
+            instance,
+            request_binding_sha256,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BgJobReceipt {
+    action: String,
+    started: bool,
+    id: String,
+    pid: u32,
+    log_path: String,
+    request_binding_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BgRunApprovalReceipt {
+    action: String,
+    approved: bool,
+    request_binding_sha256: String,
+    token: String,
+}
+
+impl BgJobReceipt {
+    fn is_bound_to(&self, request: &BgJobRequest) -> bool {
+        let Ok(expected) =
+            request_binding_sha256(&request.command, &request.label, &request.instance)
+        else {
+            return false;
+        };
+        self.action == BG_JOB_ACTION
+            && self.started
+            && request.request_binding_sha256 == expected
+            && self.request_binding_sha256 == expected
+    }
+}
+
+fn canonical_instance(instance_home: &Path) -> Result<String> {
+    let absolute = std::path::absolute(instance_home).with_context(|| {
+        format!(
+            "resolve background-job instance {}",
+            instance_home.display()
+        )
+    })?;
+    let path = match absolute.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(error) if error.kind() == ErrorKind::NotFound => absolute,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "canonicalize background-job instance {}",
+                    absolute.display()
+                )
+            });
+        }
+    };
+    let instance = path.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let instance = instance.replace('\\', "/").to_ascii_lowercase();
+    Ok(instance)
+}
+
+fn request_binding_sha256(command: &str, label: &str, instance: &str) -> Result<String> {
+    let canonical = serde_json::to_vec(&BgJobRequestBinding {
+        action: BG_JOB_ACTION,
+        command,
+        label,
+        instance,
+    })
+    .context("serialize canonical background-job request binding")?;
+    Ok(hex::encode(Sha256::digest(canonical)))
+}
+
+fn interactive_confirm_strategy() -> ConfirmStrategy {
+    if std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
+        ConfirmStrategy::Tty
+    } else {
+        ConfirmStrategy::FailClosed
+    }
+}
+
+fn jobs_daemon_is_live() -> Result<bool> {
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .with_context(|| format!("inspect daemon pidfile {}", pidfile.display()))
+        .map(|pid| pid.is_some())
+}
+
+fn fill_os_random(bytes: &mut [u8]) -> Result<()> {
+    getrandom::getrandom(bytes)
+        .map_err(|error| anyhow::anyhow!("background job id RNG unavailable: {error}"))
+}
+
+fn reserve_bg_job_log(
+    bgjobs_dir: &Path,
+    label: &str,
+    now_unix: u64,
+    random: &mut dyn FnMut(&mut [u8]) -> Result<()>,
+) -> Result<(crate::daemon::bg_jobs::BgJobId, PathBuf)> {
+    for _ in 0..BG_ID_RESERVATION_ATTEMPTS {
+        let mut nonce = [0_u8; BG_ID_RANDOM_BYTES];
+        random(&mut nonce)?;
+        let id =
+            crate::daemon::bg_jobs::BgJobId(format!("{label}-{now_unix}-{}", hex::encode(nonce)));
+        let log = bgjobs_dir.join(format!("{}.log", id.as_str()));
+        match crate::util::atomic_write::write_private_create_new(&log, b"") {
+            Ok(()) => return Ok((id, log)),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("reserve background job log {}", log.display()));
+            }
+        }
+    }
+    anyhow::bail!(
+        "could not reserve a unique background job id after {BG_ID_RESERVATION_ATTEMPTS} attempts"
+    )
+}
+
+fn spawn_detached(program: &str, args: &[String]) -> std::io::Result<u32> {
+    std::process::Command::new(program)
+        .args(args)
+        .spawn()
+        .map(|child| child.id())
+}
+
+async fn execute_bg_job_with(
+    request: &BgJobRequest,
+    policy: crate::permissions::AutonomyPolicySnapshot,
+    confirm: ConfirmStrategy,
+    preconfirmed_source: Option<&'static str>,
+    audit_sink: PermissionAuditSink<'_>,
+    audit_required: bool,
+    bgjobs_dir: &Path,
+    random: &mut dyn FnMut(&mut [u8]) -> Result<()>,
+    spawn: impl FnOnce(&str, &[String]) -> std::io::Result<u32>,
+) -> Result<BgJobReceipt> {
+    let mut gate = Gate::for_policy(policy).with_confirm(confirm);
+    if let Some(source) = preconfirmed_source {
+        gate = gate.with_preconfirmed_confirmation(source);
+    }
+    gate.check_with_audit_sink(
+        &Action::ExecArbitrary,
+        audit_sink,
+        audit_required,
+        Some(&request.request_binding_sha256),
+    )
+    .await
+    .context("background job permission gate denied the request")?;
+
+    std::fs::create_dir_all(bgjobs_dir)
+        .with_context(|| format!("create background jobs directory {}", bgjobs_dir.display()))?;
+    let (id, log) = reserve_bg_job_log(
+        bgjobs_dir,
+        &request.label,
+        crate::time::now_unix_secs(),
+        random,
+    )?;
+    let exit = bgjobs_dir.join(format!("{}.exit", id.as_str()));
+    let (program, wrapper_args) = bg_wrapper_argv(&request.command, &log, &exit);
+    let pid = match spawn(&program, &wrapper_args) {
+        Ok(pid) => pid,
+        Err(spawn_error) => {
+            if let Err(cleanup_error) = std::fs::remove_file(&log) {
+                anyhow::bail!(
+                    "spawn detached job via `{program}` failed: {spawn_error}; cleanup of reserved log {} also failed: {cleanup_error}",
+                    log.display()
+                );
+            }
+            return Err(spawn_error).with_context(|| format!("spawn detached job via `{program}`"));
+        }
+    };
+
+    Ok(BgJobReceipt {
+        action: BG_JOB_ACTION.to_owned(),
+        started: true,
+        id: id.as_str().to_owned(),
+        pid,
+        log_path: log.display().to_string(),
+        request_binding_sha256: request.request_binding_sha256.clone(),
+    })
+}
+
+async fn approve_bg_job(command: &str, label: &str, output: &OutputFormat) -> Result<()> {
+    anyhow::ensure!(
+        matches!(output, OutputFormat::Json | OutputFormat::Jsonl),
+        "--approve-run is an internal structured GUI handshake and requires --output json"
+    );
+    let home = FreedomConfig::default_neoth_home();
+    let request = BgJobRequest::new(command, label, &home)?;
+    let cfg = FreedomConfig::load_from_default_path_or_default()
+        .context("load existing freedom.yaml for background job approval policy")?;
+    ensure_bg_approval_policy(&cfg.autonomy_policy())?;
+    let daemon_live = jobs_daemon_is_live()?;
+    anyhow::ensure!(
+        daemon_live,
+        "GUI background-job confirmation requires a running NEOTH daemon to mint a single-use request-bound token"
+    );
+    let token =
+        crate::daemon::audit_rpc::mint_jobs_run_token(&home, &request.request_binding_sha256)
+            .await
+            .context("daemon refused the request-bound GUI background-job approval token")?;
+    let receipt = BgRunApprovalReceipt {
+        action: "jobs_approve_run".to_owned(),
+        approved: true,
+        request_binding_sha256: request.request_binding_sha256,
+        token,
+    };
+    println!("{}", serde_json::to_string(&receipt)?);
+    Ok(())
+}
+
+/// The GUI token is operator authority only for a canonical `Confirm`
+/// decision. A static policy denial remains final; same-UID processes are
+/// already inside the operator boundary because they can edit freedom.yaml and
+/// read the audit-RPC credential, but they cannot turn Custom/Deny into Allow
+/// through this ceremony.
+fn ensure_bg_approval_policy(policy: &crate::permissions::AutonomyPolicySnapshot) -> Result<()> {
+    if let Decision::Deny(reason) = evaluate(&Action::ExecArbitrary, policy) {
+        anyhow::bail!("background job denied by current autonomy policy: {reason}");
+    }
+    Ok(())
+}
+
 /// ODY-07b — spawn `command` as a detached background job. Writes the bg_jobs
 /// on-disk markers (`<id>.log` + `<id>.exit`) the daemon's bg_monitor watches.
 /// The `std::process::Child` handle is dropped immediately — dropping it does
 /// NOT kill the process, so the job runs detached and survives this CLI exit.
-fn run_bg_job(command: &str, label: &str, output: &OutputFormat) -> Result<()> {
-    if command.trim().is_empty() {
-        anyhow::bail!("--run requires a non-empty command");
-    }
-    let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
-    std::fs::create_dir_all(&bgjobs_dir).context("create ~/.neoth/bgjobs")?;
-    let id =
-        crate::daemon::bg_jobs::BgJobId::new(&sanitise_label(label), crate::time::now_unix_secs());
-    let log = bgjobs_dir.join(format!("{}.log", id.as_str()));
-    let exit = bgjobs_dir.join(format!("{}.exit", id.as_str()));
-    let (program, wrapper_args) = bg_wrapper_argv(command, &log, &exit);
-    let child = std::process::Command::new(&program)
-        .args(&wrapper_args)
-        .spawn()
-        .with_context(|| format!("spawn detached job via `{program}`"))?;
+async fn run_bg_job(
+    command: &str,
+    label: &str,
+    gui_approval_token: Option<&str>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let request = BgJobRequest::new(command, label, &home)?;
+    let cfg = FreedomConfig::load_from_default_path_or_default()
+        .context("load existing freedom.yaml for background job permission policy")?;
+    let bgjobs_dir = home.join("bgjobs");
+    let daemon_live = jobs_daemon_is_live()?;
+    // Arbitrary detached execution is never a best-effort-audit action. The
+    // permission decision must be durably appended before the subprocess can
+    // start, independently of the operator's general one-shot audit posture.
+    // A GUI approval additionally has its own mandatory mint audit in the
+    // daemon; this run audit binds the consumed capability to the side effect.
+    let audit_required = BG_JOB_AUDIT_REQUIRED;
+    crate::daemon::audit_rpc::enforce_required_audit(audit_required, daemon_live, &home)?;
+    let preconfirmed_source = match gui_approval_token {
+        Some(token) => {
+            anyhow::ensure!(
+                daemon_live,
+                "GUI background-job approval token requires the live daemon that minted it"
+            );
+            anyhow::ensure!(
+                crate::daemon::audit_rpc::consume_jobs_run_token(
+                    &home,
+                    token,
+                    &request.request_binding_sha256,
+                )
+                .await,
+                "GUI background-job approval token is invalid, expired, replayed, or bound to a different request"
+            );
+            Some("gui_request_bound_token")
+        }
+        None => None,
+    };
+    let confirm = if preconfirmed_source.is_some() {
+        ConfirmStrategy::FailClosed
+    } else {
+        interactive_confirm_strategy()
+    };
+    let mut random = fill_os_random;
+
+    let receipt = if daemon_live {
+        execute_bg_job_with(
+            &request,
+            cfg.autonomy_policy(),
+            confirm,
+            preconfirmed_source,
+            PermissionAuditSink::DaemonRpc(&home),
+            audit_required,
+            &bgjobs_dir,
+            &mut random,
+            spawn_detached,
+        )
+        .await?
+    } else {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir)
+            .context("required permission audit WAL directory could not be created")?;
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "jobs-run");
+        let (writer, join) = crate::wal::spawn_for_home(segment, home.clone()).with_context(|| {
+            "refusing un-audited background job: mandatory standalone WAL writer could not be opened"
+        })?;
+        let result = execute_bg_job_with(
+            &request,
+            cfg.autonomy_policy(),
+            confirm,
+            preconfirmed_source,
+            PermissionAuditSink::Writer(&writer),
+            audit_required,
+            &bgjobs_dir,
+            &mut random,
+            spawn_detached,
+        )
+        .await;
+        drop(writer);
+        join.await
+            .context("mandatory background-job audit WAL writer task failed")?;
+        result?
+    };
+
+    debug_assert!(receipt.is_bound_to(&request));
+
     // I13 — typed ack so the GUI's fail-closed mutation path can verify
     // the spawn instead of trusting exit-0 (R4-05 dead-button rule).
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
-        println!(
-            "{}",
-            serde_json::json!({
-                "action": "jobs_run",
-                "started": true,
-                "id": id.as_str(),
-                "pid": child.id(),
-                "log_path": log.display().to_string(),
-            })
-        );
+        println!("{}", serde_json::to_string(&receipt)?);
         return Ok(());
     }
     println!(
         "started background job `{}` (pid {})",
-        id.as_str(),
-        child.id()
+        receipt.id, receipt.pid
     );
-    println!("  log   : {}", log.display());
+    println!("  log   : {}", receipt.log_path);
+    println!("  binding: {}", receipt.request_binding_sha256);
     println!("  status: `neoth jobs --bg` (a running daemon's bg-monitor auto-tracks completion)");
     Ok(())
 }
 
 /// Pure listing core: scan `bgjobs_dir` for `<id>.log` files and pair each with
-/// its `<id>.exit` status. Split out so the directory scan is unit-testable with
-/// a tempdir. Returns `(id, status, exit_code)` rows sorted by id.
-fn collect_bg_rows(bgjobs_dir: &Path) -> Vec<(String, String, Option<i32>)> {
+/// its `<id>.exit` status. A genuinely absent registry is empty; directory,
+/// entry, file-type, read, and parse errors from an existing registry are
+/// surfaced rather than misreported as a healthy empty/running state.
+fn collect_bg_rows(bgjobs_dir: &Path) -> Result<Vec<(String, String, Option<i32>)>> {
     let mut rows: Vec<(String, String, Option<i32>)> = Vec::new();
-    let Ok(rd) = std::fs::read_dir(bgjobs_dir) else {
-        return rows;
+    let rd = match std::fs::read_dir(bgjobs_dir) {
+        Ok(rd) => rd,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(rows),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("read background jobs directory {}", bgjobs_dir.display())
+            });
+        }
     };
-    for e in rd.flatten() {
+    for entry in rd {
+        let e = entry.with_context(|| {
+            format!(
+                "read an entry from background jobs directory {}",
+                bgjobs_dir.display()
+            )
+        })?;
         let p = e.path();
         if p.extension().and_then(|x| x.to_str()) != Some("log") {
             continue;
         }
-        let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
+        anyhow::ensure!(
+            e.file_type()
+                .with_context(|| format!("inspect background job log {}", p.display()))?
+                .is_file(),
+            "background job log is not a regular file: {}",
+            p.display()
+        );
+        let stem = p
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .with_context(|| format!("background job log has a non-UTF-8 id: {}", p.display()))?;
         let exit = bgjobs_dir.join(format!("{stem}.exit"));
-        let (state, code) = match crate::daemon::bg_jobs::read_job_status(&exit) {
+        let (state, code) = match read_job_status_for_listing(&exit)? {
             crate::daemon::bg_jobs::BgJobStatus::Running => ("running".to_string(), None),
             crate::daemon::bg_jobs::BgJobStatus::Completed { code } => {
                 ("completed".to_string(), code)
@@ -419,12 +803,32 @@ fn collect_bg_rows(bgjobs_dir: &Path) -> Vec<(String, String, Option<i32>)> {
         rows.push((stem.to_string(), state, code));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
-    rows
+    Ok(rows)
+}
+
+fn read_job_status_for_listing(exit: &Path) -> Result<crate::daemon::bg_jobs::BgJobStatus> {
+    let raw = match std::fs::read_to_string(exit) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(crate::daemon::bg_jobs::BgJobStatus::Running);
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read background job exit marker {}", exit.display()));
+        }
+    };
+    let code = raw.trim().parse::<i32>().with_context(|| {
+        format!(
+            "parse background job exit marker {} as an exit code",
+            exit.display()
+        )
+    })?;
+    Ok(crate::daemon::bg_jobs::BgJobStatus::Completed { code: Some(code) })
 }
 
 fn list_bg_jobs(output: &OutputFormat) -> Result<()> {
     let bgjobs_dir = FreedomConfig::default_neoth_home().join("bgjobs");
-    let rows = collect_bg_rows(&bgjobs_dir);
+    let rows = collect_bg_rows(&bgjobs_dir)?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let arr: Vec<_> = rows
@@ -499,6 +903,11 @@ fn truncate(s: &str, n: usize) -> String {
 mod tests {
     use super::*;
     use crate::cron::schema::{JobsFile, Schedule};
+    use crate::permissions::{
+        ActionKind, AutonomyLevel, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision,
+    };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn make_job(id: &str, prompt: &str) -> crate::cron::schema::Job {
         crate::cron::schema::Job {
@@ -517,6 +926,46 @@ mod tests {
             execution: Default::default(),
             depends_on: vec![],
         }
+    }
+
+    fn level_policy(level: AutonomyLevel) -> AutonomyPolicySnapshot {
+        AutonomyPolicySnapshot::new(level, &CustomAutonomyConfig::default())
+    }
+
+    fn test_request(home: &Path) -> BgJobRequest {
+        BgJobRequest::new("echo exact-request", "Test Job", home).unwrap()
+    }
+
+    async fn execute_test_job(
+        request: &BgJobRequest,
+        policy: AutonomyPolicySnapshot,
+        confirm: ConfirmStrategy,
+        sink: PermissionAuditSink<'_>,
+        audit_required: bool,
+        bgjobs_dir: &Path,
+        spawned: Arc<AtomicBool>,
+    ) -> Result<BgJobReceipt> {
+        let mut nonce = 1_u8;
+        let mut random = move |bytes: &mut [u8]| {
+            bytes.fill(nonce);
+            nonce = nonce.wrapping_add(1);
+            Ok(())
+        };
+        execute_bg_job_with(
+            request,
+            policy,
+            confirm,
+            None,
+            sink,
+            audit_required,
+            bgjobs_dir,
+            &mut random,
+            move |_, _| {
+                spawned.store(true, Ordering::SeqCst);
+                Ok(4_242)
+            },
+        )
+        .await
     }
 
     #[test]
@@ -639,8 +1088,269 @@ mod tests {
     fn ody07b_sanitise_label_keeps_safe_chars_and_defaults_empty() {
         assert_eq!(super::sanitise_label("build-1_x"), "build-1_x");
         assert_eq!(super::sanitise_label("a b/c.d"), "a-b-c-d");
+        assert_eq!(super::sanitise_label("UPPER"), "upper");
         assert_eq!(super::sanitise_label(""), "job");
         assert_eq!(super::sanitise_label("///"), "---");
+    }
+
+    #[test]
+    fn bg_request_rejects_unbounded_command_and_label() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(
+            BgJobRequest::new(&"x".repeat(BG_COMMAND_MAX_BYTES + 1), "job", home.path()).is_err()
+        );
+        assert!(
+            BgJobRequest::new("echo ok", &"x".repeat(BG_LABEL_MAX_BYTES + 1), home.path()).is_err()
+        );
+    }
+
+    #[test]
+    fn bg_exec_permission_audit_is_never_best_effort() {
+        assert!(
+            BG_JOB_AUDIT_REQUIRED,
+            "detached arbitrary execution must never start without its permission WAL proof"
+        );
+    }
+
+    #[test]
+    fn bg_gui_approval_honours_live_custom_deny() {
+        let mut deny = CustomAutonomyConfig::default();
+        deny.overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Deny);
+        assert!(
+            ensure_bg_approval_policy(&AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &deny,))
+                .is_err()
+        );
+
+        let mut confirm = CustomAutonomyConfig::default();
+        confirm
+            .overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Confirm);
+        ensure_bg_approval_policy(&AutonomyPolicySnapshot::new(
+            AutonomyLevel::Custom,
+            &confirm,
+        ))
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn bg_full_policy_allows_before_spawn() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let spawned = Arc::new(AtomicBool::new(false));
+        let receipt = execute_test_job(
+            &request,
+            level_policy(AutonomyLevel::Full),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("bgjobs"),
+            Arc::clone(&spawned),
+        )
+        .await
+        .unwrap();
+        assert!(spawned.load(Ordering::SeqCst));
+        assert!(receipt.is_bound_to(&request));
+    }
+
+    #[tokio::test]
+    async fn bg_strict_policy_denies_without_spawning() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let spawned = Arc::new(AtomicBool::new(false));
+        let result = execute_test_job(
+            &request,
+            level_policy(AutonomyLevel::Strict),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("bgjobs"),
+            Arc::clone(&spawned),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!spawned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn bg_custom_policy_honours_allow_and_deny() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+
+        let mut allow = CustomAutonomyConfig::default();
+        allow
+            .overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Allow);
+        let allow_spawned = Arc::new(AtomicBool::new(false));
+        execute_test_job(
+            &request,
+            AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &allow),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("allow"),
+            Arc::clone(&allow_spawned),
+        )
+        .await
+        .unwrap();
+        assert!(allow_spawned.load(Ordering::SeqCst));
+
+        let mut deny = CustomAutonomyConfig::default();
+        deny.overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Deny);
+        let deny_spawned = Arc::new(AtomicBool::new(false));
+        let result = execute_test_job(
+            &request,
+            AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &deny),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("deny"),
+            Arc::clone(&deny_spawned),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!deny_spawned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn bg_confirm_fails_closed_without_interactive_confirmation() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let spawned = Arc::new(AtomicBool::new(false));
+        let result = execute_test_job(
+            &request,
+            level_policy(AutonomyLevel::Standard),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("bgjobs"),
+            Arc::clone(&spawned),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!spawned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn bg_request_bound_gui_confirmation_upgrades_confirm_but_not_deny() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let mut random = |bytes: &mut [u8]| {
+            bytes.fill(7);
+            Ok(())
+        };
+        let confirmed_spawned = Arc::new(AtomicBool::new(false));
+        execute_bg_job_with(
+            &request,
+            level_policy(AutonomyLevel::Strict),
+            ConfirmStrategy::FailClosed,
+            Some("gui_request_bound_token"),
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("confirmed"),
+            &mut random,
+            {
+                let spawned = Arc::clone(&confirmed_spawned);
+                move |_, _| {
+                    spawned.store(true, Ordering::SeqCst);
+                    Ok(9)
+                }
+            },
+        )
+        .await
+        .unwrap();
+        assert!(confirmed_spawned.load(Ordering::SeqCst));
+
+        let mut deny = CustomAutonomyConfig::default();
+        deny.overrides
+            .insert(ActionKind::ExecArbitrary, CustomDecision::Deny);
+        let denied_spawned = Arc::new(AtomicBool::new(false));
+        let result = execute_bg_job_with(
+            &request,
+            AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &deny),
+            ConfirmStrategy::FailClosed,
+            Some("gui_request_bound_token"),
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("denied"),
+            &mut random,
+            {
+                let spawned = Arc::clone(&denied_spawned);
+                move |_, _| {
+                    spawned.store(true, Ordering::SeqCst);
+                    Ok(10)
+                }
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!denied_spawned.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn bg_required_audit_failure_prevents_spawn() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let spawned = Arc::new(AtomicBool::new(false));
+        let bgjobs = home.path().join("bgjobs");
+        let result = execute_test_job(
+            &request,
+            level_policy(AutonomyLevel::Full),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::Fail("injected audit failure"),
+            true,
+            &bgjobs,
+            Arc::clone(&spawned),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!spawned.load(Ordering::SeqCst));
+        assert!(!bgjobs.exists(), "gate must fail before registry mutation");
+    }
+
+    #[tokio::test]
+    async fn bg_json_receipt_binding_rejects_request_tampering() {
+        let home = tempfile::tempdir().unwrap();
+        let request = test_request(home.path());
+        let receipt = execute_test_job(
+            &request,
+            level_policy(AutonomyLevel::Full),
+            ConfirmStrategy::FailClosed,
+            PermissionAuditSink::None,
+            false,
+            &home.path().join("bgjobs"),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+        let encoded = serde_json::to_vec(&receipt).unwrap();
+        let decoded: BgJobReceipt = serde_json::from_slice(&encoded).unwrap();
+        assert!(decoded.is_bound_to(&request));
+
+        let mut tampered = request.clone();
+        tampered.command.push_str(" && echo tampered");
+        assert!(!decoded.is_bound_to(&tampered));
+    }
+
+    #[test]
+    fn bg_id_reservation_retries_collision_and_stays_unique() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path();
+        let zero_id = format!("job-42-{}", hex::encode([0_u8; BG_ID_RANDOM_BYTES]));
+        std::fs::write(dir.join(format!("{zero_id}.log")), b"existing").unwrap();
+
+        let mut call = 0_u8;
+        let mut random = |bytes: &mut [u8]| {
+            bytes.fill(call);
+            call = call.wrapping_add(1);
+            Ok(())
+        };
+        let (first, _) = reserve_bg_job_log(dir, "job", 42, &mut random).unwrap();
+        let (second, _) = reserve_bg_job_log(dir, "job", 42, &mut random).unwrap();
+        assert_ne!(first, second);
+        assert_ne!(first.as_str(), zero_id);
+        assert_eq!(call, 3, "collision consumes one retry, then two claims");
     }
 
     #[test]
@@ -654,7 +1364,7 @@ mod tests {
         std::fs::write(dir.join("beta-200.exit"), b"0\n").unwrap();
         // non-log file is ignored
         std::fs::write(dir.join("note.txt"), b"x").unwrap();
-        let rows = super::collect_bg_rows(dir);
+        let rows = super::collect_bg_rows(dir).unwrap();
         assert_eq!(rows.len(), 2, "two .log jobs, txt ignored: {rows:?}");
         assert_eq!(rows[0].0, "alpha-100"); // sorted by id
         assert_eq!(rows[0].1, "running");
@@ -666,7 +1376,18 @@ mod tests {
 
     #[test]
     fn ody07b_collect_bg_rows_empty_for_missing_dir() {
-        let rows = super::collect_bg_rows(Path::new("/no/such/bgjobs/dir/xyz"));
+        let rows = super::collect_bg_rows(Path::new("/no/such/bgjobs/dir/xyz")).unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn bg_listing_surfaces_malformed_exit_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("broken.log"), b"out").unwrap();
+        std::fs::write(tmp.path().join("broken.exit"), b"not-an-exit-code").unwrap();
+        let error = super::collect_bg_rows(tmp.path()).unwrap_err();
+        let message = format!("{error:#}");
+        assert!(message.contains("broken.exit"), "got: {message}");
+        assert!(message.contains("exit code"), "got: {message}");
     }
 }

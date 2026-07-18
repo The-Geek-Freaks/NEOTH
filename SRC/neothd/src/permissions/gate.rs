@@ -19,6 +19,7 @@
 //! before the side effect (provider call, channel send, shell exec). The
 //! gate never owns the WAL writer; it borrows it.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -59,6 +60,28 @@ pub enum ConfirmStrategy {
     #[cfg(test)]
     #[doc(hidden)]
     AlwaysAllow,
+}
+
+/// Destination for a permission-decision audit frame.
+///
+/// One-shot CLIs use `DaemonRpc` while `neoth serve` owns the WAL and
+/// `Writer` when they own a short-lived writer themselves. Keeping this in
+/// the canonical gate prevents callers from reimplementing a weaker policy or
+/// emitting a decision that does not match the one that actually authorised
+/// the side effect.
+#[derive(Clone, Copy)]
+pub enum PermissionAuditSink<'a> {
+    /// No audit destination. Valid only for best-effort callers.
+    None,
+    /// Append through a WAL writer owned by this process.
+    Writer(&'a WalWriterHandle),
+    /// Forward through the live daemon's same-uid loopback audit RPC.
+    DaemonRpc(&'a Path),
+    /// Deterministic audit failure used to prove required-audit fail-closed
+    /// behaviour without starting a real writer.
+    #[cfg(test)]
+    #[doc(hidden)]
+    Fail(&'static str),
 }
 
 /// R2-P1-2: trait the channel layer implements so the permission gate
@@ -269,7 +292,10 @@ impl Gate {
         action: &Action,
         writer: Option<&WalWriterHandle>,
     ) -> Result<(), GateError> {
-        self.check_at_with_audit(action, writer, Self::now_unix(), false)
+        let sink = writer
+            .map(PermissionAuditSink::Writer)
+            .unwrap_or(PermissionAuditSink::None);
+        self.check_at_with_audit(action, sink, Self::now_unix(), false, None)
             .await
     }
 
@@ -282,8 +308,38 @@ impl Gate {
         action: &Action,
         writer: &WalWriterHandle,
     ) -> Result<(), GateError> {
-        self.check_at_with_audit(action, Some(writer), Self::now_unix(), true)
-            .await
+        self.check_at_with_audit(
+            action,
+            PermissionAuditSink::Writer(writer),
+            Self::now_unix(),
+            true,
+            None,
+        )
+        .await
+    }
+
+    /// Resolve one action and route the exact permission decision through the
+    /// caller's single-writer-compatible audit destination.
+    ///
+    /// `request_binding_sha256` lets a caller bind an otherwise payload-free
+    /// action such as [`Action::ExecArbitrary`] to its concrete request. When
+    /// `audit_required` is true, a missing or failing sink denies the action
+    /// before the caller may perform its side effect.
+    pub(crate) async fn check_with_audit_sink(
+        &self,
+        action: &Action,
+        sink: PermissionAuditSink<'_>,
+        audit_required: bool,
+        request_binding_sha256: Option<&str>,
+    ) -> Result<(), GateError> {
+        self.check_at_with_audit(
+            action,
+            sink,
+            Self::now_unix(),
+            audit_required,
+            request_binding_sha256,
+        )
+        .await
     }
 
     /// [`Self::check`] with an explicit decision-time clock. The lease
@@ -303,16 +359,20 @@ impl Gate {
         writer: Option<&WalWriterHandle>,
         now_unix: i64,
     ) -> Result<(), GateError> {
-        self.check_at_with_audit(action, writer, now_unix, false)
+        let sink = writer
+            .map(PermissionAuditSink::Writer)
+            .unwrap_or(PermissionAuditSink::None);
+        self.check_at_with_audit(action, sink, now_unix, false, None)
             .await
     }
 
     async fn check_at_with_audit(
         &self,
         action: &Action,
-        writer: Option<&WalWriterHandle>,
+        sink: PermissionAuditSink<'_>,
         now_unix: i64,
         audit_required: bool,
+        request_binding_sha256: Option<&str>,
     ) -> Result<(), GateError> {
         let decision = evaluate(action, &self.policy);
         // SL-01a-b: a covering capability lease upgrades `Confirm → Allow`,
@@ -325,7 +385,10 @@ impl Gate {
         // wal show --type permission_granted` records WHY the action was
         // allowed — the verifiable-loyalty grant chain.
         let (final_decision, lease_id, confirmation_source) = match decision {
-            Decision::Allow => (Decision::Allow, None, None),
+            // A request-bound capability can accompany a policy-level Allow
+            // (for example Full or Custom/Allow). Preserve that authority in
+            // the audit frame even though no Confirm upgrade was necessary.
+            Decision::Allow => (Decision::Allow, None, self.preconfirmed_source),
             Decision::Deny(reason) => (Decision::Deny(reason), None, None),
             Decision::Confirm(reason) => match self
                 .lease_ctx
@@ -335,21 +398,36 @@ impl Gate {
                 Some(id) => (Decision::Allow, Some(id), Some("capability_lease")),
                 None => match self.preconfirmed_source {
                     Some(source) => (Decision::Allow, None, Some(source)),
-                    None => (self.resolve_confirm(action, &reason).await, None, None),
+                    None => {
+                        let resolved = self.resolve_confirm(action, &reason).await;
+                        let source = if resolved.is_allow() {
+                            match self.confirm {
+                                ConfirmStrategy::Tty => Some("tty_operator_confirm"),
+                                ConfirmStrategy::Channel => Some("channel_operator_confirm"),
+                                ConfirmStrategy::FailClosed => None,
+                                #[cfg(test)]
+                                ConfirmStrategy::AlwaysAllow => Some("test_always_allow"),
+                            }
+                        } else {
+                            None
+                        };
+                        (resolved, None, source)
+                    }
                 },
             },
         };
 
-        if let Some(w) = writer {
+        if !matches!(sink, PermissionAuditSink::None) {
             let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
             let audit_result = audit(
-                w,
+                sink,
                 action,
                 self.policy.level(),
                 &final_decision,
                 subject,
                 lease_id.as_deref(),
                 confirmation_source,
+                request_binding_sha256,
             )
             .await;
             if audit_required {
@@ -366,6 +444,10 @@ impl Gate {
                     "best-effort permission audit WAL append failed"
                 );
             }
+        } else if audit_required {
+            return Err(GateError::Unavailable(
+                "required permission audit has no WAL writer or daemon audit-RPC sink".into(),
+            ));
         }
 
         match final_decision {
@@ -460,20 +542,21 @@ impl Gate {
 /// `0xA1 PERMISSION_DENIED` payload is enriched (single frame per decision,
 /// inherits immediate-sync, no SC-01a band churn).
 async fn audit(
-    writer: &WalWriterHandle,
+    sink: PermissionAuditSink<'_>,
     action: &Action,
     level: AutonomyLevel,
     decision: &Decision,
     subject: Option<&str>,
     lease_id: Option<&str>,
     confirmation_source: Option<&str>,
+    explicit_request_binding_sha256: Option<&str>,
 ) -> Result<()> {
     let (event_type, reason): (u8, Option<&str>) = match decision {
         Decision::Allow => (EVENT_TYPE_PERMISSION_GRANTED, None),
         Decision::Deny(r) => (EVENT_TYPE_PERMISSION_DENIED, Some(r.as_str())),
         Decision::Confirm(r) => (EVENT_TYPE_PERMISSION_DENIED, Some(r.as_str())),
     };
-    let (authorization_id, request_binding_sha256) = match action {
+    let (authorization_id, intrinsic_request_binding_sha256) = match action {
         Action::PaidProviderCall {
             authorization_id,
             request_binding_sha256,
@@ -497,6 +580,17 @@ async fn audit(
         } => (None, Some(request_binding_sha256.as_str())),
         _ => (None, None),
     };
+    if let (Some(explicit), Some(intrinsic)) = (
+        explicit_request_binding_sha256,
+        intrinsic_request_binding_sha256,
+    ) {
+        anyhow::ensure!(
+            explicit == intrinsic,
+            "explicit permission request binding does not match the action binding"
+        );
+    }
+    let request_binding_sha256 =
+        explicit_request_binding_sha256.or(intrinsic_request_binding_sha256);
     let payload = serde_json::to_vec(&serde_json::json!({
         "level": level.as_str(),
         "action": format!("{action:?}"),
@@ -509,11 +603,23 @@ async fn audit(
         "confirmation_source": confirmation_source,
         "ts_ns": crate::time::now_unix_ns(),
     }))?;
-    let header = crate::wal::HeaderBuilder::new(event_type, &payload)
-        .flags(crate::wal::EventFlags::SYNTHETIC)
-        .build();
-    writer.append(header, payload).await?;
-    Ok(())
+    match sink {
+        PermissionAuditSink::None => Ok(()),
+        PermissionAuditSink::Writer(writer) => {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+                .flags(crate::wal::EventFlags::SYNTHETIC)
+                .build();
+            writer.append(header, payload).await?;
+            Ok(())
+        }
+        PermissionAuditSink::DaemonRpc(home) => {
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
+                .await
+                .map_err(|error| anyhow::anyhow!(error))
+        }
+        #[cfg(test)]
+        PermissionAuditSink::Fail(message) => anyhow::bail!("{message}"),
+    }
 }
 
 #[cfg(test)]
@@ -752,6 +858,35 @@ mod tests {
         let bytes = read(&seg).await.unwrap();
         let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
         assert_eq!(f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
+    }
+
+    #[tokio::test]
+    async fn bound_exec_audit_carries_the_exact_request_binding() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("bound-exec.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let binding = "ab".repeat(32);
+
+        Gate::for_level(AutonomyLevel::Full)
+            .with_preconfirmed_confirmation("gui_request_bound_token")
+            .check_with_audit_sink(
+                &Action::ExecArbitrary,
+                PermissionAuditSink::Writer(&writer),
+                true,
+                Some(&binding),
+            )
+            .await
+            .unwrap();
+
+        drop(writer);
+        join.await.unwrap();
+        let bytes = read(&seg).await.unwrap();
+        let frame = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(frame.header.event_type, EVENT_TYPE_PERMISSION_GRANTED);
+        assert_eq!(payload["action"], "ExecArbitrary");
+        assert_eq!(payload["request_binding_sha256"], binding);
+        assert_eq!(payload["confirmation_source"], "gui_request_bound_token");
     }
 
     #[tokio::test]

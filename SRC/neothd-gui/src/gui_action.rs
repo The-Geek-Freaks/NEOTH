@@ -1952,7 +1952,65 @@ impl DreamNowAck {
     }
 }
 
+/// I13 — one row from `neoth jobs --bg --output json`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BgJobListRowAck {
+    pub id: String,
+    pub status: String,
+    pub exit_code: Option<i32>,
+}
+
+impl BgJobListRowAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.id.trim().is_empty() {
+            return Err("Background-job list contains an empty id".to_string());
+        }
+        match (self.status.as_str(), self.exit_code) {
+            ("running", None) | ("completed", Some(_)) => Ok(()),
+            ("running", Some(_)) => {
+                Err("A running background job unexpectedly has an exit code".to_string())
+            }
+            ("completed", None) => Err("A completed background job has no exit code".to_string()),
+            (status, _) => Err(format!(
+                "Background-job list contains unknown status `{status}`"
+            )),
+        }
+    }
+}
+
 /// I13 — `neoth jobs --run "<command>" --label <l> --output json` ack.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BgRunApprovalAck {
+    pub action: String,
+    pub approved: bool,
+    pub request_binding_sha256: String,
+    pub token: String,
+}
+
+impl BgRunApprovalAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.action != "jobs_approve_run" || !self.approved {
+            return Err("Background-run approval was not granted".to_string());
+        }
+        if !valid_lower_sha256(&self.request_binding_sha256) {
+            return Err("Background-run approval has a malformed request binding".to_string());
+        }
+        // Daemon tokens are exactly 32 random bytes encoded as unpadded
+        // base64url (43 ASCII chars). Reject every other wire shape.
+        if self.token.len() != 43
+            || !self
+                .token
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err("Background-run approval has no valid single-use token".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BgRunAck {
@@ -1961,21 +2019,37 @@ pub struct BgRunAck {
     pub id: String,
     pub pid: u32,
     pub log_path: String,
+    pub request_binding_sha256: String,
 }
 
 impl BgRunAck {
-    pub fn verify(&self) -> Result<(), String> {
+    pub fn verify(&self, expected_request_binding_sha256: &str) -> Result<(), String> {
         if self.action != "jobs_run" {
             Err(format!(
                 "Background-run acknowledgement has wrong action `{}`",
                 self.action
             ))
-        } else if !self.started || self.id.trim().is_empty() {
+        } else if !self.started
+            || self.id.trim().is_empty()
+            || self.pid == 0
+            || self.log_path.trim().is_empty()
+        {
             Err("Background job did not confirm a started id".to_string())
+        } else if !valid_lower_sha256(&self.request_binding_sha256)
+            || self.request_binding_sha256 != expected_request_binding_sha256
+        {
+            Err("Background-run acknowledgement does not match the approved request".to_string())
         } else {
             Ok(())
         }
     }
+}
+
+fn valid_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2923,6 +2997,67 @@ mod tests {
         )
         .unwrap();
         assert!(bad.verify().is_err());
+    }
+
+    #[test]
+    fn background_run_ack_must_match_the_confirmed_request_binding() {
+        let binding = "ab".repeat(32);
+        let approval: BgRunApprovalAck = serde_json::from_value(serde_json::json!({
+            "action": "jobs_approve_run",
+            "approved": true,
+            "request_binding_sha256": binding,
+            "token": "t".repeat(43),
+        }))
+        .unwrap();
+        approval.verify().unwrap();
+
+        let ack: BgRunAck = serde_json::from_value(serde_json::json!({
+            "action": "jobs_run",
+            "started": true,
+            "id": "gui-42-abcd",
+            "pid": 42,
+            "log_path": "bgjobs/gui-42-abcd.log",
+            "request_binding_sha256": approval.request_binding_sha256.clone(),
+        }))
+        .unwrap();
+        ack.verify(&approval.request_binding_sha256).unwrap();
+        assert!(ack.verify(&"cd".repeat(32)).is_err());
+        assert!(
+            serde_json::from_value::<BgRunAck>(serde_json::json!({
+                "action": "jobs_run",
+                "started": true,
+                "id": "gui-42-abcd",
+                "pid": 42,
+                "log_path": "bgjobs/gui-42-abcd.log",
+                "request_binding_sha256": approval.request_binding_sha256.clone(),
+                "unexpected": true,
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn background_job_list_rows_are_strict_and_state_consistent() {
+        let running: BgJobListRowAck =
+            serde_json::from_str(r#"{"id":"build-42-abcd","status":"running","exit_code":null}"#)
+                .unwrap();
+        running.verify().unwrap();
+
+        let completed: BgJobListRowAck =
+            serde_json::from_str(r#"{"id":"build-42-abcd","status":"completed","exit_code":0}"#)
+                .unwrap();
+        completed.verify().unwrap();
+
+        let inconsistent: BgJobListRowAck =
+            serde_json::from_str(r#"{"id":"build-42-abcd","status":"running","exit_code":0}"#)
+                .unwrap();
+        assert!(inconsistent.verify().is_err());
+        assert!(
+            serde_json::from_str::<BgJobListRowAck>(
+                r#"{"id":"build-42-abcd","status":"running","exit_code":null,"unexpected":true}"#,
+            )
+            .is_err()
+        );
     }
 
     #[test]

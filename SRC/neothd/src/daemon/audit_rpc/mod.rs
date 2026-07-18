@@ -33,6 +33,13 @@
 //! cross-uid forgery vector, which is the real boundary. Same precedent as the
 //! WAL HMAC key (`wal/compaction.rs`).
 //!
+//! The approval-token endpoints use that same operator-authority boundary. A
+//! jobs-run token is bound to one canonical request digest, expires quickly,
+//! and is consumed once. Its CLI mint path re-reads the live autonomy policy
+//! and cannot override a static `Deny`; the daemon also appends a mandatory WAL
+//! proof before it releases the token. This is deliberately not an OS sandbox
+//! against the operator who owns both `freedom.yaml` and the RPC credential.
+//!
 //! Gated behind `freedom.yaml::audit_rpc.enabled` (default OFF). The listener is
 //! spawned from `cli/serve.rs` and aborted on shutdown; the sidecar is removed
 //! by [`SidecarGuard`] on drop.
@@ -57,10 +64,11 @@ mod token;
 mod tests;
 
 pub use client::{
-    AuditRpcClientError, consume_fullauto_token, enforce_required_audit, is_reachable,
-    mint_fullauto_token, try_post_audit_frame, try_post_audit_frame_with_subtype,
+    AuditRpcClientError, consume_fullauto_token, consume_jobs_run_token, enforce_required_audit,
+    is_reachable, mint_fullauto_token, mint_jobs_run_token, try_post_audit_frame,
+    try_post_audit_frame_with_subtype,
 };
-pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore};
+pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
 pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState, bind_and_serve,
     is_allowed_client_event, is_allowed_client_event_pair,

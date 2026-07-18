@@ -33,7 +33,7 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 32);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 34);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(
@@ -59,6 +59,12 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
         assert!(
             is_allowed_client_event(c),
             "{c:#x} (preset/FULL-AUTO transaction) must be allowed"
+        );
+    }
+    for c in [0xA0u8, 0xA1] {
+        assert!(
+            is_allowed_client_event(c),
+            "{c:#x} (one-shot permission decision) must be allowed"
         );
     }
     // GOLD-ADOPT-23 point 3 — `neoth risk-confirm` grant audit.
@@ -87,8 +93,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
         "0xF6 (recon_run) must be allowed"
     );
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
-    // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.
-    for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
+    // autonomy codes must NOT bleed into the neighbouring 0xA4.
+    for c in [0x10u8, 0x15, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
         assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
     }
 
@@ -388,6 +394,84 @@ async fn client_round_trips_against_a_live_listener() {
         crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
             .unwrap();
     assert_eq!(f.header.event_type, EVENT_TYPE_OS_FILE_READ);
+}
+
+#[tokio::test]
+async fn jobs_run_token_client_is_request_bound_and_single_use() {
+    let home = tempdir().unwrap();
+    let seg_dir = tempdir().unwrap();
+    let seg = seg_dir.path().join("000001.wal");
+    let token = init_rpc_token(home.path()).unwrap();
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), seg_dir.path().to_path_buf()).unwrap();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let binding = "ab".repeat(32);
+    let approval = mint_jobs_run_token(home.path(), &binding)
+        .await
+        .expect("jobs token mint");
+
+    assert!(
+        !consume_jobs_run_token(home.path(), &approval, &"cd".repeat(32)).await,
+        "a different request binding must not consume or authorise the token"
+    );
+    assert!(consume_jobs_run_token(home.path(), &approval, &binding).await);
+    assert!(
+        !consume_jobs_run_token(home.path(), &approval, &binding).await,
+        "jobs token must be single-use"
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let frame =
+        crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
+            .unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+    assert_eq!(
+        frame.header.event_type,
+        crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED
+    );
+    assert_eq!(payload["action"], "ExecArbitrary");
+    assert_eq!(payload["decision"], "operator_approval_token_minted");
+    assert_eq!(payload["authority_boundary"], "same_uid_operator");
+    assert_eq!(payload["request_binding_sha256"], binding);
+}
+
+#[tokio::test]
+async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
+    let home = tempdir().unwrap();
+    let seg_dir = tempdir().unwrap();
+    let seg = seg_dir.path().join("000001.wal");
+    let token = init_rpc_token(home.path()).unwrap();
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, seg_dir.path().to_path_buf()).unwrap();
+    wal_join.abort();
+    let _ = wal_join.await;
+
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer,
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+
+    assert!(
+        mint_jobs_run_token(home.path(), &"ab".repeat(32))
+            .await
+            .is_none(),
+        "the daemon must not release an approval token without its WAL proof"
+    );
+    task.abort();
 }
 
 #[tokio::test]

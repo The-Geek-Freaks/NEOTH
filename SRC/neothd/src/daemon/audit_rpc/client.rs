@@ -35,8 +35,9 @@ pub fn is_reachable(home: &Path) -> bool {
 
 /// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.
 ///
-/// When `required` (`audit_rpc.required_for_oneshot_permission_events`) is set
-/// AND a daemon is live (it owns the WAL writer, so the one-shot can't audit
+/// When `required` is set by the caller (either its configured compliance
+/// posture or an action-specific hard requirement) AND a daemon is live (it
+/// owns the WAL writer, so the one-shot can't audit
 /// locally) AND the daemon's audit-RPC listener is NOT reachable, returns an
 /// error so the caller REFUSES the action — a permission action must never run
 /// without an audit record under a compliance/proof posture. No-op when the
@@ -45,10 +46,10 @@ pub fn is_reachable(home: &Path) -> bool {
 pub fn enforce_required_audit(required: bool, daemon_live: bool, home: &Path) -> Result<()> {
     if required && daemon_live && !is_reachable(home) {
         anyhow::bail!(
-            "audit_rpc.required_for_oneshot_permission_events is set, a daemon owns the WAL, but \
-             its audit-RPC listener is unreachable — refusing this permission action so it isn't \
-             performed un-audited. Enable `audit_rpc` + restart the daemon, stop the daemon, or \
-             clear the required flag."
+            "required permission auditing is active for this action and a daemon owns the WAL, but \
+             its audit-RPC listener is unreachable — refusing the action so it isn't performed \
+             un-audited. Enable `audit_rpc` and restart the daemon, or stop the daemon so the \
+             one-shot can own its WAL writer."
         );
     }
     Ok(())
@@ -207,6 +208,45 @@ pub async fn consume_fullauto_token(home: &Path, token: &str) -> bool {
     let body = format!("{{\"token\":{token:?}}}");
     matches!(
         post_rpc(home, "/fullauto-token/consume", &body).await,
+        Ok((200, _))
+    )
+}
+
+/// Mint a daemon-held, short-lived approval token for one exact GUI
+/// `jobs --run` request binding. The daemon appends the mandatory approval
+/// audit before returning the token. `None` means the daemon/audit writer is
+/// unavailable, refused the request, or returned a malformed response.
+pub async fn mint_jobs_run_token(home: &Path, request_binding_sha256: &str) -> Option<String> {
+    let body = serde_json::json!({
+        "request_binding_sha256": request_binding_sha256,
+    })
+    .to_string();
+    let (status, resp) = post_rpc(home, "/jobs-run-token/mint", &body).await.ok()?;
+    if status != 200 {
+        return None;
+    }
+    let body = resp.rsplit("\r\n\r\n").next().unwrap_or("");
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()?
+        .get("token")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// Validate and consume a GUI jobs-run token against the exact request digest.
+/// Any mismatch, replay, expiry, or daemon failure is a fail-closed `false`.
+pub async fn consume_jobs_run_token(
+    home: &Path,
+    token: &str,
+    request_binding_sha256: &str,
+) -> bool {
+    let body = serde_json::json!({
+        "token": token,
+        "request_binding_sha256": request_binding_sha256,
+    })
+    .to_string();
+    matches!(
+        post_rpc(home, "/jobs-run-token/consume", &body).await,
         Ok((200, _))
     )
 }

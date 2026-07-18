@@ -7,10 +7,11 @@
 // Daemon surface (both exist in cli/jobs.rs):
 //   jobs --bg  --output json               → [{id, status, exit_code}]
 //   jobs --run "<command>" --label <label> --output json
-//       → {action:"jobs_run", started, id, pid, log_path}  (typed ack)
+//       → {action:"jobs_run", started, id, pid, log_path,
+//          request_binding_sha256}  (typed, request-bound ack)
 
 import { Theme } from "theme.slint";
-import { Card, Led, NeothButton, Kicker, RefreshFooter, NeothLineEdit, EmptyState } from "components.slint";
+import { Card, Led, NeothButton, Kicker, RefreshFooter, NeothLineEdit, EmptyState, ConfirmDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire struct ───────────────────────────────────────────────────────
@@ -76,6 +77,8 @@ export component BgJobsView inherits Rectangle {
     in property <string> bg-error: "";
     in-out property <string> bg-command-draft: "";
     in-out property <string> bg-label-draft: "";
+    property <string> pending-command: "";
+    property <string> pending-label: "";
 
     callback bg-refresh();
     callback bg-run(string /*command*/, string /*label*/);
@@ -137,7 +140,8 @@ export component BgJobsView inherits Rectangle {
                             primary: true;
                             enabled: !root.bg-submitting && root.bg-command-draft != "";
                             clicked => {
-                                root.bg-run(root.bg-command-draft, root.bg-label-draft);
+                                root.pending-command = root.bg-command-draft;
+                                root.pending-label = root.bg-label-draft;
                             }
                         }
                     }
@@ -179,6 +183,23 @@ export component BgJobsView inherits Rectangle {
             for j in root.bg-jobs: BgJobCard { job: j; }
 
             RefreshFooter { ts: root.bg-refreshed-at; }
+        }
+    }
+
+    if root.pending-command != "": ConfirmDialog {
+        title: "Run this shell command?";
+        body: root.pending-command + (root.pending-label == "" ? "" : "\n\nLabel: " + root.pending-label)
+            + "\n\nThe command runs with your user permissions. NEOTH binds this approval to the exact command, label, and instance.";
+        confirm-label: "Run command";
+        danger: true;
+        confirmed => {
+            root.bg-run(root.pending-command, root.pending-label);
+            root.pending-command = "";
+            root.pending-label = "";
+        }
+        cancelled => {
+            root.pending-command = "";
+            root.pending-label = "";
         }
     }
 }

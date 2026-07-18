@@ -18,7 +18,8 @@ use tokio::task::JoinHandle;
 use crate::n8n_api::auth::AuthCooldown;
 use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
 use crate::wal::events::{
-    EVENT_TYPE_AUDIT_RPC_ACCEPT, EVENT_TYPE_AUDIT_RPC_REJECT, EVENT_TYPE_EXTENDED, ExtendedSubtype,
+    EVENT_TYPE_AUDIT_RPC_ACCEPT, EVENT_TYPE_AUDIT_RPC_REJECT, EVENT_TYPE_EXTENDED,
+    EVENT_TYPE_PERMISSION_GRANTED, ExtendedSubtype,
 };
 use crate::wal::writer::WalWriterHandle;
 
@@ -40,6 +41,8 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xC8, // TODO_WRITE             — `neoth todo add/close` mutated an external task list
     0xCA, // CALENDAR_WRITE         — `neoth calendar add` wrote an external calendar event
     0xCB, // CALENDAR_WRITE_DENIED  — `neoth calendar add` refused (writes_enabled off)
+    0xA0, // PERMISSION_GRANTED — one-shot canonical permission gate decision
+    0xA1, // PERMISSION_DENIED  — one-shot canonical permission gate decision
     0xA2, // LEVEL_ELEVATED   — `neoth autonomy set` raised the level
     0xA3, // LEVEL_DEROGATED  — `neoth autonomy set` lowered the level
     0xA5, // LEASE_GRANTED
@@ -109,9 +112,9 @@ pub struct AuditRpcState {
     pub token: String,
     pub writer: WalWriterHandle,
     pub cooldown: Arc<AuthCooldown>,
-    /// GR-RESID-D34 — single-use, short-TTL FULL-AUTO tokens. Shared (Arc) so the
-    /// `/fullauto-token/mint` and `/fullauto-token/consume` endpoints (handled on
-    /// separate per-connection tasks) hit the same store.
+    /// Single-use, short-TTL approval tokens. Shared so FULL-AUTO and
+    /// request-bound jobs-run mint/consume calls hit their respective slots in
+    /// one daemon-owned store across separate connection tasks.
     pub fullauto: Arc<super::fullauto_token::FullAutoTokenStore>,
 }
 
@@ -255,12 +258,16 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     };
 
-    // Only POST to a known endpoint (/audit or the D34 FULL-AUTO token verbs).
+    // Only POST to a known endpoint (/audit or one of the approval-token verbs).
     let req_path = req.path.split('?').next().unwrap_or("").to_string();
     if req.method != "POST"
         || !matches!(
             req_path.as_str(),
-            "/audit" | "/fullauto-token/mint" | "/fullauto-token/consume"
+            "/audit"
+                | "/fullauto-token/mint"
+                | "/fullauto-token/consume"
+                | "/jobs-run-token/mint"
+                | "/jobs-run-token/consume"
         )
     {
         let _ = stream
@@ -314,6 +321,88 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         let ok = candidate
             .as_deref()
             .is_some_and(|t| state.fullauto.consume(t, std::time::Instant::now()));
+        let status = if ok { 200 } else { 401 };
+        let _ = stream
+            .write_all(http_response_json(status, &format!("{{\"ok\":{ok}}}")).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+    if req_path == "/jobs-run-token/mint" {
+        let binding = serde_json::from_slice::<serde_json::Value>(&req.body)
+            .ok()
+            .and_then(|value| {
+                value
+                    .get("request_binding_sha256")
+                    .and_then(|field| field.as_str())
+                    .map(str::to_string)
+            });
+        let token = binding.as_deref().and_then(|binding| {
+            state
+                .fullauto
+                .mint_jobs_run(binding, super::fullauto_token::JOBS_RUN_TOKEN_TTL)
+        });
+        let (status, body) = match token.zip(binding) {
+            Some((token, binding)) => {
+                // A GUI approval token is an authority-bearing capability, not
+                // a convenience nonce. Persist its exact request binding before
+                // releasing the token to the caller. If the append fails, burn
+                // the still-secret token and fail closed.
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "action": "ExecArbitrary",
+                    "decision": "operator_approval_token_minted",
+                    "confirmation_source": "gui_dialog",
+                    "authority_boundary": "same_uid_operator",
+                    "request_binding_sha256": &binding,
+                    "ts_ns": crate::time::now_unix_ns(),
+                }))
+                .expect("jobs-run approval audit contains only infallible JSON values");
+                let header =
+                    crate::wal::HeaderBuilder::new(EVENT_TYPE_PERMISSION_GRANTED, &payload)
+                        .flags(crate::wal::EventFlags::SYNTHETIC)
+                        .build();
+                match state.writer.append(header, payload).await {
+                    Ok(_) => (200, format!("{{\"token\":{token:?}}}")),
+                    Err(error) => {
+                        let _ = state.fullauto.consume_jobs_run(
+                            &token,
+                            &binding,
+                            std::time::Instant::now(),
+                        );
+                        tracing::error!(%error, "jobs-run approval audit failed; token revoked");
+                        (
+                            500,
+                            "{\"error\":\"mandatory approval audit append failed\"}".into(),
+                        )
+                    }
+                }
+            }
+            None => (
+                400,
+                "{\"error\":\"invalid binding or token mint failed\"}".into(),
+            ),
+        };
+        let _ = stream
+            .write_all(http_response_json(status, &body).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+    if req_path == "/jobs-run-token/consume" {
+        let parsed = serde_json::from_slice::<serde_json::Value>(&req.body).ok();
+        let token = parsed
+            .as_ref()
+            .and_then(|value| value.get("token"))
+            .and_then(|field| field.as_str());
+        let binding = parsed
+            .as_ref()
+            .and_then(|value| value.get("request_binding_sha256"))
+            .and_then(|field| field.as_str());
+        let ok = token.zip(binding).is_some_and(|(token, binding)| {
+            state
+                .fullauto
+                .consume_jobs_run(token, binding, std::time::Instant::now())
+        });
         let status = if ok { 200 } else { 401 };
         let _ = stream
             .write_all(http_response_json(status, &format!("{{\"ok\":{ok}}}")).as_bytes())

@@ -26,7 +26,7 @@ pub mod lease;
 pub mod policy;
 pub mod tier_classifier;
 
-pub use gate::{ConfirmStrategy, Gate};
+pub use gate::{ConfirmStrategy, Gate, PermissionAuditSink};
 pub use policy::{
     ActionKind, AutonomyPolicySnapshot, CustomAutonomyConfig, CustomDecision, PolicyArgument,
 };

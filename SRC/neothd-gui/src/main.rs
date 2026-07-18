@@ -4596,11 +4596,19 @@ fn main() -> Result<()> {
         w0.set_bg_jobs_running(true);
         let weak = weak_bg_jobs.clone();
         std::thread::spawn(move || {
-            let result = run_neothd_json_action::<Vec<panel_logic::BgJobWire>>(
+            let result = run_neothd_json_action::<Vec<gui_action::BgJobListRowAck>>(
                 &["jobs", "--bg"],
-                "Background job list",
+                "Load background jobs",
             )
-            .and_then(panel_logic::bg_job_rows);
+            .and_then(|rows| {
+                for row in &rows {
+                    row.verify()?;
+                }
+                Ok(rows)
+            });
+            if let Err(error) = &result {
+                push_toast(&weak, "warn", "Background jobs unavailable", error);
+            }
             let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
                 use slint::VecModel;
@@ -4610,10 +4618,14 @@ fn main() -> Result<()> {
                             let count = rows.len();
                             let model: Vec<BgJobRow> = rows
                                 .into_iter()
-                                .map(|(id, status, exit)| BgJobRow {
-                                    id: id.into(),
-                                    status: status.into(),
-                                    exit_code: exit.into(),
+                                .map(|row| BgJobRow {
+                                    id: row.id.into(),
+                                    status: row.status.into(),
+                                    exit_code: row
+                                        .exit_code
+                                        .map(|code| code.to_string())
+                                        .unwrap_or_default()
+                                        .into(),
                                 })
                                 .collect();
                             w.set_bg_jobs_model(slint::ModelRc::new(std::rc::Rc::new(
@@ -4656,14 +4668,38 @@ fn main() -> Result<()> {
             } else {
                 label.to_string()
             };
-            let result = run_neothd_json_action::<gui_action::BgRunAck>(
-                &["jobs", "--run", &command, "--label", &label],
-                "Run background job",
-            )
-            .and_then(|ack| {
-                ack.verify()?;
+            // The Slint confirm dialog is the human approval. Turn it into a
+            // daemon-held, short-lived token bound to the exact canonical
+            // request; the second process must consume that token before its
+            // central ExecArbitrary gate may upgrade Confirm to Allow.
+            let result = (|| {
+                let approval = run_neothd_json_action::<gui_action::BgRunApprovalAck>(
+                    &[
+                        "jobs",
+                        "--run",
+                        &command,
+                        "--label",
+                        &label,
+                        "--approve-run",
+                    ],
+                    "Approve background job",
+                )?;
+                approval.verify()?;
+                let ack = run_neothd_json_action::<gui_action::BgRunAck>(
+                    &[
+                        "jobs",
+                        "--run",
+                        &command,
+                        "--label",
+                        &label,
+                        "--gui-approval-token",
+                        &approval.token,
+                    ],
+                    "Run background job",
+                )?;
+                ack.verify(&approval.request_binding_sha256)?;
                 Ok(ack)
-            });
+            })();
             let weak2 = weak.clone();
             match result {
                 Ok(ack) => {
