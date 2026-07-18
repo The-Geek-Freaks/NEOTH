@@ -266,8 +266,22 @@ impl IrohTransport {
         cluster_key: Arc<ClusterKey>,
         writer: Option<Arc<WalWriterHandle>>,
     ) -> Result<Self> {
+        Self::bind_with_secret(handler, cluster_key, writer, iroh::SecretKey::generate()).await
+    }
+
+    /// Bind with an explicitly owned endpoint identity. The runtime supervisor
+    /// uses this boundary so one cluster-key generation keeps a stable dial id
+    /// across daemon restarts instead of silently minting a new peer identity.
+    pub async fn bind_with_secret(
+        handler: FrameHandler,
+        cluster_key: Arc<ClusterKey>,
+        writer: Option<Arc<WalWriterHandle>>,
+        endpoint_secret: iroh::SecretKey,
+    ) -> Result<Self> {
         let peers: PeerRegistry = Arc::new(Mutex::new(HashSet::new()));
-        let endpoint = Endpoint::bind(presets::N0)
+        let endpoint = Endpoint::builder(presets::N0)
+            .secret_key(endpoint_secret)
+            .bind()
             .await
             .context("iroh: bind endpoint")?;
         let our_id = endpoint.id();
@@ -352,6 +366,12 @@ impl IrohTransport {
     /// This node's stable cryptographic id (hex), for logging / peer maps.
     pub fn node_id(&self) -> String {
         self.router.endpoint().id().to_string()
+    }
+
+    /// True only while both the protocol router and its underlying endpoint
+    /// are live. A retained `Arc<IrohTransport>` is not health evidence.
+    pub fn is_healthy(&self) -> bool {
+        !self.router.is_shutdown() && !self.router.endpoint().is_closed()
     }
 
     /// Dial a peer by its `EndpointAddr` and do one gossip request/response

@@ -2,12 +2,13 @@
 //!
 //! Agent #4 design consensus (2026-05-19): when the operator edits
 //! `freedom.yaml` mid-session, NEOTH must pick up the changes without
-//! a daemon restart. Some fields (`operator_id`, the complete provider runtime
-//! graph) and the cluster lifecycle are IMMUTABLE post-init — reloading them
-//! would require rebuilding the provider Arc + channel adapters that hold
-//! derived state. Those
+//! a daemon restart. Some fields (`operator_id` and the complete provider
+//! runtime graph) are IMMUTABLE post-init because they would require rebuilding
+//! the provider Arc + adapters that hold derived state. Those
 //! fields cause the reload to be rejected with a reason logged at
 //! warn level + audited via WAL.
+//! Cluster lifecycle fields are mutable: the generation-bound cluster runtime
+//! supervisor owns carrier, mDNS, gossip and request-consumer reconstruction.
 //!
 //! Tunable fields (`council.selection_mode`, `code_map.auto_context_max_files`,
 //! `claude_cli.tmux.*`, hooks/skills paths, autonomy level, …) reload
@@ -72,10 +73,6 @@ pub enum ReloadRejectionReason {
     /// A provider Arc, fallback/compaction decorator, route, credential, or
     /// adapter setting would diverge from the newly published config snapshot.
     ProviderRuntimeChanged { changed_fields: Vec<&'static str> },
-    /// Cluster transports own sockets, discovery registrations and gossip
-    /// tasks, so their lifecycle remains restart-bound until one supervisor
-    /// owns those resources.
-    ClusterLifecycleChanged { changed_fields: Vec<&'static str> },
     /// Enabling sovereign mode requires its explicit consent ceremony, but it
     /// does not require a daemon restart after that ceremony succeeds.
     SovereignBuddyCeremonyRequired,
@@ -88,7 +85,6 @@ impl ReloadRejectionReason {
             Self::OperatorIdChanged { .. } => "operator_id_changed",
             Self::ProviderKindChanged { .. } => "provider_kind_changed",
             Self::ProviderRuntimeChanged { .. } => "provider_runtime_changed",
-            Self::ClusterLifecycleChanged { .. } => "cluster_lifecycle_changed",
             Self::SovereignBuddyCeremonyRequired => "sovereign_buddy_ceremony_required",
         }
     }
@@ -101,7 +97,6 @@ impl ReloadRejectionReason {
             Self::OperatorIdChanged { .. }
                 | Self::ProviderKindChanged { .. }
                 | Self::ProviderRuntimeChanged { .. }
-                | Self::ClusterLifecycleChanged { .. }
         )
     }
 }
@@ -120,11 +115,6 @@ impl std::fmt::Display for ReloadRejectionReason {
             Self::ProviderRuntimeChanged { changed_fields } => write!(
                 f,
                 "provider runtime fields cannot be hot-reloaded yet (changed: {}); the active provider Arc, route/fallback graph and compaction decorators remain on the startup generation; restart NEOTH to apply these fields",
-                changed_fields.join(", ")
-            ),
-            Self::ClusterLifecycleChanged { changed_fields } => write!(
-                f,
-                "cluster lifecycle fields cannot be hot-reloaded yet (changed: {}); the active transport, mDNS announcer, and gossip tasks remain on the prior config; restart NEOTH to apply the on-disk cluster config",
                 changed_fields.join(", ")
             ),
             Self::SovereignBuddyCeremonyRequired => write!(
@@ -351,11 +341,9 @@ impl ReloadController {
 ///     per-role topology, fallbacks and compaction decorators are built once at
 ///     startup. Publishing a different config without rebuilding that graph
 ///     would make live consent checks authorize the wrong route generation.
-///   - cluster lifecycle fields — the active carrier, DHT membership,
-///     mDNS registration and gossip handles are built as one runtime unit.
-///     A restart is required until that unit has a generation-bound supervisor.
-///     `cluster.gossip` is the deliberate exception: workers resolve it from
-///     the live controller for every anti-entropy operation.
+/// Cluster lifecycle fields are mutable because the runtime supervisor rebuilds
+/// the complete generation. `cluster.gossip` remains cheaper: workers resolve
+/// it from the live controller without a carrier rebuild.
 /// Channel-specific fields, including `telegram_user_id`, are mutable because
 /// the credential-aware adapter reconciler restarts only the affected adapter.
 fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRejection> {
@@ -376,12 +364,6 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<ReloadRej
     if !provider_runtime_changes.is_empty() {
         reasons.push(ReloadRejectionReason::ProviderRuntimeChanged {
             changed_fields: provider_runtime_changes,
-        });
-    }
-    let cluster_changes = changed_cluster_lifecycle_fields(old, new);
-    if !cluster_changes.is_empty() {
-        reasons.push(ReloadRejectionReason::ClusterLifecycleChanged {
-            changed_fields: cluster_changes,
         });
     }
     // Error-hunt #2 (2026-07-03) HIGH: sovereign-buddy must NEVER escalate via a
@@ -470,65 +452,6 @@ fn changed_provider_runtime_fields(old: &FreedomConfig, new: &FreedomConfig) -> 
         changed.push("recursive_mas");
     }
     changed
-}
-
-/// Exact cluster fields whose values own long-lived runtime resources.
-///
-/// Keep this field-level instead of comparing serialized `cluster` blobs so the
-/// rejection audit identifies the operator action that requires a restart.
-/// Every lifecycle field in `ClusterConfig` is intentionally covered: even
-/// announce policy and bootstrap-peer changes affect a running carrier. Gossip
-/// policy is omitted deliberately because all transports read it live.
-fn changed_cluster_lifecycle_fields(old: &FreedomConfig, new: &FreedomConfig) -> Vec<&'static str> {
-    let mut changed = Vec::new();
-    if old.cluster.name != new.cluster.name {
-        changed.push("cluster.name");
-    }
-    if old.cluster.enabled != new.cluster.enabled {
-        changed.push("cluster.enabled");
-    }
-    if old.cluster.transport != new.cluster.transport {
-        changed.push("cluster.transport");
-    }
-    if old.cluster.peers != new.cluster.peers {
-        changed.push("cluster.peers");
-    }
-    if old.cluster.mdns != new.cluster.mdns {
-        changed.push("cluster.mdns");
-    }
-    if old.cluster.policy != new.cluster.policy {
-        changed.push("cluster.policy");
-    }
-    if old.cluster.listen_port != new.cluster.listen_port {
-        changed.push("cluster.listen_port");
-    }
-    // Future-proof the safety boundary: if ClusterConfig gains a field and its
-    // contributor forgets to classify it above, reject the reload under an
-    // explicit catch-all instead of silently publishing a value whose runtime
-    // lifecycle is unknown.
-    match (
-        serialized_cluster_lifecycle(&old.cluster),
-        serialized_cluster_lifecycle(&new.cluster),
-    ) {
-        (Ok(old_value), Ok(new_value)) if old_value != new_value && changed.is_empty() => {
-            changed.push("cluster.<unclassified>");
-        }
-        (Err(_), _) | (_, Err(_)) if changed.is_empty() => {
-            changed.push("cluster.<serialization-error>");
-        }
-        _ => {}
-    }
-    changed
-}
-
-fn serialized_cluster_lifecycle(
-    cluster: &crate::config::ClusterConfig,
-) -> Result<serde_yaml::Value, serde_yaml::Error> {
-    let mut value = serde_yaml::to_value(cluster)?;
-    if let serde_yaml::Value::Mapping(mapping) = &mut value {
-        mapping.remove(serde_yaml::Value::String("gossip".to_string()));
-    }
-    Ok(value)
 }
 
 /// Compare two `FreedomConfig` instances at the top level via their YAML
@@ -698,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn every_cluster_lifecycle_field_is_restart_bound() {
+    fn every_cluster_lifecycle_field_is_hot_reloadable_by_runtime_supervisor() {
         let old = fresh_config();
         let mut new = old.clone();
         new.cluster.name = Some("home-mesh".into());
@@ -712,24 +635,10 @@ mod tests {
         new.cluster.gossip.replay_budget_days = 14;
         new.cluster.listen_port = 49_738;
 
-        assert_eq!(
-            changed_cluster_lifecycle_fields(&old, &new),
-            vec![
-                "cluster.name",
-                "cluster.enabled",
-                "cluster.transport",
-                "cluster.peers",
-                "cluster.mdns",
-                "cluster.policy",
-                "cluster.listen_port",
-            ]
+        assert!(
+            validate_reload(&old, &new).is_none(),
+            "one supervisor owns every cluster lifecycle resource"
         );
-
-        let rejection = validate_reload(&old, &new).expect("cluster reload must reject");
-        assert!(rejection.restart_required());
-        let reason = rejection.to_string();
-        assert!(reason.contains("active transport"));
-        assert!(reason.contains("restart NEOTH"));
     }
 
     #[test]
@@ -739,7 +648,6 @@ mod tests {
         new.cluster.gossip.replicate_raw_ingress = true;
         new.cluster.gossip.replay_budget_days = 14;
 
-        assert!(changed_cluster_lifecycle_fields(&old, &new).is_empty());
         assert!(
             validate_reload(&old, &new).is_none(),
             "gossip policy does not own a carrier and must hot-reload"
@@ -770,26 +678,18 @@ mod tests {
     }
 
     #[test]
-    fn combined_ceremony_and_lifecycle_rejection_retains_restart_requirement() {
+    fn cluster_change_does_not_turn_ceremony_rejection_into_restart_requirement() {
         let old = fresh_config();
         let mut new = old.clone();
         new.cluster.name = Some("new-mesh".into());
         new.sovereign_buddy = true;
 
         let rejection = validate_reload(&old, &new).expect("combined edit must reject");
-        assert_eq!(rejection.reasons().len(), 2);
-        assert!(matches!(
-            rejection.reasons()[0],
-            ReloadRejectionReason::ClusterLifecycleChanged { .. }
-        ));
         assert_eq!(
-            rejection.reasons()[1],
-            ReloadRejectionReason::SovereignBuddyCeremonyRequired
+            rejection.reasons(),
+            &[ReloadRejectionReason::SovereignBuddyCeremonyRequired]
         );
-        assert!(
-            rejection.restart_required(),
-            "a ceremony rejection must not hide the cluster restart requirement"
-        );
+        assert!(!rejection.restart_required());
     }
 
     #[test]
@@ -919,7 +819,7 @@ mod tests {
     }
 
     #[test]
-    fn try_reload_rejects_cluster_change_without_swapping_or_bumping_generation() {
+    fn try_reload_swaps_cluster_change_and_bumps_supervisor_generation() {
         let dir = tempdir().unwrap();
         let yaml_path = dir.path().join("freedom.yaml");
         let initial = fresh_config();
@@ -931,23 +831,20 @@ mod tests {
 
         let ctrl = ReloadController::new(initial, yaml_path);
         let generation = ctrl.subscribe_generation();
-        match ctrl.try_reload().expect("reload call succeeds") {
-            ReloadResult::Rejected { rejection } => {
-                assert!(rejection.restart_required());
-                assert!(rejection.to_string().contains("cluster.name"));
-            }
-            other => panic!("expected Rejected, got {other:?}"),
-        }
+        assert!(matches!(
+            ctrl.try_reload().expect("reload call succeeds"),
+            ReloadResult::Reloaded { .. }
+        ));
 
         assert_eq!(
-            ctrl.latest().cluster.name,
-            None,
-            "rejected cluster config must not become the active snapshot"
+            ctrl.latest().cluster.name.as_deref(),
+            Some("new-mesh"),
+            "cluster supervisor must observe the published config generation"
         );
         assert_eq!(
             *generation.borrow(),
-            0,
-            "rejected cluster config must not wake live-config consumers"
+            1,
+            "cluster lifecycle change must wake the runtime supervisor"
         );
     }
 

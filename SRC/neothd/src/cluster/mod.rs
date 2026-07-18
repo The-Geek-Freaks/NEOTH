@@ -53,6 +53,11 @@ pub mod executor;
 /// live on the transport.
 pub mod wal_sync;
 
+/// R4-13 — one generation-bound owner for carrier, mDNS, gossip and request
+/// consumers. Live config/credential changes switch the complete unit without
+/// overlapping old and new transport generations.
+pub mod runtime_supervisor;
+
 /// GOLD-R3-09 durable per-peer cursor/ACK state and canonical content ledger.
 /// Both peeroxide and iroh route through this module.
 pub mod durable_sync;

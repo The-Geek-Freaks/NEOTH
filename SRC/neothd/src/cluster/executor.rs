@@ -93,6 +93,10 @@ pub struct ClusterExecutorHandle {
 }
 
 impl ClusterExecutorHandle {
+    pub(crate) fn is_healthy(&self) -> bool {
+        self.dispatch_tx.is_some() && self.task.as_ref().is_some_and(|task| !task.is_finished())
+    }
+
     /// Clone the bounded sender handed to authenticated peer sessions.
     pub fn dispatch_sender(&self) -> tokio::sync::mpsc::Sender<ClusterTaskJob> {
         self.dispatch_tx

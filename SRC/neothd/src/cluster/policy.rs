@@ -138,12 +138,42 @@ pub fn current_ssid() -> Option<String> {
     }
 }
 
+/// Run the platform Wi-Fi probe with an owned child and a hard deadline. A
+/// wedged OS utility is killed and reaped here; no detached process survives a
+/// supervisor network poll or daemon shutdown.
+#[cfg(any(
+    target_os = "windows",
+    target_os = "macos",
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "openbsd"
+))]
+fn bounded_command_output(program: &str, args: &[&str]) -> Option<std::process::Output> {
+    let mut child = std::process::Command::new(program)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return child.wait_with_output().ok(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn ssid_via_netsh() -> Option<String> {
-    let output = std::process::Command::new("netsh")
-        .args(["wlan", "show", "interfaces"])
-        .output()
-        .ok()?;
+    let output = bounded_command_output("netsh", &["wlan", "show", "interfaces"])?;
     if !output.status.success() {
         return None;
     }
@@ -156,10 +186,7 @@ fn ssid_via_networksetup() -> Option<String> {
     // networksetup -getairportnetwork takes a device name; we
     // try `en0` (typical primary wifi) first, then fall through.
     for dev in ["en0", "en1"] {
-        let output = std::process::Command::new("networksetup")
-            .args(["-getairportnetwork", dev])
-            .output()
-            .ok();
+        let output = bounded_command_output("networksetup", &["-getairportnetwork", dev]);
         if let Some(out) = output
             && out.status.success()
             && let Some(ssid) = parse_networksetup_ssid(&String::from_utf8_lossy(&out.stdout))
@@ -172,10 +199,7 @@ fn ssid_via_networksetup() -> Option<String> {
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
 fn ssid_via_iwgetid() -> Option<String> {
-    let output = std::process::Command::new("iwgetid")
-        .arg("-r")
-        .output()
-        .ok()?;
+    let output = bounded_command_output("iwgetid", &["-r"])?;
     if !output.status.success() {
         return None;
     }

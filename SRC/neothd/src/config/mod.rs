@@ -1546,7 +1546,7 @@ pub(crate) const fn default_cluster_replay_budget_days() -> u32 {
 
 /// SL-00 cluster identity and transport config. Default: inert cluster,
 /// peeroxide selected, no peers, and privacy-gated mDNS discovery.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ClusterConfig {
     /// Public cluster rendezvous name — derives the DHT topic + mDNS service.

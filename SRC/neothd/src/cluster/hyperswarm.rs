@@ -82,6 +82,40 @@ pub type ClusterWalWriter = Option<Arc<WalWriterHandle>>;
 /// cluster is single-digit peers); excess inbound connections are dropped.
 const MAX_CONCURRENT_PEER_SESSIONS: usize = 64;
 
+/// Startup must either return a fully joined swarm or prove every spawned
+/// actor/accept task gone before returning `Err` to the runtime supervisor.
+const SWARM_JOIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const STARTUP_CLEANUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const STARTUP_DESTROY_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[derive(Debug)]
+struct StartupTeardownUncertain(String);
+
+impl std::fmt::Display for StartupTeardownUncertain {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StartupTeardownUncertain {}
+
+fn uncertain_start_error(message: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(StartupTeardownUncertain(message.into()))
+}
+
+/// `peeroxide::spawn` does not return its internal task handle on `Err`, and a
+/// timed-out cleanup may have had to abort the wrapper that owns the DHT join.
+/// The runtime supervisor must terminally poison instead of treating either as
+/// a clean, retryable start failure.
+pub(crate) fn start_error_has_uncertain_teardown(error: &anyhow::Error) -> bool {
+    error.root_cause().is::<StartupTeardownUncertain>()
+}
+
+#[cfg(test)]
+pub(crate) fn test_uncertain_start_error(message: &str) -> anyhow::Error {
+    uncertain_start_error(message)
+}
+
 /// SL-00(1b) DoS hardening: wall-clock budget for the Hello handshake
 /// (write-our-Hello + read-peer-Hello). A peer that connects but stalls
 /// without completing the handshake is dropped instead of pinning a task /
@@ -133,6 +167,20 @@ impl SwarmHandle {
         &self.own_peer_id
     }
 
+    /// The carrier is live only while both owned critical workers are still
+    /// running. Retaining their handles alone is not runtime evidence.
+    pub(crate) fn is_healthy(&self) -> bool {
+        self.peer_handle.is_some()
+            && self
+                .swarm_task
+                .as_ref()
+                .is_some_and(|task| !task.is_finished())
+            && self
+                .accept_task
+                .as_ref()
+                .is_some_and(|task| !task.is_finished())
+    }
+
     /// Explicit graceful shutdown — unannounces, stops the DHT actor, and
     /// awaits termination. Use over `Drop` when the caller wants synchronous
     /// teardown (daemon SIGTERM path) with no lingering DHT announce.
@@ -178,6 +226,63 @@ impl Drop for SwarmHandle {
         if let Some(t) = self.swarm_task.take() {
             t.abort();
         }
+    }
+}
+
+async fn await_or_abort_startup_task(
+    mut task: tokio::task::JoinHandle<()>,
+    task_name: &'static str,
+    cleanup_timeout: std::time::Duration,
+) -> bool {
+    match tokio::time::timeout(cleanup_timeout, &mut task).await {
+        Ok(Ok(())) => true,
+        Ok(Err(error)) => {
+            warn!(%error, task = task_name, "hyperswarm startup cleanup task failed");
+            false
+        }
+        Err(_) => {
+            task.abort();
+            let _ = task.await;
+            warn!(
+                task = task_name,
+                "hyperswarm startup cleanup exceeded deadline and was aborted"
+            );
+            false
+        }
+    }
+}
+
+async fn cleanup_failed_swarm_start(
+    peer_handle: peeroxide::SwarmHandle,
+    accept_shutdown: tokio::sync::oneshot::Sender<()>,
+    accept_task: tokio::task::JoinHandle<()>,
+    swarm_task: tokio::task::JoinHandle<()>,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + STARTUP_CLEANUP_TIMEOUT;
+    let _ = accept_shutdown.send(());
+    // Ask the actor to destroy the DHT before dropping the final command
+    // sender. Regardless of that reply, the actor-task join below is the proof
+    // that topic leave, DHT shutdown, and runtime socket cleanup completed.
+    let destroy_timeout = STARTUP_DESTROY_REQUEST_TIMEOUT
+        .min(deadline.saturating_duration_since(tokio::time::Instant::now()));
+    if tokio::time::timeout(destroy_timeout, peer_handle.destroy())
+        .await
+        .is_err()
+    {
+        warn!("hyperswarm startup cleanup destroy request exceeded deadline");
+    }
+    drop(peer_handle);
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    let (accept_clean, actor_clean) = tokio::join!(
+        await_or_abort_startup_task(accept_task, "accept", remaining),
+        await_or_abort_startup_task(swarm_task, "actor", remaining),
+    );
+    if accept_clean && actor_clean {
+        Ok(())
+    } else {
+        Err(uncertain_start_error(
+            "hyperswarm startup failed and complete task/DHT teardown was not proven",
+        ))
     }
 }
 
@@ -234,9 +339,18 @@ pub async fn spawn_discovery_with_wal(
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
-    let (swarm_task, handle, mut conn_rx) = peeroxide::spawn(config)
-        .await
-        .context("peeroxide::spawn — bring up Hyperswarm")?;
+    let (swarm_task, handle, mut conn_rx) = match peeroxide::spawn(config).await {
+        Ok(parts) => parts,
+        Err(error) => {
+            // peeroxide owns an internal DHT task but does not return its join
+            // handle on `Err`; callers cannot prove teardown and must not retry
+            // another carrier generation in this process.
+            return Err(uncertain_start_error(format!(
+                "peeroxide::spawn failed before handing out cleanup ownership: {error}"
+            )))
+            .context("peeroxide::spawn — bring up Hyperswarm");
+        }
+    };
     // Our own Noise static pubkey — the same for every peer session. Bound
     // into the cluster_key proof so a captured proof can't be replayed.
     let own_noise_pk: [u8; 32] = handle.key_pair().public_key;
@@ -352,10 +466,40 @@ pub async fn spawn_discovery_with_wal(
     // live. The loop blocks on an empty `conn_rx` until peers actually connect,
     // so spawning it first costs nothing and closes the window where the node
     // was visible on the public DHT before the auth guardian was polling.
-    handle
-        .join(topic, peeroxide::JoinOpts::default())
-        .await
-        .with_context(|| format!("peeroxide join topic for cluster `{cluster_name}`"))?;
+    match tokio::time::timeout(
+        SWARM_JOIN_TIMEOUT,
+        handle.join(topic, peeroxide::JoinOpts::default()),
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            if let Err(cleanup_error) =
+                cleanup_failed_swarm_start(handle, accept_shutdown, accept_task, swarm_task).await
+            {
+                return Err(cleanup_error.context(format!(
+                    "peeroxide join topic for cluster `{cluster_name}` failed: {error}"
+                )));
+            }
+            return Err(error)
+                .with_context(|| format!("peeroxide join topic for cluster `{cluster_name}`"));
+        }
+        Err(_) => {
+            let timeout_error = format!(
+                "peeroxide join topic for cluster `{cluster_name}` timed out after {} seconds",
+                SWARM_JOIN_TIMEOUT.as_secs()
+            );
+            if let Err(cleanup_error) =
+                cleanup_failed_swarm_start(handle, accept_shutdown, accept_task, swarm_task).await
+            {
+                return Err(cleanup_error.context(timeout_error));
+            }
+            anyhow::bail!(
+                "peeroxide join topic for cluster `{cluster_name}` timed out after {} seconds",
+                SWARM_JOIN_TIMEOUT.as_secs()
+            );
+        }
+    }
 
     info!(
         cluster = cluster_name,
@@ -1713,6 +1857,37 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn startup_cleanup_aborts_and_awaits_a_stuck_task() {
+        struct DropSignal(Option<tokio::sync::oneshot::Sender<()>>);
+
+        impl Drop for DropSignal {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (dropped_tx, dropped_rx) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _drop_signal = DropSignal(Some(dropped_tx));
+            let _ = started_tx.send(());
+            std::future::pending::<()>().await;
+        });
+        started_rx.await.expect("cleanup target started");
+
+        assert!(
+            !await_or_abort_startup_task(task, "test", std::time::Duration::from_millis(10)).await
+        );
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), dropped_rx)
+            .await
+            .expect("aborted task was awaited")
+            .expect("drop signal sent");
+    }
 
     #[tokio::test]
     async fn owned_peer_sessions_release_wal_senders_on_shutdown() {

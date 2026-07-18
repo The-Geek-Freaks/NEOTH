@@ -1417,6 +1417,16 @@ fn same_cluster_secret_generation(left: &Credentials, right: &Credentials) -> bo
 /// Daemon-only acknowledgement written after the configured carrier has
 /// actually started. This is the sole path that can make `cluster status`
 /// report `transport_active=true`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ClusterRuntimeAckOutcome {
+    /// The exact config/credential generation was durably acknowledged.
+    Committed,
+    /// Disk/runtime-marker state advanced while this generation was starting.
+    /// The caller must stop this uncommitted carrier and reconcile the latest
+    /// generation; this is deliberately not represented as successful `()`.
+    Superseded,
+}
+
 #[cfg(any(feature = "cluster", test))]
 pub(crate) fn acknowledge_cluster_runtime_at(
     home: &Path,
@@ -1424,7 +1434,7 @@ pub(crate) fn acknowledge_cluster_runtime_at(
     credentials: &Credentials,
     carrier_active: bool,
     mdns_active: bool,
-) -> Result<()> {
+) -> Result<ClusterRuntimeAckOutcome> {
     let identity = crate::cluster::identity::cluster_identity_status(config, credentials);
     anyhow::ensure!(
         carrier_active == identity.transport_active,
@@ -1454,7 +1464,7 @@ pub(crate) fn acknowledge_cluster_runtime_at(
         // Config/credential state advanced after this daemon loaded its startup
         // snapshot. The newer pending marker belongs to that mutation and must
         // remain untouched until a daemon actually starts from it.
-        return Ok(());
+        return Ok(ClusterRuntimeAckOutcome::Superseded);
     }
 
     let mut state = match load_cluster_runtime_state(home)? {
@@ -1484,7 +1494,21 @@ pub(crate) fn acknowledge_cluster_runtime_at(
             ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
                 .finalize()
         }
-        Some(_) => return Ok(()),
+        Some(state) if state.ready_for_confirmation && state.acknowledged_daemon_pid.is_some() => {
+            // A directly edited freedom.yaml can legitimately advance the
+            // public cluster generation without going through `cluster
+            // configure`, so no matching pending marker was staged first.
+            // The exact config+credential pair above was re-read while this
+            // state lock is held and the caller owns the daemon PID file. An
+            // already-acknowledged mismatching marker is therefore the old
+            // runtime generation, not an uncommitted newer writer. Replace it
+            // atomically so the freshly constructed current generation can be
+            // acknowledged. Unacknowledged mismatching markers still remain
+            // protected by the Superseded branch below.
+            ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
+                .finalize()
+        }
+        Some(_) => return Ok(ClusterRuntimeAckOutcome::Superseded),
         None => {
             ClusterRuntimeState::blocked(snapshot, identity.has_passphrase, current_binding.clone())
                 .finalize()
@@ -1493,7 +1517,50 @@ pub(crate) fn acknowledge_cluster_runtime_at(
     state.acknowledged_daemon_pid = Some(std::process::id());
     state.carrier_active = carrier_active;
     state.mdns_active = mdns_active;
-    write_cluster_runtime_state(home, &state)
+    write_cluster_runtime_state(home, &state)?;
+    Ok(ClusterRuntimeAckOutcome::Committed)
+}
+
+/// Conservatively revoke a daemon acknowledgement after a critical worker
+/// dies or before the supervisor tears a generation down. The exact disk
+/// generation is revalidated under the runtime-state lock so an old carrier
+/// can never clear a newer pending marker.
+#[cfg(any(feature = "cluster", test))]
+pub(crate) fn invalidate_cluster_runtime_at(
+    home: &Path,
+    config: &FreedomConfig,
+    credentials: &Credentials,
+) -> Result<ClusterRuntimeAckOutcome> {
+    let identity = crate::cluster::identity::cluster_identity_status(config, credentials);
+    anyhow::ensure!(
+        live_daemon_owner_pid(home)? == Some(std::process::id()),
+        "refusing cluster runtime invalidation without daemon PID-file ownership"
+    );
+    let _runtime_state_lock = crate::util::locked_file::lock_file_blocking(
+        &home.join(CLUSTER_RUNTIME_STATE_LOCK_NAME),
+        "cluster runtime state",
+    )?;
+    let current = crate::config::load_runtime_config_pair_from_path(&home.join("freedom.yaml"))?;
+    if ClusterConfigureSnapshot::from(&current.config.cluster)
+        != ClusterConfigureSnapshot::from(&config.cluster)
+        || !same_cluster_secret_generation(credentials, &current.credentials)
+    {
+        return Ok(ClusterRuntimeAckOutcome::Superseded);
+    }
+    let binding = cluster_identity_binding(home, &current.credentials, true)?;
+    let snapshot = ClusterConfigureSnapshot::from(&config.cluster);
+    let Some(mut state) = load_cluster_runtime_state(home)? else {
+        return Ok(ClusterRuntimeAckOutcome::Superseded);
+    };
+    if !state.matches(&snapshot, identity.has_passphrase, binding.as_ref())
+        || state.acknowledged_daemon_pid != Some(std::process::id())
+    {
+        return Ok(ClusterRuntimeAckOutcome::Superseded);
+    }
+    state.carrier_active = false;
+    state.mdns_active = false;
+    write_cluster_runtime_state(home, &state)?;
+    Ok(ClusterRuntimeAckOutcome::Committed)
 }
 
 fn parse_json_string_array(raw: &str, flag: &str) -> Result<Vec<String>> {
@@ -3372,8 +3439,11 @@ mod tests {
             FreedomConfig::load_from_path(&home.join("freedom.yaml")).expect("load live config");
         let live_credentials = Credentials::load_or_default(&home.join("credentials.yaml"))
             .expect("load live credentials");
-        acknowledge_cluster_runtime_at(home, &live_config, &live_credentials, true, false)
-            .expect("daemon acknowledges successful carrier startup");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(home, &live_config, &live_credentials, true, false)
+                .expect("daemon acknowledges successful carrier startup"),
+            ClusterRuntimeAckOutcome::Committed
+        );
         let after_restart = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
             .expect("retry after a new daemon generation");
         assert!(after_restart.reload_requested);
@@ -3494,8 +3564,17 @@ mod tests {
         assert_eq!(before.cluster, ClusterConfigureSnapshot::from(&desired));
         assert_eq!(before.acknowledged_daemon_pid, None);
 
-        acknowledge_cluster_runtime_at(home, &startup_config, &startup_credentials, false, false)
-            .expect("stale daemon acknowledgement is ignored");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &startup_config,
+                &startup_credentials,
+                false,
+                false,
+            )
+            .expect("stale daemon acknowledgement is rejected as superseded"),
+            ClusterRuntimeAckOutcome::Superseded
+        );
         let after = load_cluster_runtime_state(home)
             .expect("reload B marker")
             .expect("B marker remains");
@@ -3542,13 +3621,70 @@ mod tests {
         .finalize();
         write_cluster_runtime_state(home, &pending_b).expect("write B pending marker");
 
-        acknowledge_cluster_runtime_at(home, &startup_config, &startup_credentials, true, false)
-            .expect("stale A acknowledgement is ignored");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &startup_config,
+                &startup_credentials,
+                true,
+                false,
+            )
+            .expect("stale A acknowledgement is rejected as superseded"),
+            ClusterRuntimeAckOutcome::Superseded
+        );
         assert_eq!(
             load_cluster_runtime_state(home).unwrap(),
             Some(pending_b),
             "a carrier keyed with A must not acknowledge pending generation B"
         );
+    }
+
+    #[test]
+    fn daemon_ack_adopts_directly_edited_cluster_generation_after_old_ack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let home = dir.path();
+        let mut config_a = FreedomConfig::default();
+        config_a.cluster = ClusterConfig {
+            enabled: true,
+            name: Some("operators-a".to_string()),
+            ..ClusterConfig::default()
+        };
+        write_test_freedom(home, &config_a);
+        let credentials = Credentials {
+            cluster_passphrase: Some(SecretString::new("shared-generation-key".to_string())),
+            ..Credentials::default()
+        };
+        credentials
+            .write(&home.join("credentials.yaml"))
+            .expect("write cluster credentials");
+        let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
+            .expect("acquire simulated daemon owner");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(home, &config_a, &credentials, true, false)
+                .expect("acknowledge carrier A"),
+            ClusterRuntimeAckOutcome::Committed
+        );
+
+        let mut config_b = config_a.clone();
+        config_b.cluster.name = Some("operators-b".to_string());
+        config_b.cluster.listen_port = config_b.cluster.listen_port.saturating_add(1);
+        write_test_freedom(home, &config_b);
+
+        assert_eq!(
+            acknowledge_cluster_runtime_at(home, &config_b, &credentials, true, false)
+                .expect("acknowledge directly edited carrier B"),
+            ClusterRuntimeAckOutcome::Committed
+        );
+        let state = load_cluster_runtime_state(home).unwrap().unwrap();
+        let snapshot_b = ClusterConfigureSnapshot::from(&config_b.cluster);
+        let binding = cluster_identity_binding(home, &credentials, false).unwrap();
+        assert!(cluster_runtime_carrier_active(
+            Some(&state),
+            &snapshot_b,
+            true,
+            binding.as_ref(),
+            Some(std::process::id()),
+        ));
     }
 
     #[test]
@@ -3571,8 +3707,11 @@ mod tests {
             .expect("write credentials A");
         let _daemon_owner = crate::daemon::pidfile::acquire(&home.join("neothd.pid"))
             .expect("acquire simulated daemon owner");
-        acknowledge_cluster_runtime_at(home, &config, &credentials_a, true, false)
-            .expect("acknowledge carrier A");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(home, &config, &credentials_a, true, false)
+                .expect("acknowledge carrier A"),
+            ClusterRuntimeAckOutcome::Committed
+        );
 
         let state = load_cluster_runtime_state(home).unwrap().unwrap();
         let snapshot = ClusterConfigureSnapshot::from(&config.cluster);
@@ -3607,6 +3746,26 @@ mod tests {
         assert!(!runtime_applied, "rotated credentials require a restart");
         assert!(!cluster_runtime_carrier_active(
             Some(&state),
+            &snapshot,
+            true,
+            binding_b.as_ref(),
+            Some(std::process::id()),
+        ));
+
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &current.config,
+                &current.credentials,
+                true,
+                false,
+            )
+            .expect("acknowledge out-of-band credential generation B"),
+            ClusterRuntimeAckOutcome::Committed
+        );
+        let adopted = load_cluster_runtime_state(home).unwrap().unwrap();
+        assert!(cluster_runtime_carrier_active(
+            Some(&adopted),
             &snapshot,
             true,
             binding_b.as_ref(),
@@ -3798,14 +3957,17 @@ mod tests {
         );
         write_cluster_runtime_state(home, &orphan).expect("write orphan blocked marker");
 
-        acknowledge_cluster_runtime_at(
-            home,
-            &startup_config,
-            &Credentials::default(),
-            false,
-            false,
-        )
-        .expect("recover orphan marker");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &startup_config,
+                &Credentials::default(),
+                false,
+                false,
+            )
+            .expect("recover orphan marker"),
+            ClusterRuntimeAckOutcome::Committed
+        );
         let state = load_cluster_runtime_state(home).unwrap().unwrap();
         assert!(state.ready_for_confirmation);
         assert_eq!(
@@ -3831,14 +3993,17 @@ mod tests {
         );
         write_cluster_runtime_state(home, &blocked).expect("write matching blocked marker");
 
-        acknowledge_cluster_runtime_at(
-            home,
-            &startup_config,
-            &Credentials::default(),
-            false,
-            false,
-        )
-        .expect("ack exact landed config");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &startup_config,
+                &Credentials::default(),
+                false,
+                false,
+            )
+            .expect("ack exact landed config"),
+            ClusterRuntimeAckOutcome::Committed
+        );
         let state = load_cluster_runtime_state(home).unwrap().unwrap();
         assert!(state.ready_for_confirmation);
         assert_eq!(state.cluster, blocked.cluster);
@@ -3864,14 +4029,17 @@ mod tests {
         .finalize();
         write_cluster_runtime_state(home, &pending).expect("write finalized pending marker");
 
-        acknowledge_cluster_runtime_at(
-            home,
-            &startup_config,
-            &Credentials::default(),
-            false,
-            false,
-        )
-        .expect("mismatched finalized marker is left pending");
+        assert_eq!(
+            acknowledge_cluster_runtime_at(
+                home,
+                &startup_config,
+                &Credentials::default(),
+                false,
+                false,
+            )
+            .expect("mismatched finalized marker is rejected as superseded"),
+            ClusterRuntimeAckOutcome::Superseded
+        );
         assert_eq!(load_cluster_runtime_state(home).unwrap(), Some(pending));
     }
 

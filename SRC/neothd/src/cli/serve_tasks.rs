@@ -6349,26 +6349,8 @@ pub(crate) struct BackgroundHandles {
     #[cfg(feature = "cluster")]
     pub cluster_foreign_indexer_task: crate::cluster::foreign_indexer::ForeignIndexerHandle,
     #[cfg(feature = "cluster")]
-    pub cluster_gossip_task: Option<JoinHandle<()>>,
-    /// Optional iroh outbound anti-entropy loop. It owns WAL and transport
-    /// handles and must be aborted before either is shut down.
-    #[cfg(feature = "cluster-iroh")]
-    pub iroh_gossip_task: Option<JoinHandle<()>>,
-    /// Live iroh router. Kept in the shutdown set so the router-owned inbound
-    /// handler releases its WAL writer sender before the main writer drains.
-    #[cfg(feature = "cluster-iroh")]
-    pub iroh_transport_handle: Option<Arc<crate::cluster::iroh_transport::IrohTransport>>,
-    #[cfg(feature = "cluster")]
-    pub cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle>,
-    /// Single delegated-task executor. It owns its dispatch sender and active
-    /// inference task; shut down only after the swarm has drained peer sender
-    /// clones, and before the WAL writer is joined.
-    #[cfg(feature = "cluster")]
-    pub cluster_executor: Option<crate::cluster::executor::ClusterExecutorHandle>,
-    /// mDNS LAN announcer (Phase-2 wire-in). Dropping the ServiceDaemon
-    /// unregisters `_neoth._udp.local.`; torn down beside the swarm.
-    #[cfg(feature = "cluster")]
-    pub mdns_daemon: Option<mdns_sd::ServiceDaemon>,
+    pub cluster_runtime_supervisor:
+        crate::cluster::runtime_supervisor::ClusterRuntimeSupervisorHandle,
     pub installer_audit_task: JoinHandle<()>,
     pub credentials_import_task: JoinHandle<()>,
     pub detect_complete_task: JoinHandle<()>,
@@ -6491,17 +6473,7 @@ pub(crate) async fn shutdown_background_tasks(
         #[cfg(feature = "cluster")]
         cluster_foreign_indexer_task,
         #[cfg(feature = "cluster")]
-        cluster_gossip_task,
-        #[cfg(feature = "cluster-iroh")]
-        iroh_gossip_task,
-        #[cfg(feature = "cluster-iroh")]
-        iroh_transport_handle,
-        #[cfg(feature = "cluster")]
-        cluster_swarm,
-        #[cfg(feature = "cluster")]
-        cluster_executor,
-        #[cfg(feature = "cluster")]
-        mdns_daemon,
+        cluster_runtime_supervisor,
         installer_audit_task,
         credentials_import_task,
         detect_complete_task,
@@ -6659,49 +6631,9 @@ pub(crate) async fn shutdown_background_tasks(
         crate::cli::serve_tasks::abort_join(cluster_audit_task).await;
         cluster_foreign_indexer_task.shutdown().await;
 
-        // SL-01b: stop the gossip send-tick before tearing the transport down.
-        crate::cli::serve_tasks::abort_optional(cluster_gossip_task).await;
-
-        // Iroh owns two additional WalWriterHandle senders: the outbound tick
-        // and the router's inbound handler. Drain the tick first, then always
-        // shut the router down so it releases the handler. Shutdown deliberately
-        // works through a shared reference: a future observer Arc must not turn
-        // graceful daemon teardown into a WAL-writer deadlock.
-        #[cfg(feature = "cluster-iroh")]
-        {
-            crate::cli::serve_tasks::abort_optional(iroh_gossip_task).await;
-            if let Some(transport) = iroh_transport_handle {
-                if let Err(error) = transport.shutdown().await {
-                    warn!(%error, "iroh cluster transport shutdown error (non-fatal)");
-                } else {
-                    info!("iroh cluster transport shut down");
-                }
-            }
-        }
-
-        // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
-        // discovery task + awaits it so we leave the DHT cleanly (no lingering
-        // announce). `None` when the transport never came up — no-op.
-        if let Some(swarm) = cluster_swarm {
-            if let Err(e) = swarm.shutdown().await {
-                warn!(error = %e, "cluster transport shutdown error (non-fatal)");
-            } else {
-                info!("cluster transport shut down");
-            }
-        }
-        // Every transport-owned dispatch Sender clone is gone now. Cancel and
-        // await the executor (including an active provider child) so its
-        // AuthorizedProvider cannot retain a WAL sender into writer_join.
-        if let Some(executor) = cluster_executor {
-            executor.shutdown().await;
-            info!("cluster task executor shut down");
-        }
-        // Unregister the mDNS announce (drop ⇒ goodbye packets). Beside
-        // the swarm teardown so the LAN + DHT presence disappear together.
-        if let Some(d) = mdns_daemon {
-            info!("cluster: stopping mDNS announcer");
-            let _ = d.shutdown();
-        }
+        // R4-13: one ordered stop drains gossip/request consumers, carrier,
+        // executor, iroh foreign writer and mDNS before the WAL writer closes.
+        cluster_runtime_supervisor.shutdown().await;
     }
 
     // Abort the installer_ran + credentials_import sidecar ingesters.
