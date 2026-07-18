@@ -168,7 +168,11 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
       + Last-Error (consent-rot) aus `cluster sync-state --output json`
       (durable_sync::MeshPeerStatus). Card versteckt sich ohne Daten.
       Gossip-Event-Stream war schon da (Session #13).
-- [ ] F3 Per-Node-Aktionen (request sync, kick peer), Node-Rollen.
+- [~] F3 (verified 2026-07-18): Node-Rollen-Chip ✓ (PeerCard), Kick-Peer ✓
+      (ctx-menu Remove/revoke, main.rs on_mesh_peer_revoke), Copy-ID ✓.
+      **Residual = CODEX-ZONE:** "Force Sync" toastet aktuell nur den
+      sync-state-Read (main.rs:6696) statt `cluster request-sync` zu feuern —
+      das ist exakt Codex' Serialize-Item "request-sync-real". Nicht anfassen.
 
 ## Wave H — 12/10 KILLER-BACKLOG (Research-Wave 2, `wf_c9f1360d-bda`, web-grounded)
 
