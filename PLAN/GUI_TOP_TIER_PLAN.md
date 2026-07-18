@@ -116,11 +116,12 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
       Enter/Space, sichtbaren Fokus sowie passende tab/radio/switch-Rollen und
       selected/checked state.
 - [ ] D4 Filter-as-you-type in jeder Listen-View.
-- [~] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
+- [x] D5 Keyboard-Shortcuts (Ctrl+1..9 Tabs, Ctrl+Enter send, Esc close) +
       Shortcut-Cheatsheet (? oder Ctrl+/).
-      **Residual:** Der globale Tab-Vertrag endet bei Ctrl+1..5; Ctrl+6..9
-      müssen noch auf stabile Tab-Ziele verdrahtet und im Cheatsheet geführt
-      werden.
+      **Closed 2026-07-18 (`d455efc5`):** Ctrl+6..9 = agents · automation ·
+      mesh · doctor, Ctrl+B = Sidebar-Toggle, Cheatsheet geführt. Vorher
+      geblockt durch Slint-Codegen-Stack-Ceiling — build.rs kompiliert jetzt
+      auf 256-MiB-Stack-Thread (BUILD_LOG_2026_07_18 W0), Ceiling ist weg.
 
 ### Wave E — Homogenität & Polish (GOLD-R4-09)
 - [x] E1 Glyph-Dedup + eine Icon-Familie (Sidebar-Kollisionen fixen).
@@ -213,6 +214,73 @@ Chat (Claude/ChatGPT/Perplexity-Research):
 Mesh/Fleet (Grafana/Netdata/k9s):
 - [x] H21 Netdata-Node-Cards mit Color-Ring-Health (Basis ✅ Build-Agent). (Killer)
 - [ ] H22 Health-Heatmap (Zeit × Peer), Topology-Graph mit RTT, Composite-Cluster-Bar. (High)
+
+## Wave I — Research-Refresh 2026-07-18 (5-Agenten: Inventar, Plan-State, Parity 134 Verben, Backend-Scan, UX-Research)
+
+Neue verifizierte Gaps, nicht von A–H abgedeckt. Reihenfolge = Impact.
+Codex-Zone bleibt tabu (credential panel, moral-core editor, inline-tool-approval,
+request-sync-real, task-priority/label, message-branch-nav, artifact-canvas,
+inline-patch-diff (Chat), rollback-apply).
+
+Dead-Ends / Bugs (kleine Diffs, hoher Wert):
+- [ ] I1 **BUG: Chat-Channel-Kontextmenü feuert ins Leere** — main.slint definiert
+      Remove Channel/Copy Name, main.rs hat keine Handler (silent no-op).
+- [ ] I2 **VERIFY: Self-Reprog "Apply to Source"** — selfreprog.slint Button vorhanden,
+      kein main.rs-Handler gefunden; verifizieren + verdrahten oder Button gaten.
+- [ ] I3 WAL-Inspector: Sidebar-NavBtn fehlt (nur Palette erreichbar; NAV_PANELS 26
+      Einträge ohne `wal`) + `WalTimelineStrip` (wal_timeline.slint, H1-Komponente)
+      ist fertig aber NICHT in WalInspectorView importiert/verdrahtet.
+- [ ] I4 memgraph + groundtruth: nur Palette-erreichbar, kein Sidebar-Eintrag —
+      für Nicht-Palette-Nutzer unsichtbar.
+- [ ] I5 Dreaming: "Dream Now" refresht die Day-List nicht (kein Auto-Refresh nach
+      Aktion; Kontrast: kanban move ruft invoke_kanban_refresh_clicked()).
+- [ ] I6 Cron-Run-Button: schlägt bei laufendem Daemon IMMER fehl, sieht aber
+      klickbar aus → disabled + Tooltip "managed by live daemon" statt Fehl-Toast.
+
+Buddy lebendig — Restausbau (GOLD-R4-06):
+- [ ] I7 Forward-Infra-Moods verdrahten: MemoryRecall, ConsentGate, AuditVerify,
+      Secured, ProviderFallback haben GuiActivity-Varianten aber keine
+      WAL-Subscription (gui_stream.rs FOLLOW_TYPES) — Opcodes prüfen + mappen.
+      Quota-Breach 0xF0 fehlt komplett (Orb zeigt nichts bei Disk-Ceiling).
+- [ ] I8 Idle-Variety (Pet-UX-Research): 5+ zufällig gecycelte Idle-Micro-Behaviors
+      (blink, look-around, yawn, einschlafen nach Lang-Idle, aufwachen+grüßen bei
+      Rückkehr); Event-Reaktionen: Task-Done=Celebration, Error=Concerned.
+- [ ] I9 SAFE_GAPS HIGH: 6 Mood-Overlays ohne Entrance-Fade (buddy.slint:352),
+      Caption-Chip Hard-Swap statt Crossfade (buddy.slint:471), Orb ohne
+      Keyboard/Focus-Pfad (buddy.slint:461).
+
+Kanban TOP (Backend-Felder existieren, GUI rendert sie nicht):
+- [ ] I10 Card-Enrichment: `test_summary` Badge ({passing}/{total}, rot bei failing),
+      `task_type`-Chip (ui/store/tests/…), `worker`-Chip, ETA aus `eta_ns`,
+      `parent_task_id`-Hierarchie (Indent/Link), Patch-Indikator bei `patch_path`.
+- [ ] I11 Kanban-Summary-Bar über dem Board (proportionale Spalten-Verteilung,
+      Hover = exakte Counts) — Linear/Trello-Pattern.
+- [ ] I12 = H13 Space-Peek auf Karten (Detail-Overlay ohne Navigation, Esc schließt).
+
+Parity-Lücken (aus 134-Verb-Audit):
+- [ ] I13 /background + /btw GUI-Form: BG-Jobs-Panel bekommt Prompt-Submission
+      (Schema-Regel schema.rs:17 verlangt Panel-Parity für Action-Commands) +
+      BG-Jobs ProbeView → strukturierte Job-Cards.
+- [ ] I14 Slash-Command-Browser im Agents-Panel: `neoth slash list --output json`
+      strukturiert rendern (~/.neoth/commands/*.toml sichtbar machen);
+      add/remove-Verben existieren NICHT → read-only, keine Dead-Buttons.
+- [ ] I15 Channel-Pairing-Wizard (`connect`-Verb CLI-only) — größte tägliche
+      Reibung, aber R4-07-Territorium → mit R4-07-Welle bündeln.
+
+Homogenität (UX-Research "aus einem Guss"-Checkliste):
+- [ ] I16 SAFE_GAPS-HIGH-Sweep: ConfirmDialog vor ChatBubble-Delete (chat.slint:494),
+      CronJobCard-Remove (cron.slint:128), Mesh Prefer-A/B (mesh.slint:611),
+      SelfImprove-Rollback (selfimprove.slint:92) = G5-Rollout; animierter
+      Streaming-Cursor statt statischem ▋ (chat.slint:184); CommandPalette
+      Keyboard-Legend-Footer + ↵-Chip (components.slint:1289/1274); StatusFooter
+      Font-Token-Audit (app_shell.slint:374); EntranceFade für chat/loop/
+      agents_view/memory_graph/tabs (fehlen als einzige).
+- [ ] I17 Toast-Format-Vertrag: `[Operation] failed · [Grund] · [Aktion]` statt
+      Generik; max 3 gestackt; Countdown-Ring. Undo-Toast nach Agent-Aktionen
+      (CLI `undo` existiert, L229) mit 5s-Fenster.
+- [ ] I18 Focus-Ring-Standard (2px accent, 2px offset) app-weit = D3-Konkretisierung;
+      Empty-State-Familie vereinheitlichen (loop/dreaming/n8n/calendar inline-Texte
+      → EmptyState-Komponente).
 
 ## Gates (BSOD-Regeln beachten)
 - Slint: `SRC/_gui_check.bat` (mit `-j` VOR `--`).
