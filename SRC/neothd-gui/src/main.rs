@@ -6261,87 +6261,133 @@ fn main() -> Result<()> {
 
     // ── H2 — Memory graph callbacks ───────────────────────────────────────────
     {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
         let mg_nodes: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>> =
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mg_busy = std::sync::Arc::new(AtomicBool::new(true));
 
         fn memgraph_refresh(
             weak: slint::Weak<MainWindow>,
             store: std::sync::Arc<std::sync::Mutex<Vec<panel_logic::GraphNodeData>>>,
+            busy: std::sync::Arc<AtomicBool>,
         ) {
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["memory", "--graph", "--output", "json"]);
-                let (nodes, edges, comms) = panel_logic::layout_memory_graph(&out);
+                let result =
+                    fetch_memory_graph().and_then(|graph| panel_logic::layout_memory_graph(&graph));
                 let _ = slint::invoke_from_event_loop(move || {
+                    busy.store(false, Ordering::Release);
                     let Some(w) = weak.upgrade() else { return };
-                    let stats = format!(
-                        "{} memories · {} links · {} communities",
-                        nodes.len(),
-                        edges.len(),
-                        comms
-                    );
-                    let node_model: Vec<GraphNode> = nodes
-                        .iter()
-                        .map(|nd| GraphNode {
-                            id: nd.id as i32,
-                            label: nd.label.as_str().into(),
-                            tier: nd.tier.as_str().into(),
-                            degree: nd.degree,
-                            community: nd.community,
-                            x: nd.x,
-                            y: nd.y,
-                            r: nd.r,
-                        })
-                        .collect();
-                    let edge_model: Vec<GraphEdge> = edges
-                        .iter()
-                        .map(|e| GraphEdge {
-                            x1: e.x1,
-                            y1: e.y1,
-                            x2: e.x2,
-                            y2: e.y2,
-                            w: e.w,
-                        })
-                        .collect();
-                    *store.lock().unwrap() = nodes;
-                    w.set_memgraph_nodes(slint::ModelRc::new(std::rc::Rc::new(
-                        slint::VecModel::from(node_model),
-                    )));
-                    w.set_memgraph_edges(slint::ModelRc::new(std::rc::Rc::new(
-                        slint::VecModel::from(edge_model),
-                    )));
-                    w.set_memgraph_stats(stats.as_str().into());
                     w.set_memgraph_running(false);
+                    match result {
+                        Ok((nodes, edges, comms)) => {
+                            let stats = format!(
+                                "{} memories · {} links · {} communities",
+                                nodes.len(),
+                                edges.len(),
+                                comms
+                            );
+                            let node_model: Vec<GraphNode> = nodes
+                                .iter()
+                                .map(|nd| GraphNode {
+                                    id: nd.id as i32,
+                                    label: nd.label.as_str().into(),
+                                    tier: nd.tier.as_str().into(),
+                                    degree: nd.degree,
+                                    community: nd.community,
+                                    x: nd.x,
+                                    y: nd.y,
+                                    r: nd.r,
+                                })
+                                .collect();
+                            let edge_model: Vec<GraphEdge> = edges
+                                .iter()
+                                .map(|e| GraphEdge {
+                                    x1: e.x1,
+                                    y1: e.y1,
+                                    x2: e.x2,
+                                    y2: e.y2,
+                                    w: e.w,
+                                })
+                                .collect();
+                            *store.lock().unwrap() = nodes;
+                            w.set_memgraph_nodes(slint::ModelRc::new(std::rc::Rc::new(
+                                slint::VecModel::from(node_model),
+                            )));
+                            w.set_memgraph_edges(slint::ModelRc::new(std::rc::Rc::new(
+                                slint::VecModel::from(edge_model),
+                            )));
+                            w.set_memgraph_stats(stats.as_str().into());
+                        }
+                        Err(error) => {
+                            w.set_memgraph_stats("Refresh failed — retry".into());
+                            push_toast(&w.as_weak(), "error", "Memory graph unavailable", &error);
+                        }
+                    }
                 });
             });
         }
 
-        memgraph_refresh(window.as_weak(), mg_nodes.clone());
+        window.set_memgraph_running(true);
+        memgraph_refresh(window.as_weak(), mg_nodes.clone(), mg_busy.clone());
 
-        let (weak_mg, store_mg) = (window.as_weak(), mg_nodes.clone());
+        let (weak_mg, store_mg, busy_mg) = (window.as_weak(), mg_nodes.clone(), mg_busy.clone());
         window.on_memgraph_refresh_clicked(move || {
+            if busy_mg.swap(true, Ordering::AcqRel) {
+                return;
+            }
             if let Some(w) = weak_mg.upgrade() {
                 w.set_memgraph_running(true);
             }
-            memgraph_refresh(weak_mg.clone(), store_mg.clone());
+            memgraph_refresh(weak_mg.clone(), store_mg.clone(), busy_mg.clone());
         });
 
-        // Research P0 — export the Hebbian graph JSON to a file.
+        // Export the exact verified graph snapshot to a private atomic file.
         let weak_exp = window.as_weak();
+        let busy_exp = mg_busy.clone();
         window.on_memgraph_export_clicked(move || {
-            let _ = &weak_exp;
+            if busy_exp.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            if let Some(w) = weak_exp.upgrade() {
+                w.set_memgraph_running(true);
+            }
+            let weak = weak_exp.clone();
+            let busy = busy_exp.clone();
             std::thread::spawn(move || {
-                let out = run_neothd_probe(&["memory", "--graph", "--output", "json"]);
-                if out.trim().is_empty() {
-                    return;
-                }
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title("Export memory graph")
-                    .set_file_name("neoth-memory-graph.json")
-                    .add_filter("JSON", &["json"])
-                    .save_file()
-                {
-                    let _ = std::fs::write(&path, out.as_bytes());
-                }
+                let result = (|| -> std::result::Result<Option<PathBuf>, String> {
+                    let graph = fetch_memory_graph()?;
+                    let body = serde_json::to_vec_pretty(&graph)
+                        .map_err(|error| format!("could not encode verified graph: {error}"))?;
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Export memory graph")
+                        .set_file_name("neoth-memory-graph.json")
+                        .add_filter("JSON", &["json"])
+                        .save_file()
+                    else {
+                        return Ok(None);
+                    };
+                    write_mode_0600(&path, &body)
+                        .map_err(|error| format!("could not save graph: {error:#}"))?;
+                    Ok(Some(path))
+                })();
+                let _ = slint::invoke_from_event_loop(move || {
+                    busy.store(false, Ordering::Release);
+                    let Some(w) = weak.upgrade() else { return };
+                    w.set_memgraph_running(false);
+                    match result {
+                        Ok(Some(path)) => push_toast(
+                            &w.as_weak(),
+                            "success",
+                            "Memory graph exported",
+                            &path.display().to_string(),
+                        ),
+                        Ok(None) => {}
+                        Err(error) => {
+                            push_toast(&w.as_weak(), "error", "Memory graph export failed", &error)
+                        }
+                    }
+                });
             });
         });
 
@@ -12434,6 +12480,18 @@ where
 {
     let mut command = neothd_json_command(args)?;
     gui_action::run_json_receipt(&mut command, action)
+}
+
+/// Load one complete memory-graph snapshot through the typed GUI/CLI boundary.
+/// Both refresh and export share this function so neither surface can accept a
+/// success-looking partial graph that the other rejects.
+fn fetch_memory_graph() -> std::result::Result<panel_logic::MemoryGraphWire, String> {
+    let graph = run_neothd_json_action::<panel_logic::MemoryGraphWire>(
+        &["memory", "--graph"],
+        "Memory graph",
+    )?;
+    graph.verify()?;
+    Ok(graph)
 }
 
 /// Convert the multiline cluster editors into exact string arrays. No trim is

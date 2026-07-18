@@ -2758,6 +2758,136 @@ pub fn parse_usage_rollup(json: &str) -> Option<(f64, u64)> {
 
 // ── Memory graph (H2) — parse + deterministic force layout ───────────────────
 
+const MAX_MEMORY_GRAPH_EDGES: usize = 400;
+const MAX_MEMORY_GRAPH_NODES: usize = MAX_MEMORY_GRAPH_EDGES * 2;
+const MAX_MEMORY_GRAPH_LABEL_CHARS: usize = 80;
+
+/// Exact wire contract emitted by `neoth memory --graph --output json`.
+///
+/// The graph is personal data, so both the on-screen view and the export path
+/// reject malformed or internally inconsistent snapshots instead of silently
+/// dropping bad nodes/edges and presenting a plausible-looking partial graph.
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryGraphWire {
+    pub nodes: Vec<MemoryGraphNodeWire>,
+    pub edges: Vec<MemoryGraphEdgeWire>,
+    pub communities: usize,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryGraphNodeWire {
+    pub id: i64,
+    pub label: String,
+    pub tier: String,
+    pub degree: u32,
+    pub community: usize,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryGraphEdgeWire {
+    pub a: i64,
+    pub b: i64,
+    pub w: f64,
+}
+
+impl MemoryGraphWire {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.edges.len() > MAX_MEMORY_GRAPH_EDGES {
+            return Err(format!(
+                "memory graph returned {} links, maximum is {MAX_MEMORY_GRAPH_EDGES}",
+                self.edges.len()
+            ));
+        }
+        if self.nodes.len() > MAX_MEMORY_GRAPH_NODES {
+            return Err(format!(
+                "memory graph returned {} nodes, maximum is {MAX_MEMORY_GRAPH_NODES}",
+                self.nodes.len()
+            ));
+        }
+        if self.nodes.is_empty() {
+            if !self.edges.is_empty() || self.communities != 0 {
+                return Err("empty memory graph reported links or communities".to_string());
+            }
+            return Ok(());
+        }
+        if self.communities == 0 || self.communities > self.nodes.len() {
+            return Err("memory graph reported an invalid community count".to_string());
+        }
+
+        let mut ids = std::collections::HashSet::with_capacity(self.nodes.len());
+        let mut expected_degree = std::collections::HashMap::<i64, u32>::new();
+        for node in &self.nodes {
+            if i32::try_from(node.id).is_err() {
+                return Err(format!(
+                    "memory graph node id {} exceeds the GUI range",
+                    node.id
+                ));
+            }
+            if !ids.insert(node.id) {
+                return Err(format!(
+                    "memory graph contains duplicate node id {}",
+                    node.id
+                ));
+            }
+            if node.label.chars().count() > MAX_MEMORY_GRAPH_LABEL_CHARS
+                || node
+                    .label
+                    .chars()
+                    .any(|character| matches!(character, '\r' | '\n'))
+            {
+                return Err(format!(
+                    "memory graph node {} has an invalid one-line label",
+                    node.id
+                ));
+            }
+            if !matches!(node.tier.as_str(), "hot" | "warm" | "cold" | "fact") {
+                return Err(format!(
+                    "memory graph node {} has unknown tier `{}`",
+                    node.id, node.tier
+                ));
+            }
+            if node.community >= self.communities {
+                return Err(format!(
+                    "memory graph node {} references unknown community {}",
+                    node.id, node.community
+                ));
+            }
+        }
+
+        let mut pairs = std::collections::HashSet::with_capacity(self.edges.len());
+        for edge in &self.edges {
+            if edge.a >= edge.b {
+                return Err("memory graph links must use canonical distinct endpoints".to_string());
+            }
+            if !ids.contains(&edge.a) || !ids.contains(&edge.b) {
+                return Err("memory graph link references a missing node".to_string());
+            }
+            if !edge.w.is_finite() || edge.w <= 0.0 {
+                return Err("memory graph link has a non-positive weight".to_string());
+            }
+            if !pairs.insert((edge.a, edge.b)) {
+                return Err("memory graph contains a duplicate link".to_string());
+            }
+            *expected_degree.entry(edge.a).or_default() += 1;
+            *expected_degree.entry(edge.b).or_default() += 1;
+        }
+
+        for node in &self.nodes {
+            let degree = expected_degree.get(&node.id).copied().unwrap_or(0);
+            if node.degree != degree {
+                return Err(format!(
+                    "memory graph node {} reported degree {}, expected {degree}",
+                    node.id, node.degree
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// One node of the Hebbian association graph, positioned 0..1.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct GraphNodeData {
@@ -2781,45 +2911,30 @@ pub struct GraphEdgeData {
     pub w: f32,
 }
 
-/// Parse `neoth memory --graph --output json` and lay the graph out with
-/// a deterministic Fruchterman–Reingold pass (nodes start on a circle by
-/// index — no RNG, so the layout is stable across refreshes). Returns
-/// (nodes, edges, communities).
-pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData>, i32) {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let communities = v.get("communities").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
-    let Some(jnodes) = v.get("nodes").and_then(|x| x.as_array()) else {
-        return (Vec::new(), Vec::new(), 0);
-    };
-    let jedges = v
-        .get("edges")
-        .and_then(|x| x.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let n = jnodes.len();
+/// Lay a verified graph out with a deterministic Fruchterman-Reingold pass
+/// (nodes start on a circle by index, so identical snapshots stay stable).
+pub fn layout_memory_graph(
+    graph: &MemoryGraphWire,
+) -> Result<(Vec<GraphNodeData>, Vec<GraphEdgeData>, i32), String> {
+    graph.verify()?;
+    let communities = i32::try_from(graph.communities)
+        .map_err(|_| "memory graph community count exceeds the GUI range".to_string())?;
+    let n = graph.nodes.len();
     if n == 0 {
-        return (Vec::new(), Vec::new(), communities);
+        return Ok((Vec::new(), Vec::new(), communities));
     }
-    let mut nodes: Vec<GraphNodeData> = jnodes
+    let mut nodes: Vec<GraphNodeData> = graph
+        .nodes
         .iter()
         .enumerate()
-        .map(|(i, jn)| {
+        .map(|(i, node)| {
             let ang = std::f32::consts::TAU * (i as f32) / (n as f32);
             GraphNodeData {
-                id: jn.get("id").and_then(|x| x.as_i64()).unwrap_or(0),
-                label: jn
-                    .get("label")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-                tier: jn
-                    .get("tier")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("fact")
-                    .to_string(),
-                degree: jn.get("degree").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
-                community: jn.get("community").and_then(|x| x.as_i64()).unwrap_or(0) as i32,
+                id: node.id,
+                label: node.label.clone(),
+                tier: node.tier.clone(),
+                degree: node.degree as i32,
+                community: node.community as i32,
                 x: 0.5 + 0.4 * ang.cos(),
                 y: 0.5 + 0.4 * ang.sin(),
                 r: 0.0,
@@ -2828,13 +2943,13 @@ pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData
         .collect();
     let index_of: std::collections::HashMap<i64, usize> =
         nodes.iter().enumerate().map(|(i, nd)| (nd.id, i)).collect();
-    let raw_edges: Vec<(usize, usize, f32)> = jedges
+    let raw_edges: Vec<(usize, usize, f32)> = graph
+        .edges
         .iter()
-        .filter_map(|je| {
-            let a = *index_of.get(&je.get("a")?.as_i64()?)?;
-            let b = *index_of.get(&je.get("b")?.as_i64()?)?;
-            let w = je.get("w").and_then(|x| x.as_f64()).unwrap_or(0.0) as f32;
-            Some((a, b, w))
+        .map(|edge| {
+            let a = index_of[&edge.a];
+            let b = index_of[&edge.b];
+            (a, b, edge.w as f32)
         })
         .collect();
 
@@ -2905,7 +3020,7 @@ pub fn layout_memory_graph(json: &str) -> (Vec<GraphNodeData>, Vec<GraphEdgeData
             w: w.clamp(0.0, 1.0),
         })
         .collect();
-    (nodes, edges, communities)
+    Ok((nodes, edges, communities))
 }
 
 // ── Agents tab — structured card data ─────────────────────────────────────────
@@ -8235,7 +8350,8 @@ mod tests {
             {"id":2,"label":"beta","tier":"cold","degree":1,"community":0},
             {"id":3,"label":"gamma","tier":"fact","degree":1,"community":1}],
             "edges":[{"a":1,"b":2,"w":0.8},{"a":1,"b":3,"w":0.2}]}"#;
-        let (nodes, edges, comms) = layout_memory_graph(json);
+        let graph: MemoryGraphWire = serde_json::from_str(json).unwrap();
+        let (nodes, edges, comms) = layout_memory_graph(&graph).unwrap();
         assert_eq!(nodes.len(), 3);
         assert_eq!(edges.len(), 2);
         assert_eq!(comms, 2);
@@ -8246,11 +8362,44 @@ mod tests {
         }
         assert_eq!(nodes[0].r, 1.0, "highest degree gets full radius");
         // determinism — identical input, identical layout
-        let (again, _, _) = layout_memory_graph(json);
+        let (again, _, _) = layout_memory_graph(&graph).unwrap();
         assert_eq!(nodes, again);
-        // degenerate inputs
-        assert!(layout_memory_graph("").0.is_empty());
-        assert!(layout_memory_graph(r#"{"nodes":[]}"#).0.is_empty());
+        let empty: MemoryGraphWire =
+            serde_json::from_str(r#"{"nodes":[],"edges":[],"communities":0}"#).unwrap();
+        assert!(layout_memory_graph(&empty).unwrap().0.is_empty());
+    }
+
+    #[test]
+    fn memory_graph_rejects_partial_or_inconsistent_snapshots() {
+        assert!(serde_json::from_str::<MemoryGraphWire>(r#"{"nodes":[]}"#).is_err());
+        assert!(
+            serde_json::from_str::<MemoryGraphWire>(
+                r#"{"nodes":[],"edges":[],"communities":0,"extra":true}"#
+            )
+            .is_err()
+        );
+
+        let missing_endpoint: MemoryGraphWire = serde_json::from_str(
+            r#"{"communities":1,"nodes":[
+                {"id":1,"label":"alpha","tier":"hot","degree":1,"community":0}],
+                "edges":[{"a":1,"b":2,"w":1.0}]}"#,
+        )
+        .unwrap();
+        assert!(
+            missing_endpoint
+                .verify()
+                .unwrap_err()
+                .contains("missing node")
+        );
+
+        let false_degree: MemoryGraphWire = serde_json::from_str(
+            r#"{"communities":1,"nodes":[
+                {"id":1,"label":"alpha","tier":"hot","degree":0,"community":0},
+                {"id":2,"label":"beta","tier":"warm","degree":1,"community":0}],
+                "edges":[{"a":1,"b":2,"w":1.0}]}"#,
+        )
+        .unwrap();
+        assert!(false_degree.verify().unwrap_err().contains("degree"));
     }
 
     #[test]

@@ -242,18 +242,20 @@ export component MemoryGraphView inherits Rectangle {
                 background: exp-ta.has-hover ? Theme.surface-2 : transparent;
                 border-width: 1px; border-color: Theme.border-default;
                 accessible-role: button;
-                accessible-label: "export memory graph JSON";
+                accessible-label: root.running
+                    ? "memory graph operation in progress"
+                    : "export memory graph JSON";
                 animate background { duration: Theme.duration-fast; easing: ease-out; }
                 export-lbl := Text {
                     x: 0; width: parent.width; height: parent.height;
-                    text: "Export";
-                    color: Theme.text-secondary;
+                    text: root.running ? "working…" : "Export";
+                    color: root.running ? Theme.text-tertiary : Theme.text-secondary;
                     font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                     vertical-alignment: center; horizontal-alignment: center;
                 }
                 exp-ta := TouchArea {
                     mouse-cursor: pointer;
-                    clicked => { root.export-clicked(); }
+                    clicked => { if (!root.running) { root.export-clicked(); } }
                 }
             }
         }
