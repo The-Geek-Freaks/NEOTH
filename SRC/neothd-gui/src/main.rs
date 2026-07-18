@@ -3289,11 +3289,21 @@ fn main() -> Result<()> {
     window.on_omi_refresh(move || {
         let weak = weak_omi_refresh.clone();
         std::thread::spawn(move || {
-            let snapshot = fetch_omi_snapshot();
+            let snapshot = fetch_verified_omi_snapshot(&default_neoth_home());
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
-                    apply_omi_snapshot(&window, snapshot);
-                    window.set_status_line("OMI state refreshed.".into());
+                    match snapshot {
+                        Ok(snapshot) => {
+                            apply_omi_snapshot(&window, snapshot);
+                            window.set_status_line("OMI state refreshed and verified.".into());
+                        }
+                        Err(error) => window.set_status_line(
+                            format!(
+                                "OMI refresh failed; the last verified state was preserved: {error}"
+                            )
+                            .into(),
+                        ),
+                    }
                 }
             });
         });
@@ -3363,8 +3373,16 @@ fn main() -> Result<()> {
     window.on_omi_probe(move || {
         let weak = weak_omi_probe.clone();
         std::thread::spawn(move || {
-            let result = run_omi_subcommand(&default_neoth_home(), &["probe".to_string()]);
-            let status = result.unwrap_or_else(|error| format!("OMI probe failed: {error:#}"));
+            let result = (|| {
+                let acknowledgement = run_omi_json_action::<gui_action::OmiProbeAck>(
+                    &default_neoth_home(),
+                    &["probe".to_string()],
+                    "OMI probe",
+                )?;
+                acknowledgement.verify()?;
+                Ok::<_, String>(acknowledgement.summary())
+            })();
+            let status = result.unwrap_or_else(|error| format!("OMI probe failed: {error}"));
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
                     window.set_status_line(status.into());
@@ -3378,17 +3396,39 @@ fn main() -> Result<()> {
         let weak = weak_omi_resume.clone();
         let note = note.to_string();
         std::thread::spawn(move || {
-            let result = run_omi_subcommand(
-                &default_neoth_home(),
-                &["resume".into(), "--review-note".into(), note],
-            );
-            let snapshot = fetch_omi_snapshot();
-            let status = result.unwrap_or_else(|error| format!("OMI resume failed: {error:#}"));
+            let home = default_neoth_home();
+            let result = (|| {
+                let acknowledgement = run_omi_json_action::<gui_action::OmiResumeAck>(
+                    &home,
+                    &["resume".into(), "--review-note".into(), note],
+                    "OMI resume",
+                )?;
+                acknowledgement.verify()?;
+                let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
+                    format!("resume was acknowledged, but live-state readback failed: {error}")
+                })?;
+                Ok::<_, String>((acknowledgement, snapshot))
+            })();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
-                    apply_omi_snapshot(&window, snapshot);
-                    window.set_omi_review_note("".into());
-                    window.set_status_line(status.into());
+                    match result {
+                        Ok((acknowledgement, snapshot)) => {
+                            apply_omi_snapshot(&window, snapshot);
+                            window.set_omi_review_note("".into());
+                            let status = if acknowledgement.resumed {
+                                "OMI sanitizer resumed; review evidence retained."
+                            } else {
+                                "OMI sanitizer was already active; no state changed."
+                            };
+                            window.set_status_line(status.into());
+                        }
+                        Err(error) => window.set_status_line(
+                            format!(
+                                "OMI resume could not be verified; the last verified state was preserved: {error}"
+                            )
+                            .into(),
+                        ),
+                    }
                 }
             });
         });
@@ -3398,13 +3438,41 @@ fn main() -> Result<()> {
     window.on_omi_retention(move || {
         let weak = weak_omi_retention.clone();
         std::thread::spawn(move || {
-            let result = run_omi_subcommand(&default_neoth_home(), &["enforce-retention".into()]);
-            let snapshot = fetch_omi_snapshot();
-            let status = result.unwrap_or_else(|error| format!("OMI retention failed: {error:#}"));
+            let home = default_neoth_home();
+            let result = (|| {
+                let acknowledgement = run_omi_json_action::<gui_action::OmiDeletionAck>(
+                    &home,
+                    &["enforce-retention".into()],
+                    "OMI retention",
+                )?;
+                acknowledgement.verify("retention", None)?;
+                let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
+                    format!(
+                        "retention was acknowledged, but live-state readback failed: {error}"
+                    )
+                })?;
+                Ok::<_, String>((acknowledgement, snapshot))
+            })();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
-                    apply_omi_snapshot(&window, snapshot);
-                    window.set_status_line(status.into());
+                    match result {
+                        Ok((acknowledgement, snapshot)) => {
+                            let removed = acknowledgement.total_removed();
+                            apply_omi_snapshot(&window, snapshot);
+                            window.set_status_line(
+                                format!(
+                                    "OMI retention completed and verified; {removed} local record(s) removed."
+                                )
+                                .into(),
+                            );
+                        }
+                        Err(error) => window.set_status_line(
+                            format!(
+                                "OMI retention could not be verified; the last verified state was preserved: {error}"
+                            )
+                            .into(),
+                        ),
+                    }
                 }
             });
         });
@@ -3415,16 +3483,46 @@ fn main() -> Result<()> {
         let weak = weak_omi_purge.clone();
         let conversation_id = conversation_id.to_string();
         std::thread::spawn(move || {
-            let result = run_omi_subcommand(
-                &default_neoth_home(),
-                &["purge".into(), conversation_id, "--yes".into()],
-            );
-            let snapshot = fetch_omi_snapshot();
-            let status = result.unwrap_or_else(|error| format!("OMI purge failed: {error:#}"));
+            let home = default_neoth_home();
+            let result = (|| {
+                if conversation_id.trim().is_empty() {
+                    return Err("a conversation id is required".to_string());
+                }
+                let acknowledgement = run_omi_json_action::<gui_action::OmiDeletionAck>(
+                    &home,
+                    &[
+                        "purge".into(),
+                        conversation_id.clone(),
+                        "--yes".into(),
+                    ],
+                    "OMI purge",
+                )?;
+                acknowledgement.verify("purge", Some(&conversation_id))?;
+                let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
+                    format!("purge was acknowledged, but live-state readback failed: {error}")
+                })?;
+                Ok::<_, String>((acknowledgement, snapshot))
+            })();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
-                    apply_omi_snapshot(&window, snapshot);
-                    window.set_status_line(status.into());
+                    match result {
+                        Ok((acknowledgement, snapshot)) => {
+                            let removed = acknowledgement.total_removed();
+                            apply_omi_snapshot(&window, snapshot);
+                            window.set_status_line(
+                                format!(
+                                    "OMI purge completed and verified; {removed} local record(s) removed."
+                                )
+                                .into(),
+                            );
+                        }
+                        Err(error) => window.set_status_line(
+                            format!(
+                                "OMI purge could not be verified; the last verified state was preserved: {error}"
+                            )
+                            .into(),
+                        ),
+                    }
                 }
             });
         });
@@ -3435,17 +3533,53 @@ fn main() -> Result<()> {
         let weak = weak_omi_reimport.clone();
         let conversation_id = conversation_id.to_string();
         std::thread::spawn(move || {
-            let result = run_omi_subcommand(
-                &default_neoth_home(),
-                &["allow-reimport".into(), conversation_id, "--yes".into()],
-            );
-            let snapshot = fetch_omi_snapshot();
-            let status =
-                result.unwrap_or_else(|error| format!("OMI allow-reimport failed: {error:#}"));
+            let home = default_neoth_home();
+            let result = (|| {
+                if conversation_id.trim().is_empty() {
+                    return Err("a conversation id is required".to_string());
+                }
+                let acknowledgement = run_omi_json_action::<gui_action::OmiAllowReimportAck>(
+                    &home,
+                    &[
+                        "allow-reimport".into(),
+                        conversation_id.clone(),
+                        "--yes".into(),
+                    ],
+                    "OMI allow-reimport",
+                )?;
+                acknowledgement.verify(&conversation_id)?;
+                let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
+                    format!(
+                        "allow-reimport was acknowledged, but live-state readback failed: {error}"
+                    )
+                })?;
+                Ok::<_, String>((acknowledgement, snapshot))
+            })();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(window) = weak.upgrade() {
-                    apply_omi_snapshot(&window, snapshot);
-                    window.set_status_line(status.into());
+                    match result {
+                        Ok((acknowledgement, snapshot)) => {
+                            apply_omi_snapshot(&window, snapshot);
+                            let detail = match (
+                                acknowledgement.tombstone_cleared,
+                                acknowledgement.stale_native_receipt_removed,
+                            ) {
+                                (true, true) => "tombstone and stale receipt cleared",
+                                (true, false) => "tombstone cleared",
+                                (false, true) => "stale receipt cleared; no tombstone existed",
+                                (false, false) => "no stale recovery state existed",
+                            };
+                            window.set_status_line(
+                                format!("OMI re-import permission verified; {detail}.").into(),
+                            );
+                        }
+                        Err(error) => window.set_status_line(
+                            format!(
+                                "OMI allow-reimport could not be verified; the last verified state was preserved: {error}"
+                            )
+                            .into(),
+                        ),
+                    }
                 }
             });
         });
@@ -11475,22 +11609,22 @@ fn save_omi_settings(
     Ok(())
 }
 
-fn run_omi_subcommand(home: &Path, args: &[String]) -> Result<String> {
-    let bin = which_neothd().context("neothd binary not found")?;
+fn run_omi_json_action<T>(
+    home: &Path,
+    args: &[String],
+    action: &str,
+) -> std::result::Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let bin = which_neothd()
+        .ok_or_else(|| "NEOTH CLI not found. Reinstall or repair PATH, then retry.".to_string())?;
     let mut command = spawn_neothd_plain(&bin);
-    command.arg("omi").arg("--home").arg(home);
+    command
+        .args(["--output", "json", "omi", "--home"])
+        .arg(home);
     command.args(args);
-    let output = command.output().context("run OMI operator command")?;
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    if !output.status.success() {
-        anyhow::bail!("{}", if stderr.is_empty() { stdout } else { stderr });
-    }
-    Ok(if stdout.is_empty() {
-        "OMI command completed.".to_string()
-    } else {
-        stdout
-    })
+    gui_action::run_json(&mut command, action)
 }
 
 // ── ZF-05 parity writer ───────────────────────────────────────────────────
@@ -12731,6 +12865,50 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
     window.set_trust_privacy(to_rows(snap.privacy));
     window.set_trust_recovery(to_rows(snap.recovery));
     window.set_trust_ledger(to_rows(snap.ledger));
+}
+
+/// Receipt-backed OMI readback used after operator actions and explicit
+/// refreshes. Unlike the legacy startup/settings probe below, this returns an
+/// error for a failed exit, missing/extended JSON, or invalid semantic fields;
+/// callers therefore keep the last verified UI state intact.
+fn fetch_verified_omi_snapshot(
+    home: &Path,
+) -> std::result::Result<panel_logic::OmiSnapshot, String> {
+    let acknowledgement = run_omi_json_action::<gui_action::OmiStatusAck>(
+        home,
+        &["status".to_string()],
+        "OMI status readback",
+    )?;
+    acknowledgement.verify()?;
+    Ok(omi_snapshot_from_status_ack(acknowledgement))
+}
+
+fn omi_snapshot_from_status_ack(
+    acknowledgement: gui_action::OmiStatusAck,
+) -> panel_logic::OmiSnapshot {
+    panel_logic::OmiSnapshot {
+        enabled: acknowledgement.enabled,
+        mode: acknowledgement.mode,
+        endpoint: acknowledgement.endpoint,
+        listen_addr: acknowledgement.listen_addr,
+        configuration_valid: acknowledgement.configuration_valid,
+        configuration_error: acknowledgement.configuration_error.unwrap_or_default(),
+        developer_credential_present: acknowledgement.developer_api_credential_present,
+        native_credential_present: acknowledgement.native_ingest_credential_present,
+        runtime_state: acknowledgement.runtime_state,
+        runtime_detail: acknowledgement.runtime_detail.unwrap_or_default(),
+        pending_audits: acknowledgement.pending_audits,
+        retention_days: acknowledgement.retention_days,
+        retain_transcripts: acknowledgement.retain_transcripts,
+        audio_enabled: acknowledgement.audio_enabled,
+        visual_enabled: acknowledgement.visual_enabled,
+        video_enabled: acknowledgement.video_enabled,
+        allow_cloud_api: acknowledgement.allow_cloud_api,
+        allow_cloud_summary: acknowledgement.allow_cloud_summary,
+        create_actions: acknowledgement.create_actions,
+        seed_groundtruth: acknowledgement.seed_groundtruth,
+        summary_enabled: acknowledgement.summary_enabled,
+    }
 }
 
 fn fetch_omi_snapshot() -> panel_logic::OmiSnapshot {
@@ -20069,5 +20247,34 @@ mod gui_bug_regression_tests {
         state.license_accepted = false; // operator unchecked license
         let err = finish(&state).unwrap_err();
         assert!(err.to_string().contains("license"));
+    }
+
+    #[test]
+    fn omi_runtime_actions_use_typed_receipts_and_verified_readback() {
+        let source = include_str!("main.rs");
+        let human_stdout_helper = ["fn run_omi_", "subcommand"].concat();
+        assert!(
+            !source.contains(&human_stdout_helper),
+            "human-stdout OMI action inference must not return"
+        );
+        let start = source.find("let weak_omi_resume").unwrap();
+        let end = source[start..].find("// SPEC-06").unwrap() + start;
+        let actions = &source[start..end];
+        for acknowledgement in [
+            "gui_action::OmiResumeAck",
+            "gui_action::OmiDeletionAck",
+            "gui_action::OmiAllowReimportAck",
+        ] {
+            assert!(
+                actions.contains(acknowledgement),
+                "OMI runtime callback is missing typed receipt {acknowledgement}"
+            );
+        }
+        assert!(actions.contains("fetch_verified_omi_snapshot"));
+        assert!(actions.contains("last verified state was preserved"));
+        assert!(
+            !actions.contains("fetch_omi_snapshot()"),
+            "runtime action callbacks must not publish a default-on-error snapshot"
+        );
     }
 }

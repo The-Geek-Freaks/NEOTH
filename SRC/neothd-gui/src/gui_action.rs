@@ -681,6 +681,234 @@ impl QuotaSetCapAck {
     }
 }
 
+/// Exact `neoth omi resume --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiResumeAck {
+    pub operation: String,
+    pub resumed: bool,
+    pub review_evidence_retained: bool,
+}
+
+impl OmiResumeAck {
+    pub fn verify(&self) -> Result<(), String> {
+        require_action(&self.operation, "resume")?;
+        if self.resumed != self.review_evidence_retained {
+            return Err(
+                "OMI resume acknowledgement has inconsistent review-evidence state".to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Shared exact wire shape for `omi purge` and `omi enforce-retention`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiDeletionAck {
+    pub operation: String,
+    pub conversation_id: Option<String>,
+    pub conversations: usize,
+    pub segments: usize,
+    pub media: usize,
+    pub actions: usize,
+    pub tasks: usize,
+    pub groundtruth: usize,
+}
+
+impl OmiDeletionAck {
+    pub fn verify(
+        &self,
+        expected_operation: &str,
+        expected_conversation_id: Option<&str>,
+    ) -> Result<(), String> {
+        require_action(&self.operation, expected_operation)?;
+        match (self.conversation_id.as_deref(), expected_conversation_id) {
+            (Some(actual), Some(expected)) => require_id(actual, expected),
+            (None, None) => Ok(()),
+            (Some(actual), None) => Err(format!(
+                "OMI {expected_operation} unexpectedly acknowledged conversation `{actual}`"
+            )),
+            (None, Some(expected)) => Err(format!(
+                "OMI {expected_operation} acknowledgement is missing conversation `{expected}`"
+            )),
+        }
+    }
+
+    pub fn total_removed(&self) -> usize {
+        [
+            self.conversations,
+            self.segments,
+            self.media,
+            self.actions,
+            self.tasks,
+            self.groundtruth,
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add)
+    }
+}
+
+/// Exact `neoth omi allow-reimport --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiAllowReimportAck {
+    pub operation: String,
+    pub conversation_id: String,
+    pub tombstone_cleared: bool,
+    pub stale_native_receipt_removed: bool,
+    pub reconciliation_state_cleared: bool,
+}
+
+impl OmiAllowReimportAck {
+    pub fn verify(&self, expected_conversation_id: &str) -> Result<(), String> {
+        require_action(&self.operation, "allow_reimport")?;
+        require_id(&self.conversation_id, expected_conversation_id)?;
+        if !self.reconciliation_state_cleared {
+            return Err(
+                "OMI allow-reimport did not confirm cleared reconciliation state".to_string(),
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Exact readback contract for `neoth omi status --output json`.
+///
+/// Fields not rendered by the current panel are intentionally retained: the
+/// GUI must reject a changed CLI wire contract instead of silently accepting a
+/// partial status object and publishing defaults as live state.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+pub struct OmiStatusAck {
+    pub enabled: bool,
+    pub mode: String,
+    pub configuration_valid: bool,
+    pub configuration_error: Option<String>,
+    pub developer_api_credential_present: bool,
+    pub native_ingest_credential_present: bool,
+    pub endpoint: String,
+    pub listen_addr: String,
+    pub retention_days: u64,
+    pub poll_interval_secs: u64,
+    pub retain_transcripts: bool,
+    pub audio_enabled: bool,
+    pub visual_enabled: bool,
+    pub video_enabled: bool,
+    pub allow_cloud_api: bool,
+    pub allow_cloud_summary: bool,
+    pub create_actions: bool,
+    pub seed_groundtruth: bool,
+    pub summary_enabled: bool,
+    pub ledger_initialized: bool,
+    pub conversations: u64,
+    pub segments: u64,
+    pub media: u64,
+    pub actions: u64,
+    pub tombstones: u64,
+    pub pending_audits: u64,
+    pub runtime_state: String,
+    pub runtime_persisted_state: Option<String>,
+    pub runtime_detail: Option<String>,
+    pub runtime_pid: Option<u32>,
+    pub runtime_updated_ns: Option<i64>,
+    pub daemon_pid: Option<u32>,
+    pub sanitizer_halted: bool,
+    pub last_success_ns: Option<i64>,
+    pub last_error: Option<String>,
+    pub last_retention_purge_ns: Option<i64>,
+    pub last_retention_error: Option<String>,
+}
+
+impl OmiStatusAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if !matches!(
+            self.mode.as_str(),
+            "developer_api" | "native_ingest" | "both" | "legacy_memories"
+        ) {
+            return Err(format!(
+                "OMI status acknowledged unsupported mode `{}`",
+                self.mode
+            ));
+        }
+        if self.endpoint.trim().is_empty() || self.listen_addr.trim().is_empty() {
+            return Err("OMI status is missing its configured endpoint or listener".to_string());
+        }
+        if self.retention_days == 0 || self.poll_interval_secs == 0 {
+            return Err(
+                "OMI status acknowledged an invalid zero retention/poll window".to_string(),
+            );
+        }
+        if self.runtime_state.trim().is_empty() {
+            return Err("OMI status is missing its effective runtime state".to_string());
+        }
+        match (
+            self.configuration_valid,
+            self.configuration_error.as_deref().map(str::trim),
+        ) {
+            (true, Some(error)) if !error.is_empty() => {
+                Err("OMI status claims valid configuration while reporting an error".to_string())
+            }
+            (false, None | Some("")) => {
+                Err("OMI invalid configuration is missing its diagnostic".to_string())
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+/// Exact `neoth omi probe --output json` acknowledgement. This keeps the last
+/// remaining OMI helper off human-stdout inference as well.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiProbeAck {
+    pub mode: String,
+    pub local_endpoint: Option<String>,
+    pub native_listener: Option<String>,
+    pub public_api: Option<String>,
+}
+
+impl OmiProbeAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if !matches!(
+            self.mode.as_str(),
+            "developer_api" | "native_ingest" | "both" | "legacy_memories"
+        ) {
+            return Err(format!(
+                "OMI probe acknowledged unsupported mode `{}`",
+                self.mode
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn summary(&self) -> String {
+        let checks = [
+            self.local_endpoint
+                .as_deref()
+                .map(|value| format!("endpoint {value}")),
+            self.native_listener
+                .as_deref()
+                .map(|value| format!("listener {value}")),
+            self.public_api
+                .as_deref()
+                .map(|value| format!("public API {value}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        if checks.is_empty() {
+            format!(
+                "OMI probe ({}) completed; no endpoint check required.",
+                self.mode
+            )
+        } else {
+            format!("OMI probe ({}): {}.", self.mode, checks.join(", "))
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code)] // Keep the complete status wire shape fail-closed as it evolves.
@@ -2200,6 +2428,138 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn omi_resume_receipt_binds_operation_and_review_state() {
+        let acknowledgement = decode_json_output::<OmiResumeAck>(
+            &output(
+                0,
+                r#"{"operation":"resume","resumed":true,"review_evidence_retained":true}"#,
+                "",
+            ),
+            "OMI resume",
+        )
+        .unwrap();
+        acknowledgement.verify().unwrap();
+
+        let inconsistent = decode_json_output::<OmiResumeAck>(
+            &output(
+                0,
+                r#"{"operation":"resume","resumed":true,"review_evidence_retained":false}"#,
+                "",
+            ),
+            "OMI resume",
+        )
+        .unwrap();
+        assert!(inconsistent.verify().is_err());
+
+        let wrong_operation = decode_json_output::<OmiResumeAck>(
+            &output(
+                0,
+                r#"{"operation":"purge","resumed":true,"review_evidence_retained":true}"#,
+                "",
+            ),
+            "OMI resume",
+        )
+        .unwrap();
+        assert!(wrong_operation.verify().is_err());
+    }
+
+    #[test]
+    fn omi_deletion_receipt_binds_operation_and_conversation() {
+        let purge = decode_json_output::<OmiDeletionAck>(
+            &output(
+                0,
+                r#"{"operation":"purge","conversation_id":"conv-7","conversations":1,"segments":2,"media":3,"actions":4,"tasks":5,"groundtruth":6}"#,
+                "",
+            ),
+            "OMI purge",
+        )
+        .unwrap();
+        purge.verify("purge", Some("conv-7")).unwrap();
+        assert_eq!(purge.total_removed(), 21);
+        assert!(purge.verify("purge", Some("conv-8")).is_err());
+        assert!(purge.verify("retention", None).is_err());
+
+        let retention = decode_json_output::<OmiDeletionAck>(
+            &output(
+                0,
+                r#"{"operation":"retention","conversation_id":null,"conversations":0,"segments":0,"media":0,"actions":0,"tasks":0,"groundtruth":0}"#,
+                "",
+            ),
+            "OMI retention",
+        )
+        .unwrap();
+        retention.verify("retention", None).unwrap();
+        assert!(retention.verify("retention", Some("conv-7")).is_err());
+    }
+
+    #[test]
+    fn omi_allow_reimport_receipt_binds_conversation_and_terminal_state() {
+        let acknowledgement = decode_json_output::<OmiAllowReimportAck>(
+            &output(
+                0,
+                r#"{"operation":"allow_reimport","conversation_id":"conv-7","tombstone_cleared":true,"stale_native_receipt_removed":false,"reconciliation_state_cleared":true}"#,
+                "",
+            ),
+            "OMI allow-reimport",
+        )
+        .unwrap();
+        acknowledgement.verify("conv-7").unwrap();
+        assert!(acknowledgement.verify("conv-8").is_err());
+
+        let incomplete = decode_json_output::<OmiAllowReimportAck>(
+            &output(
+                0,
+                r#"{"operation":"allow_reimport","conversation_id":"conv-7","tombstone_cleared":true,"stale_native_receipt_removed":false,"reconciliation_state_cleared":false}"#,
+                "",
+            ),
+            "OMI allow-reimport",
+        )
+        .unwrap();
+        assert!(incomplete.verify("conv-7").is_err());
+    }
+
+    #[test]
+    fn omi_status_readback_is_complete_strict_and_semantically_valid() {
+        let valid = r#"{
+            "enabled":true,"mode":"both","configuration_valid":true,
+            "configuration_error":null,"developer_api_credential_present":true,
+            "native_ingest_credential_present":true,"endpoint":"https://api.omi.me",
+            "listen_addr":"127.0.0.1:8003","retention_days":30,"poll_interval_secs":30,
+            "retain_transcripts":false,"audio_enabled":true,"visual_enabled":true,
+            "video_enabled":false,"allow_cloud_api":true,"allow_cloud_summary":false,
+            "create_actions":true,"seed_groundtruth":true,"summary_enabled":true,
+            "ledger_initialized":true,"conversations":2,"segments":3,"media":4,
+            "actions":5,"tombstones":1,"pending_audits":0,"runtime_state":"healthy",
+            "runtime_persisted_state":"healthy","runtime_detail":"ready","runtime_pid":12,
+            "runtime_updated_ns":13,"daemon_pid":12,"sanitizer_halted":false,
+            "last_success_ns":14,"last_error":null,"last_retention_purge_ns":15,
+            "last_retention_error":null
+        }"#;
+        let acknowledgement =
+            decode_json_output::<OmiStatusAck>(&output(0, valid, ""), "OMI status").unwrap();
+        acknowledgement.verify().unwrap();
+
+        let extended = valid.replacen(
+            "\"last_retention_error\":null",
+            "\"last_retention_error\":null,\"surprise\":true",
+            1,
+        );
+        assert!(
+            decode_json_output::<OmiStatusAck>(&output(0, &extended, ""), "OMI status").is_err()
+        );
+
+        let contradictory = valid.replacen(
+            "\"configuration_error\":null",
+            "\"configuration_error\":\"broken\"",
+            1,
+        );
+        let acknowledgement =
+            decode_json_output::<OmiStatusAck>(&output(0, &contradictory, ""), "OMI status")
+                .unwrap();
+        assert!(acknowledgement.verify().is_err());
     }
 
     #[test]
