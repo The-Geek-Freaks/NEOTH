@@ -39,7 +39,7 @@ fn orb_rgba(size: u32) -> Vec<u8> {
 #[cfg(any(target_os = "linux", test))]
 fn orb_argb(size: u32) -> Vec<u8> {
     let mut argb = orb_rgba(size);
-    for pixel in argb.chunks_exact_mut(4) {
+    for pixel in argb.as_chunks_mut::<4>().0 {
         pixel.rotate_right(1);
     }
     argb
@@ -275,11 +275,18 @@ mod tests {
         let center = (((SIZE / 2) * SIZE + SIZE / 2) * 4) as usize;
         assert_eq!(&rgba[center..center + 4], &[0x00, 0xFF, 0x80, 0xFF]);
         assert!(
-            rgba.chunks_exact(4)
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
                 .any(|pixel| (1..255).contains(&pixel[3]))
         );
 
-        for (rgba, argb) in rgba.chunks_exact(4).zip(argb.chunks_exact(4)) {
+        for (rgba, argb) in rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(argb.as_chunks::<4>().0.iter())
+        {
             assert_eq!(argb, &[rgba[3], rgba[0], rgba[1], rgba[2]]);
         }
     }

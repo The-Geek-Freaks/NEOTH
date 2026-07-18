@@ -12618,7 +12618,7 @@ mod tests {
             "test prompt",
             config.tokens.max_per_request,
             &mcp_servers,
-            None,
+            crate::mcp::McpToolScope::default(),
             "0000000000000001",
             authorized_model,
             // GOLD-CCPARITY-EFFORT-03: no effort override in model-capture tests.
@@ -12748,7 +12748,7 @@ mod tests {
             "blocked prompt",
             config.tokens.max_per_request,
             &mcp_servers,
-            None,
+            crate::mcp::McpToolScope::default(),
             "0000000000000003",
             Some("unknown-paid-model".to_string()),
             None,
@@ -12863,7 +12863,7 @@ mod tests {
             "effort test",
             config.tokens.max_per_request,
             &mcp_servers,
-            None,
+            crate::mcp::McpToolScope::default(),
             "0000000000000002",
             None, // effective model authorization binding
             override_effort,

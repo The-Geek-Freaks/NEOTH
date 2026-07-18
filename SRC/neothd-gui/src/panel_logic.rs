@@ -3738,10 +3738,6 @@ impl KanbanSelection {
         self.0.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     /// Ids in deterministic order for the bulk-mutation loop.
     pub fn sorted_ids(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.0.iter().cloned().collect();
@@ -3776,7 +3772,7 @@ mod kanban_selection_tests {
         sel.retain_known(&["#2".into()]);
         assert_eq!(sel.sorted_ids(), vec!["#2".to_string()]);
         sel.clear();
-        assert!(sel.is_empty());
+        assert_eq!(sel.len(), 0);
     }
 }
 
