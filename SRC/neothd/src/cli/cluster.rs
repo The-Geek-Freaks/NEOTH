@@ -69,6 +69,15 @@ pub enum ClusterAction {
         #[arg(long, value_name = "PEER_PK")]
         peer: Option<String>,
     },
+    /// Ask the running daemon to accelerate durable WAL catch-up for one
+    /// paired peer. The request is coalesced and persisted in views.db; only
+    /// the daemon-owned authenticated transport can consume it.
+    #[command(name = "request-sync")]
+    RequestSync {
+        /// Exact 64-character public key of an already-paired peer.
+        #[arg(long, value_name = "PEER_PK")]
+        peer: String,
+    },
     /// Inspect the bounded, durable node-global causal frontier. Counters are
     /// provenance/ordering evidence only; they never grant trust or resolve a
     /// content conflict without an explicit operator decision.
@@ -317,6 +326,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             run_foreign_events(peer.as_deref(), limit, &args.output)
         }
         ClusterAction::SyncState { peer } => run_sync_state(peer.as_deref(), &args.output),
+        ClusterAction::RequestSync { peer } => run_request_sync(&peer, &args.output),
         ClusterAction::Frontier { peer } => run_frontier(peer.as_deref(), &args.output),
         ClusterAction::Conflicts {
             action,
@@ -2806,8 +2816,8 @@ fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Resu
                 return Ok(());
             }
             println!(
-                "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10}",
-                "PEER", "ACKED", "PENDING", "ATTEMPTS", "IN NEXT", "CURSOR"
+                "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10} {:>12}",
+                "PEER", "ACKED", "PENDING", "ATTEMPTS", "IN NEXT", "CURSOR", "REQUEST"
             );
             for row in rows {
                 let short: String = row.peer_pk.chars().take(16).collect();
@@ -2822,7 +2832,7 @@ fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Resu
                     },
                 );
                 println!(
-                    "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10}",
+                    "{:<20} {:>9} {:>9} {:>9} {:>9} {:>10} {:>12}",
                     format!("{short}..."),
                     row.acked_origin_seq,
                     row.pending_origin_seq
@@ -2832,8 +2842,64 @@ fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Resu
                     row.inbound_next_expected_seq
                         .map_or_else(|| "-".to_string(), |value| value.to_string()),
                     cursor,
+                    row.request_state.as_deref().unwrap_or("-"),
                 );
+                if let Some(error) = row.request_last_error.as_deref() {
+                    println!("  request: {error}");
+                }
             }
+        }
+    }
+    Ok(())
+}
+
+fn run_request_sync(peer: &str, output: &crate::cli::OutputFormat) -> Result<()> {
+    validate_pub_key_hex(peer)?;
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let registry = crate::cluster::registry::load(&home)?;
+    anyhow::ensure!(
+        registry.peers.iter().any(|known| known.pub_key_hex == peer),
+        "peer `{peer}` is not paired; confirm it before requesting sync"
+    );
+    let runtime_config = crate::config::load_runtime_config_pair_from_path_or_default(
+        &crate::config::FreedomConfig::default_path(),
+    )?;
+    let identity = crate::cluster::identity::cluster_identity_status(
+        &runtime_config.config,
+        &runtime_config.credentials,
+    );
+    let configured_snapshot = ClusterConfigureSnapshot::from(&runtime_config.config.cluster);
+    let runtime_state = load_cluster_runtime_state(&home)?;
+    let live_daemon_pid = live_daemon_owner_pid(&home)?;
+    let binding = cluster_identity_binding(&home, &runtime_config.credentials, false)?;
+    anyhow::ensure!(
+        identity.transport_active
+            && cluster_runtime_carrier_active(
+                runtime_state.as_ref(),
+                &configured_snapshot,
+                identity.has_passphrase,
+                binding.as_ref(),
+                live_daemon_pid,
+            ),
+        "no live authenticated cluster carrier; start or restart NEOTH before requesting sync"
+    );
+    let sync = crate::cluster::durable_sync::DurableMeshSync::new(home.join("views.db"));
+    let receipt = sync.request_sync(
+        &crate::cluster::PeerPubkey::new(peer.to_string()),
+        crate::time::now_unix_i64(),
+    )?;
+    match output {
+        crate::cli::OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        }
+        crate::cli::OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
+        crate::cli::OutputFormat::Table => {
+            println!("Mesh sync requested for {peer}.");
+            println!("  state   : {}", receipt.state);
+            println!("  expires : {}", receipt.expires_at);
+            println!(
+                "The daemon will use the configured authenticated carrier; inspect progress with `neoth cluster sync-state --peer {peer}`."
+            );
         }
     }
     Ok(())

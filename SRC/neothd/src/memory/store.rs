@@ -74,7 +74,10 @@ use rusqlite::Connection;
 ///      cannot mutate its causal vector clock after the content was committed.
 /// v32: persist the bounded, node-global mesh vector frontier independently of
 ///      per-destination delivery sequences.
-pub const SCHEMA_VERSION: i64 = 32;
+/// v33: add the durable operator-requested mesh-sync queue. One coalesced row
+///      per paired peer lets the CLI/GUI request an accelerated catch-up while
+///      the daemon remains the only process that owns either live transport.
+pub const SCHEMA_VERSION: i64 = 33;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -1102,6 +1105,25 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             attempts           INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
             created_at         INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS mesh_sync_requests (
+            peer_pk       TEXT PRIMARY KEY
+                               CHECK (length(peer_pk) = 64 AND peer_pk NOT GLOB '*[^0-9a-f]*'),
+            requested_at  INTEGER NOT NULL CHECK (requested_at > 0),
+            expires_at    INTEGER NOT NULL CHECK (expires_at > requested_at),
+            state         TEXT NOT NULL
+                               CHECK (state IN ('queued', 'active', 'waiting_peer', 'complete', 'expired')),
+            updated_at    INTEGER NOT NULL CHECK (updated_at >= requested_at),
+            last_attempt_at INTEGER CHECK (last_attempt_at IS NULL OR last_attempt_at >= requested_at),
+            send_attempts INTEGER NOT NULL DEFAULT 0 CHECK (send_attempts >= 0),
+            last_error    TEXT CHECK (last_error IS NULL OR length(last_error) <= 240)
+        );
+        CREATE TRIGGER IF NOT EXISTS mesh_sync_requests_cap
+        BEFORE INSERT ON mesh_sync_requests
+        WHEN NOT EXISTS (SELECT 1 FROM mesh_sync_requests WHERE peer_pk = NEW.peer_pk)
+             AND (SELECT COUNT(*) FROM mesh_sync_requests) >= 256
+        BEGIN
+            SELECT RAISE(ABORT, 'mesh sync request queue exceeds 256 peers');
+        END;
         CREATE TABLE IF NOT EXISTS mesh_sync_inbound (
             origin_peer_pk       TEXT PRIMARY KEY,
             next_expected_seq    INTEGER NOT NULL DEFAULT 1 CHECK (next_expected_seq > 0),

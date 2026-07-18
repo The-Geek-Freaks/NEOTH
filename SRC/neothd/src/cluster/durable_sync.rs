@@ -28,6 +28,9 @@ use super::wal_sync::{
 
 const MAX_MEMORY_TEXT_BYTES: usize = 1_048_576;
 const MAX_STABLE_CONTENT_ID_BYTES: usize = 128;
+pub const SYNC_REQUEST_TTL_SECS: i64 = 15 * 60;
+pub const SYNC_REQUEST_RETRY_SECS: i64 = 2;
+const SYNC_REQUEST_POLL_LIMIT: i64 = 32;
 
 #[derive(Clone, Debug)]
 pub struct DurableMeshSync {
@@ -102,6 +105,29 @@ pub struct MeshPeerStatus {
     pub pending_origin_seq: Option<u64>,
     pub pending_attempts: Option<u64>,
     pub inbound_next_expected_seq: Option<u64>,
+    pub request_state: Option<String>,
+    pub request_requested_at: Option<i64>,
+    pub request_updated_at: Option<i64>,
+    pub request_expires_at: Option<i64>,
+    pub request_send_attempts: Option<u64>,
+    pub request_last_error: Option<String>,
+}
+
+/// Durable receipt for a local operator-requested accelerated peer catch-up.
+/// One row per paired peer coalesces repeated clicks without creating an
+/// unbounded command queue. The daemon is the only consumer with a transport
+/// handle; CLI and GUI processes can only enqueue this exact peer identity.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct MeshSyncRequest {
+    pub operation: &'static str,
+    pub peer_pk: String,
+    pub state: String,
+    pub requested_at: i64,
+    pub expires_at: i64,
+    pub updated_at: i64,
+    pub last_attempt_at: Option<i64>,
+    pub send_attempts: u64,
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -298,6 +324,94 @@ impl DurableMeshSync {
     pub fn list_status(&self, peer_filter: Option<&str>) -> Result<Vec<MeshPeerStatus>> {
         let conn = crate::memory::store::open(&self.db_path)?;
         list_status_on_conn(&conn, peer_filter)
+    }
+
+    /// Enqueue (or restart) an accelerated catch-up for one already-paired
+    /// peer. Repeated requests coalesce into the peer's primary-key row.
+    pub fn request_sync(&self, peer: &PeerPubkey, now: i64) -> Result<MeshSyncRequest> {
+        ensure!(now > 0, "mesh sync request timestamp must be positive");
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Terminal receipts are useful briefly for GUI feedback, but never
+        // grow without bound across long-lived installations.
+        tx.execute(
+            "DELETE FROM mesh_sync_requests WHERE state IN ('complete','expired') AND updated_at < ?1",
+            [now.saturating_sub(24 * 60 * 60)],
+        )?;
+        let expires_at = now
+            .checked_add(SYNC_REQUEST_TTL_SECS)
+            .context("mesh sync request expiry overflow")?;
+        tx.execute(
+            "INSERT INTO mesh_sync_requests \
+             (peer_pk,requested_at,expires_at,state,updated_at,last_attempt_at,send_attempts,last_error) \
+             VALUES (?1,?2,?3,'queued',?2,NULL,0,NULL) \
+             ON CONFLICT(peer_pk) DO UPDATE SET \
+               requested_at=excluded.requested_at, expires_at=excluded.expires_at, \
+               state='queued', updated_at=excluded.updated_at, last_attempt_at=NULL, \
+               send_attempts=0, last_error=NULL",
+            params![peer.as_str(), now, expires_at],
+        )?;
+        let receipt = load_sync_request_on_conn(&tx, peer)?
+            .context("mesh sync request vanished before commit")?;
+        tx.commit()?;
+        Ok(receipt)
+    }
+
+    /// Return requests due for another daemon-owned send attempt. This method
+    /// also expires stale rows transactionally, so a stopped/offline peer is
+    /// reported honestly instead of remaining queued forever.
+    pub fn due_sync_requests(&self, now: i64) -> Result<Vec<MeshSyncRequest>> {
+        ensure!(now > 0, "mesh sync request poll timestamp must be positive");
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "UPDATE mesh_sync_requests SET state='expired', updated_at=?1, \
+             last_error='request expired before the peer caught up' \
+             WHERE state IN ('queued','active','waiting_peer') AND expires_at <= ?1",
+            [now],
+        )?;
+        let retry_before = now.saturating_sub(SYNC_REQUEST_RETRY_SECS);
+        let requests = list_due_sync_requests_on_conn(&tx, now, retry_before)?;
+        tx.commit()?;
+        Ok(requests)
+    }
+
+    pub fn mark_sync_request_waiting(
+        &self,
+        peer: &PeerPubkey,
+        now: i64,
+        error: &str,
+    ) -> Result<()> {
+        update_sync_request_on_conn(
+            &crate::memory::store::open(&self.db_path)?,
+            peer,
+            now,
+            "waiting_peer",
+            false,
+            Some(error),
+        )
+    }
+
+    pub fn mark_sync_request_sent(&self, peer: &PeerPubkey, now: i64) -> Result<()> {
+        update_sync_request_on_conn(
+            &crate::memory::store::open(&self.db_path)?,
+            peer,
+            now,
+            "active",
+            true,
+            None,
+        )
+    }
+
+    pub fn mark_sync_request_complete(&self, peer: &PeerPubkey, now: i64) -> Result<()> {
+        update_sync_request_on_conn(
+            &crate::memory::store::open(&self.db_path)?,
+            peer,
+            now,
+            "complete",
+            false,
+            None,
+        )
     }
 
     /// Read the authoritative durable causal frontier in stable peer-id order.
@@ -1713,16 +1827,21 @@ fn list_status_on_conn(
         "WITH peers(peer_pk) AS (\
              SELECT peer_pk FROM mesh_sync_outbound UNION \
              SELECT peer_pk FROM mesh_sync_outbound_pending UNION \
-             SELECT origin_peer_pk FROM mesh_sync_inbound\
+             SELECT origin_peer_pk FROM mesh_sync_inbound UNION \
+             SELECT peer_pk FROM mesh_sync_requests\
          ) \
          SELECT p.peer_pk,o.cursor_segment,COALESCE(o.cursor_offset,0),COALESCE(o.acked_origin_seq,0), \
-                q.origin_seq,q.attempts,i.next_expected_seq \
+                q.origin_seq,q.attempts,i.next_expected_seq, \
+                CASE WHEN r.state IN ('queued','active','waiting_peer') AND r.expires_at <= ?2 \
+                     THEN 'expired' ELSE r.state END, \
+                r.requested_at,r.updated_at,r.expires_at,r.send_attempts,r.last_error \
          FROM peers p LEFT JOIN mesh_sync_outbound o ON o.peer_pk=p.peer_pk \
          LEFT JOIN mesh_sync_outbound_pending q ON q.peer_pk=p.peer_pk \
          LEFT JOIN mesh_sync_inbound i ON i.origin_peer_pk=p.peer_pk \
+         LEFT JOIN mesh_sync_requests r ON r.peer_pk=p.peer_pk \
          WHERE (?1 IS NULL OR p.peer_pk=?1) ORDER BY p.peer_pk",
     )?;
-    let rows = stmt.query_map([peer_filter], |r| {
+    let rows = stmt.query_map(params![peer_filter, crate::time::now_unix_i64()], |r| {
         let cursor_offset = nonnegative_u64(r.get::<_, i64>(2)?, "status cursor_offset")?;
         let acked = nonnegative_u64(r.get::<_, i64>(3)?, "status acked_origin_seq")?;
         let pending = r
@@ -1737,6 +1856,10 @@ fn list_status_on_conn(
             .get::<_, Option<i64>>(6)?
             .map(|v| positive_u64(v, "status inbound_next_expected_seq"))
             .transpose()?;
+        let request_send_attempts = r
+            .get::<_, Option<i64>>(11)?
+            .map(|v| nonnegative_u64(v, "status request_send_attempts"))
+            .transpose()?;
         Ok(MeshPeerStatus {
             peer_pk: r.get(0)?,
             cursor_segment: r.get(1)?,
@@ -1745,10 +1868,99 @@ fn list_status_on_conn(
             pending_origin_seq: pending,
             pending_attempts: attempts,
             inbound_next_expected_seq: inbound,
+            request_state: r.get(7)?,
+            request_requested_at: r.get(8)?,
+            request_updated_at: r.get(9)?,
+            request_expires_at: r.get(10)?,
+            request_send_attempts,
+            request_last_error: r.get(12)?,
         })
     })?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .context("read durable mesh status")
+}
+
+fn load_sync_request_on_conn(
+    conn: &Connection,
+    peer: &PeerPubkey,
+) -> Result<Option<MeshSyncRequest>> {
+    conn.query_row(
+        "SELECT peer_pk,state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
+         FROM mesh_sync_requests WHERE peer_pk=?1",
+        [peer.as_str()],
+        map_sync_request_row,
+    )
+    .optional()
+    .context("load durable mesh sync request")
+}
+
+fn list_due_sync_requests_on_conn(
+    conn: &Connection,
+    now: i64,
+    retry_before: i64,
+) -> Result<Vec<MeshSyncRequest>> {
+    let mut statement = conn.prepare(
+        "SELECT peer_pk,state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
+         FROM mesh_sync_requests \
+         WHERE state IN ('queued','active','waiting_peer') AND expires_at > ?1 \
+           AND (last_attempt_at IS NULL OR last_attempt_at <= ?2) \
+         ORDER BY COALESCE(last_attempt_at,0) ASC, requested_at ASC, peer_pk ASC \
+         LIMIT ?3",
+    )?;
+    Ok(statement
+        .query_map(
+            params![now, retry_before, SYNC_REQUEST_POLL_LIMIT],
+            map_sync_request_row,
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+fn map_sync_request_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MeshSyncRequest> {
+    let send_attempts = nonnegative_u64(row.get(6)?, "mesh sync request send_attempts")?;
+    Ok(MeshSyncRequest {
+        operation: "cluster.request-sync",
+        peer_pk: row.get(0)?,
+        state: row.get(1)?,
+        requested_at: row.get(2)?,
+        expires_at: row.get(3)?,
+        updated_at: row.get(4)?,
+        last_attempt_at: row.get(5)?,
+        send_attempts,
+        last_error: row.get(7)?,
+    })
+}
+
+fn update_sync_request_on_conn(
+    conn: &Connection,
+    peer: &PeerPubkey,
+    now: i64,
+    state: &str,
+    increment_sent: bool,
+    error: Option<&str>,
+) -> Result<()> {
+    ensure!(
+        now > 0,
+        "mesh sync request update timestamp must be positive"
+    );
+    let error = error.map(|value| value.chars().take(240).collect::<String>());
+    let changed = conn.execute(
+        "UPDATE mesh_sync_requests SET state=?2,updated_at=?3,last_attempt_at=?3, \
+         send_attempts=send_attempts + ?4,last_error=?5 \
+         WHERE peer_pk=?1 AND state IN ('queued','active','waiting_peer') AND expires_at > ?3",
+        params![
+            peer.as_str(),
+            state,
+            now,
+            if increment_sent { 1_i64 } else { 0_i64 },
+            error,
+        ],
+    )?;
+    ensure!(
+        changed == 1,
+        "no active mesh sync request for peer {}",
+        peer.as_str()
+    );
+    Ok(())
 }
 
 fn json_i64(payload: &[u8], field: &str) -> Result<i64> {
@@ -1825,6 +2037,66 @@ mod tests {
         let db_path = dir.path().join("views.db");
         let conn = crate::memory::store::open(&db_path).unwrap();
         (dir, db_path, conn)
+    }
+
+    #[test]
+    fn sync_request_coalesces_and_tracks_bounded_progress() {
+        let (_dir, db_path, conn) = open_test_db();
+        let sync = DurableMeshSync::new(db_path);
+        let peer = PeerPubkey::new("a".repeat(64));
+        let now = 1_900_000_000;
+
+        let queued = sync.request_sync(&peer, now).unwrap();
+        assert_eq!(queued.state, "queued");
+        assert_eq!(queued.send_attempts, 0);
+        assert_eq!(sync.due_sync_requests(now).unwrap(), vec![queued.clone()]);
+
+        sync.mark_sync_request_sent(&peer, now + 1).unwrap();
+        assert!(sync.due_sync_requests(now + 2).unwrap().is_empty());
+        assert_eq!(sync.due_sync_requests(now + 3).unwrap().len(), 1);
+
+        let long_error = "peer offline 🦀".repeat(40);
+        sync.mark_sync_request_waiting(&peer, now + 3, &long_error)
+            .unwrap();
+        let waiting = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
+        assert_eq!(waiting.state, "waiting_peer");
+        assert_eq!(waiting.send_attempts, 1);
+        assert!(waiting.last_error.unwrap().chars().count() <= 240);
+
+        let restarted = sync.request_sync(&peer, now + 4).unwrap();
+        assert_eq!(restarted.state, "queued");
+        assert_eq!(restarted.send_attempts, 0);
+        assert!(restarted.last_error.is_none());
+        sync.mark_sync_request_complete(&peer, now + 5).unwrap();
+        assert!(sync.due_sync_requests(now + 10).unwrap().is_empty());
+        let status = sync.list_status(Some(peer.as_str())).unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].request_state.as_deref(), Some("complete"));
+
+        for table in ["mesh_sync_outbound", "mesh_sync_outbound_pending"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "request queue must not mutate {table}");
+        }
+    }
+
+    #[test]
+    fn sync_request_status_expires_without_a_running_consumer() {
+        let (_dir, db_path, _conn) = open_test_db();
+        let sync = DurableMeshSync::new(db_path);
+        let peer = PeerPubkey::new("b".repeat(64));
+        sync.request_sync(&peer, 1).unwrap();
+
+        let status = sync.list_status(Some(peer.as_str())).unwrap();
+        assert_eq!(status.len(), 1);
+        assert_eq!(status[0].request_state.as_deref(), Some("expired"));
+        assert_eq!(
+            status[0].request_expires_at,
+            Some(1 + SYNC_REQUEST_TTL_SECS)
+        );
     }
 
     fn canonical_wal(event_type: u8, payload: &[u8]) -> Vec<u8> {

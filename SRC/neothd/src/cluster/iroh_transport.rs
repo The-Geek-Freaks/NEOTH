@@ -105,12 +105,14 @@ fn emit_gossip_sent(
     frame_count: usize,
     delivered: usize,
     peer_count: usize,
+    operator_requested: usize,
 ) {
     let Some(w) = writer else { return };
     let payload = serde_json::json!({
         "frame_count": frame_count,
         "delivered": delivered,
         "peer_count": peer_count,
+        "operator_requested": operator_requested,
         "transport": "iroh",
         "ts_unix": crate::time::now_unix_i64(),
     })
@@ -584,10 +586,10 @@ pub fn gossip_handler(
 
 /// Outbound gossip broadcast tick for iroh — the send-side counterpart to
 /// `wal_sync::spawn_gossip_tick` (which serves the peeroxide streams). Every 30s
-/// it cycles every live or sealed WAL segment using the same per-peer durable
-/// cursor and pending-frame store as peeroxide, then sends one bare
-/// `GossipFrame` (JSON) per known peer. Only an exact authenticated ACK advances
-/// that peer's cursor.
+/// it cycles every live or sealed WAL segment; a durable local `request-sync`
+/// row accelerates one paired peer to the one-second control cadence until
+/// caught up. Both paths use the same per-peer durable cursor and pending-frame
+/// store as peeroxide. Only an exact authenticated ACK advances that cursor.
 pub fn spawn_gossip_broadcast(
     transport: Arc<IrohTransport>,
     segment_path: std::path::PathBuf,
@@ -606,25 +608,83 @@ pub fn spawn_gossip_broadcast(
             .map(|home| home.join("views.db"))
             .unwrap_or_else(|| std::path::PathBuf::from("views.db"));
         let durable = crate::cluster::durable_sync::DurableMeshSync::new(db_path);
-        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(30));
+        let regular_interval = std::time::Duration::from_secs(30);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut next_regular_tick = tokio::time::Instant::now();
         loop {
             ticker.tick().await;
-            if transport.peer_count() == 0 {
-                continue; // no peers ⇒ nothing to gossip
+            let now = crate::time::now_unix_i64();
+            let due_requests = match durable.due_sync_requests(now) {
+                Ok(requests) => requests,
+                Err(error) => {
+                    tracing::warn!(%error, "iroh mesh request queue poll failed closed");
+                    Vec::new()
+                }
+            };
+            let requested_peers: HashSet<String> = due_requests
+                .iter()
+                .map(|request| request.peer_pk.clone())
+                .collect();
+            let known_peers = transport.known_peers();
+            let known_peer_ids: HashSet<String> =
+                known_peers.iter().map(ToString::to_string).collect();
+            for request in &due_requests {
+                if !known_peer_ids.contains(&request.peer_pk) {
+                    let peer = crate::cluster::PeerPubkey::new(request.peer_pk.clone());
+                    if let Err(error) = durable.mark_sync_request_waiting(
+                        &peer,
+                        now,
+                        "paired peer is not known to the active iroh carrier",
+                    ) {
+                        tracing::warn!(%error, peer = %request.peer_pk, "iroh mesh request waiting state could not be persisted");
+                    }
+                }
             }
+
+            let regular_due = tokio::time::Instant::now() >= next_regular_tick;
+            if regular_due {
+                next_regular_tick = tokio::time::Instant::now() + regular_interval;
+            }
+            if known_peers.is_empty()
+                || (!regular_due
+                    && !known_peers
+                        .iter()
+                        .any(|peer| requested_peers.contains(&peer.to_string())))
+            {
+                continue;
+            }
+
             let policy = reload_controller.gossip_policy();
 
             let mut delivered = 0usize;
-            for endpoint in transport.known_peers() {
+            let mut operator_requested = 0usize;
+            for endpoint in known_peers {
                 let peer = crate::cluster::PeerPubkey::new(endpoint.to_string());
+                let requested = requested_peers.contains(peer.as_str());
+                if !regular_due && !requested {
+                    continue;
+                }
                 match durable
                     .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy, &state)
                     .await
                 {
                     Ok(Some(prepared)) => {
-                        let Ok(wire) = serde_json::to_vec(&prepared.frame) else {
-                            continue;
+                        let wire = match serde_json::to_vec(&prepared.frame) {
+                            Ok(wire) => wire,
+                            Err(error) => {
+                                tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh frame serialization failed closed");
+                                if requested {
+                                    if let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        &peer,
+                                        now,
+                                        "durable mesh frame serialization failed",
+                                    ) {
+                                        tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh request serialization failure could not be persisted");
+                                    }
+                                }
+                                continue;
+                            }
                         };
                         let attempt_store = durable.clone();
                         let attempt_peer = peer.clone();
@@ -636,12 +696,35 @@ pub fn spawn_gossip_broadcast(
                             Ok(Ok(())) => {}
                             Ok(Err(error)) => {
                                 tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh attempt persistence failed closed");
+                                if requested
+                                    && let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        &peer,
+                                        now,
+                                        &format!("mesh attempt persistence failed: {error}"),
+                                    )
+                                {
+                                    tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh request attempt failure could not be persisted");
+                                }
                                 continue;
                             }
                             Err(error) => {
                                 tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh attempt task panicked");
+                                if requested
+                                    && let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        &peer,
+                                        now,
+                                        "mesh attempt persistence task panicked",
+                                    )
+                                {
+                                    tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh request attempt panic could not be persisted");
+                                }
                                 continue;
                             }
+                        }
+                        if requested && let Err(error) = durable.mark_sync_request_sent(&peer, now)
+                        {
+                            tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh request progress failed closed before transport send");
+                            continue;
                         }
                         match bounded_gossip_send(
                             GOSSIP_SEND_TIMEOUT,
@@ -650,11 +733,26 @@ pub fn spawn_gossip_broadcast(
                         .await
                         {
                             Ok(Ok(reply)) => {
-                                let Ok(ack) = serde_json::from_slice::<
+                                let ack = match serde_json::from_slice::<
                                     crate::cluster::gossip_wire::GossipAck,
-                                >(&reply) else {
-                                    tracing::warn!(peer = %peer.as_str(), "iroh mesh peer withheld or returned malformed ACK");
-                                    continue;
+                                >(&reply)
+                                {
+                                    Ok(ack) => ack,
+                                    Err(_) => {
+                                        tracing::warn!(peer = %peer.as_str(), "iroh mesh peer withheld or returned malformed ACK");
+                                        if requested {
+                                            if let Err(persist_error) = durable
+                                                .mark_sync_request_waiting(
+                                                    &peer,
+                                                    now,
+                                                    "peer withheld or returned a malformed ACK",
+                                                )
+                                            {
+                                                tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh malformed-ACK state could not be persisted");
+                                            }
+                                        }
+                                        continue;
+                                    }
                                 };
                                 let ack_store = durable.clone();
                                 let ack_peer = peer.clone();
@@ -664,28 +762,89 @@ pub fn spawn_gossip_broadcast(
                                 })
                                 .await
                                 {
-                                    Ok(Ok(_)) => delivered += 1,
+                                    Ok(Ok(_)) => {
+                                        delivered += 1;
+                                        if requested {
+                                            operator_requested += 1;
+                                        }
+                                    }
                                     Ok(Err(error)) => {
-                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK rejected")
+                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK rejected");
+                                        if requested {
+                                            if let Err(persist_error) = durable
+                                                .mark_sync_request_waiting(
+                                                    &peer,
+                                                    now,
+                                                    &format!("peer ACK was rejected: {error}"),
+                                                )
+                                            {
+                                                tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh rejected-ACK state could not be persisted");
+                                            }
+                                        }
                                     }
                                     Err(error) => {
-                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK task panicked")
+                                        tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh ACK task panicked");
+                                        if requested {
+                                            if let Err(persist_error) = durable
+                                                .mark_sync_request_waiting(
+                                                    &peer,
+                                                    now,
+                                                    "peer ACK persistence task panicked",
+                                                )
+                                            {
+                                                tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh ACK panic state could not be persisted");
+                                            }
+                                        }
                                     }
                                 }
                             }
                             Ok(Err(error)) => {
-                                tracing::debug!(%error, peer = %peer.as_str(), "iroh mesh send failed; pending frame retained")
+                                tracing::debug!(%error, peer = %peer.as_str(), "iroh mesh send failed; pending frame retained");
+                                if requested {
+                                    if let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        &peer,
+                                        now,
+                                        &format!("active iroh carrier send failed: {error}"),
+                                    ) {
+                                        tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh send-failure state could not be persisted");
+                                    }
+                                }
                             }
-                            Err(_) => tracing::warn!(
-                                peer = %peer.as_str(),
-                                timeout_secs = GOSSIP_SEND_TIMEOUT.as_secs(),
-                                "iroh mesh peer timed out; pending frame retained"
-                            ),
+                            Err(_) => {
+                                tracing::warn!(
+                                    peer = %peer.as_str(),
+                                    timeout_secs = GOSSIP_SEND_TIMEOUT.as_secs(),
+                                    "iroh mesh peer timed out; pending frame retained"
+                                );
+                                if requested {
+                                    if let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        &peer,
+                                        now,
+                                        "active iroh peer timed out",
+                                    ) {
+                                        tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh timeout state could not be persisted");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) if requested => {
+                        if let Err(error) = durable.mark_sync_request_complete(&peer, now) {
+                            tracing::warn!(%error, peer = %peer.as_str(), "iroh mesh request completion could not be persisted");
                         }
                     }
                     Ok(None) => {}
                     Err(error) => {
-                        tracing::warn!(%error, peer = %peer.as_str(), "iroh durable mesh prepare failed closed")
+                        tracing::warn!(%error, peer = %peer.as_str(), "iroh durable mesh prepare failed closed");
+                        if requested {
+                            if let Err(persist_error) = durable.mark_sync_request_waiting(
+                                &peer,
+                                now,
+                                &format!("durable mesh prepare failed: {error}"),
+                            ) {
+                                tracing::warn!(%persist_error, peer = %peer.as_str(), "iroh mesh prepare-failure state could not be persisted");
+                            }
+                        }
                     }
                 }
             }
@@ -693,7 +852,13 @@ pub fn spawn_gossip_broadcast(
             // Only emit when frames actually went out so an idle tick leaves
             // no noise.
             if delivered > 0 {
-                emit_gossip_sent(&writer, delivered, delivered, transport.peer_count());
+                emit_gossip_sent(
+                    &writer,
+                    delivered,
+                    delivered,
+                    transport.peer_count(),
+                    operator_requested,
+                );
             }
         }
     })
@@ -954,7 +1119,7 @@ mod tests {
         let (writer, join) =
             crate::wal::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let writer = Arc::new(writer);
-        emit_gossip_sent(&Some(Arc::clone(&writer)), 3, 2, 1);
+        emit_gossip_sent(&Some(Arc::clone(&writer)), 3, 2, 1, 0);
         drop(writer);
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap();

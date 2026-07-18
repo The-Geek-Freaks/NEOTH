@@ -253,7 +253,43 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-WIRE-09: persist the bounded node-global mesh vector frontier",
         run: migration_v31_to_v32,
     },
+    Migration {
+        from: 32,
+        to: 33,
+        description: "GOLD-R4 GUI parity: add durable operator-requested mesh-sync queue",
+        run: migration_v32_to_v33,
+    },
 ];
+
+/// v32 -> v33: coalesced cross-process control queue for an explicit
+/// operator-requested mesh catch-up. Transport handles remain daemon-owned;
+/// the CLI/GUI can only enqueue a paired peer identity in this bounded table.
+fn migration_v32_to_v33(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mesh_sync_requests (
+            peer_pk       TEXT PRIMARY KEY
+                               CHECK (length(peer_pk) = 64 AND peer_pk NOT GLOB '*[^0-9a-f]*'),
+            requested_at  INTEGER NOT NULL CHECK (requested_at > 0),
+            expires_at    INTEGER NOT NULL CHECK (expires_at > requested_at),
+            state         TEXT NOT NULL
+                               CHECK (state IN ('queued', 'active', 'waiting_peer', 'complete', 'expired')),
+            updated_at    INTEGER NOT NULL CHECK (updated_at >= requested_at),
+            last_attempt_at INTEGER CHECK (last_attempt_at IS NULL OR last_attempt_at >= requested_at),
+            send_attempts INTEGER NOT NULL DEFAULT 0 CHECK (send_attempts >= 0),
+            last_error    TEXT CHECK (last_error IS NULL OR length(last_error) <= 240)
+        );
+        CREATE TRIGGER mesh_sync_requests_cap
+        BEFORE INSERT ON mesh_sync_requests
+        WHEN NOT EXISTS (SELECT 1 FROM mesh_sync_requests WHERE peer_pk = NEW.peer_pk)
+             AND (SELECT COUNT(*) FROM mesh_sync_requests) >= 256
+        BEGIN
+            SELECT RAISE(ABORT, 'mesh sync request queue exceeds 256 peers');
+        END;
+        "#,
+    )
+    .context("migration_v32_to_v33: add durable mesh sync request queue")
+}
 
 /// v31 -> v32: persist causal time independently from destination ACK streams.
 /// Protocol-v5 pending frames are discarded without advancing their cursors;
@@ -2275,6 +2311,41 @@ mod tests {
             [],
         );
         assert!(r.is_err(), "post-migration CHECK must reject 'garbage'");
+    }
+
+    #[test]
+    fn migration_v32_to_v33_creates_a_bounded_mesh_request_queue() {
+        let conn = Connection::open_in_memory().unwrap();
+        migration_v32_to_v33(&conn).unwrap();
+        for index in 0..256_u64 {
+            let peer = format!("{index:064x}");
+            conn.execute(
+                "INSERT INTO mesh_sync_requests \
+                 (peer_pk,requested_at,expires_at,state,updated_at,send_attempts) \
+                 VALUES (?1,1,2,'queued',1,0)",
+                [peer],
+            )
+            .unwrap();
+        }
+        let overflow_peer = format!("{:064x}", 256_u64);
+        let overflow = conn.execute(
+            "INSERT INTO mesh_sync_requests \
+             (peer_pk,requested_at,expires_at,state,updated_at,send_attempts) \
+             VALUES (?1,1,2,'queued',1,0)",
+            [overflow_peer],
+        );
+        assert!(
+            overflow.is_err(),
+            "257th distinct peer must hit the queue cap"
+        );
+        conn.execute(
+            "INSERT INTO mesh_sync_requests \
+             (peer_pk,requested_at,expires_at,state,updated_at,send_attempts) \
+             VALUES (?1,3,4,'queued',3,0) \
+             ON CONFLICT(peer_pk) DO UPDATE SET requested_at=3,expires_at=4,updated_at=3",
+            [format!("{:064x}", 1_u64)],
+        )
+        .expect("coalescing an existing peer must remain allowed at the cap");
     }
 
     /// BS-7 sibling: starting at v4 must climb cleanly to current (skipping the

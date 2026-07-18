@@ -598,10 +598,11 @@ fn collect_gossipable_from_wal_dir(
     Ok(out)
 }
 
-/// Protocol-v6 peeroxide send path. Every
-/// [`GOSSIP_TICK_INTERVAL`] it advances through the complete WAL history,
-/// band-filters replicable frames, stages one exact durable [`GossipFrame`] per
-/// destination, and queues it to paired peers. Read-only consumer of
+/// Protocol-v6 peeroxide send path. Every [`GOSSIP_TICK_INTERVAL`] it advances
+/// through the complete WAL history; a durable local `request-sync` row
+/// accelerates one paired peer to the one-second control cadence until caught
+/// up. Both paths band-filter replicable frames, stage one exact durable
+/// [`GossipFrame`] per destination, and queue it to paired peers. Read-only consumer of
 /// the WAL (NOT a write hook
 /// — the per-peer read loop is read-to-completion and can't take an append
 /// callback). Returns the task handle so the daemon can abort it on shutdown.
@@ -630,17 +631,59 @@ pub fn spawn_gossip_tick(
             .map(|home| home.join("views.db"))
             .unwrap_or_else(|| PathBuf::from("views.db"));
         let durable = super::durable_sync::DurableMeshSync::new(db_path);
-        let mut ticker = tokio::time::interval(GOSSIP_TICK_INTERVAL);
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(1));
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut next_regular_tick = tokio::time::Instant::now();
         loop {
             ticker.tick().await;
-            // No peers ⇒ nothing to gossip; don't even read the segment.
-            if peer_streams.peer_count() == 0 {
+            let now = now_unix_secs();
+            let due_requests = match durable.due_sync_requests(now) {
+                Ok(requests) => requests,
+                Err(error) => {
+                    tracing::warn!(%error, "mesh request queue poll failed closed");
+                    Vec::new()
+                }
+            };
+            let requested_peers: HashSet<String> = due_requests
+                .iter()
+                .map(|request| request.peer_pk.clone())
+                .collect();
+            let connected_peers = peer_streams.connected_peers();
+            let connected: HashSet<&str> = connected_peers.iter().map(String::as_str).collect();
+            for request in &due_requests {
+                if !connected.contains(request.peer_pk.as_str()) {
+                    let peer = PeerPubkey::new(request.peer_pk.clone());
+                    if let Err(error) = durable.mark_sync_request_waiting(
+                        &peer,
+                        now,
+                        "paired peer is not connected to the active carrier",
+                    ) {
+                        tracing::warn!(%error, peer = %request.peer_pk, "mesh request waiting state could not be persisted");
+                    }
+                }
+            }
+
+            let regular_due = tokio::time::Instant::now() >= next_regular_tick;
+            if regular_due {
+                next_regular_tick = tokio::time::Instant::now() + GOSSIP_TICK_INTERVAL;
+            }
+            if connected_peers.is_empty()
+                || (!regular_due
+                    && !connected_peers
+                        .iter()
+                        .any(|peer| requested_peers.contains(peer)))
+            {
                 continue;
             }
+
             let policy = reload_controller.gossip_policy();
             let mut queued = 0usize;
-            for peer_pk in peer_streams.connected_peers() {
+            let mut operator_requested = 0usize;
+            for peer_pk in connected_peers {
+                let requested = requested_peers.contains(&peer_pk);
+                if !regular_due && !requested {
+                    continue;
+                }
                 let peer = PeerPubkey::new(peer_pk.clone());
                 match durable
                     .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy, &state)
@@ -654,30 +697,75 @@ pub fn spawn_gossip_tick(
                             peer_id: self_id.as_str().to_string(),
                             body: FrameBody::Gossip(Box::new(prepared.frame)),
                         };
-                        if peer_streams.send_to(&peer_pk, wf).is_ok() {
-                            queued += 1;
-                            if let Err(error) = durable.record_send_attempt(&peer) {
-                                tracing::warn!(%error, peer = %peer_pk, "mesh send queued but attempt counter could not be recorded");
+                        if requested && let Err(error) = durable.mark_sync_request_sent(&peer, now)
+                        {
+                            tracing::warn!(%error, peer = %peer_pk, "mesh request progress failed closed before transport queue");
+                            continue;
+                        }
+                        match peer_streams.send_to(&peer_pk, wf) {
+                            Ok(()) => {
+                                queued += 1;
+                                if requested {
+                                    operator_requested += 1;
+                                }
+                                if let Err(error) = durable.record_send_attempt(&peer) {
+                                    tracing::warn!(%error, peer = %peer_pk, "mesh send queued but attempt counter could not be recorded");
+                                }
                             }
+                            Err(error) if requested => {
+                                if let Err(persist_error) = durable.mark_sync_request_waiting(
+                                    &peer,
+                                    now,
+                                    &format!("active carrier could not queue the frame: {error}"),
+                                ) {
+                                    tracing::warn!(%persist_error, peer = %peer_pk, "mesh request send failure could not be persisted");
+                                }
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    Ok(None) if requested => {
+                        if let Err(error) = durable.mark_sync_request_complete(&peer, now) {
+                            tracing::warn!(%error, peer = %peer_pk, "mesh request completion could not be persisted");
                         }
                     }
                     Ok(None) => {}
                     Err(error) => {
                         tracing::warn!(%error, peer = %peer_pk, "durable mesh prepare failed closed");
+                        if requested
+                            && let Err(persist_error) = durable.mark_sync_request_waiting(
+                                &peer,
+                                now,
+                                &format!("durable mesh prepare failed: {error}"),
+                            )
+                        {
+                            tracing::warn!(%persist_error, peer = %peer_pk, "mesh request prepare failure could not be persisted");
+                        }
                     }
                 }
             }
             if queued > 0 {
-                emit_gossip_sent_wal(&writer, queued, peer_streams.peer_count());
+                emit_gossip_sent_wal(
+                    &writer,
+                    queued,
+                    peer_streams.peer_count(),
+                    operator_requested,
+                );
             }
         }
     })
 }
 
-fn emit_gossip_sent_wal(writer: &WalWriterHandle, frame_count: usize, peer_count: usize) {
+fn emit_gossip_sent_wal(
+    writer: &WalWriterHandle,
+    frame_count: usize,
+    peer_count: usize,
+    operator_requested: usize,
+) {
     let payload = serde_json::json!({
         "frame_count": frame_count,
         "peer_count": peer_count,
+        "operator_requested": operator_requested,
         "ts_unix": now_unix_secs(),
     })
     .to_string()
