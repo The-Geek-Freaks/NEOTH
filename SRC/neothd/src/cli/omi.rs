@@ -1306,7 +1306,10 @@ fn print_configure_receipt(output: OutputFormat, receipt: &OmiConfigureReceipt) 
             println!("OMI configuration committed and verified: {}", receipt.path);
             println!("  operation id    : {}", receipt.operation_id);
             println!("  config sha256   : {}", receipt.config_sha256);
-            println!("  credential store: {}", receipt.credentials.backend);
+            // Do not echo config-derived credential metadata to terminal logs.
+            // The typed JSON receipt retains the non-secret backend for callers
+            // that explicitly request structured output.
+            println!("  credentials     : committed and verified");
             println!("  reload requested: {}", receipt.reload_requested);
         }
     }
