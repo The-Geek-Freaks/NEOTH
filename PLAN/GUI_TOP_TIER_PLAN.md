@@ -163,7 +163,11 @@ Der Auftrag "maximales Research → Plan → Implementierung" ist wie folgt durc
 
 ### Wave F — Cluster/Mesh-Dashboard
 - [x] F1 Per-Peer-Ressourcen aus SwarmTable in Mesh-Tab (CPU/RAM/VRAM je Node).
-- [ ] F2 WAL-Sync-Status je Peer (Vector-Clock-Delta), Gossip-Event-Stream.
+- [x] F2 (2026-07-18): SYNC-STATE-Card im Mesh-Tab — per-Peer ACK-Highwater,
+      Pending(+Attempts), Inbound-Next, Cursor (Segment:Offset), Request-State
+      + Last-Error (consent-rot) aus `cluster sync-state --output json`
+      (durable_sync::MeshPeerStatus). Card versteckt sich ohne Daten.
+      Gossip-Event-Stream war schon da (Session #13).
 - [ ] F3 Per-Node-Aktionen (request sync, kick peer), Node-Rollen.
 
 ## Wave H — 12/10 KILLER-BACKLOG (Research-Wave 2, `wf_c9f1360d-bda`, web-grounded)

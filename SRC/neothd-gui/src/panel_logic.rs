@@ -3707,6 +3707,121 @@ pub fn parse_bg_jobs(json: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+// ── F2 mesh sync-state parse ─────────────────────────────────────────────────
+
+/// One display row from `neoth cluster sync-state --output json`
+/// (`durable_sync::MeshPeerStatus`). All fields pre-formatted for Slint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MeshSyncData {
+    pub peer_short: String,
+    pub acked: String,
+    pub pending: String,
+    pub inbound_next: String,
+    pub cursor: String,
+    pub request: String,
+    pub last_error: String,
+}
+
+/// Parse the sync-state JSON array. Optional u64s render as "-";
+/// `pending` folds attempts in ("12 (3×)"); cursor shows the segment file
+/// name plus offset. Malformed input yields an empty Vec.
+pub fn parse_mesh_sync(json: &str) -> Vec<MeshSyncData> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    let opt = |row: &serde_json::Value, key: &str| -> String {
+        row.get(key)
+            .and_then(|x| x.as_u64())
+            .map(|x| x.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    };
+    arr.iter()
+        .filter_map(|row| {
+            let pk = row.get("peer_pk")?.as_str()?;
+            let peer_short = if pk.len() > 16 {
+                format!("{}…", &pk[..16])
+            } else {
+                pk.to_string()
+            };
+            let pending = match (
+                row.get("pending_origin_seq").and_then(|x| x.as_u64()),
+                row.get("pending_attempts").and_then(|x| x.as_u64()),
+            ) {
+                (Some(seq), Some(att)) if att > 1 => format!("{seq} ({att}×)"),
+                (Some(seq), _) => seq.to_string(),
+                (None, _) => "-".to_string(),
+            };
+            let cursor = match (
+                row.get("cursor_segment").and_then(|x| x.as_str()),
+                row.get("cursor_offset").and_then(|x| x.as_u64()),
+            ) {
+                (Some(seg), off) => {
+                    let name = std::path::Path::new(seg)
+                        .file_name()
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or(seg);
+                    format!("{name}:{}", off.unwrap_or(0))
+                }
+                (None, Some(off)) => off.to_string(),
+                (None, None) => "-".to_string(),
+            };
+            Some(MeshSyncData {
+                peer_short,
+                acked: opt(row, "acked_origin_seq"),
+                pending,
+                inbound_next: opt(row, "inbound_next_expected_seq"),
+                cursor,
+                request: row
+                    .get("request_state")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("-")
+                    .to_string(),
+                last_error: row
+                    .get("request_last_error")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod mesh_sync_parse_tests {
+    use super::parse_mesh_sync;
+
+    #[test]
+    fn parses_full_and_sparse_rows() {
+        let json = r#"[
+            {"peer_pk":"abcdef0123456789deadbeef","cursor_segment":"C:\\wal\\seg-0007.wal",
+             "cursor_offset":4096,"acked_origin_seq":120,"pending_origin_seq":121,
+             "pending_attempts":3,"inbound_next_expected_seq":88,
+             "request_state":"pending","request_last_error":"peer unreachable"},
+            {"peer_pk":"short","cursor_segment":null,"cursor_offset":0,
+             "acked_origin_seq":0,"pending_origin_seq":null,"pending_attempts":null,
+             "inbound_next_expected_seq":null,"request_state":null,"request_last_error":null}
+        ]"#;
+        let rows = parse_mesh_sync(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].peer_short, "abcdef0123456789…");
+        assert_eq!(rows[0].pending, "121 (3×)");
+        assert_eq!(rows[0].cursor, "seg-0007.wal:4096");
+        assert_eq!(rows[0].request, "pending");
+        assert_eq!(rows[0].last_error, "peer unreachable");
+        assert_eq!(rows[1].peer_short, "short");
+        assert_eq!(rows[1].pending, "-");
+        assert_eq!(rows[1].cursor, "0");
+        assert_eq!(rows[1].request, "-");
+    }
+
+    #[test]
+    fn malformed_input_yields_empty() {
+        assert!(parse_mesh_sync("not json").is_empty());
+        assert!(parse_mesh_sync("{}").is_empty());
+    }
+}
+
 // ── I14 slash-command parse ──────────────────────────────────────────────────
 
 /// Parse `neoth slash list --output json` → (name, source, description,

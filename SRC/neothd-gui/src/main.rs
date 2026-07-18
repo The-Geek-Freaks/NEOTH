@@ -15613,6 +15613,9 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     let swarm_out = run_neothd_probe(&["cluster", "swarm", "--output", "json"]);
     let swarm_nodes = panel_logic::parse_swarm_nodes(&swarm_out);
     let gossip_lines = panel_logic::format_gossip_lines(&foreign_out, 60);
+    // F2 — durable per-peer sync cursors/ACKs (empty on non-cluster builds).
+    let sync_out = run_neothd_probe(&["cluster", "sync-state", "--output", "json"]);
+    let sync_rows = panel_logic::parse_mesh_sync(&sync_out);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
@@ -15730,6 +15733,22 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                 .as_str()
                 .into(),
         );
+        // F2 — durable sync-state table.
+        let sync_model: Vec<MeshSyncRow> = sync_rows
+            .into_iter()
+            .map(|r| MeshSyncRow {
+                peer: r.peer_short.into(),
+                acked: r.acked.into(),
+                pending: r.pending.into(),
+                inbound_next: r.inbound_next.into(),
+                cursor: r.cursor.into(),
+                request: r.request.into(),
+                last_error: r.last_error.into(),
+            })
+            .collect();
+        w.set_mesh_sync_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+            sync_model,
+        ))));
         w.set_mesh_refreshed_at(ts.as_str().into());
     });
 }

@@ -46,6 +46,18 @@ export struct MeshForeignRow {
     latest: string,   // pre-formatted latest received time e.g. "12:03"
 }
 
+/// F2 — one durable per-peer sync row from `neoth cluster sync-state`.
+/// All fields pre-formatted by `panel_logic::parse_mesh_sync`.
+export struct MeshSyncRow {
+    peer: string,          // truncated peer pk, mono
+    acked: string,         // ACK high-water mark
+    pending: string,       // pending seq (+ attempts), "-" when none
+    inbound-next: string,  // next expected inbound seq
+    cursor: string,        // "seg-0007.wal:4096"
+    request: string,       // catch-up request state, "-" when none
+    last-error: string,    // "" when clean
+}
+
 /// One unresolved canonical-content divergence from `neoth cluster conflicts`.
 export struct MeshConflictRow {
     content-id: string,
@@ -371,6 +383,8 @@ export component MeshView inherits Rectangle {
 
     // ── Typed conflict ledger ────────────────────────────────────────────────
     in property <[MeshConflictRow]> mesh-conflicts: [];
+    // F2 — durable per-peer sync rows (empty hides the card).
+    in property <[MeshSyncRow]> mesh-sync-rows: [];
     in property <int> mesh-conflict-count: 0;
     in property <bool> mesh-conflicts-valid: true;
     in property <string> mesh-conflicts-error: "";
@@ -797,6 +811,48 @@ export component MeshView inherits Rectangle {
                             }
 
                             RefreshFooter { ts: root.mesh-refreshed-at; }
+                        }
+                    }
+
+                    // ── F2 — DURABLE SYNC STATE (per-peer WAL catch-up) ─────
+                    if root.mesh-sync-rows.length > 0: Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            Kicker { label: "SYNC STATE"; }
+                            // Header row — mono column labels.
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: "PEER";    width: 140px; color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                Text { text: "ACKED";   width: 60px;  color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                Text { text: "PENDING"; width: 80px;  color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                Text { text: "IN-NEXT"; width: 60px;  color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                Text { text: "CURSOR";  color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; horizontal-stretch: 1; }
+                                Text { text: "REQUEST"; width: 76px;  color: Theme.text-disabled; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                            }
+                            for sr in root.mesh-sync-rows: VerticalLayout {
+                                spacing: 2px;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: sr.peer;    width: 140px; color: Theme.text-primary;   font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; }
+                                    Text { text: sr.acked;   width: 60px;  color: Theme.text-secondary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                    Text { text: sr.pending; width: 80px;  color: sr.pending == "-" ? Theme.text-tertiary : Theme.warning; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                    Text { text: sr.inbound-next; width: 60px; color: Theme.text-secondary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; }
+                                    Text { text: sr.cursor;  color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; horizontal-stretch: 1; }
+                                    Text { text: sr.request; width: 76px; color: sr.request == "-" ? Theme.text-tertiary : Theme.audit; font-family: Theme.font-mono; font-size: Theme.font-size-2xs; overflow: elide; }
+                                }
+                                if sr.last-error != "": Text {
+                                    text: "request: " + sr.last-error;
+                                    color: Theme.consent;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    overflow: elide;
+                                }
+                            }
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: "durable sync state — \{root.mesh-sync-rows.length} peer rows";
                         }
                     }
 
