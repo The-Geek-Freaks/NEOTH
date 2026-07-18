@@ -1,0 +1,163 @@
+// NEOTH GUI — Background Jobs panel (I13).
+//
+// Replaces the raw ProbeView dump with structured job cards plus a
+// submission form, closing the /background parity gap (schema.rs:17 —
+// every action command pairs with a GUI surface).
+//
+// Daemon surface (both exist in cli/jobs.rs):
+//   jobs --bg  --output json               → [{id, status, exit_code}]
+//   jobs --run "<command>" --label <label> --output json
+//       → {action:"jobs_run", started, id, pid, log_path}  (typed ack)
+
+import { Theme } from "theme.slint";
+import { Card, Led, NeothButton, Kicker, RefreshFooter, NeothLineEdit, EmptyState } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
+
+// ── Wire struct ───────────────────────────────────────────────────────
+export struct BgJobRow {
+    id: string,
+    status: string,      // "running" | "completed"
+    exit-code: string,   // "" while running, else "0", "1", …
+}
+
+component BgJobCard inherits Rectangle {
+    in property <BgJobRow> job;
+
+    background: Theme.bg-card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding: 12px; spacing: 10px;
+
+        Led {
+            state: root.job.status == "running" ? "connecting"
+                : root.job.exit-code == "0" ? "live" : "error";
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.job.id;
+            color: Theme.text-primary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        Text {
+            text: root.job.status == "running" ? "running"
+                : "exit " + root.job.exit-code;
+            color: root.job.status == "running" ? Theme.text-secondary
+                : root.job.exit-code == "0" ? Theme.accent-green : Theme.consent;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-2xs;
+            letter-spacing: Theme.letter-spacing-wide;
+            vertical-alignment: center;
+        }
+    }
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: "background job " + root.job.id + " — "
+        + (root.job.status == "running" ? "running" : "exit " + root.job.exit-code);
+}
+
+export component BgJobsView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+    in property <[BgJobRow]> bg-jobs: [];
+    in property <bool>   bg-running: false;      // refresh probe in flight
+    in property <bool>   bg-submitting: false;   // --run spawn in flight
+    in property <string> bg-refreshed-at: "";
+    in-out property <string> bg-command-draft: "";
+    in-out property <string> bg-label-draft: "";
+
+    callback bg-refresh();
+    callback bg-run(string /*command*/, string /*label*/);
+
+    ScrollView {
+        VerticalLayout {
+            padding: Theme.space-base;
+            spacing: 14px;
+
+            // ── HEADER ────────────────────────────────────────────────
+            HorizontalLayout {
+                spacing: 10px;
+                VerticalLayout {
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Kicker { text: "AUTOMATION"; }
+                    Text {
+                        text: "Background Jobs";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-lg;
+                    }
+                    Text {
+                        text: "detached commands · ~/.neoth/bgjobs · daemon bg-monitor tracks completion";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                    }
+                }
+                NeothButton {
+                    label: root.bg-running ? "Loading…" : "Refresh";
+                    size: "sm";
+                    primary: false;
+                    enabled: !root.bg-running;
+                    clicked => { root.bg-refresh(); }
+                }
+            }
+
+            // ── RUN FORM (the /background GUI mirror) ─────────────────
+            Card {
+                VerticalLayout {
+                    padding: 12px; spacing: 8px;
+                    Kicker { text: "RUN IN BACKGROUND"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        NeothLineEdit {
+                            placeholder-text: "command, e.g. cargo build --release";
+                            text <=> root.bg-command-draft;
+                            horizontal-stretch: 1;
+                        }
+                        NeothLineEdit {
+                            placeholder-text: "label (optional)";
+                            text <=> root.bg-label-draft;
+                            width: 160px;
+                        }
+                        NeothButton {
+                            label: root.bg-submitting ? "Starting…" : "Run";
+                            size: "sm";
+                            primary: true;
+                            enabled: !root.bg-submitting && root.bg-command-draft != "";
+                            clicked => {
+                                root.bg-run(root.bg-command-draft, root.bg-label-draft);
+                            }
+                        }
+                    }
+                    Text {
+                        text: "Spawns detached; stdout+stderr stream to the job log. Chat's /background does the same for prompts.";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            // ── JOB LIST ──────────────────────────────────────────────
+            if root.bg-jobs.length == 0: EmptyState {
+                glyph: "⊛";
+                title: "No background jobs";
+                hint: "start one with the form above or `neoth jobs --run \"<command>\"`";
+            }
+            for j in root.bg-jobs: BgJobCard { job: j; }
+
+            RefreshFooter { ts: root.bg-refreshed-at; }
+        }
+    }
+}

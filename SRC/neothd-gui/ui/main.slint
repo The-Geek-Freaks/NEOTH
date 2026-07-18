@@ -32,6 +32,7 @@ import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
 import { MemoryGraphView, GraphNode, GraphEdge } from "memory_graph.slint";
 import { CronView, CronJobRow } from "cron.slint";
+import { BgJobsView, BgJobRow } from "bgjobs.slint";
 import { OverviewView, HemiCard, CalEvent, ConsentEntry, CostSessionRow } from "overview.slint";
 import { LoopPanel, LoopRoundRow, LoopRunRow } from "loop.slint";
 // Design Wave 4a — new real-data panels.
@@ -49,7 +50,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -541,6 +542,11 @@ export component MainWindow inherits Window {
     in property <string> bg-jobs-output: "";
     in property <bool> bg-jobs-running: false;
     callback bg-jobs-run-clicked();
+    // I13 — structured bg-jobs model + submission form state.
+    in property <[BgJobRow]> bg-jobs-model: [];
+    in property <bool> bg-jobs-submitting: false;
+    in property <string> bg-jobs-refreshed-at: "";
+    callback bg-jobs-submit-clicked(string /*command*/, string /*label*/);
     in property <string> migrate-history-output: "";
     in property <bool> migrate-history-running: false;
     callback migrate-history-run-clicked();
@@ -3913,14 +3919,16 @@ export component MainWindow inherits Window {
                     run-clicked => { root.mode-registry-run-clicked(); }
                     init => { if (root.mode-registry-output == "") { root.mode-registry-run-clicked(); } }
                 }
-                if root.nav-active == "bg-jobs": ProbeView {
-                    blurb: "Background Jobs — detached job queue at ~/.neoth/bgjobs/ with running/completed state (neoth jobs --bg, cli/jobs.rs). Read-only.";
-                    action-label: "Refresh";
-                    output: root.bg-jobs-output;
-                    running: root.bg-jobs-running;
-                    empty-hint: "Click \"Refresh\" to load background jobs.";
-                    run-clicked => { root.bg-jobs-run-clicked(); }
-                    init => { if (root.bg-jobs-output == "") { root.bg-jobs-run-clicked(); } }
+                // I13 — structured cards + /background parity submission form
+                // (replaces the read-only ProbeView dump).
+                if root.nav-active == "bg-jobs": BgJobsView {
+                    bg-jobs: root.bg-jobs-model;
+                    bg-running: root.bg-jobs-running;
+                    bg-submitting: root.bg-jobs-submitting;
+                    bg-refreshed-at: root.bg-jobs-refreshed-at;
+                    bg-refresh => { root.bg-jobs-run-clicked(); }
+                    bg-run(cmd, label) => { root.bg-jobs-submit-clicked(cmd, label); }
+                    init => { if (root.bg-jobs-model.length == 0) { root.bg-jobs-run-clicked(); } }
                 }
                 if root.nav-active == "migrate-history": ProbeView {
                     blurb: "Migration History — every registered DB schema migration and the current applied version (neoth migrate list, cli/migrate.rs). Read-only.";

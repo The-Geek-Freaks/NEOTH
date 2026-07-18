@@ -72,7 +72,7 @@ pub async fn run_jobs(args: JobsArgs) -> Result<()> {
     // bg_monitor watches (NOT jobs.yaml), so handle them before the jobs.yaml
     // load + existence check.
     if let Some(command) = args.run.as_deref() {
-        return run_bg_job(command, args.label.as_deref().unwrap_or("job"));
+        return run_bg_job(command, args.label.as_deref().unwrap_or("job"), &args.output);
     }
     if args.bg {
         return list_bg_jobs(&args.output);
@@ -353,7 +353,7 @@ fn sanitise_label(label: &str) -> String {
 /// on-disk markers (`<id>.log` + `<id>.exit`) the daemon's bg_monitor watches.
 /// The `std::process::Child` handle is dropped immediately — dropping it does
 /// NOT kill the process, so the job runs detached and survives this CLI exit.
-fn run_bg_job(command: &str, label: &str) -> Result<()> {
+fn run_bg_job(command: &str, label: &str, output: &OutputFormat) -> Result<()> {
     if command.trim().is_empty() {
         anyhow::bail!("--run requires a non-empty command");
     }
@@ -368,6 +368,21 @@ fn run_bg_job(command: &str, label: &str) -> Result<()> {
         .args(&wrapper_args)
         .spawn()
         .with_context(|| format!("spawn detached job via `{program}`"))?;
+    // I13 — typed ack so the GUI's fail-closed mutation path can verify
+    // the spawn instead of trusting exit-0 (R4-05 dead-button rule).
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        println!(
+            "{}",
+            serde_json::json!({
+                "action": "jobs_run",
+                "started": true,
+                "id": id.as_str(),
+                "pid": child.id(),
+                "log_path": log.display().to_string(),
+            })
+        );
+        return Ok(());
+    }
     println!(
         "started background job `{}` (pid {})",
         id.as_str(),

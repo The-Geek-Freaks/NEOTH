@@ -267,9 +267,11 @@ Kanban TOP (Backend-Felder existieren, GUI rendert sie nicht):
 - [ ] I12 = H13 Space-Peek auf Karten (Detail-Overlay ohne Navigation, Esc schließt).
 
 Parity-Lücken (aus 134-Verb-Audit):
-- [ ] I13 /background + /btw GUI-Form: BG-Jobs-Panel bekommt Prompt-Submission
-      (Schema-Regel schema.rs:17 verlangt Panel-Parity für Action-Commands) +
-      BG-Jobs ProbeView → strukturierte Job-Cards.
+- [x] I13 (2026-07-18): neue ui/bgjobs.slint — strukturierte Job-Cards
+      (Led running/exit-0/exit-n) + Run-Form (command+label) via
+      `jobs --run --output json` typed BgRunAck (neuer JSON-Ack in
+      cli/jobs.rs run_bg_job, fail-closed, auto-refresh danach).
+      Chat-Prompt-Pfad /background lief schon über Slash-Chips (G16).
 - [ ] I14 Slash-Command-Browser im Agents-Panel: `neoth slash list --output json`
       strukturiert rendern (~/.neoth/commands/*.toml sichtbar machen);
       add/remove-Verben existieren NICHT → read-only, keine Dead-Buttons.

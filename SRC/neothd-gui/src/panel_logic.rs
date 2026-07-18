@@ -3677,6 +3677,66 @@ pub fn now_hhmm() -> String {
     format!("{hh:02}:{mm:02}:{ss:02} UTC")
 }
 
+// ── I13 bg-jobs parse ────────────────────────────────────────────────────────
+
+/// Parse `neoth jobs --bg --output json` → (id, status, exit_code_string) rows.
+///
+/// Expected shape: `[{"id":"build-1721...","status":"completed","exit_code":0}]`.
+/// `exit_code` is null while running → rendered as "". Malformed input or a
+/// non-array yields an empty Vec (panel shows its empty state, never crashes).
+pub fn parse_bg_jobs(json: &str) -> Vec<(String, String, String)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|row| {
+            let id = row.get("id")?.as_str()?.to_string();
+            let status = row
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            let exit = row
+                .get("exit_code")
+                .and_then(|c| c.as_i64())
+                .map(|c| c.to_string())
+                .unwrap_or_default();
+            Some((id, status, exit))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod bg_jobs_parse_tests {
+    use super::parse_bg_jobs;
+
+    #[test]
+    fn parses_running_and_completed_rows() {
+        let json = r#"[
+            {"id":"build-1","status":"completed","exit_code":0},
+            {"id":"scan-2","status":"running","exit_code":null},
+            {"id":"fail-3","status":"completed","exit_code":101}
+        ]"#;
+        let rows = parse_bg_jobs(json);
+        assert_eq!(
+            rows,
+            vec![
+                ("build-1".into(), "completed".into(), "0".into()),
+                ("scan-2".into(), "running".into(), String::new()),
+                ("fail-3".into(), "completed".into(), "101".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_input_yields_empty() {
+        assert!(parse_bg_jobs("not json").is_empty());
+        assert!(parse_bg_jobs("{}").is_empty());
+        assert!(parse_bg_jobs("[{\"status\":\"running\"}]").is_empty());
+    }
+}
+
 // ── n8n parse fns ─────────────────────────────────────────────────────────────
 
 /// Parse `neoth n8n status --output json` → (installed, webhook_base, path).

@@ -4615,10 +4615,74 @@ fn main() -> Result<()> {
                 }
                 None => "neothd binary not on PATH — cannot load background jobs.".to_string(),
             };
+            // I13 — structured model beside the raw dump (BgJobsView cards).
+            let rows = panel_logic::parse_bg_jobs(&output);
+            let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
+                use slint::VecModel;
                 if let Some(w) = weak.upgrade() {
+                    let model: Vec<BgJobRow> = rows
+                        .into_iter()
+                        .map(|(id, status, exit)| BgJobRow {
+                            id: id.into(),
+                            status: status.into(),
+                            exit_code: exit.into(),
+                        })
+                        .collect();
+                    w.set_bg_jobs_model(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                        model,
+                    ))));
+                    w.set_bg_jobs_refreshed_at(ts.as_str().into());
                     w.set_bg_jobs_output(output.into());
                     w.set_bg_jobs_running(false);
+                }
+            });
+        });
+    });
+
+    // I13 — background-job submission (`/background` parity, schema.rs:17):
+    // fail-closed typed ack, then an automatic list refresh.
+    let weak_bg_submit = window.as_weak();
+    window.on_bg_jobs_submit_clicked(move |command, label| {
+        let Some(w0) = weak_bg_submit.upgrade() else {
+            return;
+        };
+        w0.set_bg_jobs_submitting(true);
+        let weak = weak_bg_submit.clone();
+        std::thread::spawn(move || {
+            let command = command.to_string();
+            let label = if label.trim().is_empty() {
+                "gui".to_string()
+            } else {
+                label.to_string()
+            };
+            let result = run_neothd_json_action::<gui_action::BgRunAck>(
+                &["jobs", "--run", &command, "--label", &label],
+                "Run background job",
+            )
+            .and_then(|ack| {
+                ack.verify()?;
+                Ok(ack)
+            });
+            let weak2 = weak.clone();
+            match result {
+                Ok(ack) => {
+                    push_toast(
+                        &weak2,
+                        "success",
+                        "Background job started",
+                        &format!("{} (pid {}) · log: {}", ack.id, ack.pid, ack.log_path),
+                    );
+                }
+                Err(error) => {
+                    push_toast(&weak2, "warn", "Background job failed", &error);
+                }
+            }
+            let weak3 = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak3.upgrade() {
+                    w.set_bg_jobs_submitting(false);
+                    w.invoke_bg_jobs_run_clicked();
                 }
             });
         });

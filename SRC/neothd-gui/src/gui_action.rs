@@ -1189,6 +1189,32 @@ impl DreamNowAck {
     }
 }
 
+/// I13 — `neoth jobs --run "<command>" --label <l> --output json` ack.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BgRunAck {
+    pub action: String,
+    pub started: bool,
+    pub id: String,
+    pub pid: u32,
+    pub log_path: String,
+}
+
+impl BgRunAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.action != "jobs_run" {
+            Err(format!(
+                "Background-run acknowledgement has wrong action `{}`",
+                self.action
+            ))
+        } else if !self.started || self.id.trim().is_empty() {
+            Err("Background job did not confirm a started id".to_string())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReflectionAck {
