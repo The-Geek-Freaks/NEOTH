@@ -212,6 +212,9 @@ impl PeerSessions {
 /// lifecycle events emit `0xE0..=0xE5` frames. Used by
 /// `cli::serve`, which holds the writer. This is the only
 /// discovery entry point — a WAL-free variant was never built.
+// The capabilities stay explicit here: grouping them into a reusable context
+// could accidentally carry a prior instance's key, WAL, or reload policy.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_discovery_with_wal(
     cluster_name: &str,
     // SL-00(1b): the mandatory shared cluster_key. The type boundary makes an

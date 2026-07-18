@@ -146,11 +146,18 @@ fn classify_import(existing: &[String], imported: &[String]) -> (Vec<String>, Ve
     (added, overwritten)
 }
 
+struct CredentialImportPlan {
+    merged: Credentials,
+    imported: Vec<String>,
+    added: Vec<String>,
+    overwritten: Vec<String>,
+}
+
 fn plan_import(
     existing: &Credentials,
     incoming: &Credentials,
     source: &Path,
-) -> Result<(Credentials, Vec<String>, Vec<String>, Vec<String>)> {
+) -> Result<CredentialImportPlan> {
     let existing_keys = set_key_names(existing)?;
     let (merged, imported) = merge_credentials(existing, incoming)?;
     if imported.is_empty() {
@@ -160,7 +167,12 @@ fn plan_import(
         );
     }
     let (added, overwritten) = classify_import(&existing_keys, &imported);
-    Ok((merged, imported, added, overwritten))
+    Ok(CredentialImportPlan {
+        merged,
+        imported,
+        added,
+        overwritten,
+    })
 }
 
 fn import_credentials_at(
@@ -179,9 +191,9 @@ fn import_credentials_at_with_hook(
 ) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
     Credentials::update_at(dest, |existing| {
         after_locked_load();
-        let (merged, imported, added, overwritten) = plan_import(existing, incoming, source)?;
-        *existing = merged;
-        Ok((imported, added, overwritten))
+        let plan = plan_import(existing, incoming, source)?;
+        *existing = plan.merged;
+        Ok((plan.imported, plan.added, plan.overwritten))
     })
 }
 
@@ -567,8 +579,8 @@ fn run_import(file: &Path, dry_run: bool, output: OutputFormat) -> Result<()> {
     let dest = default_path();
     let (imported, added, overwritten) = if dry_run {
         let existing = Credentials::load().context("load existing credentials.yaml")?;
-        let (_, imported, added, overwritten) = plan_import(&existing, &incoming, file)?;
-        (imported, added, overwritten)
+        let plan = plan_import(&existing, &incoming, file)?;
+        (plan.imported, plan.added, plan.overwritten)
     } else {
         import_credentials_at(&dest, &incoming, file)
             .with_context(|| format!("atomically merge credentials into {}", dest.display()))?

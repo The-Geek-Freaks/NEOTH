@@ -3225,7 +3225,7 @@ fn ensure_private_stage_directory(stage_dir: &Path) -> Result<()> {
                 stage_dir.display()
             );
         }
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(unix))]

@@ -429,7 +429,7 @@ struct ProviderRetryAuthorization {
 }
 
 enum ProviderDispatchAuditState {
-    Active(cost_authorization::ProviderCallAuditGuard),
+    Active(Box<cost_authorization::ProviderCallAuditGuard>),
     BetweenAttempts,
     Closed,
     TransportOnly,
@@ -480,7 +480,7 @@ impl ProviderDispatchPermit {
                 call_scope,
                 output_token_ceiling,
             }),
-            audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(audit)),
+            audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
             _private: (),
         }
     }
@@ -598,7 +598,7 @@ impl ProviderDispatchPermit {
             drop(audit);
             anyhow::bail!("provider retry permit changed while authorization was in flight");
         }
-        *state = ProviderDispatchAuditState::Active(audit);
+        *state = ProviderDispatchAuditState::Active(Box::new(audit));
         drop(state);
         self.ensure_consent_before_send().await
     }

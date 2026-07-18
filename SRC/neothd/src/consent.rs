@@ -471,7 +471,7 @@ fn route_for_explicit_auxiliary(
     // provider kind. A different vendor gets an isolated synthetic config and
     // therefore its adapter default endpoint.
     let endpoint = (config.provider_kind == Some(kind))
-        .then(|| config.provider_endpoint.as_deref())
+        .then_some(config.provider_endpoint.as_deref())
         .flatten();
     ConsentRoute::new(kind, endpoint)
 }

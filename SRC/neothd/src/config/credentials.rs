@@ -1624,9 +1624,9 @@ impl Credentials {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DualFileFaultPoint {
-    AfterJournal,
-    AfterCredentials,
-    AfterFreedom,
+    JournalPrepared,
+    CredentialsPublished,
+    FreedomPublished,
 }
 
 fn validate_exact_pair_target(path: &Path, label: &str) -> Result<()> {
@@ -1704,7 +1704,7 @@ where
     )?;
     let journal_path = freedom_dir.join(DUAL_FILE_JOURNAL_NAME);
     journal.persist(&journal_path)?;
-    fault(DualFileFaultPoint::AfterJournal)?;
+    fault(DualFileFaultPoint::JournalPrepared)?;
 
     if let Err(write_error) = credentials_after.restore(credentials_path) {
         return Err(transaction_write_error(
@@ -1713,7 +1713,7 @@ where
             write_error,
         ));
     }
-    fault(DualFileFaultPoint::AfterCredentials)?;
+    fault(DualFileFaultPoint::CredentialsPublished)?;
 
     if let Some(write_freedom) = write_freedom {
         let target = freedom_after
@@ -1727,7 +1727,7 @@ where
             ));
         }
     }
-    fault(DualFileFaultPoint::AfterFreedom)?;
+    fault(DualFileFaultPoint::FreedomPublished)?;
 
     let actual_freedom = FileSnapshot::capture(freedom_path)?;
     let actual_credentials = FileSnapshot::capture(credentials_path)?;
@@ -3122,22 +3122,32 @@ mod tests {
 
     #[test]
     fn crash_after_prepared_journal_rolls_back_before_runtime_load() {
-        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterJournal, false, false, false);
+        assert_dual_file_crash_recovery(DualFileFaultPoint::JournalPrepared, false, false, false);
     }
 
     #[test]
     fn crash_after_credentials_rename_rolls_back_before_runtime_load() {
-        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterCredentials, false, true, false);
+        assert_dual_file_crash_recovery(
+            DualFileFaultPoint::CredentialsPublished,
+            false,
+            true,
+            false,
+        );
     }
 
     #[test]
     fn crash_after_freedom_rename_commits_before_runtime_load() {
-        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterFreedom, true, false, false);
+        assert_dual_file_crash_recovery(DualFileFaultPoint::FreedomPublished, true, false, false);
     }
 
     #[test]
     fn wal_loader_recovers_prepared_pair_before_partial_read() {
-        assert_dual_file_crash_recovery(DualFileFaultPoint::AfterCredentials, false, false, true);
+        assert_dual_file_crash_recovery(
+            DualFileFaultPoint::CredentialsPublished,
+            false,
+            false,
+            true,
+        );
     }
 
     #[test]
@@ -3158,7 +3168,7 @@ mod tests {
                 ))
             },
             |point| {
-                if point == DualFileFaultPoint::AfterCredentials {
+                if point == DualFileFaultPoint::CredentialsPublished {
                     anyhow::bail!("injected first-run crash");
                 }
                 Ok(())
@@ -3224,7 +3234,7 @@ mod tests {
             Some(&new_freedom),
             Some(&encrypted),
             |point| {
-                if point == DualFileFaultPoint::AfterCredentials {
+                if point == DualFileFaultPoint::CredentialsPublished {
                     anyhow::bail!("injected exact restore crash");
                 }
                 Ok(())
@@ -3255,7 +3265,7 @@ mod tests {
             Some(&new_freedom),
             Some(&encrypted),
             |point| {
-                if point == DualFileFaultPoint::AfterFreedom {
+                if point == DualFileFaultPoint::FreedomPublished {
                     anyhow::bail!("injected post-pair crash");
                 }
                 Ok(())
@@ -3647,7 +3657,7 @@ mod tests {
             InlineTelegramTokenPolicy::Preserve,
             None,
             |point| {
-                if point == DualFileFaultPoint::AfterCredentials {
+                if point == DualFileFaultPoint::CredentialsPublished {
                     anyhow::bail!("injected crash");
                 }
                 Ok(())

@@ -87,6 +87,10 @@ pub fn low_confidence_local(text: &str) -> bool {
 ///   caller keeps the original response unchanged.
 /// * `Err(e)` — infrastructure failure (e.g. teacher provider construction
 ///   failed). Best-effort callers should log and continue with the original.
+// Keep the exact provider leaf, authorization boundary, audit writer, and
+// timestamp visible together; hiding them in a reusable context risks stale
+// cost or audit authority crossing turns.
+#[allow(clippy::too_many_arguments)]
 pub async fn try_teacher_escalation(
     local_response: &str,
     original_prompt: &str,

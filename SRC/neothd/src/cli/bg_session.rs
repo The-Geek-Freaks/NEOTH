@@ -502,6 +502,9 @@ fn digest_hex_eq(left: &str, right: &str) -> bool {
 }
 
 impl BgApprovalCapability {
+    // Keep every authenticated field explicit at this security boundary. A
+    // bag-of-fields argument would make it easier to reuse a stale job spec.
+    #[allow(clippy::too_many_arguments)]
     fn mint(
         key: &[u8],
         schema_version: u8,
@@ -550,6 +553,9 @@ impl BgApprovalCapability {
         })
     }
 
+    // Verification deliberately mirrors `mint` field-for-field so reviewers
+    // can audit the complete MAC binding at the call site.
+    #[allow(clippy::too_many_arguments)]
     fn verify(
         &self,
         key: &[u8],

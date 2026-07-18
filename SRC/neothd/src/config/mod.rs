@@ -1757,7 +1757,7 @@ fn overlay_public_known_yaml(target: &mut serde_yaml::Value, source: serde_yaml:
 }
 
 fn remove_public_yaml_key(mapping: &mut serde_yaml::Mapping, name: &str) {
-    if let Some(mut removed) = mapping.remove(&serde_yaml::Value::String(name.to_string())) {
+    if let Some(mut removed) = mapping.remove(serde_yaml::Value::String(name.to_string())) {
         zeroize_public_yaml_value(&mut removed);
     }
 }

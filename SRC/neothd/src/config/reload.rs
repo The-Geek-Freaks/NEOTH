@@ -526,7 +526,7 @@ fn serialized_cluster_lifecycle(
 ) -> Result<serde_yaml::Value, serde_yaml::Error> {
     let mut value = serde_yaml::to_value(cluster)?;
     if let serde_yaml::Value::Mapping(mapping) = &mut value {
-        mapping.remove(&serde_yaml::Value::String("gossip".to_string()));
+        mapping.remove(serde_yaml::Value::String("gossip".to_string()));
     }
     Ok(value)
 }

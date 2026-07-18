@@ -997,14 +997,14 @@ fn apply_patch_via_worktree(
     // WS-BUG P1: clean the scratch worktree on any failure so a retry can
     // recreate it. Success intentionally keeps it (see fn doc). Best-effort —
     // a cleanup failure is logged, not surfaced (the apply outcome is authoritative).
-    if apply_result.is_err() {
-        if let Err(e) = crate::coding::worktree::cleanup_worktree(&cfg.repo_root, &wt_path, true) {
-            tracing::warn!(
-                task_id = task.task_id.raw(),
-                error = %e,
-                "worktree cleanup after failed apply failed"
-            );
-        }
+    if apply_result.is_err()
+        && let Err(e) = crate::coding::worktree::cleanup_worktree(&cfg.repo_root, &wt_path, true)
+    {
+        tracing::warn!(
+            task_id = task.task_id.raw(),
+            error = %e,
+            "worktree cleanup after failed apply failed"
+        );
     }
     apply_result
 }

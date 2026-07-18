@@ -505,7 +505,7 @@ pub async fn append_observation_audit(
             intent.observed_at_unix,
         )?
         else {
-            acknowledge_observation_audit(&home, &intent)?;
+            acknowledge_observation_audit(home, &intent)?;
             continue;
         };
         let header =
@@ -629,15 +629,14 @@ fn validate_loaded_state(state: &CommunicationState) -> Result<()> {
                 bail!("communication estimate metadata is invalid");
             }
         }
-        if let Some(context) = &subject.declared_context {
-            if !context.explicitly_asserted_by_operator
+        if let Some(context) = &subject.declared_context
+            && (!context.explicitly_asserted_by_operator
                 || !is_lower_sha256(&context.source_event_hash)
                 || context
                     .revoked_at_unix
-                    .is_some_and(|revoked| revoked < context.set_at_unix)
-            {
-                bail!("declared communication context metadata is invalid");
-            }
+                    .is_some_and(|revoked| revoked < context.set_at_unix))
+        {
+            bail!("declared communication context metadata is invalid");
         }
     }
     Ok(())

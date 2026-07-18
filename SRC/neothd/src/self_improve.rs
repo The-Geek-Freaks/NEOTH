@@ -1650,12 +1650,11 @@ pub fn review_execution_result(report: &str) -> ExecutionVerdict {
 fn find_ascii_word(haystack: &str, needle: &str) -> Option<usize> {
     haystack.match_indices(needle).find_map(|(start, _)| {
         let end = start + needle.len();
-        let before_is_word = haystack[..start]
-            .as_bytes()
+        let bytes = haystack.as_bytes();
+        let before_is_word = bytes[..start]
             .last()
             .is_some_and(u8::is_ascii_alphabetic);
-        let after_is_word = haystack[end..]
-            .as_bytes()
+        let after_is_word = bytes[end..]
             .first()
             .is_some_and(u8::is_ascii_alphabetic);
         (!before_is_word && !after_is_word).then_some(start)
