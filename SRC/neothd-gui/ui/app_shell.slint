@@ -16,7 +16,7 @@ component NavGroup inherits Rectangle {
     in property <string> label;
     height: 28px;
     HorizontalLayout {
-        padding-left: 10px; padding-top: 12px; padding-bottom: 5px;
+        padding-left: Theme.space-3; padding-top: 12px; padding-bottom: Theme.space-1;
         Text {
             text: root.label;
             overflow: elide;
@@ -49,7 +49,7 @@ component NavBtn inherits Rectangle {
 
     height: 38px;
     border-radius: Theme.radius-md;
-    border-width: key-focus.has-focus ? 2px : 0px;
+    border-width: 2px;
     border-color: key-focus.has-focus ? Theme.focus-ring : transparent;
     background: root.active ? Theme.surface-2 : transparent;
     animate background { duration: Theme.duration-fast; easing: ease-out; }
@@ -64,12 +64,12 @@ component NavBtn inherits Rectangle {
         border-radius: 2px;
         background: root.tier-color;
         opacity: root.active ? 1.0 : 0.0;
-        animate height { duration: Theme.duration-base; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
+        animate height { duration: Theme.duration-base; easing: cubic-bezier(0.16, 1, 0.3, 1); }
         animate opacity { duration: Theme.duration-fast; easing: ease-out; }
     }
 
     HorizontalLayout {
-        padding-left: 10px; padding-right: 10px; spacing: 11px;
+        padding-left: Theme.space-3; padding-right: Theme.space-3; spacing: Theme.space-3;
         alignment: start;
         Rectangle {
             width: 18px; vertical-stretch: 0;
@@ -230,7 +230,7 @@ export component Sidebar inherits Rectangle {
                 // ── CORE ─────────────────────────────────────────────────
                 // Always visible: Chat is the primary surface.
                 NavGroup { label: "CORE"; }
-                NavBtn { label: "Chat"; glyph: "💬"; active: root.active-tab == "chat"; clicked => { root.nav("chat"); } }
+                NavBtn { label: "Chat"; glyph: "▷"; active: root.active-tab == "chat"; clicked => { root.nav("chat"); } }
                 NavBtn { label: "Overview"; glyph: "◎"; active: root.active-tab == "overview"; clicked => { root.nav("overview"); } }
 
                 // ── WORK ─────────────────────────────────────────────────
