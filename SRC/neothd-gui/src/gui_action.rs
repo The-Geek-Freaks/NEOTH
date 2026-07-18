@@ -1124,6 +1124,16 @@ impl OmiConfigureAck {
         require_lower_hex(&self.operation_id, 32, "OMI operation id")?;
         require_lower_hex(&self.settings_sha256, 64, "OMI settings SHA-256")?;
         require_lower_hex(&self.config_sha256, 64, "OMI config SHA-256")?;
+        let expected_settings = serde_json::to_vec(expected)
+            .map_err(|error| format!("could not encode expected OMI settings: {error}"))?;
+        if self.settings_sha256 != sha256_hex(&expected_settings) {
+            return Err("OMI acknowledgement settings digest does not match the submission".into());
+        }
+        require_regular_file_sha256(
+            expected_path,
+            &self.config_sha256,
+            "OMI configuration generation",
+        )?;
         if !self.reload_requested || self.reload_ts_unix == 0 {
             return Err("OMI acknowledgement does not bind a reload request".to_string());
         }
@@ -1933,6 +1943,11 @@ fn is_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
 fn valid_uuid_v7(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
@@ -1991,8 +2006,7 @@ fn require_regular_file_sha256(path: &Path, expected: &str, label: &str) -> Resu
     }
     let bytes = std::fs::read(path)
         .map_err(|error| format!("could not read {label} `{}`: {error}", path.display()))?;
-    use sha2::Digest as _;
-    let actual = hex::encode(sha2::Sha256::digest(bytes));
+    let actual = sha256_hex(&bytes);
     if actual == expected {
         Ok(())
     } else {
@@ -4310,38 +4324,6 @@ mod tests {
     fn omi_configure_receipt_binds_settings_credentials_generation_and_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
-        let raw = serde_json::json!({
-            "operation": "omi.configure",
-            "operation_id": "0123456789abcdef0123456789abcdef",
-            "path": path.display().to_string(),
-            "settings_sha256": "a".repeat(64),
-            "config_sha256": "b".repeat(64),
-            "reload_requested": true,
-            "reload_ts_unix": 42,
-            "settings": {
-                "enabled": true,
-                "mode": "both",
-                "endpoint": "https://api.omi.me",
-                "listen_addr": "127.0.0.1:8003",
-                "retention_days": 14,
-                "retain_transcripts": true,
-                "audio_enabled": true,
-                "visual_enabled": true,
-                "video_enabled": false,
-                "allow_cloud_api": true,
-                "allow_cloud_summary": false,
-                "create_actions": true,
-                "seed_groundtruth": false,
-                "summary_enabled": true
-            },
-            "credentials": {
-                "backend": "keychain",
-                "updated_fields": ["omi_developer_api_key", "omi_ingest_token"],
-                "developer_api_key_present": true,
-                "native_ingest_token_present": true
-            }
-        });
-        let ack: OmiConfigureAck = serde_json::from_value(raw.clone()).unwrap();
         let expected = OmiConfigureSettingsAck {
             enabled: true,
             mode: "both".into(),
@@ -4358,6 +4340,25 @@ mod tests {
             seed_groundtruth: false,
             summary_enabled: true,
         };
+        let config = b"operator_id: test\n";
+        std::fs::write(&path, config).unwrap();
+        let raw = serde_json::json!({
+            "operation": "omi.configure",
+            "operation_id": "0123456789abcdef0123456789abcdef",
+            "path": path.display().to_string(),
+            "settings_sha256": sha256_hex(&serde_json::to_vec(&expected).unwrap()),
+            "config_sha256": sha256_hex(config),
+            "reload_requested": true,
+            "reload_ts_unix": 42,
+            "settings": serde_json::to_value(&expected).unwrap(),
+            "credentials": {
+                "backend": "keychain",
+                "updated_fields": ["omi_developer_api_key", "omi_ingest_token"],
+                "developer_api_key_present": true,
+                "native_ingest_token_present": true
+            }
+        });
+        let ack: OmiConfigureAck = serde_json::from_value(raw.clone()).unwrap();
         ack.verify(&expected, &path, true, true).unwrap();
 
         let mut wrong = expected.clone();
@@ -4369,6 +4370,22 @@ mod tests {
         bad_hash["config_sha256"] = serde_json::Value::String("ABC".to_string());
         assert!(
             serde_json::from_value::<OmiConfigureAck>(bad_hash)
+                .unwrap()
+                .verify(&expected, &path, true, true)
+                .is_err()
+        );
+        let mut wrong_settings_digest = raw.clone();
+        wrong_settings_digest["settings_sha256"] = serde_json::Value::String("a".repeat(64));
+        assert!(
+            serde_json::from_value::<OmiConfigureAck>(wrong_settings_digest)
+                .unwrap()
+                .verify(&expected, &path, true, true)
+                .is_err()
+        );
+        let mut stale_generation = raw.clone();
+        stale_generation["config_sha256"] = serde_json::Value::String("b".repeat(64));
+        assert!(
+            serde_json::from_value::<OmiConfigureAck>(stale_generation)
                 .unwrap()
                 .verify(&expected, &path, true, true)
                 .is_err()

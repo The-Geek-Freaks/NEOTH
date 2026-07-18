@@ -133,12 +133,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_surface: "Privacy > OMI > Refresh",
         ui_callback: Some("omi-refresh-clicked"),
         rust_handler: Some("window.on_omi_refresh"),
-        dispatch_token: Some("fetch_omi_snapshot()"),
-        receipt: Evidence::Untyped("parse_omi_status"),
-        readback: Evidence::Untyped("apply_omi_snapshot"),
-        state: OperationState::Partial(
-            "malformed or failed status reads collapse to OmiSnapshot defaults instead of a visible typed error",
-        ),
+        dispatch_token: Some("fetch_verified_omi_snapshot"),
+        receipt: Evidence::Typed("OmiStatusAck"),
+        readback: Evidence::Typed("omi_snapshot_from_status_ack"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.probe",
@@ -149,26 +147,39 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-probe-clicked"),
         rust_handler: Some("window.on_omi_probe"),
         dispatch_token: Some("[\"probe\".to_string()]"),
-        receipt: Evidence::Untyped("run_omi_subcommand"),
-        readback: Evidence::Missing,
-        state: OperationState::Partial(
-            "probe success is free-form stdout with no typed endpoint receipt",
-        ),
+        receipt: Evidence::Typed("OmiProbeAck"),
+        // Probe is read-only: semantic verification of its strict response is
+        // the readback, rather than a second state query.
+        readback: Evidence::Typed("acknowledgement.verify()"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.set-credentials",
         capability: "omi",
         cli_path: "omi set-credentials",
         gui_nav: "privacy",
+        gui_surface: "First-run > OMI credentials > Finish",
+        ui_callback: Some("finish-clicked"),
+        rust_handler: Some("window.on_finish_clicked"),
+        dispatch_token: Some("finish(&state)"),
+        receipt: Evidence::Untyped("persist_omi_credentials_via_cli"),
+        readback: Evidence::Missing,
+        state: OperationState::Partial(
+            "the compatibility leaf is still used by first-run setup and checks only process exit; day-two settings use the stronger typed configure transaction",
+        ),
+    },
+    OperationParity {
+        id: "omi.configure",
+        capability: "omi",
+        cli_path: "omi configure",
+        gui_nav: "privacy",
         gui_surface: "Privacy > OMI > Save and reload",
         ui_callback: Some("omi-save-clicked"),
         rust_handler: Some("window.on_omi_save"),
         dispatch_token: Some("save_omi_settings("),
-        receipt: Evidence::Untyped("persist_omi_credentials_via_cli"),
-        readback: Evidence::Untyped("fetch_omi_snapshot"),
-        state: OperationState::Partial(
-            "credential update checks only exit status and the follow-up status read can silently default",
-        ),
+        receipt: Evidence::Typed("OmiConfigureAck"),
+        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.purge",
@@ -179,11 +190,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-purge-clicked"),
         rust_handler: Some("window.on_omi_purge"),
         dispatch_token: Some("[\"purge\".into(), conversation_id, \"--yes\".into()]"),
-        receipt: Evidence::Untyped("run_omi_subcommand"),
-        readback: Evidence::Untyped("fetch_omi_snapshot"),
-        state: OperationState::Partial(
-            "privacy deletion has confirmation UI but no typed deletion/tombstone receipt",
-        ),
+        receipt: Evidence::Typed("OmiDeletionAck"),
+        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.resume",
@@ -194,11 +203,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-resume-clicked"),
         rust_handler: Some("window.on_omi_resume"),
         dispatch_token: Some("[\"resume\".into(), \"--review-note\".into(), note]"),
-        receipt: Evidence::Untyped("run_omi_subcommand"),
-        readback: Evidence::Untyped("fetch_omi_snapshot"),
-        state: OperationState::Partial(
-            "resume acknowledgement and halt-state readback are not typed",
-        ),
+        receipt: Evidence::Typed("OmiResumeAck"),
+        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.enforce-retention",
@@ -209,11 +216,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-retention-clicked"),
         rust_handler: Some("window.on_omi_retention"),
         dispatch_token: Some("[\"enforce-retention\".into()]"),
-        receipt: Evidence::Untyped("run_omi_subcommand"),
-        readback: Evidence::Untyped("fetch_omi_snapshot"),
-        state: OperationState::Partial(
-            "retention result and deletion counts are not typed or bound",
-        ),
+        receipt: Evidence::Typed("OmiDeletionAck"),
+        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.allow-reimport",
@@ -224,11 +229,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-reimport-clicked"),
         rust_handler: Some("window.on_omi_reimport"),
         dispatch_token: Some("[\"allow-reimport\".into(), conversation_id, \"--yes\".into()]"),
-        receipt: Evidence::Untyped("run_omi_subcommand"),
-        readback: Evidence::Untyped("fetch_omi_snapshot"),
-        state: OperationState::Partial(
-            "tombstone removal is not returned in a typed, request-bound receipt",
-        ),
+        receipt: Evidence::Typed("OmiAllowReimportAck"),
+        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "interface.show",
@@ -769,13 +772,7 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
 
     for expected in [
         "backup.create-default",
-        "omi.status",
-        "omi.probe",
         "omi.set-credentials",
-        "omi.purge",
-        "omi.resume",
-        "omi.enforce-retention",
-        "omi.allow-reimport",
         "interface.show",
         "interface.set-cli-day-two",
     ] {

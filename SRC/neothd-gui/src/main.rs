@@ -3232,7 +3232,7 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
-        let omi = fetch_omi_snapshot();
+        let omi = fetch_verified_omi_snapshot(&default_neoth_home());
         let hardware = fetch_hardware_snapshot();
         let topology = fetch_topology_snapshot();
         let usage = fetch_usage_meter();
@@ -3252,7 +3252,21 @@ fn main() -> Result<()> {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
-                apply_omi_snapshot(&w, omi);
+                match omi {
+                    Ok(snapshot) => apply_omi_snapshot(&w, snapshot),
+                    Err(error) => {
+                        w.set_omi_config_valid(false);
+                        w.set_omi_config_error(format!("OMI status is unverified: {error}").into());
+                        w.set_omi_runtime_state("unverified".into());
+                        w.set_omi_runtime_detail(
+                            "No live OMI state was applied; repair the configuration or CLI and refresh."
+                                .into(),
+                        );
+                        w.set_status_line(
+                            format!("OMI startup verification failed: {error}").into(),
+                        );
+                    }
+                }
                 apply_hardware(&w, hardware);
                 apply_topology(&w, topology);
                 apply_usage_meter(&w, usage);
@@ -3330,23 +3344,40 @@ fn main() -> Result<()> {
                 create_actions,
                 seed_groundtruth,
                 summary_enabled,
-                developer_key: developer_key.to_string(),
-                native_token: native_token.to_string(),
+                developer_key: zeroize::Zeroizing::new(developer_key.to_string()),
+                native_token: zeroize::Zeroizing::new(native_token.to_string()),
             };
             std::thread::spawn(move || {
-                let result = save_omi_settings(&default_neoth_home(), &draft);
-                let snapshot = fetch_omi_snapshot();
-                let status = match result {
-                    Ok(receipt) => format!(
-                        "OMI settings saved, read back, and reload requested (generation {}).",
-                        receipt.config_sha256.chars().take(12).collect::<String>()
-                    ),
-                    Err(error) => format!("OMI settings rejected: {error:#}"),
-                };
+                let home = default_neoth_home();
+                let result = (|| {
+                    let receipt = save_omi_settings(&home, &draft)?;
+                    let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
+                        anyhow::anyhow!(
+                            "configuration was acknowledged, but live-state readback failed: {error}"
+                        )
+                    })?;
+                    Ok::<_, anyhow::Error>((receipt, snapshot))
+                })();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(window) = weak.upgrade() {
-                        apply_omi_snapshot(&window, snapshot);
-                        window.set_status_line(status.into());
+                        match result {
+                            Ok((receipt, snapshot)) => {
+                                apply_omi_snapshot(&window, snapshot);
+                                window.set_status_line(
+                                    format!(
+                                        "OMI settings saved, read back, and reload requested (generation {}).",
+                                        receipt.config_sha256.chars().take(12).collect::<String>()
+                                    )
+                                    .into(),
+                                );
+                            }
+                            Err(error) => window.set_status_line(
+                                format!(
+                                    "OMI settings could not be verified; the last verified state was preserved: {error:#}"
+                                )
+                                .into(),
+                            ),
+                        }
                     }
                 });
             });
@@ -11437,8 +11468,8 @@ struct OmiSettingsDraft {
     create_actions: bool,
     seed_groundtruth: bool,
     summary_enabled: bool,
-    developer_key: String,
-    native_token: String,
+    developer_key: zeroize::Zeroizing<String>,
+    native_token: zeroize::Zeroizing<String>,
 }
 
 #[derive(Serialize)]
@@ -11514,10 +11545,7 @@ fn persist_omi_credentials_via_cli(
     Ok(())
 }
 
-fn save_omi_settings(
-    home: &Path,
-    draft: &OmiSettingsDraft,
-) -> Result<gui_action::OmiConfigureAck> {
+fn save_omi_settings(home: &Path, draft: &OmiSettingsDraft) -> Result<gui_action::OmiConfigureAck> {
     let retention_days = draft
         .retention_days
         .parse::<u64>()
@@ -12873,26 +12901,6 @@ fn omi_snapshot_from_status_ack(
         create_actions: acknowledgement.create_actions,
         seed_groundtruth: acknowledgement.seed_groundtruth,
         summary_enabled: acknowledgement.summary_enabled,
-    }
-}
-
-fn fetch_omi_snapshot() -> panel_logic::OmiSnapshot {
-    let Some(bin) = which_neothd() else {
-        return panel_logic::OmiSnapshot::default();
-    };
-    match spawn_neothd_plain(&bin)
-        .arg("omi")
-        .arg("--home")
-        .arg(default_neoth_home())
-        .arg("status")
-        .arg("--output")
-        .arg("json")
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            panel_logic::parse_omi_status(&String::from_utf8_lossy(&output.stdout))
-        }
-        _ => panel_logic::OmiSnapshot::default(),
     }
 }
 
@@ -18877,7 +18885,7 @@ mod tests {
         let source = include_str!("main.rs");
         let start = source.find("fn save_omi_settings(").unwrap();
         let end = source[start..]
-            .find("fn run_omi_subcommand(")
+            .find("fn run_omi_json_action(")
             .map(|offset| start + offset)
             .unwrap();
         let implementation = &source[start..end];
@@ -18892,6 +18900,33 @@ mod tests {
         assert!(!implementation.contains("FREEDOM_WRITE_LOCK"));
         assert!(!implementation.contains("write_mode_0600"));
         assert!(!implementation.contains(".reload-requested"));
+
+        let handler_start = source.find("window.on_omi_save(").unwrap();
+        let handler_end = source[handler_start..]
+            .find("let weak_omi_probe")
+            .map(|offset| handler_start + offset)
+            .unwrap();
+        let handler = &source[handler_start..handler_end];
+        assert!(handler.contains("fetch_verified_omi_snapshot"));
+        assert!(!handler.contains("fetch_omi_snapshot()"));
+        assert!(handler.contains("last verified state was preserved"));
+    }
+
+    #[test]
+    fn omi_startup_never_publishes_default_state_after_a_failed_read() {
+        let source = include_str!("main.rs");
+        let start = source.find("let weak_panels_init").unwrap();
+        let end = source[start..]
+            .find("// OMI-MULTIMODAL-01")
+            .map(|offset| start + offset)
+            .unwrap();
+        let startup = &source[start..end];
+
+        assert!(startup.contains("fetch_verified_omi_snapshot"));
+        assert!(startup.contains("OMI status is unverified"));
+        assert!(startup.contains("No live OMI state was applied"));
+        assert!(!source.contains("fn fetch_omi_snapshot("));
+        assert!(!startup.contains("OmiSnapshot::default"));
     }
 
     #[test]
