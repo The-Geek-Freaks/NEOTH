@@ -4155,6 +4155,214 @@ pub fn parse_selfdev_proposals(json: &str) -> Vec<SelfDevProposalData> {
         .collect()
 }
 
+// ── I10 kanban card helpers ───────────────────────────────────────────────────
+//
+// Pre-format rich task fields into strings/bools that Slint can bind
+// directly (no arithmetic in .slint). Both the cold path (`kanban show`)
+// and the warm path (`gui-stream board`) call the same helpers so their
+// `KanbanTaskRow` values are identical — see the equivalence comment in
+// `board_json_to_snapshot`.
+
+/// Format the passing/total test chip text for a kanban card.
+///
+/// Derives the denominator from the explicit `total` when available,
+/// otherwise falls back to `passing + failing` (the two fields we always
+/// receive). Returns `""` when `passing` is `None` (no test data yet).
+///
+/// Single canonical derivation — call this from BOTH cold and warm paths.
+pub fn format_tests_string(
+    passing: Option<u32>,
+    failing: Option<u32>,
+    total: Option<u32>,
+) -> String {
+    let Some(p) = passing else {
+        return String::new();
+    };
+    // Prefer the explicit total the daemon wrote; fall back to sum of known
+    // counts so we never show a denominator smaller than the numerator.
+    let denom = total.unwrap_or_else(|| p + failing.unwrap_or(0));
+    format!("{p}/{denom}")
+}
+
+/// Humanize an ETA for a kanban card chip. Pure (takes `now_ns`) so
+/// tests can pin the clock without mocking `SystemTime`.
+///
+/// `eta_ns` is a **duration in nanoseconds** (see `store::assign_task`
+/// and the 60-second assertion in `store`'s tests — not an epoch
+/// timestamp). When `started_ns` is present the remaining time is
+/// `(started_ns + eta_ns) - now_ns`; otherwise the full duration is
+/// shown as-is ("how long it will take").
+///
+/// Returns `""` when `eta_ns` is `None`, the task appears already
+/// complete (`started + eta ≤ now`), or the remaining time rounds to 0.
+pub fn format_eta_at(eta_ns: Option<u64>, started_ns: Option<u64>, now_ns: u64) -> String {
+    let Some(dur) = eta_ns else {
+        return String::new();
+    };
+    let remaining = if let Some(st) = started_ns {
+        let end = st.saturating_add(dur);
+        if end <= now_ns {
+            return String::new(); // already past ETA
+        }
+        end - now_ns
+    } else {
+        dur // not started yet — show the planned duration
+    };
+    let secs = remaining / 1_000_000_000;
+    if secs == 0 {
+        return String::new();
+    }
+    if secs < 60 {
+        format!("~{secs}s")
+    } else if secs < 3_600 {
+        format!("~{}m", secs / 60)
+    } else {
+        format!("~{}h", secs / 3_600)
+    }
+}
+
+/// Wrapper around [`format_eta_at`] that supplies the current unix time
+/// from `SystemTime`. Use in production; use `format_eta_at` in tests.
+pub fn format_eta(eta_ns: Option<u64>, started_ns: Option<u64>) -> String {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    format_eta_at(eta_ns, started_ns, now_ns)
+}
+
+#[cfg(test)]
+mod kanban_card_helpers_tests {
+    use super::{format_eta_at, format_tests_string};
+
+    // ── format_tests_string ──────────────────────────────────────────
+
+    #[test]
+    fn tests_string_no_data_returns_empty() {
+        assert_eq!(format_tests_string(None, None, None), "");
+    }
+
+    #[test]
+    fn tests_string_passing_only_uses_passing_as_denom() {
+        // When only passing is known, denom = passing + 0.
+        assert_eq!(format_tests_string(Some(5), None, None), "5/5");
+    }
+
+    #[test]
+    fn tests_string_with_failing_derives_total() {
+        // No explicit total → denom = passing + failing.
+        assert_eq!(format_tests_string(Some(8), Some(2), None), "8/10");
+    }
+
+    #[test]
+    fn tests_string_with_explicit_total_uses_total() {
+        // Explicit total wins over the derived sum.
+        assert_eq!(format_tests_string(Some(8), Some(2), Some(15)), "8/15");
+    }
+
+    #[test]
+    fn tests_string_all_zero_passes() {
+        assert_eq!(format_tests_string(Some(0), Some(0), Some(0)), "0/0");
+    }
+
+    // ── format_eta_at ────────────────────────────────────────────────
+
+    #[test]
+    fn eta_none_returns_empty() {
+        assert_eq!(format_eta_at(None, None, 0), "");
+    }
+
+    #[test]
+    fn eta_no_start_shows_full_duration_seconds() {
+        // 30 seconds, no start → "~30s"
+        assert_eq!(format_eta_at(Some(30_000_000_000), None, 0), "~30s");
+    }
+
+    #[test]
+    fn eta_no_start_shows_full_duration_minutes() {
+        // 5 minutes → "~5m"
+        assert_eq!(format_eta_at(Some(5 * 60 * 1_000_000_000), None, 0), "~5m");
+    }
+
+    #[test]
+    fn eta_no_start_shows_full_duration_hours() {
+        // 2 hours → "~2h"
+        assert_eq!(
+            format_eta_at(Some(2 * 3_600 * 1_000_000_000), None, 0),
+            "~2h"
+        );
+    }
+
+    #[test]
+    fn eta_with_start_remaining_minutes() {
+        // started at t=0, duration 5min, now at 2min → 3 min left
+        let start: u64 = 0;
+        let dur: u64 = 5 * 60 * 1_000_000_000;
+        let now: u64 = 2 * 60 * 1_000_000_000;
+        assert_eq!(format_eta_at(Some(dur), Some(start), now), "~3m");
+    }
+
+    #[test]
+    fn eta_past_deadline_returns_empty() {
+        // started at t=0, 1min duration, now at 90s → past ETA
+        let start: u64 = 0;
+        let dur: u64 = 60 * 1_000_000_000;
+        let now: u64 = 90 * 1_000_000_000;
+        assert_eq!(format_eta_at(Some(dur), Some(start), now), "");
+    }
+
+    #[test]
+    fn eta_warm_cold_equivalence_no_fields() {
+        // Both paths with None fields produce ""
+        assert_eq!(format_eta_at(None, None, u64::MAX), "");
+    }
+
+    // ── backward compat: missing fields → empty/false (parse test) ──
+
+    /// Proves that a warm-channel JSON row without the I10 fields still
+    /// produces empty/false chip values after serde(default) parsing.
+    /// Uses JSON directly to stay independent of daemon build version.
+    #[test]
+    fn backward_compat_missing_rich_fields_give_empty_chips() {
+        // Simulate an old daemon that sends only the four base fields.
+        // The new GuiBoardTaskJson serde(default) annotations must fill
+        // in safe zero-values so the chip row stays invisible.
+        #[derive(serde::Deserialize)]
+        struct MinGuiBoardTask {
+            task_id: i64,
+            #[serde(default)]
+            task_type: String,
+            #[serde(default)]
+            worker: Option<String>,
+            #[serde(default)]
+            tests_passing: Option<u32>,
+            #[serde(default)]
+            tests_failing: Option<u32>,
+            #[serde(default)]
+            tests_total: Option<u32>,
+            #[serde(default)]
+            has_patch: bool,
+            #[serde(default)]
+            parent_task_id: Option<i64>,
+            #[serde(default)]
+            eta_ns: Option<u64>,
+            #[serde(default)]
+            started_ns: Option<u64>,
+        }
+        let json = r#"{"task_id":1,"title":"foo","hemisphere":"left","status":"todo"}"#;
+        let t: MinGuiBoardTask = serde_json::from_str(json).expect("parse");
+        assert_eq!(t.task_id, 1);
+        assert_eq!(t.task_type, "");
+        assert!(t.worker.is_none());
+        assert!(t.tests_passing.is_none());
+        assert!(!t.has_patch);
+        assert!(t.parent_task_id.is_none());
+        // chip helpers return "" for all-None → chip row stays hidden
+        assert_eq!(format_tests_string(t.tests_passing, t.tests_failing, t.tests_total), "");
+        assert_eq!(format_eta_at(t.eta_ns, t.started_ns, 9_999_999_999_999_999_999), "");
+    }
+}
+
 #[cfg(test)]
 mod selfdev_tests {
     use super::parse_selfdev_proposals;

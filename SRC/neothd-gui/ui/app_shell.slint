@@ -97,7 +97,7 @@ component NavBtn inherits Rectangle {
             background: Theme.surface-3;
             cnt := Text {
                 text: root.count >= 0 ? "\{root.count}" : "";
-                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: 10px;
+                color: Theme.text-tertiary; font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                 x: 7px; vertical-alignment: center;
             }
         }
@@ -135,7 +135,7 @@ component ComplexitySeg inherits Rectangle {
             border-color: seg-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
             Text {
                 text: seg; color: root.level == i ? Theme.accent : Theme.text-tertiary;
-                font-family: Theme.font-mono; font-size: 10px;
+                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
                 letter-spacing: Theme.letter-spacing-tight;
                 horizontal-alignment: center; vertical-alignment: center;
             }
@@ -192,7 +192,7 @@ export component Sidebar inherits Rectangle {
                 alignment: center; spacing: 3px;
                 Text {
                     text: "NEOTH"; color: Theme.accent;
-                    font-family: Theme.font-wordmark; font-size: 23px; font-weight: Theme.weight-bold;
+                    font-family: Theme.font-wordmark; font-size: Theme.font-size-xl; font-weight: Theme.weight-bold;
                     letter-spacing: Theme.letter-spacing-tight;
                 }
                 Rectangle {
@@ -301,7 +301,7 @@ export component Sidebar inherits Rectangle {
             padding-top: 12px; padding-bottom: 12px; spacing: 8px;
             Text {
                 text: "COMPLEXITY"; color: Theme.text-tertiary;
-                font-family: Theme.font-mono; font-size: 9px; letter-spacing: Theme.letter-spacing-wide;
+                font-family: Theme.font-mono; font-size: Theme.font-size-2xs; letter-spacing: Theme.letter-spacing-wide;
             }
             ComplexitySeg { level: root.complexity; set-level(l) => { root.set-complexity(l); } }
         }
@@ -334,7 +334,7 @@ export component Sidebar inherits Rectangle {
                         ? "OPERATOR · " + root.project-domain
                         : "OPERATOR";
                     color: Theme.text-tertiary;
-                    font-family: Theme.font-mono; font-size: 9px; letter-spacing: Theme.letter-spacing-wide;
+                    font-family: Theme.font-mono; font-size: Theme.font-size-2xs; letter-spacing: Theme.letter-spacing-wide;
                     overflow: elide;
                 }
             }
@@ -369,12 +369,12 @@ export component TopBar inherits Rectangle {
             Text {
                 text: root.kicker; color: Theme.text-tertiary;
                 overflow: elide;
-                font-family: Theme.font-mono; font-size: 10px; letter-spacing: Theme.letter-spacing-extra-wide;
+                font-family: Theme.font-mono; font-size: Theme.font-size-2xs; letter-spacing: Theme.letter-spacing-extra-wide;
             }
             Text {
                 text: root.title; color: Theme.text-primary;
                 overflow: elide;
-                font-family: Theme.font-display; font-size: 26px;
+                font-family: Theme.font-display; font-size: Theme.font-size-xl;
             }
         }
         HorizontalLayout {

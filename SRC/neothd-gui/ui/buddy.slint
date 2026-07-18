@@ -130,6 +130,62 @@ export component Buddy inherits Rectangle {
         ? (1.0 - 0.85 * sin(root.idle-blink-t * 180deg))
         : 1.0;
 
+    // ── IDLE VARIETY — micro-behavior phases (I8) ────────────────────────
+    // Master clock 0→1 over 20 s; strictly gated to 0.0 when not idle or
+    // animation frozen, so all downstream expressions collapse to static
+    // neutral at Theme.animation-mode == 0 without extra gating.
+    // Phase schedule (seconds at 20 s cycle):
+    //   0–4.0   plain breathe (no additives — filler)
+    //   4.0–8.8 look-around   (eye x drift ±2.5 u)
+    //   8.8–12  double-blink  (two rapid squints per 1.6 s sub-cycle)
+    //   12–16   yawn/squash   (core y −4 %, x +2 %)
+    //   16–20   plain breathe (filler)
+    property <float> idle-t: (root.is-mood("idle") && Theme.animation-mode != 0)
+        ? mod(animation-tick(), 20000ms) / 20000ms
+        : 0.0;
+    // Amplitude gate: 1.0 full motion, 0.45 at reduced-motion (mode 1), 0.0 at
+    // mode 0 (idle-t is already 0 at mode 0 — this is a belt-and-suspenders guard
+    // so that explicit multiplications never divide by a duration token).
+    property <float> idle-amp: Theme.animation-mode >= 2 ? 1.0
+        : (Theme.animation-mode == 1 ? 0.45 : 0.0);
+
+    // LOOK-AROUND [0.20..0.44 of cycle = 4–8.8 s]:
+    // sin-hill envelope — max(0, sin(local*180°)) rises 0→1→0 across the window
+    // and naturally collapses to 0 outside it (negative sin → clamped by max).
+    // idle-look-offset drives both eyes together: positive = right, negative = left.
+    // Full drift swing (0 → right → 0 → left → 0) uses sin(local*360°) inside
+    // the envelope so the eyes actually traverse both directions once.
+    property <float> look-env: max(0.0, sin((root.idle-t - 0.20) / 0.24 * 180deg));
+    property <float> idle-look-offset: root.idle-amp * 2.5
+        * root.look-env
+        * sin((root.idle-t - 0.20) / 0.24 * 360deg);
+
+    // DOUBLE-BLINK [0.44..0.60 of cycle = 8.8–12 s]:
+    // Two 150 ms squints in a 1.6 s sub-cycle (independent of idle-t progress):
+    //   blink 1 → t ∈ [0, 1]  (0–150 ms)
+    //   open   → t ∈ (1, 2)   (150–300 ms)
+    //   blink 2 → t ∈ [2, 3]  (300–450 ms)
+    //   open   → t ∈ (3, 10.7) (450–1600 ms)
+    // Outside the phase: idle-dblink-t = 99.0 → scale = 1.0 (eyes fully open).
+    property <float> idle-dblink-t: (root.idle-t >= 0.44 && root.idle-t < 0.60)
+        ? mod(animation-tick(), 1600ms) / 150ms
+        : 99.0;
+    property <float> idle-dblink-scale: (root.idle-dblink-t <= 1.0)
+        ? (1.0 - root.idle-amp * 0.85 * sin(root.idle-dblink-t * 180deg))
+        : ((root.idle-dblink-t >= 2.0 && root.idle-dblink-t <= 3.0)
+            ? (1.0 - root.idle-amp * 0.85 * sin((root.idle-dblink-t - 2.0) * 180deg))
+            : 1.0);
+
+    // YAWN / SQUASH-STRETCH [0.60..0.80 of cycle = 12–16 s]:
+    // Core rect grows 2 % wider and shrinks 4 % taller — subtle "breathing out"
+    // squash. Envelope same max(0, sin-hill) pattern.
+    // idle-yawn-x / idle-yawn-y are applied to the core width/height and its
+    // centering offset so the orb stays pinned at cx, cy during the squash.
+    property <float> yawn-env: root.idle-amp
+        * max(0.0, sin((root.idle-t - 0.60) / 0.20 * 180deg));
+    property <float> idle-yawn-x: 1.0 + 0.02 * root.yawn-env;
+    property <float> idle-yawn-y: 1.0 - 0.04 * root.yawn-env;
+
     property <length> ring-r: 44 * root.u;                          // nominal orbiter radius
     property <length> core-r: 17 * root.u;
 
@@ -282,8 +338,12 @@ export component Buddy inherits Rectangle {
 
     // ══ CORE — the breathing neural core ═══════════════════════════════
     Rectangle {
-        width: root.core-scaled * 2; height: root.core-scaled * 2;
-        x: root.cx - root.core-scaled; y: root.cy - root.core-scaled;
+        // idle-yawn-x/y: 1.0 by default; squash-stretches during idle yawn phase.
+        // Centering offsets adjusted so orb stays pinned at cx, cy.
+        width: root.core-scaled * 2 * root.idle-yawn-x;
+        height: root.core-scaled * 2 * root.idle-yawn-y;
+        x: root.cx - root.core-scaled * root.idle-yawn-x;
+        y: root.cy - root.core-scaled * root.idle-yawn-y;
         border-radius: self.width / 2;
         background: root.hue;
         drop-shadow-blur: 8px + 10px * root.pulse;
@@ -303,17 +363,18 @@ export component Buddy inherits Rectangle {
     if root.show-face && !root.is-mood("sleeping") && !root.is-mood("error"): Rectangle {
         // eyes
         Rectangle {
-            x: 42.4 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
+            // idle-look-offset shifts both eyes together (positive = right gaze).
+            x: (42.4 + root.idle-look-offset) * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
             width: 3.4 * root.u;
-            // idle-blink-scale collapses eye height to ~15 % for 120 ms every ~9 s.
-            height: (9 + 3 * root.pulse) * root.u * root.idle-blink-scale;
+            // min(blink-scale, dblink-scale) — deepest squint wins; normally both = 1.0.
+            height: (9 + 3 * root.pulse) * root.u * min(root.idle-blink-scale, root.idle-dblink-scale);
             border-radius: 1.7 * root.u;
             background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
         Rectangle {
-            x: 54.2 * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
+            x: (54.2 + root.idle-look-offset) * root.u; y: (45.5 - 1.5 * root.pulse) * root.u;
             width: 3.4 * root.u;
-            height: (9 + 3 * root.pulse) * root.u * root.idle-blink-scale;
+            height: (9 + 3 * root.pulse) * root.u * min(root.idle-blink-scale, root.idle-dblink-scale);
             border-radius: 1.7 * root.u;
             background: root.hue == Theme.green-500 ? Theme.text-on-accent : Theme.ink-1000;
         }
@@ -348,25 +409,32 @@ export component Buddy inherits Rectangle {
         }
     }
 
-    // working / analyzing — scan bar with edge fade via two gradient rects
+    // working / analyzing — scan bar with edge fade via two gradient rects.
+    // Outer wrapper carries the mood-entry entrance fade (I9-1); inner retains
+    // the sweep-driven opacity so both effects compose multiplicatively.
     if root.is-mood("working") || root.is-mood("analyzing"): Rectangle {
-        property <float> sweep: Theme.animation-mode == 0 ? 0.5 : mod(animation-tick(), 1.4s) / 1.4s;
-        x: 30 * root.u; y: (40 + 20 * self.sweep) * root.u;
-        width: 40 * root.u; height: 2.0 * root.u; border-radius: 1.0 * root.u;
-        background: Theme.ink-1000;
-        opacity: 0.85 * (1.0 - abs(2.0 * self.sweep - 1.0));   // fade at top and bottom
-        // left fade cap
+        width: 100%; height: 100%;
+        opacity: 0; init => { self.opacity = 1; }
+        animate opacity { duration: Theme.duration-fast; easing: ease-out; }
         Rectangle {
-            x: 0; y: 0; width: 8 * root.u; height: parent.height;
-            border-radius: parent.border-radius;
-            background: Theme.ink-1000.with-alpha(0.0);
-        }
-        // right fade cap
-        Rectangle {
-            x: parent.width - 8 * root.u; y: 0;
-            width: 8 * root.u; height: parent.height;
-            border-radius: parent.border-radius;
-            background: Theme.ink-1000.with-alpha(0.0);
+            property <float> sweep: Theme.animation-mode == 0 ? 0.5 : mod(animation-tick(), 1.4s) / 1.4s;
+            x: 30 * root.u; y: (40 + 20 * self.sweep) * root.u;
+            width: 40 * root.u; height: 2.0 * root.u; border-radius: 1.0 * root.u;
+            background: Theme.ink-1000;
+            opacity: 0.85 * (1.0 - abs(2.0 * self.sweep - 1.0));   // fade at top and bottom
+            // left fade cap
+            Rectangle {
+                x: 0; y: 0; width: 8 * root.u; height: parent.height;
+                border-radius: parent.border-radius;
+                background: Theme.ink-1000.with-alpha(0.0);
+            }
+            // right fade cap
+            Rectangle {
+                x: parent.width - 8 * root.u; y: 0;
+                width: 8 * root.u; height: parent.height;
+                border-radius: parent.border-radius;
+                background: Theme.ink-1000.with-alpha(0.0);
+            }
         }
     }
 
@@ -494,6 +562,18 @@ export component BuddyDock inherits Rectangle {
     animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
     animate entrance-rise { duration: Theme.duration-screen-min; easing: cubic-bezier(0.34, 1.56, 0.64, 1); }
 
+    // dock-hue mirrors Buddy.hue-target() + the same 300 ms animate so the
+    // keyboard focus ring tracks the orb colour without accessing Buddy internals.
+    property <color> dock-hue: root.mood == "thinking" || root.mood == "searching"
+            || root.mood == "analyzing" || root.mood == "audit" || root.mood == "loading"
+            || root.mood == "connecting" || root.mood == "listening" ? Theme.cyan-500
+        : root.mood == "alert" || root.mood == "consent" || root.mood == "danger"
+            || root.mood == "problem" || root.mood == "error" ? Theme.pink-500
+        : root.mood == "intense" || root.mood == "cracking" || root.mood == "notification"
+            ? Theme.amber-500
+        : Theme.green-500;
+    animate dock-hue { duration: 300ms; easing: cubic-bezier(0.2, 0.8, 0.2, 1); }
+
     width: bud.width + 8px;
     height: bud.height + (root.caption != "" ? cap.height + 6px : 0px);
 
@@ -501,7 +581,9 @@ export component BuddyDock inherits Rectangle {
         mood: root.mood; orb-size: root.orb-size; audio-level: root.audio-level;
         x: (parent.width - self.width) / 2; y: root.entrance-rise;
         TouchArea {
-            clicked => { root.clicked(); }
+            // fs.focus() transfers keyboard focus to the FocusScope so
+            // mouse users can immediately continue with keyboard shortcuts.
+            clicked => { root.clicked(); fs.focus(); }
             pointer-event(ev) => {
                 if (ev.button == PointerEventButton.right
                         && ev.kind == PointerEventKind.up) {
@@ -534,6 +616,34 @@ export component BuddyDock inherits Rectangle {
         triggered => {
             root.shown-caption = root.caption;
             root.caption-alpha = 1.0;
+        }
+    }
+
+    // I9-3: Keyboard path — FocusScope makes the orb Tab-reachable.
+    // Enter / Space → clicked(); Menu key → right-clicked().
+    // Focus ring: 2 px accent border at 2 px offset (inlined, circular, hue-tracked).
+    // Positioned over the orb; follows bud.y so entrance-rise animation stays aligned.
+    fs := FocusScope {
+        x: bud.x - 2px; y: bud.y - 2px;
+        width: bud.width + 4px; height: bud.height + 4px;
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == Key.Space) {
+                root.clicked();
+                return accept;
+            }
+            if (ev.text == Key.Menu) {
+                root.right-clicked();
+                return accept;
+            }
+            return reject;
+        }
+        Rectangle {
+            width: 100%; height: 100%;
+            border-radius: self.width / 2;
+            border-width: 2px;
+            border-color: root.dock-hue;
+            opacity: fs.has-focus ? 1.0 : 0.0;
+            animate opacity { duration: Theme.duration-fast; easing: ease; }
         }
     }
 }

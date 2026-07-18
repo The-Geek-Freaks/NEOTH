@@ -20,7 +20,7 @@
 // no inline hex; radius never 0px.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, SegBar, EmptyState } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, SegBar, EmptyState, ConfirmDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Exported structs (Rust must re-export from main.slint) ────────────────────
@@ -393,6 +393,10 @@ export component MeshView inherits Rectangle {
     callback peer-sync-clicked(string /*peer-id*/);  // enqueue WAL sync
     callback peer-expanded(string /*peer-id*/);       // toggle inline detail
     callback conflict-resolve-clicked(string /*content-id*/, string /*preferred origin*/);
+    // Armed conflict-resolution awaiting confirm; content-id "" = closed.
+    property <string> conflict-confirm-content: "";
+    property <string> conflict-confirm-origin: "";
+    property <string> conflict-confirm-side: "";
     callback mesh-peer-ctx(string /*peer-id*/, length /*x*/, length /*y*/);
 
     // ── Layout ────────────────────────────────────────────────────────────────
@@ -684,11 +688,12 @@ export component MeshView inherits Rectangle {
                                             label: "Prefer A";
                                             size: "sm";
                                             primary: false;
+                                            // Destructive (discards the other
+                                            // side) — arm the confirm gate.
                                             clicked => {
-                                                root.conflict-resolve-clicked(
-                                                    conflict.content-id,
-                                                    conflict.incumbent-origin
-                                                );
+                                                root.conflict-confirm-content = conflict.content-id;
+                                                root.conflict-confirm-origin = conflict.incumbent-origin;
+                                                root.conflict-confirm-side = "A (incumbent)";
                                             }
                                         }
                                         NeothButton {
@@ -696,10 +701,9 @@ export component MeshView inherits Rectangle {
                                             size: "sm";
                                             primary: false;
                                             clicked => {
-                                                root.conflict-resolve-clicked(
-                                                    conflict.content-id,
-                                                    conflict.incoming-origin
-                                                );
+                                                root.conflict-confirm-content = conflict.content-id;
+                                                root.conflict-confirm-origin = conflict.incoming-origin;
+                                                root.conflict-confirm-side = "B (incoming)";
                                             }
                                         }
                                     }
@@ -1073,5 +1077,21 @@ export component MeshView inherits Rectangle {
                 }
             }
         }
+    }
+
+    // ── Conflict-resolution confirm gate (SAFE-GAPS HIGH) ─────────────
+    // Preferring one side discards the other origin's row — irreversible.
+    if root.conflict-confirm-content != "": ConfirmDialog {
+        width: 100%; height: 100%;
+        title: "Resolve conflict?";
+        body: "Keeps side " + root.conflict-confirm-side + " for " + root.conflict-confirm-content
+            + " and discards the other origin's version. This cannot be undone.";
+        confirm-label: "Resolve";
+        danger: true;
+        confirmed => {
+            root.conflict-resolve-clicked(root.conflict-confirm-content, root.conflict-confirm-origin);
+            root.conflict-confirm-content = "";
+        }
+        cancelled => { root.conflict-confirm-content = ""; }
     }
 }

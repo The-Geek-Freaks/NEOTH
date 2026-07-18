@@ -36,6 +36,11 @@ component StatRow inherits Rectangle {
 // Resources — the live hardware probe (CPU / memory / accelerator / VRAM /
 // disk / local models), the mockup's "neoth-core" surface.
 export component ResourcesView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
     in property <string> cpu;
     in property <string> memory;
     in property <string> accelerator;
@@ -95,6 +100,11 @@ export component ResourcesView inherits Rectangle {
 // mono output panel. Used by Agents (cluster/agent topology) and Automation
 // (cron jobs + n8n). The Buddy reacts via the caller's GuiActivity.
 export component ProbeView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
     in property <string> blurb;
     in property <string> action-label: "Refresh";
     in property <string> output: "";
@@ -167,6 +177,11 @@ export component ProbeView inherits Rectangle {
 // GAP-05: second probe section "Status" → `neoth status`.
 // GAP-13: third probe section "Security audit" → `neoth security audit`.
 export component DoctorView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
     in property <string> output: "";
     in property <bool> running: false;
     callback run-clicked();

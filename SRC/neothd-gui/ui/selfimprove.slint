@@ -7,7 +7,7 @@
 // Layout: EntranceFade > ScrollView > STATUS card + PENDING card + HISTORY card.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, ConfirmDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -173,6 +173,8 @@ export component SelfImproveView inherits Rectangle {
     callback si-run-dry-clicked();
     callback si-accept-clicked(string);    // proposal id
     callback si-rollback-clicked(string);  // proposal id
+    // Proposal id awaiting rollback confirmation; "" = no dialog.
+    property <string> rollback-confirm-id: "";
 
     background: transparent;
 
@@ -308,7 +310,9 @@ export component SelfImproveView inherits Rectangle {
                             title: p.title;
                             description: p.description;
                             accept-clicked => { root.si-accept-clicked(p.id); }
-                            rollback-clicked => { root.si-rollback-clicked(p.id); }
+                            // Destructive — reverts an applied proposal;
+                            // route through the confirm gate.
+                            rollback-clicked => { root.rollback-confirm-id = p.id; }
                         }
                     }
                 }
@@ -330,5 +334,19 @@ export component SelfImproveView inherits Rectangle {
                 }
             }
         }
+    }
+
+    // ── Rollback confirm gate (SAFE-GAPS HIGH) ────────────────────────
+    if root.rollback-confirm-id != "": ConfirmDialog {
+        width: 100%; height: 100%;
+        title: "Roll back proposal?";
+        body: "Reverts applied proposal " + root.rollback-confirm-id + ". The change is undone on next reload.";
+        confirm-label: "Roll back";
+        danger: true;
+        confirmed => {
+            root.si-rollback-clicked(root.rollback-confirm-id);
+            root.rollback-confirm-id = "";
+        }
+        cancelled => { root.rollback-confirm-id = ""; }
     }
 }

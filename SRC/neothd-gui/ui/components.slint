@@ -632,8 +632,20 @@ component Toast inherits Rectangle {
     // because Toast is a VerticalLayout child — the layout engine owns `x`.
     // Opacity-only fade is the correct Slint 1.8 equivalent.
     opacity: 0;
-    init => { self.opacity = 1; }
+    init => { self.opacity = 1; self.life = 0; }
     animate opacity { duration: Theme.duration-toast-in; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+    // I17 — visible lifetime countdown (Linear/Smashing toast guidance):
+    // hairline drains left→right over duration-toast-life. Rust owns the
+    // actual prune; this is purely informational. Collapses at mode 0.
+    property <float> life: 1.0;
+    animate life { duration: Theme.duration-toast-life; easing: linear; }
+    Rectangle {
+        x: 0; y: parent.height - self.height;
+        height: 2px;
+        width: parent.width * root.life;
+        background: root.led-color.with-alpha(0.55);
+    }
 
     VerticalLayout {
         padding: 12px; spacing: 6px;
@@ -1384,6 +1396,27 @@ export component CommandPalette inherits Rectangle {
                         color: Theme.text-tertiary;
                         font-family: Theme.font-sans; font-size: Theme.font-size-sm;
                         vertical-alignment: center; horizontal-alignment: center;
+                    }
+                    // Keyboard legend footer — Raycast/Linear convention:
+                    // the palette teaches its own keys (SAFE-GAPS HIGH).
+                    Rectangle {
+                        height: 30px;
+                        background: Theme.surface-1;
+                        border-radius: 0;
+                        Rectangle { height: 1px; y: 0; background: Theme.border-subtle; }
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 12px; spacing: 16px;
+                            alignment: center;
+                            legend-txt := Text {
+                                text: "↑↓ navigate    ↵ open    esc close";
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
+                                letter-spacing: Theme.letter-spacing-wide;
+                                vertical-alignment: center;
+                            }
+                        }
+                        accessible-role: AccessibleRole.text;
+                        accessible-label: "arrow keys navigate, enter opens, escape closes";
                     }
                 }
             }

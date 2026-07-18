@@ -31,6 +31,14 @@ export struct KanbanTaskRow {
     task-id: string,          // pre-formatted `#42` so Slint avoids int-to-str
     title: string,
     hemisphere: string,       // "left" | "right" | "cerebellum" | "unassigned"
+    // I10 rich card fields — "" / false hides the chip (no reserved space)
+    type-chip: string,        // task_type as-is ("ui", "tests", …); "" = hide
+    worker: string,           // worker name or ""
+    tests: string,            // "{passing}/{total}" or ""
+    tests-failing: bool,      // true → red tint on tests chip
+    eta: string,              // humanized remaining time ("~5m") or ""
+    parent-ref: string,       // "#<id>" or "" (`parent` is a Slint keyword)
+    has-patch: bool,          // ⌁ patch glyph when true
 }
 
 /// One row in the Code Sessions activity feed (right rail). Rust side
@@ -265,6 +273,14 @@ component KanbanTaskCard inherits Rectangle {
     /// Step 5 (2026-05-20): selected state lights the card border in
     /// accent-green when the operator picked it for the detail pane.
     in property <bool> selected: false;
+    // I10 rich fields — "" / false = absent, chip row stays hidden (no reserved space)
+    in property <string> type-chip: "";
+    in property <string> worker: "";
+    in property <string> tests: "";
+    in property <bool> tests-failing: false;
+    in property <string> eta: "";
+    in property <string> parent-ref: "";
+    in property <bool> has-patch: false;
     callback clicked();
     /// A4 — fires on right-click up; x/y approximate absolute position
     /// (card.absolute-position + mouse offset within card).
@@ -346,6 +362,88 @@ component KanbanTaskCard inherits Rectangle {
             color: Theme.text-primary;
             wrap: word-wrap;
         }
+        // I10 — rich-field chip row. Only rendered when at least one
+        // field is non-empty/non-false; absent entirely otherwise so
+        // the card stays compact with no reserved blank space.
+        if root.type-chip != "" || root.worker != "" || root.tests != ""
+                || root.eta != "" || root.parent-ref != "" || root.has-patch: HorizontalLayout {
+            spacing: 4px;
+            alignment: start;
+
+            // task_type chip ("ui", "tests", "feature", …)
+            if root.type-chip != "": Rectangle {
+                border-radius: 3px;
+                background: Theme.text-dim.with-alpha(0.12);
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    Text {
+                        text: root.type-chip;
+                        overflow: elide;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                    }
+                }
+            }
+            // worker name
+            if root.worker != "": Text {
+                text: root.worker;
+                overflow: elide;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+            }
+            // test-count chip — green when all pass, warning tint on failures
+            if root.tests != "": Rectangle {
+                border-radius: 3px;
+                background: root.tests-failing
+                    ? Theme.warning.with-alpha(0.12)
+                    : Theme.accent-green.with-alpha(0.12);
+                border-width: 1px;
+                border-color: root.tests-failing ? Theme.warning : Theme.accent-green;
+                HorizontalLayout {
+                    padding-left: 4px;
+                    padding-right: 4px;
+                    padding-top: 2px;
+                    padding-bottom: 2px;
+                    Text {
+                        text: root.tests;
+                        overflow: elide;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: root.tests-failing ? Theme.warning : Theme.accent-green;
+                    }
+                }
+            }
+            // ETA remaining time
+            if root.eta != "": Text {
+                text: root.eta;
+                overflow: elide;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+            }
+            // parent task ref
+            if root.parent-ref != "": Text {
+                text: root.parent-ref;
+                overflow: elide;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+            }
+            // ⌁ patch-present glyph
+            if root.has-patch: Text {
+                text: "⌁";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-muted;
+            }
+        }
     }
 }
 
@@ -409,6 +507,14 @@ component KanbanColumn inherits Rectangle {
                 task-id: entry.task-id;
                 title: entry.title;
                 hemisphere: entry.hemisphere;
+                // I10 — rich card fields forwarded from KanbanTaskRow
+                type-chip: entry.type-chip;
+                worker: entry.worker;
+                tests: entry.tests;
+                tests-failing: entry.tests-failing;
+                eta: entry.eta;
+                parent-ref: entry.parent-ref;
+                has-patch: entry.has-patch;
                 selected: entry.task-id == root.selected-task-id;
                 clicked => { root.task-clicked(entry.task-id); }
                 context-menu(x, y) => { root.task-context(entry.task-id, x, y); }
@@ -3994,6 +4100,95 @@ export component SettingsView inherits Rectangle {
                     VerticalLayout {
                         spacing: Theme.space-base;
                         horizontal-stretch: 1;
+
+                        // I11 — proportional summary strip. Each segment's
+                        // horizontal-stretch equals the column task count so
+                        // width is proportional to occupancy. 0-count columns
+                        // are omitted via `if` (no ghost space). Hidden when
+                        // the board is empty. Pure Slint, no new callbacks.
+                        if root.kanban-backlog.length + root.kanban-todo.length
+                                + root.kanban-in-progress.length
+                                + root.kanban-review.length
+                                + root.kanban-done.length > 0: HorizontalLayout {
+                            spacing: 2px;
+                            height: 14px;
+
+                            if root.kanban-backlog.length > 0: Rectangle {
+                                horizontal-stretch: root.kanban-backlog.length;
+                                min-width: 2px;
+                                background: Theme.text-muted.with-alpha(0.5);
+                                border-radius: 2px;
+                                clip: true;
+                                Text {
+                                    text: "\{root.kanban-backlog.length}";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.kanban-todo.length > 0: Rectangle {
+                                horizontal-stretch: root.kanban-todo.length;
+                                min-width: 2px;
+                                background: Theme.text-primary.with-alpha(0.4);
+                                border-radius: 2px;
+                                clip: true;
+                                Text {
+                                    text: "\{root.kanban-todo.length}";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.kanban-in-progress.length > 0: Rectangle {
+                                horizontal-stretch: root.kanban-in-progress.length;
+                                min-width: 2px;
+                                background: Theme.accent-amber;
+                                border-radius: 2px;
+                                clip: true;
+                                Text {
+                                    text: "\{root.kanban-in-progress.length}";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.bg-card;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.kanban-review.length > 0: Rectangle {
+                                horizontal-stretch: root.kanban-review.length;
+                                min-width: 2px;
+                                background: Theme.accent-pink;
+                                border-radius: 2px;
+                                clip: true;
+                                Text {
+                                    text: "\{root.kanban-review.length}";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.bg-card;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.kanban-done.length > 0: Rectangle {
+                                horizontal-stretch: root.kanban-done.length;
+                                min-width: 2px;
+                                background: Theme.accent-green;
+                                border-radius: 2px;
+                                clip: true;
+                                Text {
+                                    text: "\{root.kanban-done.length}";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.bg-card;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
 
                         HorizontalLayout {
                             spacing: Theme.space-tight;

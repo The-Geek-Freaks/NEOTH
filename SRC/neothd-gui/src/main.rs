@@ -875,12 +875,44 @@ static CHAT_MODEL_OVERRIDE: std::sync::Mutex<Option<String>> = std::sync::Mutex:
 /// H18 — picker entries from the live models catalog (loaded at startup).
 static REGEN_MODELS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
+/// I10 — flat test-count sub-object inside `KanbanTask` JSON. Only the
+/// three fields the card chip needs; others (`added`, `skipped`, `applied`)
+/// are ignored so the struct stays minimal.
+#[derive(Debug, Default, Deserialize)]
+struct CodingTestSummaryJson {
+    #[serde(default)]
+    passing: u32,
+    #[serde(default)]
+    failing: u32,
+    #[serde(default)]
+    total: u32,
+}
+
+/// I10 — extended with rich card fields. `#[serde(default)]` on every new
+/// field keeps the struct deserialising cleanly from old daemon JSON that
+/// predates the I10 additions.
 #[derive(Debug, Deserialize)]
 struct CodingTaskJson {
     task_id: i64,
     status: String,
     title: String,
     hemisphere: String,
+    #[serde(default)]
+    task_type: String,
+    #[serde(default)]
+    worker: Option<String>,
+    #[serde(default)]
+    parent_task_id: Option<i64>,
+    #[serde(default)]
+    eta_ns: Option<u64>,
+    #[serde(default)]
+    started_ns: Option<u64>,
+    /// Serialised as a file-path string by `KanbanTask`; we only need
+    /// presence (→ `has_patch` bool), not the actual path.
+    #[serde(default)]
+    patch_path: Option<String>,
+    #[serde(default)]
+    test_summary: Option<CodingTestSummaryJson>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -13432,10 +13464,33 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     );
     snap.feed = fetch_kanban_feed(&bin);
     for task in envelope.tasks {
+        // I10 — pre-format rich card fields via panel_logic helpers so Slint
+        // only handles strings/bools (no arithmetic in .slint). Mirror the
+        // warm-path construction in `board_json_to_snapshot` exactly.
         let row = KanbanTaskRow {
             task_id: format!("#{}", task.task_id).into(),
             title: task.title.into(),
             hemisphere: task.hemisphere.into(),
+            type_chip: task.task_type.into(),
+            worker: task.worker.unwrap_or_default().into(),
+            tests: panel_logic::format_tests_string(
+                task.test_summary.as_ref().map(|ts| ts.passing),
+                task.test_summary.as_ref().map(|ts| ts.failing),
+                task.test_summary.as_ref().map(|ts| ts.total),
+            )
+            .into(),
+            tests_failing: task
+                .test_summary
+                .as_ref()
+                .map(|ts| ts.failing > 0)
+                .unwrap_or(false),
+            eta: panel_logic::format_eta(task.eta_ns, task.started_ns).into(),
+            parent_ref: task
+                .parent_task_id
+                .map(|p| format!("#{p}"))
+                .unwrap_or_default()
+                .into(),
+            has_patch: task.patch_path.is_some(),
         };
         // Wire-form status names mirror `TaskStatus::as_str` in
         // `neothd::coding::types`. Unknown statuses go to BACKLOG so
@@ -13472,12 +13527,33 @@ struct GuiBoardJson {
     feed: Vec<FeedEntryJson>,
 }
 
-#[derive(Debug, Deserialize)]
+/// I10 — field-for-field mirror of `cli::kanban::GuiBoardTask`.
+/// `#[serde(default)]` on every I10 addition keeps warm-channel clients
+/// deserialising cleanly against a daemon that predates this build.
+#[derive(Debug, Default, Deserialize)]
 struct GuiBoardTaskJson {
     task_id: i64,
     title: String,
     hemisphere: String,
     status: String,
+    #[serde(default)]
+    task_type: String,
+    #[serde(default)]
+    worker: Option<String>,
+    #[serde(default)]
+    parent_task_id: Option<i64>,
+    #[serde(default)]
+    eta_ns: Option<u64>,
+    #[serde(default)]
+    started_ns: Option<u64>,
+    #[serde(default)]
+    has_patch: bool,
+    #[serde(default)]
+    tests_passing: Option<u32>,
+    #[serde(default)]
+    tests_failing: Option<u32>,
+    #[serde(default)]
+    tests_total: Option<u32>,
 }
 
 /// Map the warm-channel board payload into the same `KanbanBoardSnapshot`
@@ -13491,10 +13567,28 @@ fn board_json_to_snapshot(b: GuiBoardJson) -> KanbanBoardSnapshot {
         ..Default::default()
     };
     for t in b.tasks {
+        // I10 — same pre-format helpers as the cold path so both produce
+        // identical KanbanTaskRow values (warm/cold equivalence invariant).
         let row = KanbanTaskRow {
             task_id: format!("#{}", t.task_id).into(),
             title: t.title.into(),
             hemisphere: t.hemisphere.into(),
+            type_chip: t.task_type.into(),
+            worker: t.worker.unwrap_or_default().into(),
+            tests: panel_logic::format_tests_string(
+                t.tests_passing,
+                t.tests_failing,
+                t.tests_total,
+            )
+            .into(),
+            tests_failing: t.tests_failing.map(|f| f > 0).unwrap_or(false),
+            eta: panel_logic::format_eta(t.eta_ns, t.started_ns).into(),
+            parent_ref: t
+                .parent_task_id
+                .map(|p| format!("#{p}"))
+                .unwrap_or_default()
+                .into(),
+            has_patch: t.has_patch,
         };
         match t.status.as_str() {
             "todo" => snap.todo.push(row),
@@ -18380,42 +18474,49 @@ mod tests {
                     title: "a".into(),
                     hemisphere: "left".into(),
                     status: "backlog".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 2,
                     title: "b".into(),
                     hemisphere: "right".into(),
                     status: "todo".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 3,
                     title: "c".into(),
                     hemisphere: "left".into(),
                     status: "in_progress".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 4,
                     title: "d".into(),
                     hemisphere: "right".into(),
                     status: "review".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 5,
                     title: "e".into(),
                     hemisphere: "left".into(),
                     status: "done".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 6,
                     title: "f".into(),
                     hemisphere: "left".into(),
                     status: "archived".into(),
+                    ..Default::default()
                 },
                 GuiBoardTaskJson {
                     task_id: 7,
                     title: "g".into(),
                     hemisphere: "left".into(),
                     status: "totally_unknown".into(),
+                    ..Default::default()
                 },
             ],
             feed: vec![],

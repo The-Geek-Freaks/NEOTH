@@ -915,12 +915,25 @@ fn run_watch(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()
 /// the GUI's `CodingTaskJson` (`task_id` / `title` / `hemisphere` /
 /// `status`) so the warm-channel payload deserialises into the same
 /// board buckets the legacy subprocess path produced.
+///
+/// I10 — additive rich fields: old GUI versions ignore unknown JSON keys
+/// via `#[serde(default)]`, so wire compatibility is preserved.
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct GuiBoardTask {
     pub task_id: i64,
     pub title: String,
     pub hemisphere: String,
     pub status: String,
+    // I10 rich card fields — additive, old clients ignore via serde(default)
+    pub task_type: String,
+    pub worker: Option<String>,
+    pub parent_task_id: Option<i64>,
+    pub eta_ns: Option<u64>,
+    pub started_ns: Option<u64>,
+    pub has_patch: bool,
+    pub tests_passing: Option<u32>,
+    pub tests_failing: Option<u32>,
+    pub tests_total: Option<u32>,
 }
 
 /// Full board snapshot returned for a `board` request. Read-only — no
@@ -966,6 +979,16 @@ pub(crate) fn assemble_gui_board(
             title: t.title,
             hemisphere: t.hemisphere.as_str().to_string(),
             status: t.status.as_str().to_string(),
+            // I10 — pull rich fields from the already-loaded KanbanTask row
+            task_type: t.task_type,
+            worker: t.worker,
+            parent_task_id: t.parent_task_id.map(|p| p.raw()),
+            eta_ns: t.eta_ns,
+            started_ns: t.started_ns,
+            has_patch: t.patch_path.is_some(),
+            tests_passing: t.test_summary.as_ref().map(|ts| ts.passing),
+            tests_failing: t.test_summary.as_ref().map(|ts| ts.failing),
+            tests_total: t.test_summary.as_ref().map(|ts| ts.total),
         })
         .collect();
     // Feed is best-effort: a WAL-scan failure degrades to an empty feed

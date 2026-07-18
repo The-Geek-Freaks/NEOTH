@@ -264,6 +264,11 @@ component AgentCard inherits Card {
 // ── AgentsView ────────────────────────────────────────────────────────────────
 
 export component AgentsView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
     // Structured model — Rust populates this from the parsed probe JSON.
     in property <[AgentRow]> agents: [];
     // True while a refresh probe is in flight.

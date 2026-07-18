@@ -138,6 +138,10 @@ export struct GraphEdge {
 /// colour; community mod 4 drives border tint. Hover shows a floating glass
 /// label chip; click selects the node and fires node-selected(id).
 export component MemoryGraphView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
 
     // ── public API ───────────────────────────────────────────────────────────
 

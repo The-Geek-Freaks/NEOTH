@@ -14,7 +14,7 @@
 // Note: jobs.yaml has NO hot-reload; changes take effect on next daemon restart.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox, EmptyState, TooltipArea } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox, EmptyState, TooltipArea, ConfirmDialog } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire struct ───────────────────────────────────────────────────────────────
@@ -137,6 +137,8 @@ component CronJobCard inherits Rectangle {
                 label: "Remove";
                 size: "sm";
                 primary: false;
+                // Destructive — deletes the job from jobs.yaml; the view
+                // hosts the confirm gate.
                 clicked => { root.remove-clicked(job.id); }
             }
         }
@@ -170,6 +172,8 @@ export component CronView inherits Rectangle {
     callback cron-run(string);          // id
     callback cron-toggle(string, bool); // id, new_enabled
     callback cron-remove(string);       // id
+    // Job id awaiting remove confirmation; "" = no dialog.
+    property <string> remove-confirm-id: "";
 
     background: transparent;
 
@@ -360,12 +364,26 @@ export component CronView inherits Rectangle {
                     daemon-live: root.daemon-live;
                     run-clicked(id) => { root.cron-run(id); }
                     toggle-clicked(id, en) => { root.cron-toggle(id, en); }
-                    remove-clicked(id) => { root.cron-remove(id); }
+                    remove-clicked(id) => { root.remove-confirm-id = id; }
                 }
 
                 // ── FOOTER ───────────────────────────────────────────────────
                 RefreshFooter { ts: root.cron-refreshed-at; }
             }
         }
+    }
+
+    // ── Remove-job confirm gate (SAFE-GAPS HIGH) ──────────────────────
+    if root.remove-confirm-id != "": ConfirmDialog {
+        width: 100%; height: 100%;
+        title: "Remove scheduled job?";
+        body: "Deletes " + root.remove-confirm-id + " from jobs.yaml. This cannot be undone.";
+        confirm-label: "Remove";
+        danger: true;
+        confirmed => {
+            root.cron-remove(root.remove-confirm-id);
+            root.remove-confirm-id = "";
+        }
+        cancelled => { root.remove-confirm-id = ""; }
     }
 }

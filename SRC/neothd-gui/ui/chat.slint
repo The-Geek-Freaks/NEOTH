@@ -50,7 +50,7 @@
 
 import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, Led } from "components.slint";
+import { NeothButton, Card, Led, ConfirmDialog } from "components.slint";
 
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
@@ -173,7 +173,13 @@ component ChatBubble inherits Rectangle {
                 spacing: Theme.space-tight;
 
                 body := Text {
-                    text: root.message.text + (root.message.streaming ? " ▋" : "");
+                    // Streaming caret blinks ▋↔▏ (block-element glyphs share
+                    // one advance width — no reflow jitter). Static ▋ when
+                    // motion is off (Theme.animation-mode == 0).
+                    text: root.message.text + (root.message.streaming
+                        ? (Theme.animation-mode == 0 || mod(animation-tick(), 1060ms) < 530ms
+                            ? " ▋" : " ▏")
+                        : "");
                     font-family: Theme.font-display;
                     font-size: Theme.font-size-body;
                     font-weight: root.message.role == "system" ? Theme.weight-light : Theme.weight-regular;
@@ -890,6 +896,11 @@ component Composer inherits Rectangle {
 // Top-level chat layout — left sidebar + main scrollback + bottom composer.
 
 export component ChatView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
     in property <[ChatMessage]> messages: [];
     in-out property <string> composer-draft: "";
     in property <bool> send-enabled: true;
@@ -944,6 +955,9 @@ export component ChatView inherits Rectangle {
     callback message-copy(int);
     callback message-retry(int);
     callback message-delete(int);
+    /// Index awaiting delete confirmation; -1 = no dialog. The bubble's
+    /// delete action arms this instead of firing message-delete directly.
+    property <int> delete-confirm-idx: -1;
     /// FAB tapped — Rust should reset `unseen-count` to 0.
     callback scroll-to-bottom-clicked();
     /// Empty state starter chip tapped — fire the prompt as if the operator
@@ -1416,7 +1430,9 @@ export component ChatView inherits Rectangle {
                             bubble-max-width: 560px;
                             copy-clicked => { root.message-copy(idx); }
                             retry-clicked => { root.message-retry(idx); }
-                            delete-clicked => { root.message-delete(idx); }
+                            // Destructive — route through the confirm gate
+                            // (single mis-click must not destroy a message).
+                            delete-clicked => { root.delete-confirm-idx = idx; }
                             code-copy => { root.code-copy(idx); }
                         }
                     }
@@ -1568,5 +1584,20 @@ export component ChatView inherits Rectangle {
                 stop-stream-clicked => { root.stop-stream-clicked(); }
             }
         }
+    }
+
+    // ── Delete-message confirm gate (SAFE-GAPS HIGH) ──────────────────
+    // Mounted last so it scrims the whole chat surface.
+    if root.delete-confirm-idx >= 0: ConfirmDialog {
+        width: 100%; height: 100%;
+        title: "Delete message?";
+        body: "Removes it from this session's transcript view. This cannot be undone.";
+        confirm-label: "Delete";
+        danger: true;
+        confirmed => {
+            root.message-delete(root.delete-confirm-idx);
+            root.delete-confirm-idx = -1;
+        }
+        cancelled => { root.delete-confirm-idx = -1; }
     }
 }

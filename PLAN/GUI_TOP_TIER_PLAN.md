@@ -247,19 +247,23 @@ Buddy lebendig — Restausbau (GOLD-R4-06):
       0xD9/0xDB/0xF2→Secured, 0xF0→QuotaBreached (neue Variante, mood
       "problem"). Provider-Hot-Lane 0x20..0x23 bewusst NICHT subscribed.
       Test `every_followed_type_maps` pinnt Subscription⊆Mapping.
-- [ ] I8 Idle-Variety (Pet-UX-Research): 5+ zufällig gecycelte Idle-Micro-Behaviors
-      (blink, look-around, yawn, einschlafen nach Lang-Idle, aufwachen+grüßen bei
-      Rückkehr); Event-Reaktionen: Task-Done=Celebration, Error=Concerned.
-- [ ] I9 SAFE_GAPS HIGH: 6 Mood-Overlays ohne Entrance-Fade (buddy.slint:352),
-      Caption-Chip Hard-Swap statt Crossfade (buddy.slint:471), Orb ohne
-      Keyboard/Focus-Pfad (buddy.slint:461).
+- [x] I8 Idle-Variety (2026-07-18): 20s-Phasen-Zyklus (breathe → look-around
+      ±2.5u → double-blink 1.6s-Subzyklus → yawn/squash x+2%/y-4% → breathe),
+      deterministisch aus animation-tick, amp 0.45 bei mode 1, komplett statisch
+      bei mode 0. Einschlafen/Celebration weiter über Mood-Bus (I7).
+- [x] I9 (2026-07-18): working/analyzing-Overlay-Fade nachgezogen (Rest war
+      schon gefadet — VERIFIED-DONE), Caption-Crossfade VERIFIED-DONE, Orb hat
+      jetzt FocusScope (Enter/Space=click, Menu=ctx) + zirkulären Fokus-Ring
+      in dock-hue.
 
 Kanban TOP (Backend-Felder existieren, GUI rendert sie nicht):
-- [ ] I10 Card-Enrichment: `test_summary` Badge ({passing}/{total}, rot bei failing),
-      `task_type`-Chip (ui/store/tests/…), `worker`-Chip, ETA aus `eta_ns`,
-      `parent_task_id`-Hierarchie (Indent/Link), Patch-Indikator bei `patch_path`.
-- [ ] I11 Kanban-Summary-Bar über dem Board (proportionale Spalten-Verteilung,
-      Hover = exakte Counts) — Linear/Trello-Pattern.
+- [x] I10 (2026-07-18): KanbanTaskRow +7 Felder (type-chip/worker/tests/
+      tests-failing/eta/parent-ref/has-patch), Chip-Zeile auf der Karte, warm-
+      UND cold-path identisch befüllt (GuiBoardTask +9 serde-default-Felder —
+      wire-kompatibel mit alten Daemons). eta_ns = DURATION ab started_ns
+      (store.rs-Test belegt), Helper format_eta_at clock-injectable, 13 Tests.
+- [x] I11 (2026-07-18): proportionale Summary-Bar (14px, horizontal-stretch je
+      Spalten-Count, Spalten-Akzentfarben, versteckt bei leerem Board).
 - [ ] I12 = H13 Space-Peek auf Karten (Detail-Overlay ohne Navigation, Esc schließt).
 
 Parity-Lücken (aus 134-Verb-Audit):
@@ -273,16 +277,16 @@ Parity-Lücken (aus 134-Verb-Audit):
       Reibung, aber R4-07-Territorium → mit R4-07-Welle bündeln.
 
 Homogenität (UX-Research "aus einem Guss"-Checkliste):
-- [ ] I16 SAFE_GAPS-HIGH-Sweep: ConfirmDialog vor ChatBubble-Delete (chat.slint:494),
-      CronJobCard-Remove (cron.slint:128), Mesh Prefer-A/B (mesh.slint:611),
-      SelfImprove-Rollback (selfimprove.slint:92) = G5-Rollout; animierter
-      Streaming-Cursor statt statischem ▋ (chat.slint:184); CommandPalette
-      Keyboard-Legend-Footer + ↵-Chip (components.slint:1289/1274); StatusFooter
-      Font-Token-Audit (app_shell.slint:374); EntranceFade für chat/loop/
-      agents_view/memory_graph/tabs (fehlen als einzige).
-- [ ] I17 Toast-Format-Vertrag: `[Operation] failed · [Grund] · [Aktion]` statt
-      Generik; max 3 gestackt; Countdown-Ring. Undo-Toast nach Agent-Aktionen
-      (CLI `undo` existiert, L229) mit 5s-Fenster.
+- [x] I16 (2026-07-18): ConfirmDialog ×4 (Chat-Delete idx-armed, Cron-Remove,
+      Mesh Prefer-A/B mit Seiten-Label, SelfImprove-Rollback); Streaming-Caret
+      blinkt ▋↔▏ (Block-Glyphen = gleiche Advance-Width, kein Reflow; statisch
+      bei mode 0); Palette-Legend-Footer "↑↓ ↵ esc" (↵-Chip war schon da);
+      app_shell Font-Token-Sweep (7 Literale → 2xs/xl); EntranceFade-Kontrakt
+      inline auf ChatView/AgentsView/MemoryGraphView/LoopPanel/Resources/
+      Probe/DoctorView.
+- [~] I17 Toast: Countdown-Hairline (drain über duration-toast-life, led-Farbe,
+      mode-0-safe) ✅ 2026-07-18. **Residual:** Format-Vertrag der Rust-seitigen
+      push_toast-Texte, max-3-Stack, Undo-Toast (`neoth undo`).
 - [ ] I18 Focus-Ring-Standard (2px accent, 2px offset) app-weit = D3-Konkretisierung;
       Empty-State-Familie vereinheitlichen (loop/dreaming/n8n/calendar inline-Texte
       → EmptyState-Komponente).
