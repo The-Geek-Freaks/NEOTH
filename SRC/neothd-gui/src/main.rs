@@ -4046,8 +4046,8 @@ fn main() -> Result<()> {
         });
     });
 
-    // L93 — add a ground-truth statement (`neoth groundtruth add`), then refresh
-    // the list. Non-destructive; status-checked so a failure shows an error toast.
+    // L93 — add a ground-truth statement through an exact, instance-bound
+    // receipt, then refresh the read-only list.
     let weak_gt_add = window.as_weak();
     window.on_gt_add_clicked(move |statement| {
         let stmt = statement.to_string();
@@ -4056,76 +4056,39 @@ fn main() -> Result<()> {
         }
         let weak = weak_gt_add.clone();
         std::thread::spawn(move || {
-            let added = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("groundtruth")
-                    .arg("add")
-                    .arg(stmt.trim())
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth add spawn failed"))
-                    .ok()
+            let statement = stmt.trim().to_string();
+            let expected_path = default_neoth_home().join("views.db");
+            let added = run_neothd_json_action::<gui_action::GroundtruthAddAck>(
+                &["groundtruth", "add", &statement],
+                "Ground-truth add",
+            )
+            .and_then(|acknowledgement| {
+                acknowledgement.verify(&statement, "global", &expected_path)?;
+                Ok(acknowledgement.id)
             });
             let (kind, body): (&str, String) = match added {
-                Some(o) if o.status.success() => {
-                    ("success", "Ground-truth statement added.".to_string())
+                Ok(id) => ("success", format!("Ground-truth row {id} added.")),
+                Err(error) => {
+                    tracing::warn!(error = %error, "groundtruth add failed");
+                    ("error", error)
                 }
-                Some(o) => {
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    let msg: String = err.trim().chars().take(160).collect();
-                    (
-                        "error",
-                        if msg.is_empty() {
-                            "groundtruth add exited non-zero".to_string()
-                        } else {
-                            msg
-                        },
-                    )
-                }
-                None => (
-                    "error",
-                    "neothd binary not on PATH — cannot add ground-truth fact.".to_string(),
-                ),
             };
             push_toast(&weak, kind, "Ground-truth add", &body);
-            // Refresh the list so the new fact (or unchanged state) is reflected.
-            let refreshed = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("groundtruth")
-                    .arg("list")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth list refresh spawn failed"))
-                    .ok()
-            });
-            if let Some(o) = refreshed {
-                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                let e = String::from_utf8_lossy(&o.stderr);
-                if !e.trim().is_empty() {
-                    s.push('\n');
-                    s.push_str(&e);
+            let output = run_neothd_probe(&["groundtruth", "list", "--output", "json"]);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_gt_output(output.into());
+                    w.set_gt_running(false);
                 }
-                let output = if s.trim().is_empty() {
-                    "Ground-truth store is empty.".to_string()
-                } else {
-                    s
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_gt_output(output.into());
-                        w.set_gt_running(false);
-                    }
-                });
-            }
+            });
         });
     });
 
     // L93 — revoke a ground-truth row by id (`neoth groundtruth revoke <id>`),
     // then refresh. Destructive but audit-preserving (row stays in the table for
     // audit, just no longer gates recall/council). GUI gates this behind a
-    // ConfirmDialog; here we status-check and refresh.
+    // ConfirmDialog; the callback still requires a row- and instance-bound
+    // acknowledgement before reporting success.
     let weak_gt_revoke = window.as_weak();
     window.on_gt_revoke_clicked(move |id| {
         let row = id.to_string();
@@ -4134,68 +4097,31 @@ fn main() -> Result<()> {
         }
         let weak = weak_gt_revoke.clone();
         std::thread::spawn(move || {
-            let revoked = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("groundtruth")
-                    .arg("revoke")
-                    .arg(row.trim())
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth revoke spawn failed"))
-                    .ok()
+            let row = row.trim().to_string();
+            let expected_path = default_neoth_home().join("views.db");
+            let revoked = run_neothd_json_action::<gui_action::GroundtruthRevokeAck>(
+                &["groundtruth", "revoke", &row],
+                "Ground-truth revoke",
+            )
+            .and_then(|acknowledgement| {
+                acknowledgement.verify(&row, &expected_path)?;
+                Ok(acknowledgement.revoked)
             });
             let (kind, body): (&str, String) = match revoked {
-                Some(o) if o.status.success() => {
-                    ("success", format!("Ground-truth row {row} revoked."))
+                Ok(id) => ("success", format!("Ground-truth row {id} revoked.")),
+                Err(error) => {
+                    tracing::warn!(error = %error, "groundtruth revoke failed");
+                    ("error", error)
                 }
-                Some(o) => {
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    let msg: String = err.trim().chars().take(160).collect();
-                    (
-                        "error",
-                        if msg.is_empty() {
-                            "groundtruth revoke exited non-zero".to_string()
-                        } else {
-                            msg
-                        },
-                    )
-                }
-                None => (
-                    "error",
-                    "neothd binary not on PATH — cannot revoke ground-truth row.".to_string(),
-                ),
             };
             push_toast(&weak, kind, "Ground-truth revoke", &body);
-            let refreshed = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("groundtruth")
-                    .arg("list")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "groundtruth list refresh spawn failed"))
-                    .ok()
-            });
-            if let Some(o) = refreshed {
-                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                let e = String::from_utf8_lossy(&o.stderr);
-                if !e.trim().is_empty() {
-                    s.push('\n');
-                    s.push_str(&e);
+            let output = run_neothd_probe(&["groundtruth", "list", "--output", "json"]);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_gt_output(output.into());
+                    w.set_gt_running(false);
                 }
-                let output = if s.trim().is_empty() {
-                    "Ground-truth store is empty.".to_string()
-                } else {
-                    s
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_gt_output(output.into());
-                        w.set_gt_running(false);
-                    }
-                });
-            }
+            });
         });
     });
 
@@ -4362,7 +4288,8 @@ fn main() -> Result<()> {
     });
 
     // R4-05 — set a per-provider daily quota cap (`neoth quota set-cap <provider>
-    // <cap>`), then refresh status. Non-destructive (reversible); status-checked.
+    // <cap>`), then refresh status. The typed receipt binds provider, cap and
+    // authoritative instance path before the GUI reports success.
     let weak_quota_setcap = window.as_weak();
     window.on_quota_setcap_clicked(move |provider, cap| {
         let prov = provider.to_string();
@@ -4372,71 +4299,35 @@ fn main() -> Result<()> {
         }
         let weak = weak_quota_setcap.clone();
         std::thread::spawn(move || {
-            let set = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("quota")
-                    .arg("set-cap")
-                    .arg(prov.trim())
-                    .arg(cap_s.trim())
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "quota set-cap spawn failed"))
-                    .ok()
+            let provider = prov.trim().to_string();
+            let cap = cap_s.trim().to_string();
+            let expected_path = default_neoth_home().join("quota.json");
+            let set = run_neothd_json_action::<gui_action::QuotaSetCapAck>(
+                &["quota", "set-cap", &provider, &cap],
+                "Quota set-cap",
+            )
+            .and_then(|acknowledgement| {
+                acknowledgement.verify(&provider, &cap, &expected_path)?;
+                Ok(format!(
+                    "Quota cap set for {}: {}.",
+                    acknowledgement.provider, acknowledgement.estimated_daily_cap
+                ))
             });
             let (kind, body): (&str, String) = match set {
-                Some(o) if o.status.success() => {
-                    ("success", format!("Quota cap set for {prov}: {cap_s}."))
+                Ok(message) => ("success", message),
+                Err(error) => {
+                    tracing::warn!(error = %error, "quota set-cap failed");
+                    ("error", error)
                 }
-                Some(o) => {
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    let msg: String = err.trim().chars().take(160).collect();
-                    (
-                        "error",
-                        if msg.is_empty() {
-                            "quota set-cap exited non-zero (check provider name + numeric cap)"
-                                .to_string()
-                        } else {
-                            msg
-                        },
-                    )
-                }
-                None => (
-                    "error",
-                    "neothd unavailable (not on PATH, or failed to spawn — see logs) — cannot set quota cap.".to_string(),
-                ),
             };
             push_toast(&weak, kind, "Quota set-cap", &body);
-            // Refresh status so the new cap is reflected.
-            let refreshed = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("quota")
-                    .arg("status")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "quota status refresh spawn failed"))
-                    .ok()
-            });
-            if let Some(o) = refreshed {
-                let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                let e = String::from_utf8_lossy(&o.stderr);
-                if !e.trim().is_empty() {
-                    s.push('\n');
-                    s.push_str(&e);
+            let output = run_neothd_probe(&["quota", "status", "--output", "json"]);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_quota_output(output.into());
+                    w.set_quota_running(false);
                 }
-                let output = if s.trim().is_empty() {
-                    "no provider quota state recorded yet.".to_string()
-                } else {
-                    s
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(w) = weak.upgrade() {
-                        w.set_quota_output(output.into());
-                        w.set_quota_running(false);
-                    }
-                });
-            }
+            });
         });
     });
 

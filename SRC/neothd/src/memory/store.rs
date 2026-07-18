@@ -79,13 +79,13 @@ use rusqlite::Connection;
 ///      the daemon remains the only process that owns either live transport.
 pub const SCHEMA_VERSION: i64 = 33;
 
-/// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
+/// `<NEOTH_HOME>/views.db`, falling back to `~/.neoth/views.db`.
+///
+/// Standalone CLI commands use this path too, so it must share the exact home
+/// resolver used by the daemon/config surfaces instead of silently escaping a
+/// custom instance into the process user's default home.
 pub fn default_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
-        .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(".neoth").join("views.db")
+    crate::config::FreedomConfig::default_neoth_home().join("views.db")
 }
 
 /// Open or create the views database. Applies schema. Sets unix mode 0600
@@ -1467,6 +1467,23 @@ const _: fn() = || {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn default_views_path_honors_neoth_home() {
+        let _env = crate::test_env::lock();
+        let home = tempdir().unwrap();
+        let previous = std::env::var_os("NEOTH_HOME");
+        unsafe { std::env::set_var("NEOTH_HOME", home.path()) };
+
+        let actual = default_path();
+
+        match previous {
+            Some(value) => unsafe { std::env::set_var("NEOTH_HOME", value) },
+            None => unsafe { std::env::remove_var("NEOTH_HOME") },
+        }
+
+        assert_eq!(actual, home.path().join("views.db"));
+    }
 
     #[test]
     fn opens_and_creates_schema() {

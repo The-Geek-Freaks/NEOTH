@@ -155,8 +155,10 @@ pub async fn run_groundtruth(args: GroundtruthArgs) -> Result<()> {
 
     match args.action {
         GroundtruthAction::List { scope, limit } => list(&conn, &scope, limit, args.output),
-        GroundtruthAction::Add { statement, scope } => add(&conn, &statement, &scope, args.output),
-        GroundtruthAction::Revoke { id } => revoke(&conn, id, args.output),
+        GroundtruthAction::Add { statement, scope } => {
+            add(&conn, &db_path, &statement, &scope, args.output)
+        }
+        GroundtruthAction::Revoke { id } => revoke(&conn, &db_path, id, args.output),
         GroundtruthAction::State { id, state } => set_state(&conn, id, &state, args.output),
         GroundtruthAction::Contradictions { detect, resolved } => {
             contradictions(&conn, detect, resolved, args.output).await
@@ -564,6 +566,7 @@ fn list(
 
 fn add(
     conn: &rusqlite::Connection,
+    db_path: &std::path::Path,
     statement: &str,
     scope: &str,
     output: OutputFormat,
@@ -582,7 +585,13 @@ fn add(
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
                 "{}",
-                serde_json::json!({"id": id, "scope": scope, "statement": statement})
+                serde_json::json!({
+                    "operation": "groundtruth.add",
+                    "id": id,
+                    "scope": scope,
+                    "statement": statement.trim(),
+                    "path": db_path,
+                })
             );
         }
         OutputFormat::Table => {
@@ -592,12 +601,24 @@ fn add(
     Ok(())
 }
 
-fn revoke(conn: &rusqlite::Connection, id: i64, output: OutputFormat) -> Result<()> {
+fn revoke(
+    conn: &rusqlite::Connection,
+    db_path: &std::path::Path,
+    id: i64,
+    output: OutputFormat,
+) -> Result<()> {
     let now_ns = crate::time::now_unix_ns_i64();
     let modified = groundtruth::revoke(conn, id, now_ns)?;
     match (modified, output) {
         (true, OutputFormat::Json | OutputFormat::Jsonl) => {
-            println!("{}", serde_json::json!({"revoked": id}));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "operation": "groundtruth.revoke",
+                    "revoked": id,
+                    "path": db_path,
+                })
+            );
         }
         (true, OutputFormat::Table) => println!("revoked ground-truth #{id}"),
         (false, _) => {

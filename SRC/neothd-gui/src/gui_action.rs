@@ -40,6 +40,84 @@ impl McpToolCallAck {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct GroundtruthAddAck {
+    pub operation: String,
+    pub id: i64,
+    pub scope: String,
+    pub statement: String,
+    pub path: String,
+}
+
+impl GroundtruthAddAck {
+    pub fn verify(
+        &self,
+        expected_statement: &str,
+        expected_scope: &str,
+        expected_path: &Path,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "groundtruth.add")?;
+        if self.id <= 0 {
+            return Err("ground-truth acknowledgement is missing its row id".to_string());
+        }
+        if self.statement != expected_statement {
+            return Err(
+                "ground-truth acknowledgement does not match the submitted statement".to_string(),
+            );
+        }
+        require_id(&self.scope, expected_scope)?;
+        require_exact_path(&self.path, expected_path)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroundtruthRevokeAck {
+    pub operation: String,
+    pub revoked: i64,
+    pub path: String,
+}
+
+impl GroundtruthRevokeAck {
+    pub fn verify(&self, expected_id: &str, expected_path: &Path) -> Result<(), String> {
+        require_action(&self.operation, "groundtruth.revoke")?;
+        require_task_id(self.revoked, expected_id)?;
+        require_exact_path(&self.path, expected_path)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct QuotaSetCapAck {
+    pub operation: String,
+    pub provider: String,
+    pub estimated_daily_cap: u32,
+    pub path: String,
+}
+
+impl QuotaSetCapAck {
+    pub fn verify(
+        &self,
+        expected_provider: &str,
+        expected_cap: &str,
+        expected_path: &Path,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "quota.set-cap")?;
+        require_id(&self.provider, expected_provider)?;
+        let cap = expected_cap.parse::<u32>().map_err(|_| {
+            format!("expected quota cap `{expected_cap}` is not an unsigned integer")
+        })?;
+        if self.estimated_daily_cap != cap {
+            return Err(format!(
+                "acknowledged quota cap `{}`, expected `{cap}`",
+                self.estimated_daily_cap
+            ));
+        }
+        require_exact_path(&self.path, expected_path)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)] // Keep the complete status wire shape fail-closed as it evolves.
 pub struct ClusterStatusAck {
     pub mode: String,
@@ -244,7 +322,7 @@ impl ClusterConfigureAck {
         expected_path: &Path,
     ) -> Result<(), String> {
         require_action(&self.operation, "cluster.configure")?;
-        require_config_path(&self.path, expected_path)?;
+        require_exact_path(&self.path, expected_path)?;
         if self.reload_requested == self.reload_error.is_some() {
             return Err(
                 "cluster acknowledgement has inconsistent reload_requested/reload_error fields"
@@ -505,9 +583,9 @@ fn require_task_id(actual: i64, expected: &str) -> Result<(), String> {
     }
 }
 
-fn require_config_path(actual: &str, expected_path: &Path) -> Result<(), String> {
+fn require_exact_path(actual: &str, expected_path: &Path) -> Result<(), String> {
     if actual.trim().is_empty() {
-        return Err("acknowledgement is missing its config path".to_string());
+        return Err("acknowledgement is missing its target path".to_string());
     }
     let actual = std::path::absolute(actual).map_err(|error| {
         format!("could not normalize acknowledged config path `{actual}`: {error}")
@@ -528,7 +606,7 @@ fn require_config_path(actual: &str, expected_path: &Path) -> Result<(), String>
         Ok(())
     } else {
         Err(format!(
-            "acknowledged config path `{}`, expected `{}`",
+            "acknowledged target path `{}`, expected `{}`",
             actual.display(),
             expected.display()
         ))
@@ -572,7 +650,7 @@ impl PermissionMutationAck {
     }
 
     fn require_path(&self, expected_path: &Path) -> Result<(), String> {
-        require_config_path(&self.path, expected_path)
+        require_exact_path(&self.path, expected_path)
     }
 }
 
@@ -1396,6 +1474,90 @@ mod tests {
                 !callback.contains(unchecked),
                 "MCP callback regressed to unchecked boundary: {unchecked}"
             );
+        }
+    }
+
+    #[test]
+    fn groundtruth_and_quota_receipts_bind_submitted_effect_and_instance() {
+        let home = tempfile::tempdir().unwrap();
+        let views = home.path().join("views.db");
+        let quota = home.path().join("quota.json");
+        let views_json = serde_json::to_string(&views).unwrap();
+        let quota_json = serde_json::to_string(&quota).unwrap();
+
+        let add: GroundtruthAddAck = serde_json::from_str(&format!(
+            r#"{{"operation":"groundtruth.add","id":17,"scope":"global","statement":"operator fact","path":{views_json}}}"#
+        ))
+        .unwrap();
+        add.verify("operator fact", "global", &views).unwrap();
+        assert!(add.verify("different fact", "global", &views).is_err());
+        assert!(add.verify("operator fact", "host:other", &views).is_err());
+
+        let revoke: GroundtruthRevokeAck = serde_json::from_str(&format!(
+            r#"{{"operation":"groundtruth.revoke","revoked":17,"path":{views_json}}}"#
+        ))
+        .unwrap();
+        revoke.verify("17", &views).unwrap();
+        assert!(revoke.verify("18", &views).is_err());
+
+        let set_cap: QuotaSetCapAck = serde_json::from_str(&format!(
+            r#"{{"operation":"quota.set-cap","provider":"openai_api","estimated_daily_cap":200,"path":{quota_json}}}"#
+        ))
+        .unwrap();
+        set_cap.verify("openai_api", "200", &quota).unwrap();
+        assert!(set_cap.verify("gemini_api", "200", &quota).is_err());
+        assert!(set_cap.verify("openai_api", "201", &quota).is_err());
+        assert!(
+            set_cap
+                .verify("openai_api", "200", &home.path().join("other.json"))
+                .is_err()
+        );
+
+        assert!(
+            serde_json::from_str::<GroundtruthAddAck>(&format!(
+                r#"{{"operation":"groundtruth.add","id":17,"scope":"global","statement":"operator fact","path":{views_json},"unexpected":true}}"#
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn groundtruth_and_quota_gui_mutations_require_typed_receipts() {
+        let source = include_str!("main.rs");
+        let groundtruth_start = source
+            .find("L93 — add a ground-truth statement")
+            .expect("groundtruth mutation marker");
+        let groundtruth_end = source[groundtruth_start..]
+            .find("Research P0 — catalog probe")
+            .map(|offset| groundtruth_start + offset)
+            .expect("groundtruth mutation end marker");
+        let groundtruth = &source[groundtruth_start..groundtruth_end];
+        for receipt in ["GroundtruthAddAck", "GroundtruthRevokeAck"] {
+            assert!(
+                groundtruth.contains(&format!("run_neothd_json_action::<gui_action::{receipt}>")),
+                "missing typed groundtruth receipt {receipt}"
+            );
+        }
+        assert!(groundtruth.matches("acknowledgement.verify(").count() >= 2);
+
+        let quota_start = source
+            .find("R4-05 — set a per-provider daily quota cap")
+            .expect("quota mutation marker");
+        let quota_end = source[quota_start..]
+            .find("Research P0 — tweaks probe")
+            .map(|offset| quota_start + offset)
+            .expect("quota mutation end marker");
+        let quota = &source[quota_start..quota_end];
+        assert!(quota.contains("run_neothd_json_action::<gui_action::QuotaSetCapAck>"));
+        assert!(quota.contains("acknowledgement.verify(&provider, &cap, &expected_path)?"));
+
+        for (name, callback) in [("groundtruth", groundtruth), ("quota", quota)] {
+            for unchecked in ["spawn_neothd_plain", ".output()", "status.success()"] {
+                assert!(
+                    !callback.contains(unchecked),
+                    "{name} mutation regressed to unchecked boundary: {unchecked}"
+                );
+            }
         }
     }
 

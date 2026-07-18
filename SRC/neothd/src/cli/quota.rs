@@ -163,8 +163,10 @@ fn run_set_cap(
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
+                    "operation": "quota.set-cap",
                     "provider": provider,
                     "estimated_daily_cap": cap,
+                    "path": path,
                 }))?
             );
         }
