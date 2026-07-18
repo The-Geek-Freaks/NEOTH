@@ -1047,10 +1047,15 @@ impl MemoryForgetAck {
         if !audit_path
             .file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("memory-forget-") && name.ends_with(".wal"))
+            .is_some_and(valid_memory_forget_segment_name)
         {
             return Err("memory forget audit receipt has an unexpected segment name".into());
         }
+        require_regular_file_sha256(
+            audit_path,
+            &self.audit.segment_sha256,
+            "memory forget audit segment",
+        )?;
         if self.communication_profile.subjects_deleted != 0
             || self.communication_profile.topic_addressable
             || self.communication_profile.reason
@@ -1175,16 +1180,30 @@ impl ClusterPeerRevokeAck {
         {
             return Err("cluster revoke acknowledgement has inconsistent mutation state".into());
         }
-        require_exact_path(
-            &self.post_state.registry_path,
-            &expected_home.join("cluster.yaml"),
-        )?;
+        let registry_path = expected_home.join("cluster.yaml");
+        require_exact_path(&self.post_state.registry_path, &registry_path)?;
         match (
             self.post_state.registry_file_present,
             self.post_state.registry_sha256.as_deref(),
         ) {
-            (true, Some(hash)) if is_sha256(hash) => {}
-            (false, None) if self.noop => {}
+            (true, Some(hash)) if is_sha256(hash) => {
+                require_regular_file_sha256(&registry_path, hash, "cluster registry")?;
+            }
+            (false, None) if self.noop => match std::fs::symlink_metadata(&registry_path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => {
+                    return Err(
+                        "cluster revoke receipt claims the registry is absent, but it exists"
+                            .into(),
+                    );
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "could not verify absent cluster registry `{}`: {error}",
+                        registry_path.display()
+                    ));
+                }
+            },
             _ => return Err("cluster revoke acknowledgement has invalid registry evidence".into()),
         }
         if self.removed {
@@ -1235,9 +1254,7 @@ impl ClusterPeerRevokeAck {
             if !sidecar
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| {
-                    name.starts_with("cluster_peer_revoked_") && name.ends_with(".json")
-                })
+                .is_some_and(valid_cluster_revoke_sidecar_name)
             {
                 return Err("cluster revoke audit sidecar name is invalid".into());
             }
@@ -1796,6 +1813,76 @@ fn is_sha256(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_uuid_v7(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && [8, 13, 18, 23]
+            .into_iter()
+            .all(|index| bytes[index] == b'-')
+        && bytes[14] == b'7'
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            [8, 13, 18, 23].contains(&index)
+                || byte.is_ascii_digit()
+                || (b'a'..=b'f').contains(byte)
+        })
+}
+
+fn valid_memory_forget_segment_name(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".wal") else {
+        return false;
+    };
+    let Some((writer_id, sequence)) = stem.split_once("-memory-forget-") else {
+        return false;
+    };
+    valid_uuid_v7(writer_id) && sequence == "000001"
+}
+
+fn valid_cluster_revoke_sidecar_name(name: &str) -> bool {
+    let Some(stem) = name
+        .strip_prefix("cluster_peer_revoked_")
+        .and_then(|value| value.strip_suffix(".json"))
+    else {
+        return false;
+    };
+    let mut parts = stem.split('_');
+    let (Some(seconds), Some(nanos), Some(writer_id), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return false;
+    };
+    !seconds.is_empty()
+        && seconds.bytes().all(|byte| byte.is_ascii_digit())
+        && nanos.len() == 38
+        && nanos.bytes().all(|byte| byte.is_ascii_digit())
+        && writer_id.len() == 32
+        && writer_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn require_regular_file_sha256(path: &Path, expected: &str, label: &str) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("could not inspect {label} `{}`: {error}", path.display()))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!(
+            "{label} `{}` is not a regular non-symlink file",
+            path.display()
+        ));
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("could not read {label} `{}`: {error}", path.display()))?;
+    use sha2::Digest as _;
+    let actual = hex::encode(sha2::Sha256::digest(bytes));
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} `{}` no longer matches its acknowledgement digest",
+            path.display()
+        ))
+    }
 }
 
 fn require_exact_path(actual: &str, expected_path: &Path) -> Result<(), String> {
@@ -3412,9 +3499,16 @@ mod tests {
 
     #[test]
     fn sensitive_receipts_bind_forget_and_revoke_to_durable_evidence() {
+        use sha2::Digest as _;
+
         let home = tempfile::tempdir().unwrap();
         let views = home.path().join("views.db");
         let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let audit_path = wal.join("01890f9e-7b34-7cc0-8000-000000000001-memory-forget-000001.wal");
+        let audit_bytes = b"durable forget audit";
+        std::fs::write(&audit_path, audit_bytes).unwrap();
+        let audit_sha256 = hex::encode(sha2::Sha256::digest(audit_bytes));
         let forget_value = serde_json::json!({
             "operation": "memory.forget",
             "confirmed": true,
@@ -3447,8 +3541,8 @@ mod tests {
             },
             "audit": {
                 "event_type": "TOMBSTONE_REQUESTED",
-                "segment_path": wal.join("memory-forget-1700000000.wal"),
-                "segment_sha256": "ab".repeat(32),
+                "segment_path": audit_path.clone(),
+                "segment_sha256": audit_sha256,
                 "persisted": true
             },
             "communication_profile": {
@@ -3462,11 +3556,22 @@ mod tests {
         forget.verify("AcmeCorp", &views, &wal).unwrap();
         assert_eq!(forget.deleted_total().unwrap(), (1..=15).sum());
         assert!(forget.verify("Other", &views, &wal).is_err());
+        std::fs::write(&audit_path, b"tampered").unwrap();
+        assert!(forget.verify("AcmeCorp", &views, &wal).is_err());
         let mut unknown_forget = forget_value;
         unknown_forget["uncontracted"] = serde_json::json!(true);
         assert!(serde_json::from_value::<MemoryForgetAck>(unknown_forget).is_err());
 
         let canonical = "cd".repeat(32);
+        let registry_path = home.path().join("cluster.yaml");
+        let registry_bytes = b"peers: []\n";
+        std::fs::write(&registry_path, registry_bytes).unwrap();
+        let registry_sha256 = hex::encode(sha2::Sha256::digest(registry_bytes));
+        let sidecar_name = format!(
+            "cluster_peer_revoked_1700000000_{:038}_{}.json",
+            1,
+            "ab".repeat(16)
+        );
         let revoke_value = serde_json::json!({
             "operation": "cluster.peer.revoke",
             "requested_peer": "cdcd",
@@ -3474,9 +3579,9 @@ mod tests {
             "removed": true,
             "noop": false,
             "post_state": {
-                "registry_path": home.path().join("cluster.yaml"),
+                "registry_path": registry_path.clone(),
                 "registry_file_present": true,
-                "registry_sha256": "ef".repeat(32),
+                "registry_sha256": registry_sha256,
                 "peer_count": 1,
                 "canonical_peer_absent": true,
                 "verified": true
@@ -3485,12 +3590,15 @@ mod tests {
                 "required": true,
                 "state": "sidecar_committed_for_wal_ingest",
                 "event_type": "CLUSTER_PEER_REVOKED",
-                "sidecar_path": home.path().join("pending_audit/cluster_peer_revoked_1.json"),
+                "sidecar_path": home.path().join("pending_audit").join(sidecar_name),
                 "durable_handoff_persisted": true
             }
         });
         let revoke: ClusterPeerRevokeAck = serde_json::from_value(revoke_value).unwrap();
         revoke.verify("cdcd", home.path()).unwrap();
+        std::fs::write(&registry_path, b"tampered registry").unwrap();
+        assert!(revoke.verify("cdcd", home.path()).is_err());
+        std::fs::write(&registry_path, registry_bytes).unwrap();
 
         let status_value = serde_json::json!({
             "mode": "cluster",

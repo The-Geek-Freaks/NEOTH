@@ -882,6 +882,10 @@ fn communication_profile_topic_forget_metadata() -> serde_json::Value {
     })
 }
 
+fn memory_forget_audit_segment_path(wal_dir: &std::path::Path) -> std::path::PathBuf {
+    crate::wal::writer::unique_standalone_segment_path(wal_dir, "memory-forget")
+}
+
 /// `neoth memory --forget <topic> [--confirm]` — GDPR cascade-delete.
 ///
 /// Without `--confirm` this is a dry-run that prints what would be
@@ -972,7 +976,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     let now_unix = crate::time::now_unix_i64();
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
     std::fs::create_dir_all(&wal_dir).context("create WAL dir")?;
-    let segment = wal_dir.join(format!("memory-forget-{now_unix}.wal"));
+    let segment = memory_forget_audit_segment_path(&wal_dir);
     let (writer, writer_join) =
         crate::wal::writer::spawn(segment.clone()).context("spawn WAL writer for tombstone")?;
     // `rusqlite::Connection` is Send but not Sync. Move it through the
@@ -1010,6 +1014,26 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     if !sentinel.never_recreate {
         anyhow::bail!("forget anti-resurrection sentinel is not permanent");
     }
+
+    // C-15 physical erasure mutates WAL bytes, including potentially this
+    // request segment. Run it before hashing and rendering the acknowledgement
+    // so the receipt binds the final on-disk segment rather than a stale
+    // pre-redaction digest. Keep the report in the same JSON document: emitting
+    // two adjacent objects violated both the JSON and JSONL contracts.
+    let physical_report = if args.physical {
+        let report = run_physical_redaction(&wal_dir, topic, now_unix).await?;
+        info!(
+            topic = topic,
+            segments_touched = report.segments_touched,
+            frames_redacted = report.frames_redacted,
+            bytes_redacted = report.bytes_redacted,
+            "physical WAL redaction complete"
+        );
+        Some(report)
+    } else {
+        None
+    };
+
     let audit_bytes = std::fs::read(&segment).with_context(|| {
         format!(
             "read committed forget audit segment at {}",
@@ -1080,6 +1104,12 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 "communication_profile".to_owned(),
                 communication_profile_topic_forget_metadata(),
             );
+            if let Some(report) = physical_report.as_ref() {
+                object.insert(
+                    "physical_erasure".to_owned(),
+                    serde_json::to_value(report).context("serialize physical erasure report")?,
+                );
+            }
             match args.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&body)?),
                 OutputFormat::Jsonl => println!("{}", serde_json::to_string(&body)?),
@@ -1133,36 +1163,14 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 "  communication    : 0 subjects deleted (not topic-addressable; erase with `{COMMUNICATION_ERASE_COMMAND}`)"
             );
             println!("  total            : {}", report.total());
-        }
-    }
 
-    // C-15 physical erasure: scan every WAL segment + zero matching
-    // payloads. Off by default — operator opts in via `--physical`.
-    if args.physical {
-        let redact_report = run_physical_redaction(&wal_dir, topic, now_unix).await?;
-        info!(
-            topic = topic,
-            segments_touched = redact_report.segments_touched,
-            frames_redacted = redact_report.frames_redacted,
-            bytes_redacted = redact_report.bytes_redacted,
-            "physical WAL redaction complete"
-        );
-        match args.output {
-            OutputFormat::Json | OutputFormat::Jsonl => {
-                println!("{}", serde_json::to_string_pretty(&redact_report)?);
-            }
-            OutputFormat::Table => {
+            if let Some(redact_report) = physical_report.as_ref() {
                 println!("\n# Physical WAL erasure for topic `{topic}`");
                 println!("  segments scanned : {}", redact_report.segments_touched);
                 println!("  frames redacted  : {}", redact_report.frames_redacted);
                 println!("  bytes zeroed     : {}", redact_report.bytes_redacted);
                 println!("  errors           : {}", redact_report.errors);
-                if physical_erasure_incomplete(&redact_report) {
-                    // GR-008 — do NOT claim success when a segment errored. An
-                    // `errors > 0` means a segment REFUSED redaction (e.g. a
-                    // sealed/compressed v2 segment — GOLD-ARCH-03b) so the data
-                    // could persist, and/or a redaction-marker audit emit failed.
-                    // Either way the GDPR erasure is NOT provably complete.
+                if physical_erasure_incomplete(redact_report) {
                     println!(
                         "  ⚠ INCOMPLETE: {} segment(s) errored — a sealed/compressed \
                          segment may have REFUSED redaction (the data could persist) \
@@ -1180,11 +1188,14 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 }
             }
         }
+    }
+
+    if let Some(redact_report) = physical_report.as_ref() {
         // GR-008 — fail loud: a `--physical` erasure that hit ANY error is not a
         // confirmed GDPR-grade wipe. Return a non-zero exit so an operator (or a
         // script) never mistakes a partial / refused redaction for success. The
         // report above is still printed (stdout) for diagnosis.
-        if physical_erasure_incomplete(&redact_report) {
+        if physical_erasure_incomplete(redact_report) {
             anyhow::bail!(
                 "physical WAL erasure for topic `{topic}` reported {} error(s) — erasure is \
                  INCOMPLETE / unconfirmed (a sealed segment may have refused redaction; see \
@@ -2392,6 +2403,21 @@ mod tests {
             physical_erasure_incomplete(&errored),
             "a refused-redaction error must mark the erasure incomplete"
         );
+    }
+
+    #[test]
+    fn forget_audit_segments_have_collision_resistant_writer_namespaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = memory_forget_audit_segment_path(dir.path());
+        let second = memory_forget_audit_segment_path(dir.path());
+        assert_ne!(
+            first, second,
+            "same-second forgets must never share a WAL path"
+        );
+        assert_eq!(first.parent(), Some(dir.path()));
+        let name = first.file_name().unwrap().to_string_lossy();
+        assert!(name.contains("-memory-forget-"));
+        assert!(name.ends_with("-000001.wal"));
     }
 
     #[tokio::test]

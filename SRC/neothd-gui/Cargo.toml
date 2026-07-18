@@ -46,6 +46,7 @@ tracing.workspace    = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 getrandom = "0.2"
 hex = "0.4"
+sha2 = "0.10"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # H3 — native desktop tray. Linux deliberately uses StatusNotifierItem below

@@ -108,8 +108,12 @@ pub fn write_sidecar(
         created_ts_unix: now,
     };
     let body_bytes = serde_json::to_vec(&body).context("serialise sidecar")?;
-    crate::util::atomic_write::atomic_write_private(&path, &body_bytes)
-        .with_context(|| format!("atomically write {}", path.display()))?;
+    // The UUID namespace makes replacement unnecessary and undesirable: an
+    // existing path must never be silently overwritten. The durable create-new
+    // helper also propagates the parent-directory sync failure, so callers can
+    // truthfully bind `durable_handoff_persisted=true` to this return value.
+    crate::util::atomic_write::write_private_create_new_durable(&path, &body_bytes)
+        .with_context(|| format!("durably create {}", path.display()))?;
     Ok(path)
 }
 

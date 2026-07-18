@@ -1020,51 +1020,26 @@ enum RevokeOutcome {
 /// hostname can never shadow a real key; on no key-match, falls back
 /// to resolving the arg as a recorded hostname (SL-01c).
 fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
-    let key = arg.trim().to_ascii_lowercase();
-    if let Some(peer) = crate::cluster::registry::remove_resolved(home, &key)? {
-        let canonical = peer.pub_key_hex.clone();
-        let audit_sidecar = match emit_revoke_sidecar(home, arg, &canonical) {
-            Ok(path) => path,
-            Err(error) => {
-                crate::cluster::registry::upsert(home, peer).with_context(|| {
-                    format!("{error:#}; additionally failed to roll back peer `{canonical}`")
-                })?;
-                return Err(error.context(format!(
-                    "revoke of peer `{canonical}` was rolled back because its audit handoff failed"
-                )));
-            }
-        };
-        return Ok(RevokeOutcome::ByKey {
-            key: canonical,
+    let Some((peer, matched_by, audit_sidecar)) =
+        crate::cluster::registry::remove_for_revoke_committed(home, arg, |peer| {
+            emit_revoke_sidecar(home, arg, &peer.pub_key_hex)
+        })?
+    else {
+        return Ok(RevokeOutcome::NoMatch);
+    };
+
+    match matched_by {
+        crate::cluster::registry::RevokeMatch::PubKey => Ok(RevokeOutcome::ByKey {
+            key: peer.pub_key_hex,
             audit_sidecar,
-        });
-    }
-    if let Some(resolved) = crate::cluster::registry::find_by_hostname(home, arg.trim())
-        && let Some(peer) = crate::cluster::registry::remove_resolved(home, &resolved.pub_key_hex)?
-    {
-        let audit_sidecar = match emit_revoke_sidecar(home, arg, &peer.pub_key_hex) {
-            Ok(path) => path,
-            Err(error) => {
-                crate::cluster::registry::upsert(home, peer.clone()).with_context(|| {
-                    format!(
-                        "{error:#}; additionally failed to roll back peer `{}`",
-                        peer.pub_key_hex
-                    )
-                })?;
-                return Err(error.context(format!(
-                    "revoke of peer `{}` was rolled back because its audit handoff failed",
-                    peer.pub_key_hex
-                )));
-            }
-        };
-        return Ok(RevokeOutcome::ByHostname {
+        }),
+        crate::cluster::registry::RevokeMatch::Hostname => Ok(RevokeOutcome::ByHostname {
             label: peer.instance_label,
             hostname: arg.trim().to_string(),
             key: peer.pub_key_hex,
             audit_sidecar,
-        });
+        }),
     }
-    Ok(RevokeOutcome::NoMatch)
 }
 
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
@@ -1101,7 +1076,7 @@ fn revoke_post_state(
     home: &std::path::Path,
     canonical_peer: Option<&str>,
 ) -> Result<ClusterPeerRevokePostStateReceipt> {
-    let registry = crate::cluster::registry::load(home)?;
+    let (registry, registry_bytes) = crate::cluster::registry::load_committed_snapshot(home)?;
     let canonical_peer_absent = canonical_peer
         .map(|expected| {
             registry
@@ -1114,14 +1089,10 @@ fn revoke_post_state(
         anyhow::bail!("revoked peer remained present in the durable registry readback");
     }
     let registry_path = crate::cluster::registry::default_path(home);
-    let registry_file_present = registry_path.is_file();
-    let registry_sha256 = if registry_file_present {
-        let bytes = std::fs::read(&registry_path)
-            .with_context(|| format!("read committed registry at {}", registry_path.display()))?;
-        Some(hex::encode(Sha256::digest(&bytes)))
-    } else {
-        None
-    };
+    let registry_file_present = registry_bytes.is_some();
+    let registry_sha256 = registry_bytes
+        .as_deref()
+        .map(|bytes| hex::encode(Sha256::digest(bytes)));
     Ok(ClusterPeerRevokePostStateReceipt {
         registry_path: registry_path.display().to_string(),
         registry_file_present,

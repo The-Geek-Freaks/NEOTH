@@ -211,6 +211,14 @@ pub struct ClusterRegistry {
     pub peers: Vec<PairedPeer>,
 }
 
+/// How an operator-supplied revoke identifier resolved while the registry's
+/// cross-process write lock was held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevokeMatch {
+    PubKey,
+    Hostname,
+}
+
 /// Default path: `<neoth_home>/cluster.yaml`.
 pub fn default_path(home: &Path) -> PathBuf {
     home.join("cluster.yaml")
@@ -230,6 +238,33 @@ pub fn load(home: &Path) -> Result<ClusterRegistry> {
         .with_context(|| format!("parse cluster registry YAML at {}", path.display()))?;
     reg.peers.sort_by(|a, b| a.pub_key_hex.cmp(&b.pub_key_hex));
     Ok(reg)
+}
+
+/// Read one coherent registry snapshot for a mutation acknowledgement.
+///
+/// Unlike [`load`], this takes both writer locks and returns the exact bytes
+/// parsed into the registry value. Callers can therefore bind a digest and
+/// peer count to the same on-disk generation instead of racing a second read.
+pub fn load_committed_snapshot(home: &Path) -> Result<(ClusterRegistry, Option<Vec<u8>>)> {
+    let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
+    let path = default_path(home);
+    let body = match std::fs::read(&path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((ClusterRegistry::default(), None));
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read cluster registry at {}", path.display()));
+        }
+    };
+    let mut registry: ClusterRegistry = serde_yaml::from_slice(&body)
+        .with_context(|| format!("parse cluster registry YAML at {}", path.display()))?;
+    registry
+        .peers
+        .sort_by(|left, right| left.pub_key_hex.cmp(&right.pub_key_hex));
+    Ok((registry, Some(body)))
 }
 
 /// Write the registry atomically and durably with private operator-data
@@ -271,6 +306,9 @@ pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
 /// matches any peer whose `pub_key_hex` starts with it. Errors on
 /// ambiguous match (multiple peers with that prefix).
 pub fn remove_resolved(home: &Path, key_or_prefix: &str) -> Result<Option<PairedPeer>> {
+    if key_or_prefix.trim().is_empty() {
+        anyhow::bail!("peer key prefix must not be empty");
+    }
     let _guard = lock_registry();
     let _file_guard = lock_registry_file(home)?;
     let mut reg = load(home)?;
@@ -289,6 +327,77 @@ pub fn remove_resolved(home: &Path, key_or_prefix: &str) -> Result<Option<Paired
             Ok(Some(removed))
         }
         n => anyhow::bail!("prefix `{key_or_prefix}` matches {n} peers — use a longer prefix"),
+    }
+}
+
+/// Resolve a revoke identifier, durably remove the peer, and run the required
+/// commit hook while both registry locks are still held.
+///
+/// The hook is where the CLI persists the matching audit handoff. If it fails,
+/// the exact pre-mutation registry snapshot is restored before any cooperating
+/// writer can enter. This closes the old remove -> unlock -> audit -> re-lock
+/// rollback window, where a concurrent refresh/confirm could be overwritten by
+/// the stale peer snapshot.
+///
+/// Pub-key (full or unique prefix) resolution has precedence over hostname
+/// resolution, matching the public `cluster revoke` contract. Hostname ties are
+/// deterministic because [`load`] sorts peers by canonical pub key.
+pub fn remove_for_revoke_committed<T, F>(
+    home: &Path,
+    identifier: &str,
+    commit: F,
+) -> Result<Option<(PairedPeer, RevokeMatch, T)>>
+where
+    F: FnOnce(&PairedPeer) -> Result<T>,
+{
+    let identifier = identifier.trim();
+    if identifier.is_empty() {
+        anyhow::bail!("peer key or hostname must not be empty");
+    }
+    let key = identifier.to_ascii_lowercase();
+    let _guard = lock_registry();
+    let _file_guard = lock_registry_file(home)?;
+    let mut registry = load(home)?;
+    let before = registry.clone();
+
+    let key_matches = registry
+        .peers
+        .iter()
+        .enumerate()
+        .filter(|(_, peer)| peer.pub_key_hex.starts_with(&key))
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let (index, matched_by) = match key_matches.as_slice() {
+        [] => match registry
+            .peers
+            .iter()
+            .position(|peer| peer.hostname.eq_ignore_ascii_case(identifier))
+        {
+            Some(index) => (index, RevokeMatch::Hostname),
+            None => return Ok(None),
+        },
+        [index] => (*index, RevokeMatch::PubKey),
+        matches => anyhow::bail!(
+            "prefix `{key}` matches {} peers - use a longer prefix",
+            matches.len()
+        ),
+    };
+
+    let removed = registry.peers.remove(index);
+    save(home, &registry)?;
+    match commit(&removed) {
+        Ok(evidence) => Ok(Some((removed, matched_by, evidence))),
+        Err(commit_error) => {
+            if let Err(rollback_error) = save(home, &before) {
+                return Err(anyhow::anyhow!(
+                    "{commit_error:#}; additionally failed to restore the pre-revoke registry: {rollback_error:#}"
+                ));
+            }
+            Err(commit_error.context(format!(
+                "registry removal of peer `{}` was rolled back before releasing the write lock",
+                removed.pub_key_hex
+            )))
+        }
     }
 }
 
@@ -503,6 +612,60 @@ mod tests {
         let reg = load(dir.path()).unwrap();
         assert_eq!(reg.peers.len(), 1);
         assert_eq!(reg.peers[0].instance_label, "charlie");
+    }
+
+    #[test]
+    fn remove_rejects_empty_prefix_instead_of_matching_every_peer() {
+        let dir = tempdir().unwrap();
+        upsert(dir.path(), sample_peer("ab", "alpha")).unwrap();
+        let error = remove_resolved(dir.path(), "  ").unwrap_err();
+        assert!(error.to_string().contains("must not be empty"));
+        assert_eq!(load(dir.path()).unwrap().peers.len(), 1);
+    }
+
+    #[test]
+    fn committed_revoke_rolls_back_before_concurrent_writer_enters() {
+        let dir = tempdir().unwrap();
+        let original = sample_peer("ab", "original");
+        upsert(dir.path(), original.clone()).unwrap();
+
+        let home = std::sync::Arc::new(dir.path().to_path_buf());
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let mut writer = None;
+        let result = remove_for_revoke_committed(home.as_path(), "ab", |_removed| {
+            let writer_home = home.clone();
+            writer = Some(std::thread::spawn(move || {
+                started_tx.send(()).unwrap();
+                upsert(writer_home.as_path(), sample_peer("cd", "concurrent")).unwrap();
+                done_tx.send(()).unwrap();
+            }));
+            started_rx.recv().unwrap();
+            assert!(
+                done_rx
+                    .recv_timeout(std::time::Duration::from_millis(100))
+                    .is_err(),
+                "concurrent writer must remain blocked until rollback completes"
+            );
+            Err::<(), _>(anyhow::anyhow!("audit handoff failed"))
+        });
+
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("rolled back"));
+        writer.unwrap().join().unwrap();
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap();
+
+        let registry = load(dir.path()).unwrap();
+        assert_eq!(registry.peers.len(), 2);
+        assert!(registry.peers.contains(&original));
+        assert!(
+            registry
+                .peers
+                .iter()
+                .any(|peer| peer.instance_label == "concurrent")
+        );
     }
 
     #[test]
