@@ -637,31 +637,20 @@ pub fn spawn_gossip_tick(
         loop {
             ticker.tick().await;
             let now = now_unix_secs();
-            let due_requests = match durable.due_sync_requests(now) {
+            let connected_peers = peer_streams.connected_peers();
+            let connected_peer_ids: HashSet<String> = connected_peers.iter().cloned().collect();
+            let due_requests = match durable.claim_due_sync_requests(now, &connected_peer_ids) {
                 Ok(requests) => requests,
                 Err(error) => {
-                    tracing::warn!(%error, "mesh request queue poll failed closed");
+                    tracing::warn!(%error, "mesh request queue claim failed closed");
                     Vec::new()
                 }
             };
-            let requested_peers: HashSet<String> = due_requests
-                .iter()
-                .map(|request| request.peer_pk.clone())
-                .collect();
-            let connected_peers = peer_streams.connected_peers();
-            let connected: HashSet<&str> = connected_peers.iter().map(String::as_str).collect();
-            for request in &due_requests {
-                if !connected.contains(request.peer_pk.as_str()) {
-                    let peer = PeerPubkey::new(request.peer_pk.clone());
-                    if let Err(error) = durable.mark_sync_request_waiting(
-                        &peer,
-                        now,
-                        "paired peer is not connected to the active carrier",
-                    ) {
-                        tracing::warn!(%error, peer = %request.peer_pk, "mesh request waiting state could not be persisted");
-                    }
-                }
-            }
+            let requested_claims: HashMap<String, super::durable_sync::MeshSyncRequest> =
+                due_requests
+                    .into_iter()
+                    .map(|request| (request.peer_pk.clone(), request))
+                    .collect();
 
             let regular_due = tokio::time::Instant::now() >= next_regular_tick;
             if regular_due {
@@ -671,7 +660,7 @@ pub fn spawn_gossip_tick(
                 || (!regular_due
                     && !connected_peers
                         .iter()
-                        .any(|peer| requested_peers.contains(peer)))
+                        .any(|peer| requested_claims.contains_key(peer)))
             {
                 continue;
             }
@@ -680,7 +669,8 @@ pub fn spawn_gossip_tick(
             let mut queued = 0usize;
             let mut operator_requested = 0usize;
             for peer_pk in connected_peers {
-                let requested = requested_peers.contains(&peer_pk);
+                let request_claim = requested_claims.get(&peer_pk);
+                let requested = request_claim.is_some();
                 if !regular_due && !requested {
                     continue;
                 }
@@ -697,10 +687,18 @@ pub fn spawn_gossip_tick(
                             peer_id: self_id.as_str().to_string(),
                             body: FrameBody::Gossip(Box::new(prepared.frame)),
                         };
-                        if requested && let Err(error) = durable.mark_sync_request_sent(&peer, now)
-                        {
-                            tracing::warn!(%error, peer = %peer_pk, "mesh request progress failed closed before transport queue");
-                            continue;
+                        if let Some(claim) = request_claim {
+                            match durable.mark_sync_request_sending(claim, now_unix_secs()) {
+                                Ok(true) => {}
+                                Ok(false) => {
+                                    tracing::debug!(peer = %peer_pk, "mesh request lease was superseded before transport queue");
+                                    continue;
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, peer = %peer_pk, "mesh request send-attempt claim failed closed");
+                                    continue;
+                                }
+                            }
                         }
                         match peer_streams.send_to(&peer_pk, wf) {
                             Ok(()) => {
@@ -713,29 +711,35 @@ pub fn spawn_gossip_tick(
                                 }
                             }
                             Err(error) if requested => {
-                                if let Err(persist_error) = durable.mark_sync_request_waiting(
-                                    &peer,
-                                    now,
-                                    &format!("active carrier could not queue the frame: {error}"),
-                                ) {
+                                if let Some(claim) = request_claim
+                                    && let Err(persist_error) = durable.mark_sync_request_waiting(
+                                        claim,
+                                        now_unix_secs(),
+                                        &format!(
+                                            "active carrier could not queue the frame: {error}"
+                                        ),
+                                    )
+                                {
                                     tracing::warn!(%persist_error, peer = %peer_pk, "mesh request send failure could not be persisted");
                                 }
                             }
                             Err(_) => {}
                         }
                     }
-                    Ok(None) if requested => {
-                        if let Err(error) = durable.mark_sync_request_complete(&peer, now) {
+                    Ok(None) => {
+                        if let Some(claim) = request_claim
+                            && let Err(error) =
+                                durable.mark_sync_request_complete(claim, now_unix_secs())
+                        {
                             tracing::warn!(%error, peer = %peer_pk, "mesh request completion could not be persisted");
                         }
                     }
-                    Ok(None) => {}
                     Err(error) => {
                         tracing::warn!(%error, peer = %peer_pk, "durable mesh prepare failed closed");
-                        if requested
+                        if let Some(claim) = request_claim
                             && let Err(persist_error) = durable.mark_sync_request_waiting(
-                                &peer,
-                                now,
+                                claim,
+                                now_unix_secs(),
                                 &format!("durable mesh prepare failed: {error}"),
                             )
                         {

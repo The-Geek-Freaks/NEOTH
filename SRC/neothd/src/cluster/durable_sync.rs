@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail, ensure};
 use rusqlite::{Connection, OptionalExtension as _, TransactionBehavior, params};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::PeerPubkey;
@@ -30,6 +30,7 @@ const MAX_MEMORY_TEXT_BYTES: usize = 1_048_576;
 const MAX_STABLE_CONTENT_ID_BYTES: usize = 128;
 pub const SYNC_REQUEST_TTL_SECS: i64 = 15 * 60;
 pub const SYNC_REQUEST_RETRY_SECS: i64 = 2;
+pub const MESH_SYNC_REQUEST_OPERATION: &str = "cluster.request-sync";
 const SYNC_REQUEST_POLL_LIMIT: i64 = 32;
 
 #[derive(Clone, Debug)]
@@ -117,9 +118,10 @@ pub struct MeshPeerStatus {
 /// One row per paired peer coalesces repeated clicks without creating an
 /// unbounded command queue. The daemon is the only consumer with a transport
 /// handle; CLI and GUI processes can only enqueue this exact peer identity.
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct MeshSyncRequest {
-    pub operation: &'static str,
+    pub operation: String,
     pub peer_pk: String,
     pub state: String,
     pub requested_at: i64,
@@ -128,6 +130,40 @@ pub struct MeshSyncRequest {
     pub last_attempt_at: Option<i64>,
     pub send_attempts: u64,
     pub last_error: Option<String>,
+}
+
+impl MeshSyncRequest {
+    /// Verify the fail-closed enqueue receipt consumed by operator surfaces.
+    /// Runtime progress receipts legitimately use the other states and are
+    /// exposed through `cluster sync-state` instead.
+    pub fn verify_queued_for(&self, expected_peer: &str) -> Result<()> {
+        ensure!(
+            self.operation == MESH_SYNC_REQUEST_OPERATION,
+            "unexpected mesh sync operation `{}`",
+            self.operation
+        );
+        ensure!(
+            self.peer_pk == expected_peer,
+            "mesh sync receipt peer `{}` does not match requested peer `{expected_peer}`",
+            self.peer_pk
+        );
+        ensure!(
+            self.state == "queued",
+            "mesh sync enqueue receipt has unexpected state `{}`",
+            self.state
+        );
+        ensure!(
+            self.requested_at > 0
+                && self.updated_at == self.requested_at
+                && self.expires_at > self.requested_at,
+            "mesh sync enqueue receipt contains invalid timestamps"
+        );
+        ensure!(
+            self.last_attempt_at.is_none() && self.send_attempts == 0 && self.last_error.is_none(),
+            "mesh sync enqueue receipt contains impossible progress state"
+        );
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -338,7 +374,26 @@ impl DurableMeshSync {
             "DELETE FROM mesh_sync_requests WHERE state IN ('complete','expired') AND updated_at < ?1",
             [now.saturating_sub(24 * 60 * 60)],
         )?;
-        let expires_at = now
+        // `requested_at` also binds all later claim completions. Keep it
+        // strictly monotonic for this peer so a same-second re-request cannot
+        // let a stale carrier complete the new operator request accidentally.
+        let previous_requested_at = tx
+            .query_row(
+                "SELECT requested_at FROM mesh_sync_requests WHERE peer_pk=?1",
+                [peer.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let requested_at = previous_requested_at.map_or(Ok(now), |previous| {
+            if previous < now {
+                Ok(now)
+            } else {
+                previous
+                    .checked_add(1)
+                    .context("mesh sync request generation overflow")
+            }
+        })?;
+        let expires_at = requested_at
             .checked_add(SYNC_REQUEST_TTL_SECS)
             .context("mesh sync request expiry overflow")?;
         tx.execute(
@@ -349,7 +404,7 @@ impl DurableMeshSync {
                requested_at=excluded.requested_at, expires_at=excluded.expires_at, \
                state='queued', updated_at=excluded.updated_at, last_attempt_at=NULL, \
                send_attempts=0, last_error=NULL",
-            params![peer.as_str(), now, expires_at],
+            params![peer.as_str(), requested_at, expires_at],
         )?;
         let receipt = load_sync_request_on_conn(&tx, peer)?
             .context("mesh sync request vanished before commit")?;
@@ -357,10 +412,25 @@ impl DurableMeshSync {
         Ok(receipt)
     }
 
-    /// Return requests due for another daemon-owned send attempt. This method
-    /// also expires stale rows transactionally, so a stopped/offline peer is
-    /// reported honestly instead of remaining queued forever.
-    pub fn due_sync_requests(&self, now: i64) -> Result<Vec<MeshSyncRequest>> {
+    /// Atomically claim requests due for peers reachable by this carrier.
+    ///
+    /// SQLite's `IMMEDIATE` transaction serializes competing Peeroxide/Iroh
+    /// consumers. A successful claim moves the request to `active` and starts
+    /// the retry lease before transport I/O; the separate send binding below
+    /// increments `send_attempts` only when a carrier will actually send. If
+    /// the process crashes at any later point, the durable row becomes
+    /// claimable again after [`SYNC_REQUEST_RETRY_SECS`]. Delivery is therefore
+    /// crash-safe **at least once**; the exact-frame ACK/cursor contract makes
+    /// a replay idempotent, while no request can be lost silently.
+    ///
+    /// Peers absent from `eligible_peers` are not leased. This prevents an old
+    /// carrier that is still winding down from starving the newly-active
+    /// carrier during a runtime handoff.
+    pub fn claim_due_sync_requests(
+        &self,
+        now: i64,
+        eligible_peers: &HashSet<String>,
+    ) -> Result<Vec<MeshSyncRequest>> {
         ensure!(now > 0, "mesh sync request poll timestamp must be positive");
         let mut conn = crate::memory::store::open(&self.db_path)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -371,45 +441,114 @@ impl DurableMeshSync {
             [now],
         )?;
         let retry_before = now.saturating_sub(SYNC_REQUEST_RETRY_SECS);
-        let requests = list_due_sync_requests_on_conn(&tx, now, retry_before)?;
+        let due = list_due_sync_requests_on_conn(&tx, now, retry_before)?;
+        let mut requests = Vec::with_capacity(due.len().min(SYNC_REQUEST_POLL_LIMIT as usize));
+        for request in due {
+            if requests.len() >= SYNC_REQUEST_POLL_LIMIT as usize {
+                break;
+            }
+            if !eligible_peers.contains(&request.peer_pk) {
+                let unavailable_at = now.max(request.requested_at);
+                let changed = tx.execute(
+                    "UPDATE mesh_sync_requests SET state='waiting_peer', \
+                     updated_at=MAX(updated_at,?2), \
+                     last_error='paired peer is not reachable through this carrier' \
+                     WHERE peer_pk=?1 AND requested_at=?3 \
+                       AND state IN ('queued','active','waiting_peer') \
+                       AND expires_at > ?2 \
+                       AND (last_attempt_at IS NULL OR last_attempt_at <= ?4)",
+                    params![
+                        request.peer_pk.as_str(),
+                        unavailable_at,
+                        request.requested_at,
+                        retry_before,
+                    ],
+                )?;
+                ensure!(
+                    changed <= 1,
+                    "mesh sync primary-key invariant violated for unavailable peer {}",
+                    request.peer_pk
+                );
+                continue;
+            }
+            let claimed_at = now.max(request.requested_at);
+            let changed = tx.execute(
+                "UPDATE mesh_sync_requests SET state='active', updated_at=?2, \
+                 last_attempt_at=?2, last_error=NULL \
+                 WHERE peer_pk=?1 AND state IN ('queued','active','waiting_peer') \
+                   AND expires_at > ?2 \
+                   AND (last_attempt_at IS NULL OR last_attempt_at <= ?3)",
+                params![request.peer_pk.as_str(), claimed_at, retry_before],
+            )?;
+            ensure!(
+                changed == 1,
+                "mesh sync request claim lost its serialized transaction for peer {}",
+                request.peer_pk
+            );
+            requests.push(
+                load_sync_request_on_conn(&tx, &PeerPubkey::new(request.peer_pk.clone()))?
+                    .context("claimed mesh sync request vanished before commit")?,
+            );
+        }
         tx.commit()?;
         Ok(requests)
     }
 
+    /// Bind one actual transport attempt to the exact current claim. A stale
+    /// carrier receives `false` and must not send the frame.
+    pub fn mark_sync_request_sending(&self, claim: &MeshSyncRequest, now: i64) -> Result<bool> {
+        ensure!(now > 0, "mesh sync send timestamp must be positive");
+        let claimed_at = validate_active_sync_claim(claim)?;
+        let prior_send_attempts = i64::try_from(claim.send_attempts)
+            .context("mesh sync claim send_attempts exceeds SQLite range")?;
+        let send_at = now.max(claimed_at);
+        let conn = crate::memory::store::open(&self.db_path)?;
+        let changed = conn.execute(
+            "UPDATE mesh_sync_requests SET updated_at=MAX(updated_at,?2), \
+             send_attempts=send_attempts+1,last_error=NULL \
+             WHERE peer_pk=?1 AND requested_at=?3 AND state='active' \
+               AND last_attempt_at=?4 AND send_attempts=?5 AND expires_at > ?2",
+            params![
+                claim.peer_pk.as_str(),
+                send_at,
+                claim.requested_at,
+                claimed_at,
+                prior_send_attempts,
+            ],
+        )?;
+        ensure!(
+            changed <= 1,
+            "mesh sync primary-key invariant violated for peer {}",
+            claim.peer_pk
+        );
+        Ok(changed == 1)
+    }
+
+    /// Resolve an exact active claim as retryable. Returns `false` when the
+    /// claim was superseded by a retry or a newer operator request.
     pub fn mark_sync_request_waiting(
         &self,
-        peer: &PeerPubkey,
+        claim: &MeshSyncRequest,
         now: i64,
         error: &str,
-    ) -> Result<()> {
-        update_sync_request_on_conn(
+    ) -> Result<bool> {
+        resolve_sync_request_claim_on_conn(
             &crate::memory::store::open(&self.db_path)?,
-            peer,
+            claim,
             now,
             "waiting_peer",
-            false,
             Some(error),
         )
     }
 
-    pub fn mark_sync_request_sent(&self, peer: &PeerPubkey, now: i64) -> Result<()> {
-        update_sync_request_on_conn(
+    /// Complete an exact active claim. A stale transport completion returns
+    /// `false` and cannot overwrite the newer lease owner.
+    pub fn mark_sync_request_complete(&self, claim: &MeshSyncRequest, now: i64) -> Result<bool> {
+        resolve_sync_request_claim_on_conn(
             &crate::memory::store::open(&self.db_path)?,
-            peer,
-            now,
-            "active",
-            true,
-            None,
-        )
-    }
-
-    pub fn mark_sync_request_complete(&self, peer: &PeerPubkey, now: i64) -> Result<()> {
-        update_sync_request_on_conn(
-            &crate::memory::store::open(&self.db_path)?,
-            peer,
+            claim,
             now,
             "complete",
-            false,
             None,
         )
     }
@@ -1904,21 +2043,17 @@ fn list_due_sync_requests_on_conn(
          FROM mesh_sync_requests \
          WHERE state IN ('queued','active','waiting_peer') AND expires_at > ?1 \
            AND (last_attempt_at IS NULL OR last_attempt_at <= ?2) \
-         ORDER BY COALESCE(last_attempt_at,0) ASC, requested_at ASC, peer_pk ASC \
-         LIMIT ?3",
+         ORDER BY COALESCE(last_attempt_at,0) ASC, requested_at ASC, peer_pk ASC",
     )?;
     Ok(statement
-        .query_map(
-            params![now, retry_before, SYNC_REQUEST_POLL_LIMIT],
-            map_sync_request_row,
-        )?
+        .query_map(params![now, retry_before], map_sync_request_row)?
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn map_sync_request_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MeshSyncRequest> {
     let send_attempts = nonnegative_u64(row.get(6)?, "mesh sync request send_attempts")?;
     Ok(MeshSyncRequest {
-        operation: "cluster.request-sync",
+        operation: MESH_SYNC_REQUEST_OPERATION.to_string(),
         peer_pk: row.get(0)?,
         state: row.get(1)?,
         requested_at: row.get(2)?,
@@ -1930,37 +2065,54 @@ fn map_sync_request_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MeshSyncReq
     })
 }
 
-fn update_sync_request_on_conn(
+fn resolve_sync_request_claim_on_conn(
     conn: &Connection,
-    peer: &PeerPubkey,
+    claim: &MeshSyncRequest,
     now: i64,
     state: &str,
-    increment_sent: bool,
     error: Option<&str>,
-) -> Result<()> {
+) -> Result<bool> {
     ensure!(
         now > 0,
         "mesh sync request update timestamp must be positive"
     );
+    let claimed_at = validate_active_sync_claim(claim)?;
+    ensure!(
+        matches!(state, "waiting_peer" | "complete"),
+        "invalid mesh sync claim resolution state `{state}`"
+    );
+    let resolved_at = now.max(claimed_at);
     let error = error.map(|value| value.chars().take(240).collect::<String>());
     let changed = conn.execute(
         "UPDATE mesh_sync_requests SET state=?2,updated_at=?3,last_attempt_at=?3, \
-         send_attempts=send_attempts + ?4,last_error=?5 \
-         WHERE peer_pk=?1 AND state IN ('queued','active','waiting_peer') AND expires_at > ?3",
+         last_error=?4 \
+         WHERE peer_pk=?1 AND requested_at=?5 AND state='active' \
+           AND last_attempt_at=?6 AND expires_at > ?3",
         params![
-            peer.as_str(),
+            claim.peer_pk.as_str(),
             state,
-            now,
-            if increment_sent { 1_i64 } else { 0_i64 },
+            resolved_at,
             error,
+            claim.requested_at,
+            claimed_at,
         ],
     )?;
     ensure!(
-        changed == 1,
-        "no active mesh sync request for peer {}",
-        peer.as_str()
+        changed <= 1,
+        "mesh sync primary-key invariant violated for peer {}",
+        claim.peer_pk
     );
-    Ok(())
+    Ok(changed == 1)
+}
+
+fn validate_active_sync_claim(claim: &MeshSyncRequest) -> Result<i64> {
+    ensure!(
+        claim.operation == MESH_SYNC_REQUEST_OPERATION && claim.state == "active",
+        "mesh sync progress requires an active typed claim"
+    );
+    claim
+        .last_attempt_at
+        .context("active mesh sync claim has no lease timestamp")
 }
 
 fn json_i64(payload: &[u8], field: &str) -> Result<i64> {
@@ -2045,30 +2197,112 @@ mod tests {
         let sync = DurableMeshSync::new(db_path);
         let peer = PeerPubkey::new("a".repeat(64));
         let now = 1_900_000_000;
+        let eligible = HashSet::from([peer.as_str().to_string()]);
 
         let queued = sync.request_sync(&peer, now).unwrap();
         assert_eq!(queued.state, "queued");
         assert_eq!(queued.send_attempts, 0);
-        assert_eq!(sync.due_sync_requests(now).unwrap(), vec![queued.clone()]);
+        queued.verify_queued_for(peer.as_str()).unwrap();
+        let json = serde_json::to_string(&queued).unwrap();
+        assert_eq!(
+            serde_json::from_str::<MeshSyncRequest>(&json).unwrap(),
+            queued
+        );
+        let mut with_unknown = serde_json::to_value(&queued).unwrap();
+        with_unknown["unexpected"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<MeshSyncRequest>(with_unknown).is_err());
+        let mut wrong_peer = queued.clone();
+        wrong_peer.peer_pk = "b".repeat(64);
+        assert!(wrong_peer.verify_queued_for(peer.as_str()).is_err());
+        let mut impossible_progress = queued.clone();
+        impossible_progress.send_attempts = 1;
+        assert!(
+            impossible_progress
+                .verify_queued_for(peer.as_str())
+                .is_err()
+        );
 
-        sync.mark_sync_request_sent(&peer, now + 1).unwrap();
-        assert!(sync.due_sync_requests(now + 2).unwrap().is_empty());
-        assert_eq!(sync.due_sync_requests(now + 3).unwrap().len(), 1);
+        assert!(
+            sync.claim_due_sync_requests(now, &HashSet::new())
+                .unwrap()
+                .is_empty(),
+            "a carrier must never lease a peer it cannot reach"
+        );
+        let unavailable = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
+        assert_eq!(unavailable.state, "waiting_peer");
+        assert_eq!(unavailable.send_attempts, 0);
+        assert!(unavailable.last_attempt_at.is_none());
+        let claimed = sync.claim_due_sync_requests(now, &eligible).unwrap();
+        assert_eq!(claimed.len(), 1);
+        assert_eq!(claimed[0].state, "active");
+        assert_eq!(claimed[0].send_attempts, 0);
+        assert_eq!(claimed[0].last_attempt_at, Some(now));
+        assert!(sync.mark_sync_request_sending(&claimed[0], now).unwrap());
+        assert!(
+            !sync.mark_sync_request_sending(&claimed[0], now).unwrap(),
+            "one retry lease authorizes at most one transport send"
+        );
+        assert!(
+            sync.claim_due_sync_requests(now + 1, &eligible)
+                .unwrap()
+                .is_empty()
+        );
+        let retried_after_crash = sync
+            .claim_due_sync_requests(now + SYNC_REQUEST_RETRY_SECS, &eligible)
+            .unwrap();
+        assert_eq!(retried_after_crash.len(), 1);
+        assert_eq!(retried_after_crash[0].send_attempts, 1);
+        assert!(
+            sync.mark_sync_request_sending(&retried_after_crash[0], now + SYNC_REQUEST_RETRY_SECS,)
+                .unwrap()
+        );
 
         let long_error = "peer offline 🦀".repeat(40);
-        sync.mark_sync_request_waiting(&peer, now + 3, &long_error)
-            .unwrap();
+        assert!(
+            sync.mark_sync_request_waiting(
+                &retried_after_crash[0],
+                now + SYNC_REQUEST_RETRY_SECS,
+                &long_error,
+            )
+            .unwrap()
+        );
         let waiting = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
         assert_eq!(waiting.state, "waiting_peer");
-        assert_eq!(waiting.send_attempts, 1);
+        assert_eq!(waiting.send_attempts, 2);
         assert!(waiting.last_error.unwrap().chars().count() <= 240);
+        assert!(
+            sync.claim_due_sync_requests(now + 3, &eligible)
+                .unwrap()
+                .is_empty()
+        );
+        let retry_after_failure = sync.claim_due_sync_requests(now + 4, &eligible).unwrap();
+        assert_eq!(retry_after_failure.len(), 1);
+        assert_eq!(retry_after_failure[0].send_attempts, 2);
+        assert!(
+            sync.mark_sync_request_waiting(
+                &retry_after_failure[0],
+                now + 4,
+                "peer remains offline",
+            )
+            .unwrap(),
+            "a transport failure must remain durably retryable"
+        );
 
-        let restarted = sync.request_sync(&peer, now + 4).unwrap();
+        let restarted = sync.request_sync(&peer, now + 5).unwrap();
         assert_eq!(restarted.state, "queued");
         assert_eq!(restarted.send_attempts, 0);
         assert!(restarted.last_error.is_none());
-        sync.mark_sync_request_complete(&peer, now + 5).unwrap();
-        assert!(sync.due_sync_requests(now + 10).unwrap().is_empty());
+        let restarted_claim = sync.claim_due_sync_requests(now + 5, &eligible).unwrap();
+        assert_eq!(restarted_claim.len(), 1);
+        assert!(
+            sync.mark_sync_request_complete(&restarted_claim[0], now + 6)
+                .unwrap()
+        );
+        assert!(
+            sync.claim_due_sync_requests(now + 10, &eligible)
+                .unwrap()
+                .is_empty()
+        );
         let status = sync.list_status(Some(peer.as_str())).unwrap();
         assert_eq!(status.len(), 1);
         assert_eq!(status[0].request_state.as_deref(), Some("complete"));
@@ -2081,6 +2315,105 @@ mod tests {
                 .unwrap();
             assert_eq!(count, 0, "request queue must not mutate {table}");
         }
+    }
+
+    #[test]
+    fn competing_carriers_claim_one_request_once_and_restart_reclaims_it() {
+        let (_dir, db_path, conn) = open_test_db();
+        let sync = DurableMeshSync::new(db_path);
+        let peer = PeerPubkey::new("c".repeat(64));
+        let now = 1_900_100_000;
+        sync.request_sync(&peer, now).unwrap();
+
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let eligible = std::sync::Arc::new(HashSet::from([peer.as_str().to_string()]));
+        let mut workers = Vec::new();
+        for _ in 0..2 {
+            let worker_sync = sync.clone();
+            let worker_barrier = std::sync::Arc::clone(&barrier);
+            let worker_eligible = std::sync::Arc::clone(&eligible);
+            workers.push(std::thread::spawn(move || {
+                worker_barrier.wait();
+                worker_sync
+                    .claim_due_sync_requests(now, &worker_eligible)
+                    .unwrap()
+            }));
+        }
+        barrier.wait();
+        let claims = workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(claims.len(), 1, "only one carrier owns the retry lease");
+        assert_eq!(claims[0].send_attempts, 0);
+        assert!(sync.mark_sync_request_sending(&claims[0], now).unwrap());
+
+        let active = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
+        assert_eq!(active.state, "active");
+        assert_eq!(active.last_attempt_at, Some(now));
+        assert_eq!(active.send_attempts, 1);
+
+        let reclaimed = sync
+            .claim_due_sync_requests(now + SYNC_REQUEST_RETRY_SECS, &eligible)
+            .unwrap();
+        assert_eq!(
+            reclaimed.len(),
+            1,
+            "a crashed owner cannot lose the request"
+        );
+        assert_eq!(reclaimed[0].send_attempts, 1);
+        assert!(
+            sync.mark_sync_request_sending(&reclaimed[0], now + SYNC_REQUEST_RETRY_SECS)
+                .unwrap()
+        );
+        assert!(
+            !sync.mark_sync_request_sending(&claims[0], now + 3).unwrap(),
+            "a stale carrier must not start another transport send"
+        );
+        assert!(
+            !sync
+                .mark_sync_request_waiting(&claims[0], now + 3, "stale carrier failed")
+                .unwrap(),
+            "a stale transport completion must not overwrite the newer lease"
+        );
+        let still_active = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
+        assert_eq!(still_active.state, "active");
+        assert_eq!(still_active.send_attempts, 2);
+        assert!(still_active.last_error.is_none());
+        assert!(
+            sync.mark_sync_request_waiting(&reclaimed[0], now + 3, "active carrier failed")
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn same_second_operator_retry_invalidates_the_prior_transport_claim() {
+        let (_dir, db_path, conn) = open_test_db();
+        let sync = DurableMeshSync::new(db_path);
+        let peer = PeerPubkey::new("d".repeat(64));
+        let eligible = HashSet::from([peer.as_str().to_string()]);
+        let now = 1_900_200_000;
+
+        let first = sync.request_sync(&peer, now).unwrap();
+        let first_claim = sync.claim_due_sync_requests(now, &eligible).unwrap();
+        assert_eq!(first_claim.len(), 1);
+
+        let replacement = sync.request_sync(&peer, now).unwrap();
+        assert!(replacement.requested_at > first.requested_at);
+        let replacement_claim = sync.claim_due_sync_requests(now, &eligible).unwrap();
+        assert_eq!(replacement_claim.len(), 1);
+        assert!(
+            !sync
+                .mark_sync_request_complete(&first_claim[0], now + 1)
+                .unwrap()
+        );
+        assert!(
+            sync.mark_sync_request_complete(&replacement_claim[0], now + 1)
+                .unwrap()
+        );
+        let complete = load_sync_request_on_conn(&conn, &peer).unwrap().unwrap();
+        assert_eq!(complete.state, "complete");
+        assert_eq!(complete.requested_at, replacement.requested_at);
     }
 
     #[test]
