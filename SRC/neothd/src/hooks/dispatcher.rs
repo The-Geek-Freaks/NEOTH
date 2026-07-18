@@ -4,7 +4,7 @@
 //! the current stage, applies each in order, and returns a [`StageOutcome`]
 //! that the caller folds into its own dispatch logic.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
@@ -483,12 +483,14 @@ pub fn run_stage_with_config_returning_blocks(
 
 /// Session-scoped once-gate for atomic claim-before-effect in the dispatcher.
 ///
-/// Wraps `Arc<Mutex<HashSet<String>>>` so the dispatcher can, for each
+/// Tracks an explicit in-flight/consumed state so the dispatcher can, for each
 /// `once = true` hook:
 /// 1. Lock the set.
-/// 2. Check whether the hook's name is already claimed.
-/// 3. If not → insert the name (claim) **before** the effect executes.
+/// 2. Check whether the hook's name is already in-flight or consumed.
+/// 3. If not → insert an in-flight claim **before** the effect executes.
 /// 4. Drop the lock, then run the action.
+/// 5. Commit the claim after the action succeeds, or release it when a
+///    required/fail-fast plugin action blocks because it could not run.
 ///
 /// This eliminates the TOCTOU window that existed in each caller
 /// (`cli/chat.rs`, `serve_pipeline.rs`, `cron/runner.rs`) where
@@ -526,12 +528,73 @@ pub fn run_stage_with_config_returning_blocks(
 ///   `run_stage_with_once_guard`, mapping the `StageOnceResult` back to
 ///   `StageOutcome` via `result.outcome` (no once-hooks in cron today, but the
 ///   single code path parity is required).
-pub struct SessionOnceGuard(Arc<Mutex<HashSet<String>>>);
+pub struct SessionOnceGuard(Arc<Mutex<HashMap<String, SessionOnceState>>>);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SessionOnceState {
+    InFlight,
+    Consumed,
+}
+
+enum SessionOnceClaimResult {
+    Acquired(SessionOnceClaim),
+    InFlight,
+    Consumed,
+}
+
+/// Owned claim token. Dropping an uncommitted token releases only its
+/// in-flight claim, so a blocking infrastructure failure is retried on the
+/// next turn instead of being mistaken for a successfully consumed hook.
+struct SessionOnceClaim {
+    guard: SessionOnceGuard,
+    name: String,
+    committed: bool,
+}
+
+impl SessionOnceClaim {
+    fn commit(mut self) {
+        let mut states = self.guard.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(state) = states.get_mut(&self.name)
+            && *state == SessionOnceState::InFlight
+        {
+            *state = SessionOnceState::Consumed;
+        }
+        self.committed = true;
+    }
+}
+
+impl Drop for SessionOnceClaim {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        let mut states = self.guard.0.lock().unwrap_or_else(|e| e.into_inner());
+        if states.get(&self.name) == Some(&SessionOnceState::InFlight) {
+            states.remove(&self.name);
+        }
+    }
+}
 
 impl SessionOnceGuard {
     /// Create a fresh, empty guard for a new session.
     pub fn new() -> Self {
-        SessionOnceGuard(Arc::new(Mutex::new(HashSet::new())))
+        SessionOnceGuard(Arc::new(Mutex::new(HashMap::new())))
+    }
+
+    fn claim(&self, name: &str) -> SessionOnceClaimResult {
+        let mut states = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        match states.get(name) {
+            Some(SessionOnceState::InFlight) => SessionOnceClaimResult::InFlight,
+            Some(SessionOnceState::Consumed) => SessionOnceClaimResult::Consumed,
+            None => {
+                states.insert(name.to_string(), SessionOnceState::InFlight);
+                SessionOnceClaimResult::Acquired(SessionOnceClaim {
+                    guard: self.clone(),
+                    name: name.to_string(),
+                    committed: false,
+                })
+            }
+        }
     }
 }
 
@@ -581,11 +644,15 @@ pub struct StageOnceResult {
 /// For every enabled hook whose matcher fires at `stage`, if `hook.once = true`:
 ///
 /// 1. Lock `once_guard` (std::sync::Mutex, never held across an await).
-/// 2. If the hook's name is already in the claimed set →
-///    push to `StageOnceResult::skipped_once`, drop the lock, **continue to
-///    the next hook** (effect never runs).
-/// 3. Otherwise → insert the name into the claimed set **before** executing
-///    the action, drop the lock, then run the action.
+/// 2. If the hook's name is consumed (or a non-blocking hook is in-flight) →
+///    push to `StageOnceResult::skipped_once` and continue. An in-flight
+///    required or fail-fast plugin blocks a concurrent turn instead of letting
+///    it bypass a safety effect whose result is not known yet.
+/// 3. Otherwise → insert an in-flight claim **before** executing the action,
+///    drop the lock, then run the action.
+/// 4. A successful action (including an intentional `Block`) commits the claim.
+///    A required/fail-fast plugin failure drops the uncommitted claim, allowing
+///    the next turn to retry the safety hook.
 ///
 /// Because the claim (step 3) happens while the mutex is held, and the
 /// second concurrent caller acquires the same mutex and therefore sees the
@@ -664,26 +731,37 @@ pub fn run_stage_with_once_guard(
         // under the lock, and the lock is dropped BEFORE any effect runs.
         // Two concurrent callers sharing this guard cannot both proceed
         // past this gate for the same hook name.
-        if hook.once() {
-            let already_claimed = {
-                let mut set = once_guard.0.lock().unwrap_or_else(|e| e.into_inner());
-                if set.contains(&hook.name) {
+        let mut once_claim = if hook.once() {
+            match once_guard.claim(&hook.name) {
+                SessionOnceClaimResult::Acquired(claim) => Some(claim),
+                SessionOnceClaimResult::InFlight
+                    if matches!(
+                        &hook.action,
+                        HookAction::Plugin { required, .. } if *required || hook.fail_fast
+                    ) =>
+                {
+                    return Ok(StageOnceResult {
+                        outcome: StageOutcome::Block {
+                            name: hook.name.clone(),
+                            reason: format!(
+                                "once safety hook `{}` is still in flight; refusing concurrent bypass",
+                                hook.name
+                            ),
+                        },
+                        filtered_blocks: Vec::new(),
+                        skipped_once,
+                    });
+                }
+                SessionOnceClaimResult::InFlight | SessionOnceClaimResult::Consumed => {
                     // Already claimed by an earlier (possibly concurrent) call.
                     // Signal the caller to emit HOOK_SKIPPED_ONCE.
                     skipped_once.push(hook.name.clone());
-                    true
-                } else {
-                    // Claim BEFORE the effect. The lock is still held here,
-                    // so no concurrent caller can insert in parallel.
-                    set.insert(hook.name.clone());
-                    false
+                    continue;
                 }
-                // Mutex guard drops here — effect runs outside the lock.
-            };
-            if already_claimed {
-                continue;
             }
-        }
+        } else {
+            None
+        };
 
         // ── Step 3: execute effect ───────────────────────────────────────
         match &hook.action {
@@ -696,12 +774,18 @@ pub fn run_stage_with_once_guard(
                     && let Ok(re) = compile_cached(&m.pattern)
                 {
                     current = re.replace_all(&current, template.as_str()).into_owned();
-                    continue;
+                } else {
+                    // No matcher → replace the entire body.
+                    current = template.clone();
                 }
-                // No matcher → replace the entire body.
-                current = template.clone();
             }
             HookAction::Block { reason } => {
+                if let Some(claim) = once_claim.take() {
+                    // The hook ran successfully and intentionally blocked. That
+                    // is a consumed once-hook, not a retryable infrastructure
+                    // failure.
+                    claim.commit();
+                }
                 return Ok(StageOnceResult {
                     outcome: StageOutcome::Block {
                         name: hook.name.clone(),
@@ -711,7 +795,10 @@ pub fn run_stage_with_once_guard(
                     skipped_once,
                 });
             }
-            HookAction::Plugin { plugin_id, required } => {
+            HookAction::Plugin {
+                plugin_id,
+                required,
+            } => {
                 hits.push(hook.name.clone());
                 match invoker {
                     Some(inv) => {
@@ -805,7 +892,11 @@ pub fn run_stage_with_once_guard(
                     }
                 }
             }
-            HookAction::BlockFilter { start_marker, end_marker, placeholder } => {
+            HookAction::BlockFilter {
+                start_marker,
+                end_marker,
+                placeholder,
+            } => {
                 hits.push(hook.name.clone());
                 let (filtered, blocks) =
                     apply_block_filter(&current, start_marker, end_marker, placeholder);
@@ -819,10 +910,17 @@ pub fn run_stage_with_once_guard(
                 accumulated_blocks.extend(blocks);
             }
         }
+
+        if let Some(claim) = once_claim {
+            claim.commit();
+        }
     }
 
     Ok(StageOnceResult {
-        outcome: StageOutcome::Continue { body: current, hits },
+        outcome: StageOutcome::Continue {
+            body: current,
+            hits,
+        },
         filtered_blocks: accumulated_blocks,
         skipped_once,
     })
@@ -987,6 +1085,21 @@ mod tests {
     impl PluginInvoker for FailingInvoker {
         fn invoke(&self, _plugin_id: &str) -> Result<()> {
             anyhow::bail!("simulated plugin failure")
+        }
+    }
+
+    struct BlockingFailingInvoker {
+        entered: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl PluginInvoker for BlockingFailingInvoker {
+        fn invoke(&self, _plugin_id: &str) -> Result<()> {
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                entered.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+            anyhow::bail!("simulated delayed plugin failure")
         }
     }
 
@@ -1479,9 +1592,14 @@ mod tests {
         };
         let later = allow_hook("never-runs", HookStage::PreProviderCall);
         // stage-level fail_fast=false — only the per-hook flag is active.
-        let out =
-            run_stage_with_config(HookStage::PreProviderCall, "body", &[strict, later], None, false)
-                .unwrap();
+        let out = run_stage_with_config(
+            HookStage::PreProviderCall,
+            "body",
+            &[strict, later],
+            None,
+            false,
+        )
+        .unwrap();
         match out {
             StageOutcome::Block { name, reason } => {
                 assert_eq!(name, "strict-safety");
@@ -1490,9 +1608,7 @@ mod tests {
                     "block reason must identify fail_fast and the hook: {reason}"
                 );
             }
-            other => panic!(
-                "per-hook fail_fast=true must Block on bad regex, got {other:?}"
-            ),
+            other => panic!("per-hook fail_fast=true must Block on bad regex, got {other:?}"),
         }
     }
 
@@ -1575,9 +1691,7 @@ mod tests {
                     "bad-regex hook with fail_fast=false must skip; good hook must run"
                 );
             }
-            other => panic!(
-                "fail_fast=false must skip bad regex and continue, got {other:?}"
-            ),
+            other => panic!("fail_fast=false must skip bad regex and continue, got {other:?}"),
         }
     }
 
@@ -1622,9 +1736,9 @@ mod tests {
                     "runs-after hook must run because fail_fast=false continues: {hits:?}"
                 );
             }
-            other => panic!(
-                "fail_fast=false must continue on optional plugin failure, got {other:?}"
-            ),
+            other => {
+                panic!("fail_fast=false must continue on optional plugin failure, got {other:?}")
+            }
         }
     }
 
@@ -1641,6 +1755,23 @@ mod tests {
             status_message: None,
             once: true,
             fail_fast: false,
+        }
+    }
+
+    fn once_plugin_hook(name: &str, required: bool, fail_fast: bool) -> HookDef {
+        HookDef {
+            name: name.into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::Plugin {
+                plugin_id: "safety-plugin".into(),
+                required,
+            },
+            status_message: None,
+            once: true,
+            fail_fast,
         }
     }
 
@@ -1776,6 +1907,162 @@ mod tests {
         }
     }
 
+    #[test]
+    fn once_blocking_plugin_failures_release_claim_for_retry() {
+        for (label, hook) in [
+            ("required", once_plugin_hook("required-safety", true, false)),
+            ("fail_fast", once_plugin_hook("strict-safety", false, true)),
+        ] {
+            let guard = SessionOnceGuard::new();
+            let hooks = [hook];
+
+            for invoker in [None, Some(&FailingInvoker as &dyn PluginInvoker)] {
+                let blocked = run_stage_with_once_guard(
+                    HookStage::PreProviderCall,
+                    "body",
+                    &hooks,
+                    invoker,
+                    false,
+                    &guard,
+                )
+                .unwrap();
+                assert!(blocked.skipped_once.is_empty(), "{label}: {blocked:?}");
+                assert!(
+                    matches!(&blocked.outcome, StageOutcome::Block { .. }),
+                    "{label}: blocking plugin failure must block: {:?}",
+                    blocked.outcome
+                );
+            }
+
+            let recovered = CountingInvoker {
+                calls: std::sync::Mutex::new(Vec::new()),
+            };
+            let retried = run_stage_with_once_guard(
+                HookStage::PreProviderCall,
+                "body",
+                &hooks,
+                Some(&recovered),
+                false,
+                &guard,
+            )
+            .unwrap();
+            assert!(retried.skipped_once.is_empty(), "{label}: {retried:?}");
+            assert!(matches!(&retried.outcome, StageOutcome::Continue { .. }));
+            assert_eq!(
+                recovered.calls.lock().unwrap().as_slice(),
+                &["safety-plugin"]
+            );
+        }
+    }
+
+    #[test]
+    fn once_required_plugin_in_flight_blocks_concurrent_bypass() {
+        let guard = Arc::new(SessionOnceGuard::new());
+        let hooks = Arc::new(vec![once_plugin_hook("required-safety", true, false)]);
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let invoker = Arc::new(BlockingFailingInvoker {
+            entered: std::sync::Mutex::new(Some(entered_tx)),
+            release: std::sync::Mutex::new(release_rx),
+        });
+
+        let first_guard = Arc::clone(&guard);
+        let first_hooks = Arc::clone(&hooks);
+        let first_invoker = Arc::clone(&invoker);
+        let first = std::thread::spawn(move || {
+            run_stage_with_once_guard(
+                HookStage::PreProviderCall,
+                "body",
+                &first_hooks,
+                Some(first_invoker.as_ref()),
+                false,
+                &first_guard,
+            )
+            .unwrap()
+        });
+        entered_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+
+        let concurrent = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            &hooks,
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        match &concurrent.outcome {
+            StageOutcome::Block { reason, .. } => assert!(reason.contains("still in flight")),
+            other => panic!("concurrent turn must fail closed, got {other:?}"),
+        }
+        assert!(concurrent.skipped_once.is_empty());
+
+        release_tx.send(()).unwrap();
+        let first = first.join().unwrap();
+        assert!(matches!(&first.outcome, StageOutcome::Block { .. }));
+
+        let recovered = CountingInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let retried = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            &hooks,
+            Some(&recovered),
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert!(matches!(&retried.outcome, StageOutcome::Continue { .. }));
+        assert_eq!(
+            recovered.calls.lock().unwrap().as_slice(),
+            &["safety-plugin"]
+        );
+    }
+
+    #[test]
+    fn once_intentional_block_stays_consumed() {
+        let guard = SessionOnceGuard::new();
+        let hook = HookDef {
+            name: "policy-block".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: None,
+            action: HookAction::Block {
+                reason: "operator policy".into(),
+            },
+            status_message: None,
+            once: true,
+            fail_fast: false,
+        };
+
+        let first = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            std::slice::from_ref(&hook),
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert!(matches!(&first.outcome, StageOutcome::Block { .. }));
+
+        let second = run_stage_with_once_guard(
+            HookStage::PreProviderCall,
+            "body",
+            &[hook],
+            None,
+            false,
+            &guard,
+        )
+        .unwrap();
+        assert_eq!(second.skipped_once, vec!["policy-block"]);
+        assert!(matches!(&second.outcome, StageOutcome::Continue { .. }));
+    }
+
     /// (b) PostProviderCall + restoration: the same [`SessionOnceGuard`] is
     /// shared across `PreProviderCall` (where a `BlockFilter` hook redacts
     /// content) and `PostProviderCall` (where a once-hook fires). Proves that
@@ -1807,8 +2094,7 @@ mod tests {
         let post_hook = once_allow_hook("post-restore-audit", HookStage::PostProviderCall);
 
         let all_hooks = vec![pre_hook, post_hook];
-        let body =
-            "before\n// neoth-ignore-start\nkept complex code\n// neoth-ignore-end\nafter\n";
+        let body = "before\n// neoth-ignore-start\nkept complex code\n// neoth-ignore-end\nafter\n";
 
         // ── PreProviderCall ── redact the ignore region.
         let pre = run_stage_with_once_guard(
@@ -1836,7 +2122,11 @@ mod tests {
             "redacted body must not expose the ignored region"
         );
         let pending_blocks = pre.filtered_blocks;
-        assert_eq!(pending_blocks.len(), 1, "one FilteredBlock must be returned");
+        assert_eq!(
+            pending_blocks.len(),
+            1,
+            "one FilteredBlock must be returned"
+        );
 
         // ── PostProviderCall ── once-hook fires; same guard, first time.
         let post1 = run_stage_with_once_guard(
@@ -1848,7 +2138,10 @@ mod tests {
             &guard,
         )
         .unwrap();
-        assert!(post1.skipped_once.is_empty(), "first post call must not skip");
+        assert!(
+            post1.skipped_once.is_empty(),
+            "first post call must not skip"
+        );
         match &post1.outcome {
             StageOutcome::Continue { hits, .. } => {
                 assert!(

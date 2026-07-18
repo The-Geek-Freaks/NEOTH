@@ -64,10 +64,12 @@ pub struct HookDef {
     #[serde(default)]
     pub status_message: Option<String>,
     /// GOLD-CCPARITY-ONCE — when `true` this hook fires **at most once per
-    /// session**. Subsequent firings in the same session are suppressed and
-    /// recorded as `HOOK_SKIPPED_ONCE` (0x8B) WAL frames instead of
-    /// `HOOK_FIRED` (0x80). A new session (new `run_chat_with` invocation or
-    /// new channel inbound-message loop) resets the fired-set.
+    /// session** after its action succeeds. Subsequent firings in the same
+    /// session are suppressed and recorded as `HOOK_SKIPPED_ONCE` (0x8B) WAL
+    /// frames instead of `HOOK_FIRED` (0x80). Required/fail-fast plugin
+    /// infrastructure failures do not consume the hook: the next turn retries
+    /// it. A new session (new `run_chat_with` invocation or new channel
+    /// inbound-message loop) resets the fired-set.
     ///
     /// Default is `false` (fire on every matching message — existing behaviour).
     /// TOML: `once = true`.
@@ -125,12 +127,11 @@ impl HookDef {
     }
 
     /// GOLD-CCPARITY-ONCE — returns whether this hook should fire at most once
-    /// per session. The caller tracks fired hook names in a `HashSet<String>`
-    /// scoped to the session lifetime and suppresses subsequent firings.
+    /// per session. The dispatcher claims and commits it through the
+    /// session-scoped `SessionOnceGuard`.
     pub fn once(&self) -> bool {
         self.once
     }
-
 }
 
 /// Optional content filter. Anchored at the start of the body. If absent,
@@ -459,9 +460,6 @@ mod tests {
             h.fail_fast,
             "fail_fast must be true when explicitly set in TOML"
         );
-        assert!(
-            h.fail_fast,
-            "fail_fast must parse true from TOML"
-        );
+        assert!(h.fail_fast, "fail_fast must parse true from TOML");
     }
 }
