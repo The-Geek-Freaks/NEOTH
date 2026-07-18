@@ -18,8 +18,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::models::catalog::{ModelEntry, SourceOrigin};
-use crate::models::sources::{FetchResult, ModelSource};
+use crate::models::catalog::{MAX_MODELS_PER_PROVIDER, ModelEntry, SourceOrigin};
+use crate::models::sources::{FetchResult, ModelSource, read_bounded_list_page};
 use crate::providers::aws_credentials::AwsCredentials;
 use crate::providers::aws_sigv4::sign;
 
@@ -82,20 +82,20 @@ impl ModelSource for BedrockSource {
         if let Some(token) = signed.x_amz_security_token {
             req = req.header("x-amz-security-token", token);
         }
-        let response = req.send().await.with_context(|| format!("GET {url}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!(
-                "aws_bedrock list-foundation-models returned HTTP {}: {}",
-                status.as_u16(),
-                body.trim()
-            );
-        }
-        let parsed: ListResponse = response
-            .json()
+        let response = req
+            .send()
             .await
-            .context("parse aws_bedrock list-foundation-models JSON")?;
+            .context("request aws_bedrock foundation-model list")?;
+        let mut total_bytes = 0usize;
+        let parsed: ListResponse =
+            read_bounded_list_page(response, "aws_bedrock", &mut total_bytes).await?;
+        // AWS ListFoundationModels is explicitly an unpaginated operation. A
+        // model-count ceiling is still mandatory because the one response is
+        // remote, persisted input.
+        anyhow::ensure!(
+            parsed.model_summaries.len() <= MAX_MODELS_PER_PROVIDER,
+            "aws_bedrock model list exceeds {MAX_MODELS_PER_PROVIDER} entries"
+        );
         Ok(FetchResult {
             provider: PROVIDER_KEY,
             origin: SourceOrigin::Api,

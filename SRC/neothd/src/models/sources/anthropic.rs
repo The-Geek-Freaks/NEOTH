@@ -1,22 +1,23 @@
 //! Anthropic model-list source.
 //!
-//! Tries the `claude` CLI first (`claude /model list` — the slash-
-//! command list on Claude Code surfaces the catalog without an API
-//! key). Falls back to `GET https://api.anthropic.com/v1/models`
-//! with the operator's `x-api-key` header.
+//! Uses `GET https://api.anthropic.com/v1/models` whenever the effective
+//! runtime route is Anthropic REST. A CLI-only route uses NEOTH's bundled,
+//! versioned Claude aliases after detecting the configured `claude` binary;
+//! it never stands in for a separately configured REST route missing its key.
 //!
 //! Reference:
 //! <https://platform.claude.com/docs/en/api-reference/models/list>
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::models::catalog::{ModelEntry, SourceOrigin};
+use crate::models::catalog::{MAX_MODELS_PER_PROVIDER, ModelEntry, SourceOrigin};
 use crate::models::cli_detect::{bundled_cli_models, probe_cli_version};
-use crate::models::sources::{FetchResult, ModelSource};
+use crate::models::sources::{FetchResult, MAX_LIST_PAGES, ModelSource, read_bounded_list_page};
 use crate::secret::SecretString;
 
 const PROVIDER_KEY: &str = "anthropic_api";
@@ -24,10 +25,8 @@ const ANTHROPIC_VERSION_HEADER: &str = "2023-06-01";
 const DEFAULT_ENDPOINT: &str = "https://api.anthropic.com/v1/models";
 const DEFAULT_CLI_BINARY: &str = "claude";
 
-/// Anthropic source. Tries CLI-presence detection first (so operators
-/// running NEOTH with only the OAuth-authed `claude` CLI installed
-/// still get a populated catalog), then REST as the authoritative
-/// fallback when an API key is configured.
+/// Anthropic source. REST is authoritative when a key is supplied. The CLI
+/// detection path exists only for an explicitly CLI-only route.
 pub struct AnthropicSource {
     api_key: Option<SecretString>,
     endpoint: String,
@@ -124,38 +123,58 @@ fn bundled_anthropic_entries() -> Vec<ModelEntry> {
 
 async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<ModelEntry>> {
     let client = crate::providers::http_client::build_client()?;
-    let response = client
-        .get(endpoint)
-        .header("x-api-key", api_key)
-        .header("anthropic-version", ANTHROPIC_VERSION_HEADER)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .with_context(|| format!("GET {endpoint}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "anthropic_api list-models returned HTTP {}: {}",
-            status.as_u16(),
-            body.trim()
+    let base_url = reqwest::Url::parse(endpoint).context("parse anthropic_api models endpoint")?;
+    let mut after_id: Option<String> = None;
+    let mut seen_cursors = HashSet::new();
+    let mut total_bytes = 0usize;
+    let mut models = Vec::new();
+
+    for _ in 0..MAX_LIST_PAGES {
+        let mut url = base_url.clone();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("limit", "1000");
+            if let Some(cursor) = after_id.as_deref() {
+                query.append_pair("after_id", cursor);
+            }
+        }
+        let response = client
+            .get(url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION_HEADER)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .context("request anthropic_api model list")?;
+        let parsed: ListResponse =
+            read_bounded_list_page(response, "anthropic_api", &mut total_bytes).await?;
+        anyhow::ensure!(
+            models.len().saturating_add(parsed.data.len()) <= MAX_MODELS_PER_PROVIDER,
+            "anthropic_api model list exceeds {MAX_MODELS_PER_PROVIDER} entries"
         );
-    }
-    let parsed: ListResponse = response
-        .json()
-        .await
-        .context("parse anthropic_api list-models JSON")?;
-    Ok(parsed
-        .data
-        .into_iter()
-        .map(|m| {
+        models.extend(parsed.data.into_iter().map(|m| {
             let mut e = ModelEntry::new(m.id);
             if let Some(name) = m.display_name {
                 e = e.with_display_name(name);
             }
             e
-        })
-        .collect())
+        }));
+
+        if !parsed.has_more {
+            return Ok(models);
+        }
+        let cursor = parsed
+            .last_id
+            .filter(|cursor| !cursor.is_empty())
+            .context("anthropic_api pagination reported more pages without last_id")?;
+        anyhow::ensure!(
+            seen_cursors.insert(cursor.clone()),
+            "anthropic_api pagination repeated cursor"
+        );
+        after_id = Some(cursor);
+    }
+
+    anyhow::bail!("anthropic_api pagination exceeds {MAX_LIST_PAGES} pages")
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────
@@ -164,6 +183,10 @@ async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<Mode
 struct ListResponse {
     #[serde(default)]
     data: Vec<ModelRow>,
+    #[serde(default)]
+    has_more: bool,
+    #[serde(default)]
+    last_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -176,6 +199,9 @@ struct ModelRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::sources::MAX_LIST_PAGE_BYTES;
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn source_constructs_without_key() {
@@ -230,5 +256,108 @@ mod tests {
     fn bundled_anthropic_entries_include_opus_flagship() {
         let entries = bundled_anthropic_entries();
         assert!(entries.iter().any(|e| e.id == "claude-opus-4-7"));
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_follows_all_pages() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(query_param("limit", "1000"))
+            .and(query_param_is_missing("after_id"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "claude-first", "display_name": "First"}],
+                "has_more": true,
+                "last_id": "cursor-one"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(query_param("limit", "1000"))
+            .and(query_param("after_id", "cursor-one"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "claude-second", "display_name": "Second"}],
+                "has_more": false,
+                "last_id": "cursor-two"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let models = fetch_models_via_rest(&format!("{}/v1/models", server.uri()), "test-key")
+            .await
+            .unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["claude-first", "claude-second"]
+        );
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_rejects_repeated_pagination_cursor() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(query_param_is_missing("after_id"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "claude-first"}],
+                "has_more": true,
+                "last_id": "same-cursor"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(query_param("after_id", "same-cursor"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{"id": "claude-again"}],
+                "has_more": true,
+                "last_id": "same-cursor"
+            })))
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1/models", server.uri()), "test-key")
+            .await
+            .expect_err("repeated cursor must fail closed");
+        assert!(error.to_string().contains("repeated cursor"));
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_response_is_hard_bounded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![b'x'; MAX_LIST_PAGE_BYTES + 1]),
+            )
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1/models", server.uri()), "test-key")
+            .await
+            .expect_err("oversized page must fail closed");
+        assert!(error.to_string().contains("page exceeds"));
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_never_surfaces_provider_error_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("echoed-secret-test-key"))
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1/models", server.uri()), "test-key")
+            .await
+            .expect_err("HTTP failure must fail closed");
+        assert!(error.to_string().contains("HTTP 500"));
+        assert!(!error.to_string().contains("echoed-secret"));
     }
 }

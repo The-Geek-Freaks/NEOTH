@@ -20,6 +20,7 @@ use crate::secret::SecretString;
 
 const PROVIDER_KEY: &str = "openai_api";
 const DEFAULT_ENDPOINT: &str = "https://api.openai.com/v1/models";
+const MAX_LIST_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 pub struct OpenAiSource {
     api_key: Option<SecretString>,
@@ -40,18 +41,12 @@ impl OpenAiSource {
         }
     }
 
-    pub fn new_compat(api_key: Option<SecretString>, endpoint: impl Into<String>) -> Self {
-        let mut ep = endpoint.into();
-        // Caller may pass either `https://host/v1` or `https://host/v1/models`;
-        // normalise to the models path.
-        if !ep.trim_end_matches('/').ends_with("/models") {
-            ep = format!("{}/models", ep.trim_end_matches('/'));
-        }
-        Self {
+    pub fn new_compat(api_key: Option<SecretString>, endpoint: impl AsRef<str>) -> Result<Self> {
+        Ok(Self {
             api_key,
-            endpoint: ep,
+            endpoint: canonical_models_endpoint(endpoint.as_ref())?,
             provider_override: Some("openai_compat"),
-        }
+        })
     }
 
     /// Internal helper used by tests.
@@ -59,6 +54,32 @@ impl OpenAiSource {
         self.endpoint = endpoint.into();
         self
     }
+}
+
+/// Canonical, request-ready model-list URL for OpenAI-compatible APIs.
+///
+/// Query parameters are preserved, fragments are removed, and only HTTP(S)
+/// endpoints are accepted. This avoids the old `...?token=x/models` suffix
+/// corruption and gives discovery one exact endpoint identity to compare.
+pub(crate) fn canonical_models_endpoint(endpoint: &str) -> Result<String> {
+    let mut endpoint = url::Url::parse(endpoint.trim()).context("parse model-list endpoint URL")?;
+    anyhow::ensure!(
+        matches!(endpoint.scheme(), "http" | "https"),
+        "model-list endpoint URL must use http or https"
+    );
+    endpoint.set_fragment(None);
+    let path = endpoint.path().trim_end_matches('/').to_owned();
+    if !path.ends_with("/models") {
+        let path = if path.is_empty() {
+            "/models".to_string()
+        } else {
+            format!("{path}/models")
+        };
+        endpoint.set_path(&path);
+    } else if endpoint.path().ends_with('/') {
+        endpoint.set_path(&path);
+    }
+    Ok(endpoint.into())
 }
 
 #[async_trait]
@@ -94,23 +115,36 @@ async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<Mode
     if !api_key.is_empty() {
         request = request.bearer_auth(api_key);
     }
-    let response = request
+    let mut response = request
         .send()
         .await
-        .with_context(|| format!("GET {endpoint}"))?;
+        .context("request OpenAI-compatible model list")?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "openai list-models returned HTTP {}: {}",
-            status.as_u16(),
-            body.trim()
-        );
+        // A provider-controlled body can be arbitrarily large and can echo
+        // request credentials or signed query parameters. It must never cross
+        // the durable/public catalog error boundary.
+        anyhow::bail!("openai list-models returned HTTP {}", status.as_u16());
     }
-    let parsed: ListResponse = response
-        .json()
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_LIST_RESPONSE_BYTES as u64)
+    {
+        anyhow::bail!("openai list-models response exceeds {MAX_LIST_RESPONSE_BYTES} bytes");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .context("parse openai list-models JSON")?;
+        .context("read openai list-models response")?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_LIST_RESPONSE_BYTES {
+            anyhow::bail!("openai list-models response exceeds {MAX_LIST_RESPONSE_BYTES} bytes");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let parsed: ListResponse =
+        serde_json::from_slice(&body).context("parse openai list-models JSON")?;
     let mut entries: Vec<ModelEntry> = parsed
         .data
         .into_iter()
@@ -146,6 +180,8 @@ struct ModelRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn openai_source_reports_default_provider_key() {
@@ -155,20 +191,31 @@ mod tests {
 
     #[test]
     fn compat_source_reports_compat_provider_key() {
-        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1");
+        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1").unwrap();
         assert_eq!(s.provider(), "openai_compat");
     }
 
     #[test]
     fn compat_normalises_endpoint_when_models_suffix_missing() {
-        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1");
+        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1").unwrap();
         assert_eq!(s.endpoint, "http://localhost:8080/v1/models");
     }
 
     #[test]
     fn compat_passes_through_endpoint_when_models_suffix_present() {
-        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1/models");
+        let s = OpenAiSource::new_compat(None, "http://localhost:8080/v1/models").unwrap();
         assert_eq!(s.endpoint, "http://localhost:8080/v1/models");
+    }
+
+    #[test]
+    fn compat_canonicalization_preserves_query_and_drops_fragment() {
+        let s = OpenAiSource::new_compat(
+            None,
+            "https://models.example/v1/?tenant=alpha#operator-note",
+        )
+        .unwrap();
+        assert_eq!(s.endpoint, "https://models.example/v1/models?tenant=alpha");
+        assert!(OpenAiSource::new_compat(None, "file:///tmp/models").is_err());
     }
 
     #[tokio::test]
@@ -184,7 +231,7 @@ mod tests {
         // run unauthenticated on localhost. The source must NOT require
         // a key in that mode — it just sends the request without the
         // Authorization header.
-        let s = OpenAiSource::new_compat(None, "http://127.0.0.1:1/v1");
+        let s = OpenAiSource::new_compat(None, "http://127.0.0.1:1/v1").unwrap();
         // The actual call will fail (no server) but the bail path
         // must be the connect-error path, not the missing-key path.
         let err = s.fetch().await.expect_err("must error on connect");
@@ -192,5 +239,22 @@ mod tests {
             !err.to_string().contains("API key"),
             "compat must not bail on missing key; got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn successful_response_body_is_hard_bounded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(vec![
+                b'x';
+                MAX_LIST_RESPONSE_BYTES
+                    + 1
+            ]))
+            .mount(&server)
+            .await;
+        let source = OpenAiSource::new_compat(None, format!("{}/v1", server.uri())).unwrap();
+        let error = source.fetch().await.expect_err("oversized body must fail");
+        assert!(error.to_string().contains("response exceeds"));
     }
 }

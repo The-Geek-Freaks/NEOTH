@@ -24,7 +24,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::config::FreedomConfig;
-use crate::models::catalog::{DEFAULT_TTL_SECS, ModelsCatalog, now_unix};
+#[cfg(test)]
+use crate::models::catalog::DEFAULT_TTL_SECS;
+use crate::models::catalog::{ModelsCatalog, now_unix};
 use crate::models::discovery;
 
 /// Minimum delay between two refresh attempts. Picked to be
@@ -70,35 +72,43 @@ async fn run_one_pass(
     catalog_path: &std::path::Path,
     config: &FreedomConfig,
 ) -> anyhow::Result<()> {
-    let existing = ModelsCatalog::load_from(catalog_path);
-    let ttl = existing.ttl_secs.unwrap_or(DEFAULT_TTL_SECS);
+    let existing = ModelsCatalog::load_snapshot_strict_from(catalog_path)?
+        .map(|snapshot| snapshot.catalog)
+        .unwrap_or_default();
     let now = now_unix();
 
     // Build the set of providers the operator has configured + see
     // which ones are already fresh in the catalog. When every
     // configured source is fresh, skip the network round-trip.
-    let sources = discovery::build_sources_from_config(config);
-    if sources.is_empty() {
+    let home = catalog_path.parent().ok_or_else(|| {
+        anyhow::anyhow!(
+            "model catalog path `{}` has no NEOTH instance directory",
+            catalog_path.display()
+        )
+    })?;
+    let plan = discovery::build_sources_from_config_at(config, home)?;
+    if plan.is_empty() {
         tracing::debug!("models catalog refresh task: no providers configured — nothing to do");
         return Ok(());
     }
-    let all_fresh = sources.iter().all(|s| {
-        existing
-            .provider(s.provider())
-            .map(|pc| pc.is_fresh(now, ttl))
-            .unwrap_or(false)
-    });
-    if all_fresh {
+    let report =
+        discovery::discover_with_plan(catalog_path, plan.stale_only(&existing, now)).await?;
+    if report.fresh.len() == report.configured.len() {
         tracing::debug!(
-            providers = sources.len(),
+            providers = report.configured.len(),
             "models catalog refresh task: every configured provider already fresh"
         );
         return Ok(());
     }
-    let report = discovery::discover_all(catalog_path, config).await?;
     tracing::info!(
+        fresh = report.fresh.len(),
         refreshed = report.refreshed.len(),
         failed = report.failed.len(),
+        skipped_no_creds = report.skipped_no_creds.len(),
+        credential_failures = report.credential_failures.len(),
+        configuration_failures = report.configuration_failures.len(),
+        unsupported = report.unsupported.len(),
+        blocked_no_consent = report.blocked_no_consent.len(),
         "models catalog refresh task: discovery pass complete"
     );
     Ok(())
@@ -130,21 +140,29 @@ mod tests {
         std::fs::create_dir_all(&neoth_dir).unwrap();
         let catalog_path = ModelsCatalog::default_path(&home);
 
-        // Seed a fresh catalog for one provider that the config also references.
-        let mut cat = ModelsCatalog::default().with_path(catalog_path.clone());
-        let mut pc = ProviderCatalog::default();
-        pc.fetched_at_unix = now_unix();
-        pc.source = SourceOrigin::Api;
-        pc.models = vec![ModelEntry::new("claude-opus-4-7")];
-        cat.providers.insert("anthropic_api".to_string(), pc);
-        cat.save().unwrap();
-
         // Operator config — uses ClaudeCli (drives the anthropic source).
-        let config = FreedomConfig {
+        let mut config = FreedomConfig {
             provider_kind: Some(crate::cli::init::ProviderKind::ClaudeCli),
             provider_key: Some(crate::secret::SecretString::new("sk-ant-test".into())),
             ..Default::default()
         };
+        config.profile.learn_provider = None;
+        crate::consent::grant(&home, crate::cli::init::ProviderKind::ClaudeCli).unwrap();
+        let plan = discovery::build_sources_from_config_at(&config, &home).unwrap();
+        let binding_hash = plan
+            .binding_hash_for_test(discovery::ANTHROPIC_CATALOG_PROVIDER)
+            .expect("configured Claude CLI source")
+            .to_string();
+
+        // Seed a fresh catalog for one provider that the config also references.
+        let mut cat = ModelsCatalog::default().with_path(catalog_path.clone());
+        let mut pc = ProviderCatalog::default();
+        pc.fetched_at_unix = now_unix();
+        pc.binding_hash = Some(binding_hash);
+        pc.source = SourceOrigin::Api;
+        pc.models = vec![ModelEntry::new("claude-opus-4-7")];
+        cat.providers.insert("anthropic_api".to_string(), pc);
+        cat.save().unwrap();
 
         // One pass should NOT touch the network. There's no way to
         // assert that directly, but the function returning `Ok(())`

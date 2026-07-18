@@ -12,6 +12,27 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 const MAX_DIAGNOSTIC_CHARS: usize = 400;
+const EXPECTED_CATALOG_VERSION: u32 = 2;
+const MAX_CATALOG_PROVIDERS: usize = 16;
+const MAX_MODELS_PER_PROVIDER: usize = 4096;
+const MAX_MODEL_ID_CHARS: usize = 512;
+const MAX_MODEL_DISPLAY_CHARS: usize = 256;
+const MAX_MODEL_SUMMARY_CHARS: usize = 200;
+const MAX_CATALOG_ERROR_CHARS: usize = 512;
+
+fn valid_catalog_text(value: &str, max_chars: usize) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && value.chars().count() <= max_chars
+        && !value.chars().any(char::is_control)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
 
 pub struct JsonReceipt<T> {
     pub acknowledgement: T,
@@ -35,6 +56,550 @@ impl McpToolCallAck {
             return Err("MCP tool reported an execution failure".to_string());
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRefreshResult {
+    Fresh,
+    Refreshed,
+    Partial,
+    NoDiscoverableSources,
+    NoSources,
+}
+
+/// Exact `neoth catalog refresh --output json` mutation receipt. The provider
+/// sets are part of the contract so an incomplete refresh cannot be presented
+/// as a fully rebuilt catalog.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogRefreshAck {
+    pub operation: String,
+    pub path: String,
+    pub catalog_version: u32,
+    pub catalog_generation: Option<u64>,
+    pub catalog_hash: Option<String>,
+    pub catalog_changed: bool,
+    pub result: CatalogRefreshResult,
+    pub stale_only: bool,
+    pub configured: Vec<String>,
+    pub fresh: Vec<String>,
+    pub refreshed: Vec<String>,
+    pub failed: Vec<String>,
+    pub superseded: Vec<String>,
+    pub skipped_no_creds: Vec<String>,
+    pub credential_failures: Vec<String>,
+    pub configuration_failures: Vec<String>,
+    pub unsupported: Vec<String>,
+    pub blocked_no_consent: Vec<String>,
+}
+
+impl CatalogRefreshAck {
+    fn verified_snapshot(&self) -> Result<Option<CatalogSnapshotAck>, String> {
+        if self.catalog_version != EXPECTED_CATALOG_VERSION {
+            return Err(format!(
+                "catalog acknowledgement uses schema version {}, expected {}",
+                self.catalog_version, EXPECTED_CATALOG_VERSION
+            ));
+        }
+        match (&self.catalog_generation, &self.catalog_hash) {
+            (None, None) => Ok(None),
+            (Some(generation), Some(hash)) if valid_sha256(hash) => Ok(Some(CatalogSnapshotAck {
+                generation: *generation,
+                hash: hash.clone(),
+            })),
+            (Some(_), Some(_)) => {
+                Err("catalog acknowledgement hash is not lowercase SHA-256".to_string())
+            }
+            _ => Err(
+                "catalog acknowledgement generation and hash are not an atomic snapshot"
+                    .to_string(),
+            ),
+        }
+    }
+
+    fn classify(
+        &self,
+        expected_path: &Path,
+        expected_stale_only: bool,
+    ) -> Result<CatalogRefreshOutcome, String> {
+        require_action(&self.operation, "catalog.refresh")?;
+        require_exact_path(&self.path, expected_path)?;
+        if self.stale_only != expected_stale_only {
+            return Err("catalog acknowledgement does not match requested stale-only mode".into());
+        }
+        let snapshot = self.verified_snapshot()?;
+
+        let known_provider = |provider: &str| {
+            matches!(
+                provider,
+                "anthropic_api"
+                    | "openai_api"
+                    | "gemini_api"
+                    | "openai_compat"
+                    | "aws_bedrock"
+                    | "invalid_provider"
+                    | "local_qwen"
+                    | "local_ouro"
+                    | "local_ollama"
+                    | "recursive_mas"
+                    | "azure_openai"
+                    | "cohere_api"
+                    | "copilot_api"
+                    | "none"
+            )
+        };
+        let mut configured = std::collections::HashSet::new();
+        for provider in &self.configured {
+            if !known_provider(provider) || !configured.insert(provider.as_str()) {
+                return Err(
+                    "catalog acknowledgement contains an invalid configured-provider set"
+                        .to_string(),
+                );
+            }
+        }
+
+        let mut outcomes = std::collections::HashSet::new();
+        for (field, values) in [
+            ("fresh", &self.fresh),
+            ("refreshed", &self.refreshed),
+            ("failed", &self.failed),
+            ("superseded", &self.superseded),
+            ("skipped_no_creds", &self.skipped_no_creds),
+            ("credential_failures", &self.credential_failures),
+            ("configuration_failures", &self.configuration_failures),
+            ("unsupported", &self.unsupported),
+            ("blocked_no_consent", &self.blocked_no_consent),
+        ] {
+            for provider in values {
+                if !known_provider(provider) {
+                    return Err(format!(
+                        "catalog acknowledgement contains an invalid `{field}` provider id"
+                    ));
+                }
+                if !outcomes.insert(provider.as_str()) {
+                    return Err(format!(
+                        "catalog acknowledgement repeats provider `{provider}` across result sets"
+                    ));
+                }
+            }
+        }
+        if configured != outcomes {
+            return Err(
+                "catalog acknowledgement outcomes do not cover its configured provider scope"
+                    .to_string(),
+            );
+        }
+        if !self.stale_only && !self.fresh.is_empty() {
+            return Err(
+                "full catalog refresh unexpectedly acknowledged an already-fresh provider"
+                    .to_string(),
+            );
+        }
+
+        let has_incomplete_provider = !self.failed.is_empty()
+            || !self.superseded.is_empty()
+            || !self.skipped_no_creds.is_empty()
+            || !self.credential_failures.is_empty()
+            || !self.configuration_failures.is_empty()
+            || !self.blocked_no_consent.is_empty();
+        if (!self.fresh.is_empty() || !self.refreshed.is_empty() || !self.failed.is_empty())
+            && snapshot.is_none()
+        {
+            return Err(
+                "catalog acknowledgement references stored providers without a committed snapshot"
+                    .to_string(),
+            );
+        }
+        if self.catalog_changed && snapshot.is_none() {
+            return Err(
+                "catalog acknowledgement reports a durable change without a committed snapshot"
+                    .to_string(),
+            );
+        }
+        if (!self.refreshed.is_empty() || !self.failed.is_empty()) && !self.catalog_changed {
+            return Err(
+                "catalog acknowledgement persisted provider outcomes without marking the catalog changed"
+                    .to_string(),
+            );
+        }
+        let unsupported_note = if self.unsupported.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " {} configured adapter(s) do not expose a remote model catalog.",
+                self.unsupported.len()
+            )
+        };
+
+        match self.result {
+            CatalogRefreshResult::Fresh
+                if self.stale_only
+                    && !self.catalog_changed
+                    && !self.configured.is_empty()
+                    && self.fresh.len() + self.unsupported.len() == self.configured.len()
+                    && self.refreshed.is_empty()
+                    && self.failed.is_empty()
+                    && self.skipped_no_creds.is_empty()
+                    && self.credential_failures.is_empty()
+                    && self.configuration_failures.is_empty()
+                    && self.blocked_no_consent.is_empty() =>
+            {
+                Ok(CatalogRefreshOutcome::Complete {
+                    message: format!("Model catalog is already fresh.{unsupported_note}"),
+                    changed: false,
+                    snapshot,
+                })
+            }
+            CatalogRefreshResult::Refreshed
+                if self.catalog_changed
+                    && !self.refreshed.is_empty()
+                    && !has_incomplete_provider =>
+            {
+                let already_fresh = if self.fresh.is_empty() {
+                    String::new()
+                } else {
+                    format!(", {} already fresh", self.fresh.len())
+                };
+                let provider_label = if self.refreshed.len() == 1 {
+                    "provider"
+                } else {
+                    "providers"
+                };
+                Ok(CatalogRefreshOutcome::Complete {
+                    message: format!(
+                        "Model catalog refreshed from {} {provider_label}{already_fresh}.{unsupported_note}",
+                        self.refreshed.len(),
+                    ),
+                    changed: true,
+                    snapshot,
+                })
+            }
+            CatalogRefreshResult::Partial if has_incomplete_provider => {
+                let mut causes = Vec::new();
+                if !self.failed.is_empty() {
+                    causes.push(format!("fetch failed: {}", self.failed.join(", ")));
+                }
+                if !self.superseded.is_empty() {
+                    causes.push(format!(
+                        "superseded by a newer refresh or clear: {}",
+                        self.superseded.join(", ")
+                    ));
+                }
+                if !self.skipped_no_creds.is_empty() {
+                    causes.push(format!(
+                        "credentials missing: {}",
+                        self.skipped_no_creds.join(", ")
+                    ));
+                }
+                if !self.credential_failures.is_empty() {
+                    causes.push(format!(
+                        "credential resolution failed: {}",
+                        self.credential_failures.join(", ")
+                    ));
+                }
+                if !self.configuration_failures.is_empty() {
+                    causes.push(format!(
+                        "required configuration missing: {}",
+                        self.configuration_failures.join(", ")
+                    ));
+                }
+                if !self.unsupported.is_empty() {
+                    causes.push(format!(
+                        "model discovery unsupported: {}",
+                        self.unsupported.join(", ")
+                    ));
+                }
+                if !self.blocked_no_consent.is_empty() {
+                    causes.push(format!(
+                        "instance consent missing: {}",
+                        self.blocked_no_consent.join(", ")
+                    ));
+                }
+                Ok(CatalogRefreshOutcome::Incomplete {
+                    message: format!(
+                        "Catalog refresh incomplete ({}). Existing catalog entries were not assumed fresh.",
+                        causes.join("; ")
+                    ),
+                    changed: self.catalog_changed,
+                    snapshot,
+                })
+            }
+            CatalogRefreshResult::NoDiscoverableSources
+                if !self.configured.is_empty()
+                    && self.unsupported.len() == self.configured.len() =>
+            {
+                Ok(CatalogRefreshOutcome::Complete {
+                    message: if self.unsupported.len() == 1 {
+                        "The configured provider adapter does not expose a remote model catalog; no refresh is needed."
+                            .to_string()
+                    } else {
+                        "The configured provider adapters do not expose a remote model catalog; no refresh is needed."
+                            .to_string()
+                    },
+                    changed: self.catalog_changed,
+                    snapshot,
+                })
+            }
+            CatalogRefreshResult::NoSources
+                if self.configured.is_empty() && outcomes.is_empty() =>
+            {
+                Ok(CatalogRefreshOutcome::Incomplete {
+                    message:
+                        "No model-provider source is configured. Configure a provider, then retry."
+                            .to_string(),
+                    changed: self.catalog_changed,
+                    snapshot,
+                })
+            }
+            _ => Err("catalog acknowledgement result contradicts its provider sets".to_string()),
+        }
+    }
+
+    pub fn verify(
+        &self,
+        expected_path: &Path,
+        expected_stale_only: bool,
+    ) -> Result<String, String> {
+        match self.classify(expected_path, expected_stale_only)? {
+            CatalogRefreshOutcome::Complete { message, .. } => Ok(message),
+            CatalogRefreshOutcome::Incomplete { message, .. } => Err(message),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogRefreshOutcome {
+    Complete {
+        message: String,
+        changed: bool,
+        snapshot: Option<CatalogSnapshotAck>,
+    },
+    Incomplete {
+        message: String,
+        changed: bool,
+        snapshot: Option<CatalogSnapshotAck>,
+    },
+}
+
+/// Strict readback contract for `neoth catalog list --output json`. A refresh
+/// result is never presented as loaded state until this read-only subprocess
+/// exits successfully and every nested field matches the CLI schema.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogListAck {
+    operation: String,
+    path: String,
+    state: CatalogListState,
+    catalog_version: u32,
+    catalog_generation: Option<u64>,
+    catalog_hash: Option<String>,
+    providers: std::collections::BTreeMap<String, CatalogProviderAck>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum CatalogListState {
+    Present,
+    Missing,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogProviderAck {
+    fetched_at_unix: u64,
+    source: CatalogSourceAck,
+    last_error: Option<String>,
+    models: Vec<CatalogModelAck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogSnapshotAck {
+    generation: u64,
+    hash: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CatalogSourceAck {
+    Cli,
+    Api,
+    Bundled,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CatalogModelAck {
+    id: String,
+    display_name: Option<String>,
+    summary: Option<String>,
+    deprecated: bool,
+}
+
+impl CatalogListAck {
+    fn verify(
+        &self,
+        expected_path: &Path,
+        expected_generation: Option<u64>,
+        expected_hash: Option<&str>,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "catalog.list")?;
+        require_exact_path(&self.path, expected_path)?;
+        if self.catalog_version != EXPECTED_CATALOG_VERSION {
+            return Err(format!(
+                "catalog list uses schema version {}, expected {}",
+                self.catalog_version, EXPECTED_CATALOG_VERSION
+            ));
+        }
+        if expected_generation.is_some() != expected_hash.is_some() {
+            return Err(
+                "catalog readback expectation does not describe one atomic snapshot".to_string(),
+            );
+        }
+
+        match self.state {
+            CatalogListState::Missing => {
+                if self.catalog_generation.is_some()
+                    || self.catalog_hash.is_some()
+                    || !self.providers.is_empty()
+                {
+                    return Err(
+                        "missing catalog acknowledgement contains persisted state".to_string()
+                    );
+                }
+                if expected_generation.is_some() {
+                    return Err(
+                        "catalog disappeared before the committed refresh snapshot was read back"
+                            .to_string(),
+                    );
+                }
+            }
+            CatalogListState::Present => {
+                let (Some(generation), Some(hash)) =
+                    (self.catalog_generation, self.catalog_hash.as_deref())
+                else {
+                    return Err(
+                        "present catalog acknowledgement is missing its atomic snapshot"
+                            .to_string(),
+                    );
+                };
+                if !valid_sha256(hash) {
+                    return Err("catalog list hash is not lowercase SHA-256".to_string());
+                }
+                if let Some(expected) = expected_generation
+                    && generation != expected
+                {
+                    return Err(format!(
+                        "catalog readback generation {generation} does not match committed generation {expected}"
+                    ));
+                }
+                if let Some(expected) = expected_hash
+                    && hash != expected
+                {
+                    return Err(
+                        "catalog readback hash does not match the committed refresh snapshot"
+                            .to_string(),
+                    );
+                }
+            }
+        }
+
+        if self.providers.len() > MAX_CATALOG_PROVIDERS {
+            return Err("catalog list contains too many providers".to_string());
+        }
+        for (provider, entry) in &self.providers {
+            if !matches!(
+                provider.as_str(),
+                "anthropic_api" | "openai_api" | "gemini_api" | "openai_compat" | "aws_bedrock"
+            ) {
+                return Err(format!(
+                    "catalog list contains unknown provider key `{provider}`"
+                ));
+            }
+            if !entry.models.is_empty() && entry.fetched_at_unix == 0 {
+                return Err(format!(
+                    "catalog provider `{provider}` has models without a fetch timestamp"
+                ));
+            }
+            if entry.models.len() > MAX_MODELS_PER_PROVIDER {
+                return Err(format!(
+                    "catalog provider `{provider}` contains too many models"
+                ));
+            }
+            if entry
+                .last_error
+                .as_deref()
+                .is_some_and(|error| !valid_catalog_text(error, MAX_CATALOG_ERROR_CHARS))
+            {
+                return Err(format!(
+                    "catalog provider `{provider}` contains an invalid error"
+                ));
+            }
+            let mut model_ids = std::collections::HashSet::new();
+            for model in &entry.models {
+                if !valid_catalog_text(&model.id, MAX_MODEL_ID_CHARS) {
+                    return Err(format!(
+                        "catalog provider `{provider}` contains an invalid model id"
+                    ));
+                }
+                if !model_ids.insert(model.id.as_str()) {
+                    return Err(format!(
+                        "catalog provider `{provider}` repeats model id `{}`",
+                        model.id
+                    ));
+                }
+                if model
+                    .display_name
+                    .as_deref()
+                    .is_some_and(|display| !valid_catalog_text(display, MAX_MODEL_DISPLAY_CHARS))
+                {
+                    return Err(format!(
+                        "catalog provider `{provider}` contains an invalid model display name"
+                    ));
+                }
+                if model
+                    .summary
+                    .as_deref()
+                    .is_some_and(|summary| !valid_catalog_text(summary, MAX_MODEL_SUMMARY_CHARS))
+                {
+                    return Err(format!(
+                        "catalog provider `{provider}` contains an overlong model summary"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl CatalogRefreshOutcome {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Complete { message, .. } | Self::Incomplete { message, .. } => message,
+        }
+    }
+
+    pub fn catalog_changed(&self) -> bool {
+        match self {
+            Self::Complete { changed, .. } | Self::Incomplete { changed, .. } => *changed,
+        }
+    }
+
+    pub fn committed_snapshot(&self) -> Option<(u64, &str)> {
+        let snapshot = match self {
+            Self::Complete { snapshot, .. } | Self::Incomplete { snapshot, .. } => snapshot,
+        };
+        snapshot
+            .as_ref()
+            .map(|snapshot| (snapshot.generation, snapshot.hash.as_str()))
+    }
+
+    pub fn toast_kind(&self) -> &'static str {
+        match self {
+            Self::Complete { .. } => "success",
+            Self::Incomplete { .. } => "warn",
+        }
     }
 }
 
@@ -393,6 +958,36 @@ where
     run_json_receipt(command, action).map(|receipt| receipt.acknowledgement)
 }
 
+/// Catalog refresh deliberately returns a non-zero exit for typed `partial`
+/// and `no_sources` outcomes. Decode that one receipt before evaluating the
+/// exit status so the GUI can show the exact provider IDs, while still
+/// requiring success receipts to exit zero and incomplete receipts to exit
+/// non-zero.
+pub fn run_catalog_refresh(
+    command: &mut Command,
+    action: &str,
+    expected_path: &Path,
+    expected_stale_only: bool,
+) -> Result<CatalogRefreshOutcome, String> {
+    let output = command
+        .output()
+        .map_err(|error| format!("could not start {action}: {error}"))?;
+    decode_catalog_refresh_output(&output, action, expected_path, expected_stale_only)
+}
+
+pub fn run_catalog_list(
+    command: &mut Command,
+    action: &str,
+    expected_path: &Path,
+    expected_generation: Option<u64>,
+    expected_hash: Option<&str>,
+) -> Result<String, String> {
+    let acknowledgement: CatalogListAck = run_json(command, action)?;
+    acknowledgement.verify(expected_path, expected_generation, expected_hash)?;
+    serde_json::to_string(&acknowledgement)
+        .map_err(|error| format!("could not render verified {action} response: {error}"))
+}
+
 pub fn run_json_receipt<T>(command: &mut Command, action: &str) -> Result<JsonReceipt<T>, String>
 where
     T: DeserializeOwned,
@@ -477,6 +1072,46 @@ where
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("{action} returned an invalid acknowledgement: {error}"))
+}
+
+fn decode_catalog_refresh_output(
+    output: &Output,
+    action: &str,
+    expected_path: &Path,
+    expected_stale_only: bool,
+) -> Result<CatalogRefreshOutcome, String> {
+    if output.stdout.iter().all(u8::is_ascii_whitespace) {
+        return if output.status.success() {
+            Err(format!(
+                "{action} returned no acknowledgement; state was not assumed"
+            ))
+        } else {
+            let exit = output
+                .status
+                .code()
+                .map(|code| code.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            Err(format!(
+                "{action} failed (exit {exit}) without a typed receipt: {}",
+                diagnostic(output)
+            ))
+        };
+    }
+    let acknowledgement: CatalogRefreshAck = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("{action} returned an invalid acknowledgement: {error}"))?;
+    match (
+        output.status.success(),
+        acknowledgement.classify(expected_path, expected_stale_only)?,
+    ) {
+        (true, complete @ CatalogRefreshOutcome::Complete { .. }) => Ok(complete),
+        (false, incomplete @ CatalogRefreshOutcome::Incomplete { .. }) => Ok(incomplete),
+        (false, CatalogRefreshOutcome::Complete { .. }) => Err(format!(
+            "{action} returned a success receipt with a non-zero process exit; state was not assumed"
+        )),
+        (true, CatalogRefreshOutcome::Incomplete { message, .. }) => Err(format!(
+            "{message} The command incorrectly returned a successful process exit."
+        )),
+    }
 }
 
 fn diagnostic(output: &Output) -> String {
@@ -1382,6 +2017,29 @@ mod tests {
         }
     }
 
+    fn valid_catalog_refresh_json(path: &Path) -> serde_json::Value {
+        serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": 7,
+            "catalog_hash": "0".repeat(64),
+            "catalog_changed": false,
+            "result": "fresh",
+            "stale_only": true,
+            "configured": ["openai_api"],
+            "fresh": ["openai_api"],
+            "refreshed": [],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        })
+    }
+
     #[test]
     fn failed_exit_never_parses_success_looking_stdout() {
         let error = decode_json_output::<ToggleAck>(
@@ -1475,6 +2133,451 @@ mod tests {
                 "MCP callback regressed to unchecked boundary: {unchecked}"
             );
         }
+    }
+
+    #[test]
+    fn catalog_refresh_receipt_binds_operation_path_result_and_provider_sets() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("models_catalog.json");
+        let receipt = |value| serde_json::from_value::<CatalogRefreshAck>(value).unwrap();
+        let refreshed = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": 7,
+            "catalog_hash": "0".repeat(64),
+            "catalog_changed": true,
+            "result": "refreshed",
+            "stale_only": false,
+            "configured": ["openai_api"],
+            "fresh": [],
+            "refreshed": ["openai_api"],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }));
+        let summary = refreshed.verify(&path, false).unwrap();
+        assert!(summary.contains("1 provider"));
+        assert!(
+            refreshed
+                .verify(&home.path().join("other_catalog.json"), false)
+                .is_err()
+        );
+        assert!(refreshed.verify(&path, true).is_err());
+
+        let stale_mixed = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": 7,
+            "catalog_hash": "0".repeat(64),
+            "catalog_changed": true,
+            "result": "refreshed",
+            "stale_only": true,
+            "configured": ["anthropic_api", "openai_api"],
+            "fresh": ["anthropic_api"],
+            "refreshed": ["openai_api"],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }));
+        assert!(
+            stale_mixed
+                .verify(&path, true)
+                .unwrap()
+                .contains("1 already fresh")
+        );
+
+        let partial = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": 7,
+            "catalog_hash": "0".repeat(64),
+            "catalog_changed": true,
+            "result": "partial",
+            "stale_only": false,
+            "configured": [
+                "openai_api",
+                "anthropic_api",
+                "gemini_api",
+                "aws_bedrock",
+                "openai_compat"
+            ],
+            "fresh": [],
+            "refreshed": ["openai_api"],
+            "failed": ["anthropic_api"],
+            "superseded": [],
+            "skipped_no_creds": ["gemini_api"],
+            "credential_failures": ["aws_bedrock"],
+            "configuration_failures": ["openai_compat"],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }));
+        let error = partial.verify(&path, false).unwrap_err();
+        for provider in [
+            "anthropic_api",
+            "gemini_api",
+            "aws_bedrock",
+            "openai_compat",
+        ] {
+            assert!(error.contains(provider));
+        }
+        let partial_wire = serde_json::to_vec(&serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": 7,
+            "catalog_hash": "0".repeat(64),
+            "catalog_changed": true,
+            "result": "partial",
+            "stale_only": false,
+            "configured": ["openai_api", "gemini_api"],
+            "fresh": [],
+            "refreshed": ["openai_api"],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": ["gemini_api"],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }))
+        .unwrap();
+        let partial_output = Output {
+            status: status(7),
+            stdout: partial_wire.clone(),
+            stderr: b"Error: generic catalog refresh incomplete".to_vec(),
+        };
+        let typed_outcome =
+            decode_catalog_refresh_output(&partial_output, "Catalog refresh", &path, false)
+                .unwrap();
+        assert!(matches!(
+            typed_outcome,
+            CatalogRefreshOutcome::Incomplete { changed: true, .. }
+        ));
+        assert!(typed_outcome.message().contains("gemini_api"));
+        assert!(
+            !typed_outcome
+                .message()
+                .contains("generic catalog refresh incomplete")
+        );
+        let zero_exit_partial = Output {
+            status: status(0),
+            stdout: partial_wire,
+            stderr: Vec::new(),
+        };
+        assert!(
+            decode_catalog_refresh_output(&zero_exit_partial, "Catalog refresh", &path, false,)
+                .unwrap_err()
+                .contains("incorrectly returned a successful process exit")
+        );
+
+        let superseded_after_clear = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": null,
+            "catalog_hash": null,
+            "catalog_changed": false,
+            "result": "partial",
+            "stale_only": false,
+            "configured": ["openai_api"],
+            "fresh": [],
+            "refreshed": [],
+            "failed": [],
+            "superseded": ["openai_api"],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }));
+        let error = superseded_after_clear.verify(&path, false).unwrap_err();
+        assert!(error.contains("superseded"));
+        assert!(error.contains("openai_api"));
+
+        let no_sources = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": null,
+            "catalog_hash": null,
+            "catalog_changed": false,
+            "result": "no_sources",
+            "stale_only": false,
+            "configured": [],
+            "fresh": [],
+            "refreshed": [],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": [],
+            "blocked_no_consent": [],
+        }));
+        assert!(
+            no_sources
+                .verify(&path, false)
+                .unwrap_err()
+                .contains("configured")
+        );
+        let unsupported_only = receipt(serde_json::json!({
+            "operation": "catalog.refresh",
+            "path": path.display().to_string(),
+            "catalog_version": 2,
+            "catalog_generation": null,
+            "catalog_hash": null,
+            "catalog_changed": false,
+            "result": "no_discoverable_sources",
+            "stale_only": false,
+            "configured": ["local_ollama"],
+            "fresh": [],
+            "refreshed": [],
+            "failed": [],
+            "superseded": [],
+            "skipped_no_creds": [],
+            "credential_failures": [],
+            "configuration_failures": [],
+            "unsupported": ["local_ollama"],
+            "blocked_no_consent": [],
+        }));
+        assert!(
+            unsupported_only
+                .verify(&path, false)
+                .unwrap()
+                .contains("no refresh is needed")
+        );
+        let no_sources_output = Output {
+            status: status(2),
+            stdout: serde_json::to_vec(&serde_json::json!({
+                "operation": "catalog.refresh",
+                "path": path.display().to_string(),
+                "catalog_version": 2,
+                "catalog_generation": null,
+                "catalog_hash": null,
+                "catalog_changed": false,
+                "result": "no_sources",
+                "stale_only": false,
+                "configured": [],
+                "fresh": [],
+                "refreshed": [],
+                "failed": [],
+                "superseded": [],
+                "skipped_no_creds": [],
+                "credential_failures": [],
+                "configuration_failures": [],
+                "unsupported": [],
+                "blocked_no_consent": [],
+            }))
+            .unwrap(),
+            stderr: Vec::new(),
+        };
+        let no_sources_outcome =
+            decode_catalog_refresh_output(&no_sources_output, "Catalog refresh", &path, false)
+                .unwrap();
+        assert!(matches!(
+            no_sources_outcome,
+            CatalogRefreshOutcome::Incomplete { changed: false, .. }
+        ));
+        assert!(
+            no_sources_outcome
+                .message()
+                .contains("No model-provider source")
+        );
+
+        let success_wire = serde_json::to_vec(&valid_catalog_refresh_json(&path)).unwrap();
+        let nonzero_success = Output {
+            status: status(9),
+            stdout: success_wire,
+            stderr: Vec::new(),
+        };
+        assert!(
+            decode_catalog_refresh_output(&nonzero_success, "Catalog refresh", &path, true,)
+                .unwrap_err()
+                .contains("success receipt with a non-zero")
+        );
+
+        let valid_fresh = valid_catalog_refresh_json(&path);
+        let mut wrong_action = valid_fresh.clone();
+        wrong_action["operation"] = serde_json::json!("catalog.clear");
+        let mut uncovered_provider = valid_fresh.clone();
+        uncovered_provider["configured"] = serde_json::json!(["openai_api", "gemini_api"]);
+        let mut duplicate_outcome = valid_fresh.clone();
+        duplicate_outcome["refreshed"] = serde_json::json!(["openai_api"]);
+        let mut unknown_provider = valid_fresh.clone();
+        unknown_provider["configured"] = serde_json::json!(["future_provider"]);
+        unknown_provider["fresh"] = serde_json::json!(["future_provider"]);
+        let mut future_result = valid_fresh.clone();
+        future_result["result"] = serde_json::json!("future_result");
+        let mut wrong_version = valid_fresh.clone();
+        wrong_version["catalog_version"] = serde_json::json!(3);
+        let mut malformed_hash = valid_fresh.clone();
+        malformed_hash["catalog_hash"] = serde_json::json!("not-a-sha256");
+        let mut torn_snapshot = valid_fresh.clone();
+        torn_snapshot["catalog_generation"] = serde_json::Value::Null;
+        let mut unexpected = valid_fresh.clone();
+        unexpected["unexpected"] = serde_json::json!(true);
+        for invalid in [
+            wrong_action,
+            uncovered_provider,
+            duplicate_outcome,
+            unknown_provider,
+            future_result,
+            wrong_version,
+            malformed_hash,
+            torn_snapshot,
+            unexpected,
+        ] {
+            match serde_json::from_value::<CatalogRefreshAck>(invalid) {
+                Ok(acknowledgement) => {
+                    assert!(
+                        acknowledgement
+                            .verify(&path, acknowledgement.stale_only)
+                            .is_err()
+                    )
+                }
+                Err(_) => {}
+            }
+        }
+    }
+
+    #[test]
+    fn catalog_refresh_gui_reports_and_reloads_only_after_verified_receipt() {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("L97 — rebuild the model catalog")
+            .expect("catalog refresh callback marker");
+        let end = source[start..]
+            .find("Research P0 — quota probe")
+            .map(|offset| start + offset)
+            .expect("catalog refresh callback end marker");
+        let callback = &source[start..end];
+
+        assert!(callback.contains("neothd_json_command(&[\"catalog\", \"refresh\"])"));
+        assert!(callback.contains("gui_action::run_catalog_refresh("));
+        assert!(callback.contains("default_neoth_home().join(\"models_catalog.json\")"));
+        assert!(callback.contains("Ok(outcome)"));
+        assert!(callback.contains("outcome.catalog_changed()"));
+        assert!(callback.contains("outcome.committed_snapshot()"));
+        assert!(callback.contains("gui_action::run_catalog_list("));
+        assert!(callback.contains("Some(generation)"));
+        assert!(callback.contains("Some(hash)"));
+        assert!(!callback.contains("run_neothd_probe"));
+        assert!(callback.contains("compare_exchange("));
+        assert!(callback.contains("Err(error)"));
+        assert!(callback.contains("(\"error\", error, None)"));
+        assert!(callback.contains("if let Some(output) = output"));
+        assert!(callback.contains("w.set_catalog_running(false)"));
+
+        let verified = callback.find("gui_action::run_catalog_refresh(").unwrap();
+        let success = callback.find("Ok(outcome)").unwrap();
+        let reload = callback.find("gui_action::run_catalog_list(").unwrap();
+        let error = callback.find("(\"error\", error, None)").unwrap();
+        let toast = callback.find("push_toast(&weak, kind").unwrap();
+        let spinner_stop = callback.find("w.set_catalog_running(false)").unwrap();
+        assert!(verified < success && success < reload && reload < toast);
+        assert!(error < spinner_stop, "error paths must stop the spinner");
+        for unchecked in [
+            "spawn_neothd_plain",
+            ".output()",
+            "status.success()",
+            "which_neothd",
+        ] {
+            assert!(
+                !callback.contains(unchecked),
+                "catalog refresh regressed to unchecked boundary: {unchecked}"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_readback_requires_successful_exit_and_exact_nested_schema() {
+        let path = std::env::current_dir().unwrap().join("models_catalog.json");
+        let valid = serde_json::json!({
+            "operation": "catalog.list",
+            "path": path.display().to_string(),
+            "state": "present",
+            "catalog_version": 2,
+            "catalog_generation": 11,
+            "catalog_hash": "a".repeat(64),
+            "providers": {
+                "openai_api": {
+                    "fetched_at_unix": 42,
+                    "source": "api",
+                    "last_error": null,
+                    "models": [{
+                        "id": "gpt-test",
+                        "display_name": null,
+                        "summary": null,
+                        "deprecated": false
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let parsed =
+            decode_json_output::<CatalogListAck>(&output(0, &valid, ""), "Catalog readback")
+                .unwrap();
+        parsed
+            .verify(&path, Some(11), Some(&"a".repeat(64)))
+            .unwrap();
+        assert_eq!(parsed.providers.len(), 1);
+
+        assert!(
+            decode_json_output::<CatalogListAck>(
+                &output(9, &valid, "read failed"),
+                "Catalog readback",
+            )
+            .is_err()
+        );
+        let extended = valid.replace(
+            "\"deprecated\":false",
+            "\"deprecated\":false,\"unbound\":true",
+        );
+        assert!(
+            decode_json_output::<CatalogListAck>(&output(0, &extended, ""), "Catalog readback",)
+                .is_err()
+        );
+
+        assert!(
+            parsed
+                .verify(&path, Some(12), Some(&"a".repeat(64)))
+                .is_err(),
+            "readback must bind the exact committed generation"
+        );
+        assert!(
+            parsed
+                .verify(&path, Some(11), Some(&"b".repeat(64)))
+                .is_err(),
+            "readback must bind the exact committed content hash"
+        );
+
+        let missing: CatalogListAck = serde_json::from_value(serde_json::json!({
+            "operation": "catalog.list",
+            "path": path.display().to_string(),
+            "state": "missing",
+            "catalog_version": 2,
+            "catalog_generation": null,
+            "catalog_hash": null,
+            "providers": {}
+        }))
+        .unwrap();
+        missing.verify(&path, None, None).unwrap();
+        assert!(
+            missing
+                .verify(&path, Some(11), Some(&"a".repeat(64)))
+                .is_err()
+        );
     }
 
     #[test]

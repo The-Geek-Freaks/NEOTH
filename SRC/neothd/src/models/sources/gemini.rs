@@ -9,15 +9,16 @@
 //!
 //! Reference: <https://ai.google.dev/api/models#method:-models.list>
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use crate::models::catalog::{ModelEntry, SourceOrigin};
+use crate::models::catalog::{MAX_MODELS_PER_PROVIDER, ModelEntry, SourceOrigin};
 use crate::models::cli_detect::{bundled_cli_models, probe_cli_version};
-use crate::models::sources::{FetchResult, ModelSource};
+use crate::models::sources::{FetchResult, MAX_LIST_PAGES, ModelSource, read_bounded_list_page};
 use crate::secret::SecretString;
 
 const PROVIDER_KEY: &str = "gemini_api";
@@ -112,53 +113,76 @@ fn bundled_gemini_entries() -> Vec<ModelEntry> {
 
 async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<ModelEntry>> {
     let client = crate::providers::http_client::build_client()?;
+    let base_url = reqwest::Url::parse(endpoint).context("parse gemini_api models endpoint")?;
+    let mut page_token: Option<String> = None;
+    let mut seen_tokens = HashSet::new();
+    let mut total_bytes = 0usize;
+    let mut model_rows = 0usize;
+    let mut entries = Vec::new();
+
     // GOLD-SEC-22 / A-60: key in the `x-goog-api-key` header, not the
     // `?key=` query param (URLs leak into logs/proxies; headers do not).
-    let response = client
-        .get(endpoint)
-        .header("x-goog-api-key", api_key)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await
-        .with_context(|| format!("GET {endpoint}"))?;
-    let status = response.status();
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        anyhow::bail!(
-            "gemini_api list-models returned HTTP {}: {}",
-            status.as_u16(),
-            body.trim()
+    for _ in 0..MAX_LIST_PAGES {
+        let mut url = base_url.clone();
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("pageSize", "1000");
+            if let Some(token) = page_token.as_deref() {
+                query.append_pair("pageToken", token);
+            }
+        }
+        let response = client
+            .get(url)
+            .header("x-goog-api-key", api_key)
+            .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .context("request gemini_api model list")?;
+        let parsed: ListResponse =
+            read_bounded_list_page(response, "gemini_api", &mut total_bytes).await?;
+        anyhow::ensure!(
+            model_rows.saturating_add(parsed.models.len()) <= MAX_MODELS_PER_PROVIDER,
+            "gemini_api model list exceeds {MAX_MODELS_PER_PROVIDER} entries"
         );
+        model_rows += parsed.models.len();
+        entries.extend(
+            parsed
+                .models
+                .into_iter()
+                // Filter to chat-capable models; embeddings + tuning models
+                // are out of scope for the LLM chat provider selector.
+                .filter(|m| supports_generate_content(&m.supported_generation_methods))
+                .map(|m| {
+                    // Gemini's REST API returns IDs as `models/gemini-3.1-pro-preview`;
+                    // strip the prefix so the catalog entry matches the form the
+                    // operator types into freedom.yaml.
+                    let bare_id = m
+                        .name
+                        .strip_prefix("models/")
+                        .unwrap_or(&m.name)
+                        .to_string();
+                    let mut e = ModelEntry::new(bare_id);
+                    if let Some(display) = m.display_name {
+                        e = e.with_display_name(display);
+                    }
+                    if let Some(desc) = m.description {
+                        e = e.with_summary(desc);
+                    }
+                    e
+                }),
+        );
+
+        let Some(token) = parsed.next_page_token.filter(|token| !token.is_empty()) else {
+            return Ok(entries);
+        };
+        anyhow::ensure!(
+            seen_tokens.insert(token.clone()),
+            "gemini_api pagination repeated token"
+        );
+        page_token = Some(token);
     }
-    let parsed: ListResponse = response
-        .json()
-        .await
-        .context("parse gemini_api list-models JSON")?;
-    Ok(parsed
-        .models
-        .into_iter()
-        // Filter to chat-capable models; embeddings + tuning models
-        // are out of scope for the LLM chat provider selector.
-        .filter(|m| supports_generate_content(&m.supported_generation_methods))
-        .map(|m| {
-            // Gemini's REST API returns IDs as `models/gemini-3.1-pro-preview`;
-            // strip the prefix so the catalog entry matches the form the
-            // operator types into freedom.yaml.
-            let bare_id = m
-                .name
-                .strip_prefix("models/")
-                .unwrap_or(&m.name)
-                .to_string();
-            let mut e = ModelEntry::new(bare_id);
-            if let Some(display) = m.display_name {
-                e = e.with_display_name(display);
-            }
-            if let Some(desc) = m.description {
-                e = e.with_summary(desc);
-            }
-            e
-        })
-        .collect())
+
+    anyhow::bail!("gemini_api pagination exceeds {MAX_LIST_PAGES} pages")
 }
 
 fn supports_generate_content(methods: &[String]) -> bool {
@@ -173,6 +197,8 @@ fn supports_generate_content(methods: &[String]) -> bool {
 struct ListResponse {
     #[serde(default)]
     models: Vec<ModelRow>,
+    #[serde(default, rename = "nextPageToken")]
+    next_page_token: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -189,6 +215,9 @@ struct ModelRow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::sources::MAX_LIST_PAGE_BYTES;
+    use wiremock::matchers::{method, path, query_param, query_param_is_missing};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn source_reports_provider_key() {
@@ -248,5 +277,108 @@ mod tests {
     fn endpoint_override_threads_through() {
         let s = GeminiSource::new(None).with_endpoint("http://localhost:9999/v1beta/models");
         assert_eq!(s.endpoint, "http://localhost:9999/v1beta/models");
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_follows_all_pages_and_filters_non_chat_models() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .and(query_param("pageSize", "1000"))
+            .and(query_param_is_missing("pageToken"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [
+                    {"name": "models/gemini-first", "supportedGenerationMethods": ["generateContent"]},
+                    {"name": "models/embed-only", "supportedGenerationMethods": ["embedContent"]}
+                ],
+                "nextPageToken": "page-two"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .and(query_param("pageSize", "1000"))
+            .and(query_param("pageToken", "page-two"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [
+                    {"name": "models/gemini-second", "supportedGenerationMethods": ["generateContent"]}
+                ]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let models = fetch_models_via_rest(&format!("{}/v1beta/models", server.uri()), "test-key")
+            .await
+            .unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gemini-first", "gemini-second"]
+        );
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_rejects_repeated_pagination_token() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .and(query_param_is_missing("pageToken"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [],
+                "nextPageToken": "same-token"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .and(query_param("pageToken", "same-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "models": [],
+                "nextPageToken": "same-token"
+            })))
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1beta/models", server.uri()), "test-key")
+            .await
+            .expect_err("repeated token must fail closed");
+        assert!(error.to_string().contains("repeated token"));
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_response_is_hard_bounded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![b'x'; MAX_LIST_PAGE_BYTES + 1]),
+            )
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1beta/models", server.uri()), "test-key")
+            .await
+            .expect_err("oversized page must fail closed");
+        assert!(error.to_string().contains("page exceeds"));
+    }
+
+    #[tokio::test]
+    async fn rest_catalog_never_surfaces_provider_error_body() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1beta/models"))
+            .respond_with(ResponseTemplate::new(429).set_body_string("echoed-secret-test-key"))
+            .mount(&server)
+            .await;
+
+        let error = fetch_models_via_rest(&format!("{}/v1beta/models", server.uri()), "test-key")
+            .await
+            .expect_err("HTTP failure must fail closed");
+        assert!(error.to_string().contains("HTTP 429"));
+        assert!(!error.to_string().contains("echoed-secret"));
     }
 }

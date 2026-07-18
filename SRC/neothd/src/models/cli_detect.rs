@@ -101,32 +101,48 @@ fn wait_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
 ) -> Result<std::process::Output> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let stdin_drop = child.stdin.take();
-    drop(stdin_drop);
-
-    std::thread::spawn(move || {
-        // Buffer stdout/stderr concurrently with the wait so a large
-        // version banner doesn't deadlock on a full pipe.
-        let stdout_bytes = stdout.map(read_all_to_end).unwrap_or_default();
-        let stderr_bytes = stderr.map(read_all_to_end).unwrap_or_default();
-        let status = child.wait();
-        let _ = tx.send((status, stdout_bytes, stderr_bytes));
-    });
-
-    match rx.recv_timeout(timeout) {
-        Ok((Ok(status), stdout, stderr)) => Ok(std::process::Output {
-            status,
-            stdout,
-            stderr,
-        }),
-        Ok((Err(e), _, _)) => Err(anyhow::anyhow!(e).context("child wait failed")),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            anyhow::bail!("CLI probe timed out after {timeout:?}")
+    drop(child.stdin.take());
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|stdout| std::thread::spawn(move || read_all_to_end(stdout)));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|stderr| std::thread::spawn(move || read_all_to_end(stderr)));
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().context("query CLI probe status")? {
+            Some(status) => {
+                let stdout = stdout_reader
+                    .map(|reader| reader.join().unwrap_or_default())
+                    .unwrap_or_default();
+                let stderr = stderr_reader
+                    .map(|reader| reader.join().unwrap_or_default())
+                    .unwrap_or_default();
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
+            None if started.elapsed() >= timeout => {
+                // Kill only the exact Child handle we spawned. Never use a
+                // process-name sweep: another operator process may share the
+                // same binary name. Waiting reaps the direct child handle.
+                if let Err(kill_error) = child.kill()
+                    && child
+                        .try_wait()
+                        .context("recheck timed-out CLI probe status")?
+                        .is_none()
+                {
+                    return Err(kill_error).context("terminate timed-out CLI probe");
+                }
+                child.wait().context("reap timed-out CLI probe")?;
+                anyhow::bail!("CLI probe timed out after {timeout:?}");
+            }
+            None => std::thread::sleep(Duration::from_millis(10)),
         }
-        Err(e) => Err(anyhow::anyhow!(e).context("CLI probe channel error")),
     }
 }
 
