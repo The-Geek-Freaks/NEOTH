@@ -53,9 +53,11 @@ use Surface::{CliOnly, Gui};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Evidence {
     /// A strict Rust type or verifier rejects malformed/mismatched output.
-    Typed(&'static str),
+    /// The pair is `(handler anchor, evidence token)`.
+    Typed(&'static str, &'static str),
     /// Output is consumed, but only as free-form text or a lenient parser.
-    Untyped(&'static str),
+    /// The pair is `(handler anchor, evidence token)`.
+    Untyped(&'static str, &'static str),
     /// No receipt or readback is checked.
     Missing,
 }
@@ -119,7 +121,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("backup-now-clicked"),
         rust_handler: Some("window.on_settings_backup_now_clicked"),
         dispatch_token: Some(".arg(\"backup\")"),
-        receipt: Evidence::Untyped("String::from_utf8_lossy"),
+        receipt: Evidence::Untyped(
+            "window.on_settings_backup_now_clicked",
+            "String::from_utf8_lossy",
+        ),
         readback: Evidence::Missing,
         state: OperationState::Partial(
             "GUI exposes only the default backup and trusts status text; custom output, WAL, credential flags, and archive readback remain CLI-only",
@@ -134,8 +139,11 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-refresh-clicked"),
         rust_handler: Some("window.on_omi_refresh"),
         dispatch_token: Some("fetch_verified_omi_snapshot"),
-        receipt: Evidence::Typed("OmiStatusAck"),
-        readback: Evidence::Typed("omi_snapshot_from_status_ack"),
+        receipt: Evidence::Typed("fn fetch_verified_omi_snapshot", "OmiStatusAck"),
+        readback: Evidence::Typed(
+            "fn fetch_verified_omi_snapshot",
+            "omi_snapshot_from_status_ack",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -147,10 +155,10 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-probe-clicked"),
         rust_handler: Some("window.on_omi_probe"),
         dispatch_token: Some("[\"probe\".to_string()]"),
-        receipt: Evidence::Typed("OmiProbeAck"),
+        receipt: Evidence::Typed("window.on_omi_probe", "OmiProbeAck"),
         // Probe is read-only: semantic verification of its strict response is
         // the readback, rather than a second state query.
-        readback: Evidence::Typed("acknowledgement.verify()"),
+        readback: Evidence::Typed("window.on_omi_probe", "acknowledgement.verify()"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -162,7 +170,7 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("finish-clicked"),
         rust_handler: Some("window.on_finish_clicked"),
         dispatch_token: Some("finish(&state)"),
-        receipt: Evidence::Untyped("persist_omi_credentials_via_cli"),
+        receipt: Evidence::Untyped("fn finish(", "persist_omi_credentials_via_cli"),
         readback: Evidence::Missing,
         state: OperationState::Partial(
             "the compatibility leaf is still used by first-run setup and checks only process exit; day-two settings use the stronger typed configure transaction",
@@ -177,8 +185,8 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-save-clicked"),
         rust_handler: Some("window.on_omi_save"),
         dispatch_token: Some("save_omi_settings("),
-        receipt: Evidence::Typed("OmiConfigureAck"),
-        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        receipt: Evidence::Typed("fn save_omi_settings", "OmiConfigureAck"),
+        readback: Evidence::Typed("window.on_omi_save", "fetch_verified_omi_snapshot"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -189,9 +197,9 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_surface: "Privacy > OMI > Permanently purge conversation",
         ui_callback: Some("omi-purge-clicked"),
         rust_handler: Some("window.on_omi_purge"),
-        dispatch_token: Some("[\"purge\".into(), conversation_id, \"--yes\".into()]"),
-        receipt: Evidence::Typed("OmiDeletionAck"),
-        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        dispatch_token: Some("[\"purge\".into(), conversation_id.clone(), \"--yes\".into()]"),
+        receipt: Evidence::Typed("window.on_omi_purge", "OmiDeletionAck"),
+        readback: Evidence::Typed("window.on_omi_purge", "fetch_verified_omi_snapshot"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -203,8 +211,8 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-resume-clicked"),
         rust_handler: Some("window.on_omi_resume"),
         dispatch_token: Some("[\"resume\".into(), \"--review-note\".into(), note]"),
-        receipt: Evidence::Typed("OmiResumeAck"),
-        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        receipt: Evidence::Typed("window.on_omi_resume", "OmiResumeAck"),
+        readback: Evidence::Typed("window.on_omi_resume", "fetch_verified_omi_snapshot"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -216,8 +224,8 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("omi-retention-clicked"),
         rust_handler: Some("window.on_omi_retention"),
         dispatch_token: Some("[\"enforce-retention\".into()]"),
-        receipt: Evidence::Typed("OmiDeletionAck"),
-        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        receipt: Evidence::Typed("window.on_omi_retention", "OmiDeletionAck"),
+        readback: Evidence::Typed("window.on_omi_retention", "fetch_verified_omi_snapshot"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -228,9 +236,11 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_surface: "Privacy > OMI > Allow re-import",
         ui_callback: Some("omi-reimport-clicked"),
         rust_handler: Some("window.on_omi_reimport"),
-        dispatch_token: Some("[\"allow-reimport\".into(), conversation_id, \"--yes\".into()]"),
-        receipt: Evidence::Typed("OmiAllowReimportAck"),
-        readback: Evidence::Typed("fetch_verified_omi_snapshot"),
+        dispatch_token: Some(
+            "[\"allow-reimport\".into(), conversation_id.clone(), \"--yes\".into()]",
+        ),
+        receipt: Evidence::Typed("window.on_omi_reimport", "OmiAllowReimportAck"),
+        readback: Evidence::Typed("window.on_omi_reimport", "fetch_verified_omi_snapshot"),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -240,10 +250,13 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_nav: "config",
         gui_surface: "first-run interface chooser boot state",
         ui_callback: None,
-        rust_handler: Some("load_gui_interface_preference"),
+        rust_handler: Some("fn load_gui_interface_preference"),
         dispatch_token: None,
         receipt: Evidence::Missing,
-        readback: Evidence::Typed("GuiInterfacePreferenceRecord"),
+        readback: Evidence::Typed(
+            "fn load_gui_interface_preference",
+            "GuiInterfacePreferenceRecord",
+        ),
         state: OperationState::Partial(
             "GUI consumes the canonical record at boot but has no explicit day-two show/refresh action",
         ),
@@ -257,8 +270,14 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("gui-mode-chosen"),
         rust_handler: Some("window.on_gui_mode_chosen"),
         dispatch_token: Some("set_interface_preference_via_cli"),
-        receipt: Evidence::Typed("GuiInterfaceSetAcknowledgement"),
-        readback: Evidence::Typed("validate_interface_set_result"),
+        receipt: Evidence::Typed(
+            "fn parse_interface_set_acknowledgement",
+            "GuiInterfaceSetAcknowledgement",
+        ),
+        readback: Evidence::Typed(
+            "fn validate_interface_set_result",
+            "load_gui_interface_preference(home)?",
+        ),
         state: OperationState::Verified,
     },
     OperationParity {
@@ -270,7 +289,7 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         ui_callback: Some("settings-open-cli-clicked"),
         rust_handler: Some("window.on_settings_open_cli_clicked"),
         dispatch_token: Some("switch_to_cli(&bin, &home)"),
-        receipt: Evidence::Typed("TerminalHandshake"),
+        receipt: Evidence::Typed("fn launch_cli_terminal", "TerminalHandshake"),
         readback: Evidence::Missing,
         state: OperationState::Partial(
             "authenticated terminal readiness proves commit ordering, but the GUI does not read back the saved CLI preference before handoff",
@@ -489,6 +508,154 @@ fn live_leaf_operation_paths(capability: &str) -> Vec<String> {
     paths
 }
 
+fn rust_literal_end(bytes: &[u8], start: usize) -> Option<usize> {
+    if bytes.get(start) == Some(&b'r') {
+        let hashes = bytes[start + 1..]
+            .iter()
+            .take_while(|byte| **byte == b'#')
+            .count();
+        let quote = start + 1 + hashes;
+        if bytes.get(quote) == Some(&b'"') {
+            return (quote + 1..bytes.len()).find_map(|end_quote| {
+                (bytes[end_quote] == b'"'
+                    && bytes
+                        .get(end_quote + 1..end_quote + 1 + hashes)
+                        .is_some_and(|suffix| suffix.iter().all(|byte| *byte == b'#')))
+                .then_some(end_quote + 1 + hashes)
+            });
+        }
+    }
+
+    match bytes.get(start).copied()? {
+        b'"' => {
+            let mut cursor = start + 1;
+            while cursor < bytes.len() {
+                match bytes[cursor] {
+                    b'\\' => cursor = cursor.saturating_add(2),
+                    b'"' => return Some(cursor + 1),
+                    _ => cursor += 1,
+                }
+            }
+            None
+        }
+        b'\'' => {
+            let value = start + 1;
+            let value_end = if bytes.get(value) == Some(&b'\\') {
+                match bytes.get(value + 1).copied()? {
+                    b'u' if bytes.get(value + 2) == Some(&b'{') => bytes[value + 3..]
+                        .iter()
+                        .position(|byte| *byte == b'}')
+                        .map(|offset| value + 4 + offset)?,
+                    b'x' => value + 4,
+                    _ => value + 2,
+                }
+            } else {
+                value
+                    + std::str::from_utf8(&bytes[value..])
+                        .ok()?
+                        .chars()
+                        .next()?
+                        .len_utf8()
+            };
+            (bytes.get(value_end) == Some(&b'\'')).then_some(value_end + 1)
+        }
+        _ => None,
+    }
+}
+
+/// Remove Rust comments without changing byte offsets or touching literals.
+/// Keeping offsets stable lets the handler extractor slice the original source.
+fn strip_rust_comments(source: &str) -> String {
+    let bytes = source.as_bytes();
+    let mut output = bytes.to_vec();
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        if let Some(end) = rust_literal_end(bytes, cursor) {
+            cursor = end;
+            continue;
+        }
+        let comment_start = cursor;
+        if bytes[cursor..].starts_with(b"//") {
+            while cursor < bytes.len() && !matches!(bytes[cursor], b'\r' | b'\n') {
+                cursor += 1;
+            }
+        } else if bytes[cursor..].starts_with(b"/*") {
+            let mut depth = 1_u32;
+            cursor += 2;
+            while cursor < bytes.len() && depth > 0 {
+                if bytes[cursor..].starts_with(b"/*") {
+                    depth += 1;
+                    cursor += 2;
+                } else if bytes[cursor..].starts_with(b"*/") {
+                    depth -= 1;
+                    cursor += 2;
+                } else {
+                    cursor += 1;
+                }
+            }
+        } else {
+            cursor += 1;
+            continue;
+        }
+        for byte in &mut output[comment_start..cursor] {
+            if !matches!(*byte, b'\r' | b'\n') {
+                *byte = b' ';
+            }
+        }
+    }
+    String::from_utf8(output).expect("masking valid Rust source preserves UTF-8")
+}
+
+fn operation_handler_source<'a>(source: &'a str, anchor: &str) -> &'a str {
+    let uncommented = strip_rust_comments(source);
+    let bytes = uncommented.as_bytes();
+    let start = uncommented
+        .find(anchor)
+        .unwrap_or_else(|| panic!("missing Rust handler `{anchor}`"));
+    let mut cursor = start + anchor.len();
+    while cursor < bytes.len() && bytes[cursor] != b'{' {
+        if let Some(end) = rust_literal_end(bytes, cursor) {
+            cursor = end;
+        } else {
+            cursor += 1;
+        }
+    }
+    assert!(cursor < bytes.len(), "Rust handler `{anchor}` has no body");
+
+    let mut depth = 1_u32;
+    cursor += 1;
+    while cursor < bytes.len() {
+        if let Some(end) = rust_literal_end(bytes, cursor) {
+            cursor = end;
+            continue;
+        }
+        match bytes[cursor] {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &source[start..=cursor];
+                }
+            }
+            _ => {}
+        }
+        cursor += 1;
+    }
+    panic!("Rust handler `{anchor}` has an unterminated body");
+}
+
+fn compact_rust(source: &str) -> String {
+    strip_rust_comments(source)
+        .chars()
+        .filter(|ch| !ch.is_whitespace())
+        .collect::<String>()
+        .replace(",]", "]")
+}
+
+fn handler_contains_token(source: &str, handler: &str, token: &str) -> bool {
+    compact_rust(operation_handler_source(source, handler)).contains(&compact_rust(token))
+}
+
 #[test]
 fn every_cli_capability_is_triaged_for_gui_parity() {
     // Floor guard: if a clap upgrade ever breaks enumeration and returns an
@@ -648,15 +815,6 @@ fn operation_inventory_binds_gui_callbacks_handlers_and_evidence() {
     );
     const GUI_RUST: &str = include_str!("../../../neothd-gui/src/main.rs");
 
-    fn callback_handler_body<'a>(source: &'a str, anchor: &str) -> &'a str {
-        let tail = source
-            .split_once(anchor)
-            .unwrap_or_else(|| panic!("missing Rust handler `{anchor}`"))
-            .1;
-        tail.split_once("\n    window.on_")
-            .map_or(tail, |(body, _)| body)
-    }
-
     let mut ids = BTreeSet::new();
     let nav_keys = live_gui_nav_keys();
     for operation in OPERATION_INVENTORY {
@@ -693,18 +851,14 @@ fn operation_inventory_binds_gui_callbacks_handlers_and_evidence() {
             );
         }
         if let Some(handler) = operation.rust_handler {
-            assert!(
-                GUI_RUST.contains(handler),
-                "operation `{}` references missing Rust handler `{handler}`",
-                operation.id
-            );
+            operation_handler_source(GUI_RUST, handler);
         }
         if let Some(dispatch) = operation.dispatch_token {
             let handler = operation
                 .rust_handler
                 .expect("a dispatch token requires a Rust handler anchor");
             assert!(
-                callback_handler_body(GUI_RUST, handler).contains(dispatch),
+                handler_contains_token(GUI_RUST, handler, dispatch),
                 "operation `{}` handler `{handler}` does not contain dispatch token `{dispatch}`",
                 operation.id
             );
@@ -713,10 +867,10 @@ fn operation_inventory_binds_gui_callbacks_handlers_and_evidence() {
             ("receipt", operation.receipt),
             ("readback", operation.readback),
         ] {
-            if let Evidence::Typed(token) | Evidence::Untyped(token) = evidence {
+            if let Evidence::Typed(handler, token) | Evidence::Untyped(handler, token) = evidence {
                 assert!(
-                    GUI_RUST.contains(token),
-                    "operation `{}` {kind} evidence token `{token}` is stale",
+                    handler_contains_token(GUI_RUST, handler, token),
+                    "operation `{}` {kind} handler `{handler}` does not contain evidence token `{token}`",
                     operation.id
                 );
             }
@@ -726,8 +880,8 @@ fn operation_inventory_binds_gui_callbacks_handlers_and_evidence() {
                 assert!(operation.ui_callback.is_some());
                 assert!(operation.rust_handler.is_some());
                 assert!(operation.dispatch_token.is_some());
-                assert!(matches!(operation.receipt, Evidence::Typed(_)));
-                assert!(matches!(operation.readback, Evidence::Typed(_)));
+                assert!(matches!(operation.receipt, Evidence::Typed(..)));
+                assert!(matches!(operation.readback, Evidence::Typed(..)));
             }
             OperationState::Partial(gap) => {
                 assert!(
@@ -755,6 +909,49 @@ fn operation_inventory_binds_gui_callbacks_handlers_and_evidence() {
             }
         }
     }
+}
+
+#[test]
+fn operation_evidence_in_another_handler_does_not_count() {
+    const GUI_RUST: &str = r#"
+    window.on_target(move || {
+        show_pending();
+    });
+    window.on_other(move || {
+        dispatch_target();
+        let _: TargetReceipt = receive();
+        read_back_target();
+    });
+"#;
+
+    for token in ["dispatch_target()", "TargetReceipt", "read_back_target()"] {
+        assert!(!handler_contains_token(GUI_RUST, "window.on_target", token));
+        assert!(handler_contains_token(GUI_RUST, "window.on_other", token));
+    }
+}
+
+#[test]
+fn operation_evidence_in_comments_does_not_count() {
+    const GUI_RUST: &str = r###"
+    window.on_target(move || {
+        // dispatch_target();
+        /* TargetReceipt */
+        /* read_back_target();
+           /* nested block comments are legal Rust */
+        */
+        let url = "https://example.test/a//b";
+        let raw = r#"/* literal, not a comment */"#;
+        let brace = '}';
+    });
+    window.on_other(move || {});
+"###;
+
+    for token in ["dispatch_target()", "TargetReceipt", "read_back_target()"] {
+        assert!(!handler_contains_token(GUI_RUST, "window.on_target", token));
+    }
+    let stripped = strip_rust_comments(GUI_RUST);
+    assert!(stripped.contains("https://example.test/a//b"));
+    assert!(stripped.contains("r#\"/* literal, not a comment */\"#"));
 }
 
 #[test]

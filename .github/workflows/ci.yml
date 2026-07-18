@@ -11,9 +11,11 @@
 # semantics (mlock, /proc, AF_UNIX) are individually `#[cfg(unix)]`-gated.
 #
 # Workspace-wide invariant (CDX-08):
-# Every cargo step below uses --workspace explicitly so cross-crate breakage
-# (e.g. a neothd refactor that breaks the plugin SDK's stable surface) fails
-# CI rather than slipping through under cargo's default-package selection.
+# General build/test/lint steps use --workspace explicitly so cross-crate
+# breakage (e.g. a neothd refactor that breaks the plugin SDK's stable surface)
+# fails CI rather than slipping through under cargo's default-package
+# selection. Explicit package/feature/MSRV contract probes are documented
+# exceptions and select their intended target with -p/--manifest-path.
 # The workspace has five members: neoth, neoth-plugin-sdk, neothd-gui,
 # neoth-migrate, and neoth-relay.
 # =============================================================================
@@ -265,6 +267,16 @@ jobs:
       # Stable toolchain: `-D warnings` (hard gate). Beta toolchain:
       # `-W warnings` (advisory) — beta catches stabilising clippy
       # lints early, but they shouldn't block the merge gate.
+      #
+      # GOLD-SEC-16 is a separate supported build contract. The workspace
+      # command below unifies in `wizard`, so it cannot prove that the slim
+      # solo-node binaries and library stay warning-free when wizard, cluster,
+      # and keychain are all compiled out.
+      - name: cargo clippy slim core (stable, hard gate)
+        if: matrix.toolchain == 'stable'
+        working-directory: SRC
+        run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
+
       - name: cargo clippy --workspace (stable, hard gate)
         if: matrix.toolchain == 'stable'
         working-directory: SRC
@@ -537,6 +549,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: '1.91.0'
+          components: clippy
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -550,9 +563,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
 
+      # GOLD-SEC-16 is a public supported-build contract, not only a
+      # current-stable lint probe. Pin the declared MSRV and compile both public
+      # launchers with every default feature removed before the smoke build.
+      - name: MSRV 1.91 slim library + binary contract
+        working-directory: SRC
+        run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
+
       - name: Build neoth + neothd compatibility launcher (release)
         working-directory: SRC
-        run: cargo build -p neoth --bins --release
+        run: cargo build -p neoth --bins --release --locked
 
       - name: Run gold-smoke eval suite
         working-directory: SRC

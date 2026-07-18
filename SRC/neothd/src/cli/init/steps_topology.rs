@@ -2,16 +2,19 @@
 //! step5b2 ollama provisioning, step5c qwen weights, step5d profile
 //! approval gate. Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(feature = "wizard")]
+use anyhow::Context as _;
+use anyhow::Result;
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "wizard")]
-use super::apply_local_multi_preset_interactive;
 use super::{
-    InitArgs, WizardState, WizardStep, apply_local_only_preset, collect_ollama_model_refs,
-    inference_uses_local_qwen, parse_topology_mode_arg, prompt_hemisphere_model,
-    prompt_inference_provider, recommended_provider_for_role, render_council_depth_cost_warning,
-    topology_default_idx_for_probe,
+    InitArgs, WizardState, WizardStep, collect_ollama_model_refs, inference_uses_local_qwen,
+    parse_topology_mode_arg, render_council_depth_cost_warning,
+};
+#[cfg(feature = "wizard")]
+use super::{
+    apply_local_multi_preset_interactive, apply_local_only_preset, prompt_hemisphere_model,
+    prompt_inference_provider, recommended_provider_for_role, topology_default_idx_for_probe,
 };
 
 /// Step 5b — inference topology (D14b).
@@ -33,7 +36,9 @@ pub(crate) fn step5b_inference_topology(
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
-    use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
+    #[cfg(feature = "wizard")]
+    use crate::config::inference::TopologyMode;
+    use crate::config::inference::{HemisphereSlot, InferenceProvider};
     use crate::daemon::accelerator;
 
     debug!("wizard step 5b: inference topology");
@@ -750,7 +755,6 @@ pub(crate) async fn step5f_hex_graph_offer(interactive: bool, dry_run: bool) -> 
 /// Non-interactive: print a registration hint and skip. The wizard step is
 /// an offer — no unattended install of a third-party service.
 pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
-    use crate::installers::tududi;
     if !interactive {
         println!(
             "[neoth init] optional tududi task-manager MCP rail — skip for now. \
@@ -761,6 +765,8 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
     }
     #[cfg(feature = "wizard")]
     {
+        use crate::installers::tududi;
+
         println!(
             "\n[6i/9] tududi task-manager MCP rail (optional) — exposes 8 task tools \
              (list/get/create/update/complete/delete/subtask/metrics) from your \
@@ -869,7 +875,6 @@ pub(crate) async fn step6i_tududi_offer(interactive: bool) -> Result<()> {
 /// Non-interactive: print a registration hint and skip. Device prerequisites
 /// require human setup; no unattended install is performed.
 pub(crate) async fn step6j_mobile_mcp_offer(interactive: bool) -> Result<()> {
-    use crate::installers::mobile_mcp;
     if !interactive {
         println!(
             "[neoth init] optional mobile-mcp iOS/Android device control rail — skip for now. \
@@ -881,6 +886,8 @@ pub(crate) async fn step6j_mobile_mcp_offer(interactive: bool) -> Result<()> {
     }
     #[cfg(feature = "wizard")]
     {
+        use crate::installers::mobile_mcp;
+
         println!(
             "\n[6j/9] mobile-mcp iOS/Android device control rail (optional) — drives real \
              devices and simulators via WebDriverAgent (iOS) + ADB (Android). Exposes 24 \
@@ -1211,6 +1218,9 @@ pub(crate) async fn step6k_companion_pairing_offer(
             );
         }
     }
+
+    #[cfg(not(feature = "wizard"))]
+    let _ = state;
 
     Ok(())
 }

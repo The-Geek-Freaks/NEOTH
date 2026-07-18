@@ -102,6 +102,7 @@ pub(crate) fn maybe_resume_from_checkpoint(
 /// Human-readable age hint for the resume prompt. Operator-facing only;
 /// not parsed back. Returns e.g. `"last updated 2 hours ago"` or
 /// `"timestamp unavailable"` if the wall clock looks bogus.
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn format_checkpoint_age(ts_unix: i64) -> String {
     if ts_unix <= 0 {
         return "timestamp unavailable".into();
@@ -146,6 +147,7 @@ pub const FIRST_TOUR_MESSAGE: &str = "Hi, I'm running. Want a quick tour? \
 /// The path comes from `std::env::current_exe()` so a `cargo run
 /// --bin neoth` invocation reuses the same binary instead of relying
 /// on a `PATH` lookup that might miss a freshly-built dev binary.
+#[cfg(feature = "wizard")]
 pub(crate) fn spawn_daemon_detached() -> Result<u32> {
     use std::process::{Command, Stdio};
 
@@ -325,6 +327,7 @@ pub(crate) fn get_os_username() -> String {
         .unwrap_or_else(|_| "user".to_string())
 }
 
+#[cfg(feature = "wizard")]
 pub(crate) fn dirs_home() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(std::path::PathBuf::from)

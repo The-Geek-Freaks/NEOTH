@@ -107,6 +107,7 @@ the release gates:
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14) | 10 | **1** | **9** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 13 | **12** | **1** |
+| WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **118** | **0** |
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -145,14 +146,27 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   code-scanning API currently reports zero open alerts, but that is not a
   substitute for completed exact-head CI, Security and CodeQL runs.
 
+  **Local reconciliation slice 2026-07-18 (remains OPEN):** the OMI CLI
+  reference, configuration guide, privacy contract and operator runbook now
+  match the bounded complete surfaced-settings request, staged keychain
+  finalization, typed recovery-boundary errors, strict persisted readback and
+  asynchronous reload semantics; generated `docs/cli-commands.md` is current.
+  CI now hard-gates the locked slim Core library and both public binaries with
+  no default features on every stable Ubuntu/macOS/Windows matrix leg, and
+  repeats the contract on pinned Rust 1.91.0 in Ubuntu gold-smoke before the
+  locked release build. Workflow definitions and local gates are not a green
+  exact-head run. The final README/channel/migration/architecture/release
+  reconciliation plus visible exact-head CI, Security and CodeQL remain
+  required.
+
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 
 > **Research (2026-07-16):** grounded backlog for the open R4 rollups (R4-05 parity,
 > R4-06 buddy, R4-07 channels, R4-09 accessibility, R4-13 cluster) is in
 > `PLAN/RESEARCH_GOLD_R4_2026_07_16.md` — each with done/gaps/ordered steps at file
 > anchors, verified against current code. **Still-open parity P0s** (from R4-05):
-> credential GUI
-> panels, `/critic` `/background` `/quit` triggers, interaction-mode picker, memory `--graph` export button. (Closed today: WAL inspector, permissions
+> general provider/channel credential GUI
+> panels, `/critic` `/background` `/quit` triggers and interaction-mode picker. (Closed today: WAL inspector, permissions
 > matrix, operator identity, cost/usage, cluster transport, model picker, kanban
 > notes/menu/session-selector, memory graph, tray, about, **undo probe (Doctor)**, **MCP registry tab**, **hooks + groundtruth + catalog + quota + tweaks probes**, **auto-update config card**, **memory --graph export button**.) See also
 > `PLAN/RESEARCH_BUGHUNT_2026_07_16.md` (WS-BUG — 62-finding hunt).
@@ -248,8 +262,65 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   a status generation so neither an older autosave nor an older probe can erase
   accepted receipt truth. Typed reload reasons put reason codes and the correct
   restart boolean in WAL. This closes the prior correctness and packaging
-  mismatch, but not R4-05 or R4-13: live transport/mDNS/gossip teardown and
-  carrier switching still require one shared runtime supervisor.
+  mismatch. The generation-bound runtime supervisor now owns the Peeroxide/Iroh
+  carrier, outbound gossip, applicable mDNS, worker-side delegated execution and
+  the Iroh foreign-event writer as one stop-before-start lifecycle. It awaits the
+  old generation before replacement, leaves a failed candidate stopped, retries
+  only the exact desired generation, terminally poisons uncertain teardown and
+  never restores a revoked authentication generation. This closes the previously
+  named live teardown/switch slice, but not R4-05 or R4-13: master-side task
+  coordination, the durable correlated result outbox, deadline/retry/redelegation,
+  authenticated Iroh task dispatch and complete GUI/Buddy/Doctor control parity
+  remain absent.
+
+  **Current operation-integrity and parity slice (2026-07-18; remains OPEN):**
+  a live-Clap/top-level navigation guard now rejects unmapped public commands and
+  GUI panels without a capability owner. The first nested operation manifest is
+  deliberately scoped to the previously misleading backup, OMI, interface and
+  restore surfaces; it binds each represented leaf to its Slint callback, Rust
+  handler, dispatch token, acknowledgement and readback posture. OMI status,
+  probe, settings/credential configuration, purge, resume, retention and
+  re-import now cross strict typed boundaries. The GUI submits the complete
+  surfaced settings snapshot plus optional credential replacements in one
+  bounded private-stdin request. File-backed settings and credential images
+  publish through the owner-private PREPARED recovery-journal protocol. With a
+  keychain backend, NEOTH first stages authoritative file overrides, snapshots
+  every prior keychain value before the first write, stages the complete new
+  keychain generation, and then clears the overrides through a second
+  credential-only pair transaction. Pre-publication failures restore the prior
+  keychain generation; a failure after the file recovery boundary retains the
+  new generation and reports that the file target may already be committed;
+  rollback failure is explicit. This is a crash-recoverable multi-stage
+  operation, not a single atomic transaction across files and the OS keychain.
+  The GUI verifies the submitted settings digest, committed config generation,
+  reload request and live status, and never publishes defaults or free-form
+  stdout as success.
+
+  **Frozen-source local evidence 2026-07-18:** Core OMI **21/21**, credentials
+  **51/51**, OMI-init **2/2**, background jobs **20/20**, cluster runtime
+  supervisor **13/13**, parity drift **10/10**, model catalog **29/29**, GUI
+  OMI **16/16**, GUI background execution **2/2**, and generated CLI-doc drift
+  **1/1** are green; strict Core, locked slim no-default lib+bins and locked GUI
+  all-target Clippy are green. These are local source-bound checks, not
+  exact-head workflow evidence, and close no broad R4 box.
+
+  Model-catalog refresh/list bind the complete configured-provider outcome
+  partition to an atomic catalog generation and SHA-256 readback. Memory Graph
+  refresh/export, mesh force-sync and background-job execution likewise require
+  request-bound receipts and verified post-state; malformed structured reads
+  remain visible errors. Memory Forget and peer revoke bind destructive success
+  to durable post-state and audit evidence, with collision-resistant receipt
+  paths and rollback-safe registry mutation. Configured external chat channels
+  remain visible but explicitly disabled because no chat route exists, and
+  historical chat sessions are explicitly read-only because transcript/session
+  control is not implemented.
+
+  This is not complete R4-05 parity. `backup.create-default` and
+  `omi.set-credentials` remain partial, `interface.show` and day-two CLI
+  switching remain partial, and `restore.archive` remains unwired. The nested
+  manifest does not yet decompose every public CLI capability; external-channel
+  chat routing and a real chat-session controller remain absent, and the broader
+  onboarding/Buddy/accessibility work is unchanged.
 - [ ] **GOLD-R4-06 Buddy product-grade utility:** evolve Buddy into an always-available desktop companion with useful quick actions, current task/session context, notifications, approvals, channel/automation status, drag/drop or share ingestion, voice/media entry where supported, safe interruption/cancel, and direct handoff into the full GUI/CLI. Every action must traverse the same permission, cost, audit and Custom-Home boundaries as the primary surfaces.
 - [ ] **GOLD-R4-07 Channel parity and onboarding quality:** compare the current channel registry against OpenClaw and the relevant adopted sources, implement every high-value channel/behavior still missing, and fully wire add/edit/probe/remove, credentials, allowlists, media/reply/streaming behavior, health/error status and GUI/CLI onboarding. Unsupported channels require an explicit evidence-based skip, not silent absence.
 - [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.
@@ -2015,6 +2086,161 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 
 > **GUI Feature-Roadmap → `PLAN/RESEARCH_GUI_FEATURE_ROADMAP_2026_07_16.md`** — 57 code-grounded feature findings (kanban/cluster/right-click/best-in-class/CLI-parity) each with `current_state` + exact `build_approach`. Breakdown: **52 needs-rust + Codex-zone · 3 needs-live-verify · ~1 pure-slint.** This is the **Codex handoff** for the GUI major-feature lane (Claude finished the pure-slint polish; the features need main.rs/main.slint/settings.slint/panel_logic.rs glue). Highlights: right-click rollout (ContextMenu pattern already in main.slint — regen/kanban/buddy), kanban patch-diff viewer + multi-line notes + drag-drop + richer card face, chat model-picker + artifact-panel + image I/O + branch-nav, and 7 missing CLI panels (MCP inspector, moral-core editor, ADR browser, jobs monitor, mode registry, migration, council-weights).
 
+## WS-LF — Confirmed Lost-Feature Recovery (2026-07-18)
+
+> **Scope contract:** this is v1.0 work. P1/P2 below expresses execution priority
+> only; no item may move to 1.1, disappear under a broad WS-R4 rollup, or close
+> from a source-only/partial implementation. Each box needs production wiring,
+> focused regression evidence, the applicable surface/artifact evidence and a
+> committed exact-head result.
+>
+> **Source evidence:** PLAN/LOST_FEATURES_1_0_RECOVERY.md plus the open
+> Definition-of-Done leaves in plans/001-openclaw-channel-migration-parity.md,
+> plans/002-zero-friction-adoption-coupling.md and
+> plans/003-gui-cli-buddy-capability-parity.md.
+>
+> **Count contract:** 118 open tasks = 1 inventory-integrity gate + 23 recovered
+> P1 rows + 29 recovered P2 rows + 19 Plan-001 leaves + 22 Plan-002 leaves +
+> 24 Plan-003 leaves. The recovery source header claims 53 losses (23+30), but
+> its body contains 52 (23+29); GOLD-LF-INTEGRITY-01 keeps that discrepancy
+> release-blocking until the source and a mechanical one-to-one check agree.
+
+### Inventory integrity
+
+- [ ] **GOLD-LF-INTEGRITY-01 — Reconcile the lost-feature source count:** correct the 53-versus-52 and 30-versus-29 discrepancy in PLAN/LOST_FEATURES_1_0_RECOVERY.md, retain an explicit disposition for every archaeological candidate, and add a mechanical check proving exactly 23 P1 + 29 P2 source rows map one-to-one to unique GOLD-LF-P1/P2 IDs without omissions or duplicates.
+
+### Recovered P1 rows — high-leverage v1.0 scope (23)
+
+- [ ] **GOLD-LF-P1-01 — ADR-009 INTENT/RESULT WAL pairs:** implement paired OsFileWriteIntent, ChannelEgressIntent, MediaCallIntent, SelfUpdateIntent and OsAppLaunchIntent subtypes at every real effect edge; focused tests must prove intent-before-effect, exactly one terminal result, replayability and secret-safe payloads. Source: ADR/009 and LOST_FEATURES P1.
+- [ ] **GOLD-LF-P1-02 — Mirror-refusal stages 2–6:** wire Schicht-0 output through the specified right-hemisphere, callosum and recovery stages, including bounded termination, provider/fallback behavior and audited outcomes; adversarial regressions must exercise every stage rather than only detection. Source: SPEC_mirror_refusal.md.
+- [ ] **GOLD-LF-P1-03 — Uniform tool-output redaction in WAL coding frames:** enumerate every CODING_TOOL_RESULT/recall/MCP result producer, apply the canonical sanitizer before persistence, and prove representative direct, recalled and MCP outputs cannot leak configured secret patterns. Source: SMALLCODE_AUDIT_2026-05-21 §5#4.
+- [ ] **GOLD-LF-P1-04 — HLC-ordered WAL replay:** first record a backwards-compatible EventHeaderV2/HLC merge design, then replace naive ±300-second wall-clock ordering with deterministic node-aware HLC ordering without breaking existing WAL consumers; mixed-version, skew and tie tests are required. Source: CLAUDE_v07_review.md §11.
+- [ ] **GOLD-LF-P1-05 — Per-decision append-only trust ledger:** add typed TrustEvent/TrustLedger persistence and a WAL event at every autonomy/trust decision boundary, with deterministic inspection, subject isolation, tamper detection and replay tests. Source: GREMIUM_EXECUTION_BACKLOG_2026-05-20 P3.
+- [ ] **GOLD-LF-P1-06 — AgreementDimension council scoring:** define the complete dimension enum and explicit weighting/aggregation contract, thread dimension scores through council decisions and audits, and pin deterministic formula, missing-dimension and disagreement tests. Source: BLUEPRINT_v06_synthesis.md §8.
+- [ ] **GOLD-LF-P1-07 — External-family grader parity gate:** add a verified family tag to grader configuration and fail the recall-parity gate unless the required independent external family is present; cover spoofed, missing, duplicate and mixed-family configurations. Source: 00_DESIGN_v1.1_FINAL.md H7.
+- [ ] **GOLD-LF-P1-08 — Recall-parity evaluation harness:** ship transcript/WAL goldset mining, operator labeling, four-grader batch orchestration and family-bias clustering as one reproducible workflow with resumable artifacts, provenance and a release-gating report. Source: SPEC_recall_parity_methodology.md.
+- [ ] **GOLD-LF-P1-09 — Ouro O-5c quantized forward pass:** implement QuantizedOuroLayer and QuantizedOuroModel end-to-end inference on the retained Candle primitives, validate exact model/artifact binding, and prove deterministic Q8 execution plus bounded failure/progress behavior in CLI and GUI consumers. Source: SPEC_ouro_thinking_provider_2026-05-23.md.
+- [ ] **GOLD-LF-P1-10 — Inner-monologue audit/streaming reasoning surface:** carry provider reasoning events through the authorized streaming pipeline into explicit operator-controlled CLI/GUI/Buddy presentation and audit, with unsupported/redacted/cancelled states and no hidden persistence. Source: FEATURE_EVAL.md C-16.
+- [ ] **GOLD-LF-P1-11 — Proactive context preparation:** implement a bounded session-start context preloader using authoritative recall and current policy, expose loading/stale/failure state, and prove prefetched context is subject-isolated, budgeted and actually consumed by the first request. Source: FEATURE_EVAL.md C-6.
+- [ ] **GOLD-LF-P1-12 — Citation live lookup:** add allowlisted Crossref/OpenAlex/Semantic Scholar resolution with typed provenance, caching, timeout/rate-limit/offline behavior and citation chips/CLI parity; tests must prove the cited record and displayed claim remain bound. Source: QUELLEN_ADOPT_academic_2026-05-21 §3.2.
+- [ ] **GOLD-LF-P1-13 — Sub-200ms voice streaming capture:** research and select the compiled-in Silero/VAD path, then wire cpal capture → VAD → streaming STT with visible download/readiness/progress/cancel states and measured latency evidence on supported release targets. Source: FEATURE_EVAL.md C-17.
+- [ ] **GOLD-LF-P1-14 — Proactive delivery beyond Telegram:** route plan_delivery through every supported channel's real send path, preserving account, policy, permit, WAL, retry and receipt binding; channel-contract tests must reject SidecarOnly false positives. Source: proactive_dispatcher.rs findings.
+- [ ] **GOLD-LF-P1-15 — First-class WebChat surface:** implement the authenticated HTTP/WebSocket adapter, registry/config/credential/health/message lifecycle, account routing and CLI/GUI/Buddy onboarding; clean-machine and migration fixtures must include it. Source: Plan 001 channel ledger.
+- [ ] **GOLD-LF-P1-16 — ChannelAccountId end to end:** thread the canonical account identity through config, credentials, inbound/outbound messages, sessions, routes, pairing, queues, runtime health, permits, WAL, all surfaces and importer; multi-account isolation and migration tests are required. Source: Plan 001 gap F-01.
+- [ ] **GOLD-LF-P1-17 — Channel-aware flapping Doctor check:** add the channel/account dimension to usage/health events and compute flapping per channel rather than provider; prove independent channels do not contaminate each other's diagnosis. Source: REEVALUATION R7 P1.
+- [ ] **GOLD-LF-P1-18 — Real wizard GUI↔daemon IPC:** replace the documented stub with bounded authenticated MPSC/session wiring opened by serve and consumed by GUI, including reconnect, cancellation, ordered progress and fail-closed daemon-loss behavior. Source: Plan 003 gap SURF-01.
+- [ ] **GOLD-LF-P1-19 — Local-LLM resource tab:** add daemon-backed Ollama/local-model polling and an operator GUI/CLI/Buddy view for artifact download, disk/RAM/VRAM use, load/readiness, progress, cancellation, errors, update and prune; displayed Ready must be probe-backed. Source: v1_0_OPERATOR_WISHLIST_2026-05-24 §X.
+- [ ] **GOLD-LF-P1-20 — Sidebar last-message preview:** populate each session preview from the canonical latest visible message, update it on send/stream completion/reload, and test redaction, empty, truncation, Unicode and session-switch behavior. Source: GUI_BEAT_OPENHUMAN.md.
+- [ ] **GOLD-LF-P1-21 — Per-turn silence watchdog:** implement a 120-second watchdog that rearms on meaningful stream/provider signal, cancels cleanly and surfaces retry/diagnostic state without mistaking a short read timeout for liveness; cover stall, progress and race cases. Source: GUI_BEAT_OPENHUMAN.md.
+- [ ] **GOLD-LF-P1-22 — Per-hemisphere provider wizard step 5d:** expose left/right/cerebellum provider and model choices using the canonical topology contract, persist through the shared wizard executor and prove CLI/GUI rerun, invalid-provider and readiness parity. Source: SPEC_hemisphere_provider_selection.md.
+- [ ] **GOLD-LF-P1-23 — Close the orphaned Plan 001/002/003 criteria:** keep all 65 GOLD-LF-001/002/003 leaves below individually tracked and evidence-backed, synchronize their owning WS-R4 rollups, and mechanically prevent a plan leaf from being open while its parent is reported complete. Source: LOST_FEATURES tracker-hygiene row.
+
+### Recovered P2 rows — mandatory v1.0 scope (29)
+
+- [ ] **GOLD-LF-P2-01 — Dreaming Light/REM/Repair phases:** implement the three-phase state machine, phase-specific work and durable/audited transitions with scheduling, restart and idempotency tests. Source: OpenClaw adoption CHERRY_PICK #1.
+- [ ] **GOLD-LF-P2-02 — Hippocampus importance cron:** add the 0.75 importance selection contract, decay task and durable importance field, with hot-reload, Custom fail-closed and boundary/retention tests. Source: Jarvis cherry-pick #1.
+- [ ] **GOLD-LF-P2-03 — Nightly vault Git WAL-mirror backup:** implement policy-gated, credential-safe nightly commit/verification/retention for the configured external vault and surface status/repair in CLI, GUI and Buddy; no operator data may be silently pushed or deleted. Source: Jarvis cherry-pick #3.
+- [ ] **GOLD-LF-P2-04 — Complete reflection hygiene:** enforce ≤90-day retention, Jaccard topic deduplication, yearly synthesis from period reflections and a deterministic topic-synonym map, with migration and long-horizon regressions. Source: REFLECT_BACKLOG §A.
+- [ ] **GOLD-LF-P2-05 — Self-improve proposal quality schema:** version and persist eval source, corpus hash, regressions and quality evidence, reject incomplete/stale proposals before acceptance, and expose the same proof in CLI/GUI/Buddy. Source: REFLECT_BACKLOG §B.
+- [ ] **GOLD-LF-P2-06 — Capability decay tracking:** define and persist provider/capability quality-over-time metrics, decay/recovery rules and operator-visible diagnostics without allowing noisy samples to silently disable capabilities. Source: FEATURE_EVAL.md C-13.
+- [ ] **GOLD-LF-P2-07 — EXP-FD-1..5 fractal-dimension experiments:** complete the reasoning-depth literature/design note, then implement all five reproducible gated experiments with datasets, metrics, provenance and explicit promotion/rejection criteria. Source: dimension.rs gated experiment backlog.
+- [ ] **GOLD-LF-P2-08 — Universal WAL session_id:** thread the authenticated session identity through make_header and every applicable emitter, migrate/read legacy zero values safely and prove cross-session replay/query isolation. Source: builder.rs session_id finding.
+- [ ] **GOLD-LF-P2-09 — Autonomous research loop:** implement an operator-governed agent-goal lifecycle with bounded planning/execution, budgets, pause/resume/cancel, evidence capture, proposal-first mutation and full audit/rollback surfaces. Source: FEATURE_EVAL.md C-2.
+- [ ] **GOLD-LF-P2-10 — Session-start skill registry injection:** inject the exact enabled, dependency-ready skill registry into every new session and downstream retry/fallback/sub-agent path; prove hot-reload and subject/policy isolation. Source: SP-H1.
+- [ ] **GOLD-LF-P2-11 — CodeGraph import/type/BFS edges:** add ImportGraph, TypeHierarchy and bounded BFS APIs beside the existing CallGraph, regenerate Graphify/self-knowledge consumers and test cross-language, cycle and stale-index behavior. Source: CG-2/3/5.
+- [ ] **GOLD-LF-P2-12 — Per-skill autonomy gradients:** add typed per-skill overrides under the canonical Custom/autonomy policy, resolve them at every invocation edge and expose inspect/edit/reset parity with fail-closed tests. Source: per-skill autonomy finding.
+- [ ] **GOLD-LF-P2-13 — CloakBrowser stealth fetch plugin:** document the Playwright-rs versus chromiumoxide decision, then ship a pinned managed browser/runtime with policy, network, credential, progress, cancellation and clean-machine lifecycle wiring. Source: CloakBrowser recovery row.
+- [ ] **GOLD-LF-P2-14 — Ralph error-aware retry tool:** implement typed error classification and bounded LLM retry with request/model/cost/permission rebinding, deterministic stop conditions, receipts and CLI/GUI/Buddy visibility. Source: Ralph-Retry recovery row.
+- [ ] **GOLD-LF-P2-15 — Hemisphere role-enforcement pipeline:** enforce configured role boundaries across council, normal dispatch, fallback, retries and sub-agents, with typed violations and adversarial prompt/regression evidence. Source: role-enforcement recovery row.
+- [ ] **GOLD-LF-P2-16 — Skill hot-reload invocation pinning:** pin each active invocation to one Arc<SkillBody> generation while allowing later turns to observe ArcSwap updates; concurrency tests must prove no mid-call body/config split. Source: E-22.
+- [ ] **GOLD-LF-P2-17 — Omniparser reopen decision and implementation:** re-evaluate PC-01/PC-02 with current Windows/resource evidence, record a binding adopt/skip verdict, and if retained ship the fully managed model/runtime plus GUI/CLI progress and lifecycle before v1.0; an undocumented limbo verdict cannot close this item. Source: DO_NOT_ADOPT.md reopen condition.
+- [ ] **GOLD-LF-P2-18 — Per-node skill assignment and channel binding:** extend authenticated cluster handshakes/routing with operator-controlled node capabilities, skill assignments and channel/account bindings, including conflict, failover and surface-parity tests. Source: Veronica Delta §6.
+- [ ] **GOLD-LF-P2-19 — Cluster BudgetToken consensus:** implement the specified Raft-backed budget authority so concurrent nodes cannot overspend or reuse grants; partition, leader-change, replay and recovery tests must prove safety. Source: cluster Phase 6 recovery row.
+- [ ] **GOLD-LF-P2-20 — Pinned verified n8n/Paperless installs:** bind exact versions, recursive artifact checksums/signatures and authenticated readiness to installer/update/repair/rollback/uninstall jobs; port-only success is insufficient. Source: installer recovery row.
+- [ ] **GOLD-LF-P2-21 — neoth-archive-bridge Obsidian plugin:** ship the pinned external TypeScript plugin and NEOTH pairing/sync contract together, including install/update/repair/uninstall, vault preservation, offline behavior and clean-machine artifact tests. Source: archive-bridge recovery row.
+- [ ] **GOLD-LF-P2-22 — Per-counterparty ingress-clustering consent:** attach verified counterparty consent to every channel episode used by dreaming/clustering, default deny on unknown/revoked consent, and prove isolation, revocation and audit behavior. Source: ADR-005.
+- [ ] **GOLD-LF-P2-23 — dream.cron_enabled plus wizard nudge:** add the authoritative setting, hot-reload scheduler consumption and non-coercive CLI/GUI onboarding control; Strict and Custom fail closed and config/readback tests prove the actual runtime state. Source: ADR-003.
+- [ ] **GOLD-LF-P2-24 — BGE-M3 fallback embedding model:** implement explicit opt-in acquisition, exact artifact verification, routing/readiness/fallback semantics and full GUI/CLI/Buddy lifecycle parity. Source: ADR-004.
+- [ ] **GOLD-LF-P2-25 — First-class Voice Call surface:** implement the fully gated call adapter, account/config/credential/media/session lifecycle, typed health and receipts, all-surface onboarding and clean-machine qualification. Source: Plan 001 channel ledger.
+- [ ] **GOLD-LF-P2-26 — Three-phase streaming indicator:** drive waiting/receiving/finalizing UI state from the canonical stream controller, including cancellation/error/reconnect and reduced-motion behavior; no timer-only fake progress. Source: GUI-Polish recovery row.
+- [ ] **GOLD-LF-P2-27 — Recall citation chips:** render bound source/provenance and WarmHit score from typed recall results, with keyboard/screen-reader behavior and stale/missing-source handling. Source: GUI-Polish recovery row.
+- [ ] **GOLD-LF-P2-28 — Non-star response quality signal:** add a privacy-preserving per-response feedback contract that feeds the intended evaluation/self-improve path, supports correction/removal and has CLI/GUI/Buddy parity. Source: FEATURE_EVAL.md C-18.
+- [ ] **GOLD-LF-P2-29 — Live TPS meter:** compute a stable one-second rolling throughput from real streamed tokens/events, reset correctly across messages/providers and expose unavailable/paused/error states without invented values. Source: GUI-Polish R-03.
+
+### Plan 001 — OpenClaw channel migration parity leaves (19)
+
+- [ ] **GOLD-LF-001-01 — Complete the 31-row pinned channel fixture:** account for all 29 public rows plus ClickClack and QA-test-only, with a stable source commit/hash and a drift test. Source: Plan 001 DoD 1.
+- [ ] **GOLD-LF-001-02 — Classify every source schema leaf:** give every manifest/schema path a migration disposition and fail extraction/CI on any unclassified leaf. Source: Plan 001 DoD 2.
+- [ ] **GOLD-LF-001-03 — Carry ChannelAccountId across every consumer:** config, credentials, messages, identities, sessions, routing, pairing, queues, runtime, health, permits, WAL, CLI, GUI, Buddy and importer all use the same identity. Source: Plan 001 DoD 3.
+- [ ] **GOLD-LF-001-04 — Migrate legacy flat channel config transactionally:** convert to the default account with exact behavior preservation, rollback, crash recovery and idempotent rerun evidence. Source: Plan 001 DoD 4.
+- [ ] **GOLD-LF-001-05 — Generate all channel consumers from one descriptor:** Core, CLI, GUI, Buddy, importer, docs and artifacts derive from the canonical registry; drift tests reject parallel hardcoded lists. Source: Plan 001 DoD 5.
+- [ ] **GOLD-LF-001-06 — Qualify all 13 overlapping adapters:** each adapter passes its pinned behavioral, account, credential, media, health and migration contracts. Source: Plan 001 DoD 6.
+- [ ] **GOLD-LF-001-07 — Implement all 12 missing official adapters:** every retained adapter is fully managed and passes clean-machine release qualification. Source: Plan 001 DoD 7.
+- [ ] **GOLD-LF-001-08 — Ship Voice Call and WebChat as first-class surfaces:** both have real registry/runtime/config/health/onboarding consumers and equivalent safety gates. Source: Plan 001 DoD 8.
+- [ ] **GOLD-LF-001-09 — Resolve WeChat, Yuanbao and Zalo ClawBot honestly:** each is source-verified and fully managed or has an explicit evidence-backed release decision; docs-only support claims fail the gate. Source: Plan 001 DoD 9.
+- [ ] **GOLD-LF-001-10 — Keep QA Channel test-only while adopting its harness:** deterministic multi-account test patterns are retained and CI proves QA cannot enter production registry/runtime. Source: Plan 001 DoD 10.
+- [ ] **GOLD-LF-001-11 — Preserve distinct WhatsApp transports:** Baileys and Business remain separate identities and OpenClaw WhatsApp never silently maps to Business. Source: Plan 001 DoD 11.
+- [ ] **GOLD-LF-001-12 — Guide iMessage and Google Chat relinks:** transport conversion requires explicit relink and remains blocked until authenticated target probing succeeds. Source: Plan 001 DoD 12.
+- [ ] **GOLD-LF-001-13 — Complete OpenClaw migration lifecycle:** plan/apply/status/rollback binds the exact source set and proves atomicity, crash resume, idempotency and secret-redacted audit. Source: Plan 001 DoD 13.
+- [ ] **GOLD-LF-001-14 — Match per-account workflows across surfaces:** CLI, GUI and Buddy expose equivalent onboarding, status, repair, migration and durable progress states. Source: Plan 001 DoD 14.
+- [ ] **GOLD-LF-001-15 — Bundle or signed-manage every required runtime:** no compiler, language runtime or verifier installation is delegated to the user. Source: Plan 001 DoD 15.
+- [ ] **GOLD-LF-001-16 — Pass clean-machine installer and migration journeys:** exact Windows, macOS and Linux release artifacts complete install, migrate, repair and rollback tests. Source: Plan 001 DoD 16.
+- [ ] **GOLD-LF-001-17 — Bind public channel claims to release truth:** generated README, docs, Wiki, Obsidian and SVG outputs match the release registry and artifact digest. Source: Plan 001 DoD 17.
+- [ ] **GOLD-LF-001-18 — Prove exact-head channel gates green:** CI, Security, CodeQL, release-artifact, channel-contract and installer runs all succeed on the pushed candidate head. Source: Plan 001 DoD 18.
+- [ ] **GOLD-LF-001-19 — Gate GOLD-R4-07 on all Plan-001 evidence:** the parent and dependent v1.0 release boxes cannot close until GOLD-LF-001-01..18 are evidence-backed. Source: Plan 001 DoD 19.
+
+### Plan 002 — zero-friction adoption coupling leaves (22)
+
+- [ ] **GOLD-LF-002-01 — Complete the capability catalog:** one validated catalog covers every public adoption, all 181 skills, all 15 channels, both bridges, every installer module/model/workflow/preset/hook and released resource. Source: Plan 002 DoD 1.
+- [ ] **GOLD-LF-002-02 — Require a complete lifecycle or explicit unavailable state:** every catalog capability implements its target lifecycle or has a tested target-specific UnavailableReason. Source: Plan 002 DoD 2.
+- [ ] **GOLD-LF-002-03 — Use one durable job API on every surface:** CLI, GUI, Buddy, wizard, Doctor, first-use consumers and migrations expose the same revision, progress and error contract. Source: Plan 002 DoD 3.
+- [ ] **GOLD-LF-002-04 — Persist every job state restart-safely:** queued, byte/step progress, validating, configuring, awaiting-user action with bound continuation, ready, failed, cancelled and retry all survive restart correctly. Source: Plan 002 DoD 4.
+- [ ] **GOLD-LF-002-05 — Make Ready probe-backed:** exact artifact/config binding plus an authenticated capability-specific probe is required before any Ready transition. Source: Plan 002 DoD 5.
+- [ ] **GOLD-LF-002-06 — Execute the three intent-only wizard flags:** each flag starts a real job and noninteractive scripts fail when readiness fails. Source: Plan 002 DoD 6.
+- [ ] **GOLD-LF-002-07 — Complete local-model lifecycle parity:** Qwen, Ouro, CLIP, Whisper, Faster-Whisper, Piper and Ollama expose progress/cancel/retry/validation/status/update/safe-prune in GUI, CLI and Buddy. Source: Plan 002 DoD 7.
+- [ ] **GOLD-LF-002-08 — Complete Obsidian coupling:** install/bind app, vault, L6, readers/writers, four pinned plugins and the real archive bridge while normal uninstall preserves the vault. Source: Plan 002 DoD 8.
+- [ ] **GOLD-LF-002-09 — Complete n8n and Paperless managed installs:** n8n starts/authenticates and idempotently imports all 13 workflows; Paperless starts/authenticates without manual Docker. Source: Plan 002 DoD 9.
+- [ ] **GOLD-LF-002-10 — Ship runnable Keet and WhatsApp Baileys sidecars:** exact release artifacts manage their runtimes and expose resumable QR/session progress. Source: Plan 002 DoD 10.
+- [ ] **GOLD-LF-002-11 — Prove all-channel configuration and migration:** all 15 channels have lossless CLI/GUI config and typed authenticated behavior/health probes; OpenClaw multi-account/policy migration is lossless or blocks before apply. Source: Plan 002 DoD 11.
+- [ ] **GOLD-LF-002-12 — Ship real Android and iOS companions:** installable distributables consume the production pairing protocol and provide chat, approvals and integration-job parity. Source: Plan 002 DoD 12.
+- [ ] **GOLD-LF-002-13 — Materialize every skill resource and prerequisite:** bundled skills include all sibling assets and dependency-bearing skills cannot enable before exact prerequisites are Ready. Source: Plan 002 DoD 13.
+- [ ] **GOLD-LF-002-14 — Eliminate manual stock-release dependencies:** no feature requires the user to install Node/npm/pnpm, Python/pip, Hugging Face CLI, Docker, minisign/cosign, build tools or a hidden sidecar. Source: Plan 002 DoD 14.
+- [ ] **GOLD-LF-002-15 — Pin every executable source:** target release locks contain no latest, main or otherwise unversioned executable source. Source: Plan 002 DoD 15.
+- [ ] **GOLD-LF-002-16 — Gate mutations and keep secrets out of telemetry:** required audit/permission precedes every mutating job and secrets never enter argv, logs, setup.db, WAL, manifests or public status JSON. Source: Plan 002 DoD 16.
+- [ ] **GOLD-LF-002-17 — Separate safe uninstall from confirmed purge:** normal uninstall removes only owned program files/services and preserves operator data; purge is explicit and confirmed. Source: Plan 002 DoD 17.
+- [ ] **GOLD-LF-002-18 — Verify one recursive manifest across all packages:** Windows installer, macOS app/pkg/dmg, Linux deb/rpm, portable archives, updater and uninstallers consume and verify the same closed capability manifest. Source: Plan 002 DoD 18.
+- [ ] **GOLD-LF-002-19 — Pass exact-head lifecycle and quality matrices:** clean-machine, update, repair, rollback, uninstall, accessibility, mobile, CI, Security and CodeQL gates are green on the pushed head. Source: Plan 002 DoD 19.
+- [ ] **GOLD-LF-002-20 — Reconcile all public material to shipped capabilities:** README, docs, Wiki, diagrams, release notes and roadmap are generated from or checked against verified release truth. Source: Plan 002 DoD 20.
+- [ ] **GOLD-LF-002-21 — Pass repository-wide static and test gates:** git diff check, Rust formatting, workspace Clippy and workspace tests all exit zero on frozen source. Source: Plan 002 DoD 21.
+- [ ] **GOLD-LF-002-22 — Block v1.0 publication until all adoption criteria pass:** no tag or publication occurs before GOLD-LF-002-01..21 and the explicit operator-owned signing/publisher step. Source: Plan 002 DoD 22.
+
+### Plan 003 — GUI/CLI/Buddy capability-parity leaves (24)
+
+- [ ] **GOLD-LF-003-01 — Package a bound surface inventory:** deterministic surface-bindings-v1.json is generated, packaged and digest-bound to the exact capability lock, Graphify snapshot, version and commit. Source: Plan 003 DoD 1.
+- [ ] **GOLD-LF-003-02 — Give every public operation one identity/disposition:** recursively cover CLI, slash, config/lifecycle, GUI, Buddy and onboarding operations. Source: Plan 003 DoD 2.
+- [ ] **GOLD-LF-003-03 — Eliminate unclassified and enabled-orphan controls:** generated audits and runtime tests report zero of both classes. Source: Plan 003 DoD 3.
+- [ ] **GOLD-LF-003-04 — Provide full-GUI parity for public CLI operations:** every operation has Direct/Guided execution; internal/unavailable exceptions are explicit, evidenced and not marketed as support. Source: Plan 003 DoD 4.
+- [ ] **GOLD-LF-003-05 — Complete Buddy actions and exact handoff:** common actions finish inline and advanced actions preserve session, task and operation context into the target surface. Source: Plan 003 DoD 5.
+- [ ] **GOLD-LF-003-06 — Share typed mutation execution across surfaces:** CLI, GUI and Buddy use identical executor, gates, postcondition, state revision and audit receipt. Source: Plan 003 DoD 6.
+- [ ] **GOLD-LF-003-07 — Remove human-stdout success parsing:** machine paths consume typed results/errors and never silently discard stderr evidence. Source: Plan 003 DoD 7.
+- [ ] **GOLD-LF-003-08 — Share one onboarding session/task graph:** CLI and GUI use a versioned checkpoint/resume/repair workflow and converge to identical state. Source: Plan 003 DoD 8.
+- [ ] **GOLD-LF-003-09 — Make preset and Local onboarding truthful:** preview exact effects/prerequisites, prove local execution, and never navigate away or write Ready on failure. Source: Plan 003 DoD 9.
+- [ ] **GOLD-LF-003-10 — Render durable adoption-job state everywhere:** Plan-002 jobs expose honest phase/byte/step progress, required action, cancel, retry, resume, logs and postcondition in CLI, GUI and Buddy. Source: Plan 003 DoD 10.
+- [ ] **GOLD-LF-003-11 — Bind dynamic chat tabs and send receipts:** channel/account tabs derive from Plan 001 and every receipt proves the displayed route/account binding. Source: Plan 003 DoD 11.
+- [ ] **GOLD-LF-003-12 — Complete session, slash and cancellation behavior:** selection loads/resumes canonical transcript/context, slash picker derives from the real registry and normal streaming cancels immediately. Source: Plan 003 DoD 12.
+- [ ] **GOLD-LF-003-13 — Share the conversation/session/task controller:** main GUI, CLI and Buddy use the same controller and attachment policy. Source: Plan 003 DoD 13.
+- [ ] **GOLD-LF-003-14 — Complete the Buddy product matrix:** test hotkey, focus, placement/DPI, sessions, attachments/screenshot, immediate cancel, approvals, jobs, private notifications, channel state and exact handoff. Source: Plan 003 DoD 14.
+- [ ] **GOLD-LF-003-15 — Expose every adopted capability lifecycle:** all Plan-002 capabilities surface their declared install/config/auth/probe/status/update/repair/uninstall actions where required. Source: Plan 003 DoD 15.
+- [ ] **GOLD-LF-003-16 — Equalize dangerous-operation ceremony:** restore, credential, uninstall, prune and self-improve operations have the same confirmation, permission, audit and rollback guarantees across surfaces. Source: Plan 003 DoD 16.
+- [ ] **GOLD-LF-003-17 — Ship complete exact-commit self-knowledge:** every real release contains verified Graphify, source map, surface lock, Wiki export and Obsidian-ready export for one commit. Source: Plan 003 DoD 17.
+- [ ] **GOLD-LF-003-18 — Expose self-knowledge verification on all surfaces:** CLI, GUI and Buddy can status, verify, query and open it, with unmistakable stale/unverified states. Source: Plan 003 DoD 18.
+- [ ] **GOLD-LF-003-19 — Keep self-improve proposal-first and reversible:** review, gates, tests, postcondition, audit and rollback are mandatory and a release cannot be silently mutated. Source: Plan 003 DoD 19.
+- [ ] **GOLD-LF-003-20 — Pass accessibility and adverse-environment matrices:** keyboard, screen reader, reduced motion, large text, small window, 100–300% DPI, multi-monitor, offline, slow network, interrupted job and reboot cases pass. Source: Plan 003 DoD 20.
+- [ ] **GOLD-LF-003-21 — Reach Ready from clean release artifacts:** Windows, macOS and Linux installs need no manual external dependency installation beyond explicit sign-in, QR or OS-permission actions. Source: Plan 003 DoD 21.
+- [ ] **GOLD-LF-003-22 — Regenerate every public surface from release truth:** README, CLI docs, GUI tour/copy, Wiki, Obsidian, screenshots/SVGs and launch material agree with the verified candidate. Source: Plan 003 DoD 22.
+- [ ] **GOLD-LF-003-23 — Prove all exact-head parity gates green:** CI, tests, Security, CodeQL, Plan-001 fixtures, Plan-002 clean-machine/adoption tests, parity tests and self-knowledge verification succeed visibly. Source: Plan 003 DoD 23.
+- [ ] **GOLD-LF-003-24 — Forbid evidence-free WS-R4 closure:** no completion claim may rely only on dirty local work, an unpushed commit, source-only implementation or environment-limited result. Source: Plan 003 DoD 24.
+
 ## 5. Definition of GOLD (Release Gate)
 
 All of the following must be `[x]` before tagging `v1.0-gold`:
@@ -2029,6 +2255,7 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 - [x] WS-G: Gremium evaluations complete for all EVALUATE-FIRST repos; adopt-verdicts implemented — ✅ flipped 2026-07-04: 28/28 verdicted (the rollup-agent's "ADOPT-25 open" claim was a stale dashboard count — grep shows exactly ONE ADOPT-25 entry, [x] since 2026-07-03, production caller `neoth dictate` wired 2026-07-04).
 - [x] WS-H: All non-operator-blocked GOLD-PROG-NN tasks done; operator-blocked tasks (GOLD-PROG-13 minisign keypair, GOLD-PROG-15 PC-02 license) have operator decisions recorded — ✅ flipped 2026-07-04: the only open PROG boxes ARE PROG-13/PROG-15, both carry recorded operator-park decisions in plan §9 (the gate requires the DECISION recorded, not the execution).
 - [x] WS-I: All GOLD-ADAPT-* deep-read adaptations done; no “post-rc1” label excludes an implementation from Gold — ✅ the former v1.0 subset closed 2026-07-04 (OH-01 was already implemented behind `--confirm`; detect + GUI mirror shipped), and the later L6 vault-preload adoption is also shipped. **Scope corrected 2026-07-13:** completion requires the current production consumer and tests for every retained adoption, regardless of its older milestone label.
+- [ ] WS-LF: all 118 `GOLD-LF-*` inventory-integrity, recovered-feature and plans/001-003 acceptance tasks are `[x]`; no P1/P2 item is deferred to 1.1, hidden behind a broad WS-R4 rollup, or closed solely by a source-only/partial implementation.
 - [x] Full build + clippy + test green on Windows+MSVC: `cargo clippy -p neoth --tests --no-deps -- -D warnings` exits 0; `cargo test -p neoth --lib` exits 0 — ✅ 2026-07-04 evidence: clippy `-D warnings` CLIPPY_EXIT=0 (5 runs this session) + full lib suite 9868 passed / 0 failed (4 full runs: 9846→9847→9863→9868); CI matrix additionally running per-push.
 - [x] `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth --lib cli_commands_md_is_up_to_date` exits 0 (no CLI doc drift) — ✅ 2026-07-04 evidence: regen run TEST_EXIT=0 (docs/cli-commands.md regenerated for `neoth dictate`) and the drift test passes inside every full-suite run since.
 - [x] README/docs honesty pass merged (GOLD-HON-01..GOLD-HON-26 all done) — ✅ flipped 2026-07-04 (stale box, duplicates WS-B which is [x] 26/26).

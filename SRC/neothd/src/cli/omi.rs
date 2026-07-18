@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq as _;
 
 use crate::cli::OutputFormat;
 use crate::config::credentials::Credentials;
@@ -38,7 +39,7 @@ pub enum OmiAction {
     Probe,
     /// Read a bounded JSON credential update from stdin. Secret values never enter argv.
     SetCredentials,
-    /// Atomically configure public OMI settings and optional credentials from bounded JSON stdin.
+    /// Crash-recoverably configure the complete surfaced OMI settings and optional credentials from bounded JSON stdin.
     Configure,
     /// Permanently delete one conversation and every local derivative (privacy deletion wins over audit failure).
     Purge {
@@ -120,7 +121,8 @@ impl OmiCredentialUpdate {
 }
 
 /// Secret-free settings owned by the OMI Privacy panel. Advanced OMI bounds
-/// that are not surfaced there remain byte-for-byte present in freedom.yaml.
+/// that are not surfaced there remain semantically present in freedom.yaml;
+/// YAML comments and formatting are not preserved by parse/reserialize.
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct OmiConfigureSettings {
@@ -141,23 +143,6 @@ struct OmiConfigureSettings {
 }
 
 impl OmiConfigureSettings {
-    fn apply_to(&self, config: &mut crate::config::OmiConfig) {
-        config.enabled = self.enabled;
-        config.mode = self.mode;
-        config.endpoint.clone_from(&self.endpoint);
-        config.listen_addr.clone_from(&self.listen_addr);
-        config.retention_days = self.retention_days;
-        config.retain_transcripts = self.retain_transcripts;
-        config.audio_enabled = self.audio_enabled;
-        config.visual_enabled = self.visual_enabled;
-        config.video_enabled = self.video_enabled;
-        config.allow_cloud_api = self.allow_cloud_api;
-        config.allow_cloud_summary = self.allow_cloud_summary;
-        config.create_actions = self.create_actions;
-        config.seed_groundtruth = self.seed_groundtruth;
-        config.summary_enabled = self.summary_enabled;
-    }
-
     fn overlay_yaml(&self, root: &mut serde_yaml::Value) -> Result<()> {
         let root = root
             .as_mapping_mut()
@@ -290,7 +275,7 @@ impl OperatorAudit {
             crate::time::now_unix_ns(),
             std::process::id(),
         ));
-        let (writer, join) = crate::wal::writer::spawn(segment)
+        let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
             .context("spawn dedicated OMI operator WAL writer")?;
         Ok(Self { writer, join })
     }
@@ -570,17 +555,29 @@ pub(crate) fn stage_omi_keychain_update(
         requested.push(("omi_ingest_token", value.clone()));
     }
 
-    let mut applied = Vec::with_capacity(requested.len());
-    for (key, value) in &requested {
+    // Snapshot every prior value before the first write. Interleaving get/set
+    // would leave an earlier key changed if reading a later key failed.
+    let mut prior = Vec::with_capacity(requested.len());
+    for (key, _) in &requested {
         let previous = store
             .get(key)
             .with_context(|| format!("read existing {key} from {}", store.backend_name()))?;
+        prior.push((*key, previous));
+    }
+
+    let mut applied = Vec::with_capacity(requested.len());
+    for ((key, value), (prior_key, previous)) in requested.iter().zip(prior) {
+        debug_assert_eq!(*key, prior_key);
+        // An OS credential API may publish a value and still report a later
+        // durability error. Include the current key in the restoration set
+        // before writing it; restoring an unchanged value is idempotent.
+        applied.push((*key, previous));
         if let Err(error) = store.set(key, value) {
             let rollback = rollback_omi_keychain_updates(store, &applied);
             if rollback.is_empty() {
                 return Err(error).with_context(|| {
                     format!(
-                        "write {key} to {}; prior updates rolled back",
+                        "write {key} to {}; every requested keychain write was restored",
                         store.backend_name()
                     )
                 });
@@ -591,12 +588,12 @@ pub(crate) fn stage_omi_keychain_update(
                 rollback.join("; ")
             );
         }
-        applied.push((*key, previous));
     }
     Ok(applied)
 }
 
-pub(crate) fn persist_omi_keychain_update(
+#[cfg(test)]
+fn persist_omi_keychain_update(
     freedom_path: &Path,
     credentials_path: &Path,
     store: &dyn crate::config::keychain::SecretStore,
@@ -679,21 +676,42 @@ fn finalize_staged_omi_keychain_update_if_source(
         },
     );
     if let Err(error) = committed {
-        let rollback = applied
-            .as_deref()
-            .map(|applied| rollback_omi_keychain_updates(store, applied))
-            .unwrap_or_default();
-        if rollback.is_empty() {
-            return Err(error).context(
-                "finalize staged OMI keychain values; file overrides remain authoritative and exact prior keychain values were restored",
-            );
-        }
-        bail!(
-            "finalize staged OMI keychain values failed ({error:#}); file overrides remain authoritative, but keychain rollback also failed: {}",
-            rollback.join("; ")
-        );
+        return Err(staged_omi_finalization_error(
+            error,
+            store,
+            applied.as_deref(),
+        ));
     }
     Ok(())
+}
+
+fn staged_omi_finalization_error(
+    error: anyhow::Error,
+    store: &dyn crate::config::keychain::SecretStore,
+    applied: Option<&[(&'static str, Option<SecretString>)]>,
+) -> anyhow::Error {
+    let Some(applied) = applied else {
+        return error.context(
+            "OMI keychain finalization failed before a complete keychain generation was staged; inspect the underlying keychain error and staged file values before retrying",
+        );
+    };
+
+    if crate::config::credentials::dual_file_target_publication_crossed(&error) {
+        return error.context(
+            "OMI file target publication crossed its recovery boundary; the updated keychain generation was retained because the file target may already be committed; inspect recovery state and OMI status before retrying",
+        );
+    }
+
+    let rollback = rollback_omi_keychain_updates(store, applied);
+    if rollback.is_empty() {
+        return error.context(
+            "OMI file transaction did not retain the complete target generation; prior keychain values were restored",
+        );
+    }
+    anyhow::anyhow!(
+        "OMI file transaction failed ({error:#}); keychain rollback also failed: {}",
+        rollback.join("; ")
+    )
 }
 
 /// Finalize OMI values that were already committed as file overrides by the
@@ -770,7 +788,7 @@ pub(crate) fn persist_omi_credential_update(
                 expected_source.as_deref(),
             )
             .context(
-                "OMI credentials remain available through safe file overrides, but keychain finalization failed",
+                "OMI keychain finalization did not complete cleanly; inspect the retained or restored generation in the underlying error",
             )?;
         }
     }
@@ -1049,6 +1067,17 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
+fn submitted_secret_matches(submitted: &SecretString, readback: Option<&SecretString>) -> bool {
+    readback.is_some_and(|readback| {
+        bool::from(
+            submitted
+                .expose_secret()
+                .as_bytes()
+                .ct_eq(readback.expose_secret().as_bytes()),
+        )
+    })
+}
+
 fn new_omi_operation_id() -> Result<String> {
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random)
@@ -1068,7 +1097,7 @@ fn render_omi_configure_target(
         serde_yaml::from_str(source).context("parse freedom.yaml for OMI configure")?;
     settings.overlay_yaml(&mut persisted)?;
     let body = serde_yaml::to_string(&persisted)
-        .context("serialize losslessly merged OMI configuration")?;
+        .context("serialize semantically merged OMI configuration")?;
     let candidate: FreedomConfig =
         serde_yaml::from_str(&body).context("validate merged OMI configuration")?;
     anyhow::ensure!(
@@ -1099,6 +1128,21 @@ fn configure_omi_at_with_reload_and_validation_hook<R, H>(
 where
     R: FnOnce(&Path) -> Result<(PathBuf, u64)>,
     H: FnOnce(),
+{
+    configure_omi_at_with_reload_and_hooks(home, request, request_reload, after_validation, || {})
+}
+
+fn configure_omi_at_with_reload_and_hooks<R, H, B>(
+    home: &Path,
+    request: OmiConfigureRequest,
+    request_reload: R,
+    after_validation: H,
+    before_verified_readback: B,
+) -> Result<OmiConfigureReceipt>
+where
+    R: FnOnce(&Path) -> Result<(PathBuf, u64)>,
+    H: FnOnce(),
+    B: FnOnce(),
 {
     let freedom_path = home.join("freedom.yaml");
     let credentials_path = home.join("credentials.yaml");
@@ -1182,9 +1226,11 @@ where
             Some(&expected_config),
         )
         .context(
-            "OMI config committed with safe file overrides, but keychain finalization failed; retry configure after resolving the reported conflict",
+            "OMI config committed, but keychain finalization did not complete cleanly; inspect the retained or restored generation before retrying",
         )?;
     }
+
+    before_verified_readback();
 
     // Read back and reload while the exact pair generation is locked. A newer
     // writer in either inter-transaction gap wins loudly; no stale GUI success
@@ -1211,14 +1257,20 @@ where
             .context("validate committed OMI readback")?;
         let developer_present = pair.credentials.omi_developer_api_key.is_some();
         let native_present = pair.credentials.omi_ingest_token.is_some();
-        if credential_update.developer_api_key.is_some() {
+        if let Some(submitted) = credential_update.developer_api_key.as_ref() {
             anyhow::ensure!(
-                developer_present,
-                "OMI Developer key is absent after commit"
+                submitted_secret_matches(
+                    submitted,
+                    pair.credentials.omi_developer_api_key.as_ref()
+                ),
+                "OMI Developer key changed before verified readback; refresh and retry"
             );
         }
-        if credential_update.native_ingest_token.is_some() {
-            anyhow::ensure!(native_present, "OMI native token is absent after commit");
+        if let Some(submitted) = credential_update.native_ingest_token.as_ref() {
+            anyhow::ensure!(
+                submitted_secret_matches(submitted, pair.credentials.omi_ingest_token.as_ref()),
+                "OMI native token changed before verified readback; refresh and retry"
+            );
         }
         anyhow::ensure!(
             pair.config.secrets_backend == backend,
@@ -1714,7 +1766,189 @@ mod tests {
     }
 
     #[test]
-    fn staged_keychain_finalization_rolls_back_if_file_receipt_changed() {
+    fn target_publication_error_retains_updated_keychain_generation() {
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        store
+            .set(
+                "omi_developer_api_key",
+                &SecretString::from("omi_dev_old_store"),
+            )
+            .unwrap();
+        let update = credential_update(Some("omi_dev_new_store"), None);
+        let applied = stage_omi_keychain_update(&store, &update).unwrap();
+        let error = staged_omi_finalization_error(
+            crate::config::credentials::test_target_publication_crossed_error(anyhow::anyhow!(
+                "injected post-publication failure"
+            )),
+            &store,
+            Some(&applied),
+        );
+
+        assert!(crate::config::credentials::dual_file_target_publication_crossed(&error));
+        let error = format!("{error:#}");
+        assert!(error.contains("updated keychain generation was retained"));
+        assert!(error.contains("injected post-publication failure"));
+        assert_eq!(
+            store
+                .get("omi_developer_api_key")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "omi_dev_new_store"
+        );
+    }
+
+    #[test]
+    fn keychain_stage_reads_every_prior_value_before_first_write() {
+        struct SecondReadFailureStore {
+            get_calls: std::sync::atomic::AtomicUsize,
+            set_calls: std::sync::atomic::AtomicUsize,
+        }
+
+        impl crate::config::keychain::SecretStore for SecondReadFailureStore {
+            fn get(&self, _key: &str) -> Result<Option<SecretString>> {
+                let call = self
+                    .get_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if call == 1 {
+                    bail!("injected second keychain read failure")
+                }
+                Ok(Some(SecretString::from("prior-value")))
+            }
+
+            fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
+                self.set_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
+
+            fn delete(&self, _key: &str) -> Result<()> {
+                bail!("unexpected keychain delete")
+            }
+
+            fn backend_name(&self) -> &'static str {
+                "second-read-failure-test"
+            }
+        }
+
+        let store = SecondReadFailureStore {
+            get_calls: std::sync::atomic::AtomicUsize::new(0),
+            set_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let update = credential_update(
+            Some("omi_dev_new_store"),
+            Some("0123456789abcdef0123456789abcdef"),
+        );
+
+        let error = stage_omi_keychain_update(&store, &update).unwrap_err();
+        assert!(format!("{error:#}").contains("injected second keychain read failure"));
+        assert_eq!(
+            store.set_calls.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "no keychain write may occur until every prior value is readable"
+        );
+    }
+
+    #[test]
+    fn keychain_stage_restores_current_key_when_write_reports_after_side_effect() {
+        struct CommittedThenErrorStore {
+            data: std::sync::Mutex<std::collections::HashMap<String, String>>,
+            set_calls: std::sync::atomic::AtomicUsize,
+        }
+
+        impl crate::config::keychain::SecretStore for CommittedThenErrorStore {
+            fn get(&self, key: &str) -> Result<Option<SecretString>> {
+                let data = self.data.lock().unwrap();
+                Ok(data.get(key).cloned().map(SecretString::from))
+            }
+
+            fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+                let call = self
+                    .set_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.data
+                    .lock()
+                    .unwrap()
+                    .insert(key.to_string(), value.expose().to_string());
+                if call == 1 {
+                    bail!("injected error after keychain side effect")
+                }
+                Ok(())
+            }
+
+            fn delete(&self, key: &str) -> Result<()> {
+                self.data.lock().unwrap().remove(key);
+                Ok(())
+            }
+
+            fn backend_name(&self) -> &'static str {
+                "post-side-effect-failure-test"
+            }
+        }
+
+        let store = CommittedThenErrorStore {
+            data: std::sync::Mutex::new(std::collections::HashMap::from([
+                ("omi_developer_api_key".into(), "old-developer-key".into()),
+                ("omi_ingest_token".into(), "old-ingest-token".into()),
+            ])),
+            set_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let update = credential_update(
+            Some("omi_dev_new_store"),
+            Some("0123456789abcdef0123456789abcdef"),
+        );
+
+        let error = stage_omi_keychain_update(&store, &update).unwrap_err();
+        assert!(format!("{error:#}").contains("every requested keychain write was restored"));
+        assert_eq!(
+            store
+                .get("omi_developer_api_key")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "old-developer-key"
+        );
+        assert_eq!(
+            store.get("omi_ingest_token").unwrap().unwrap().expose(),
+            "old-ingest-token"
+        );
+        assert_eq!(
+            store.set_calls.load(std::sync::atomic::Ordering::Relaxed),
+            4
+        );
+    }
+
+    #[test]
+    fn pre_publication_error_restores_prior_keychain_generation() {
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        store
+            .set(
+                "omi_developer_api_key",
+                &SecretString::from("omi_dev_old_store"),
+            )
+            .unwrap();
+        let update = credential_update(Some("omi_dev_new_store"), None);
+        let applied = stage_omi_keychain_update(&store, &update).unwrap();
+        let error = staged_omi_finalization_error(
+            anyhow::anyhow!("injected pre-publication failure"),
+            &store,
+            Some(&applied),
+        );
+
+        assert!(!crate::config::credentials::dual_file_target_publication_crossed(&error));
+        assert!(format!("{error:#}").contains("prior keychain values were restored"));
+        assert_eq!(
+            store
+                .get("omi_developer_api_key")
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "omi_dev_old_store"
+        );
+    }
+
+    #[test]
+    fn staged_keychain_finalization_rejects_changed_file_receipt_before_keychain_write() {
         let home = tempfile::tempdir().unwrap();
         let path = home.path().join("credentials.yaml");
         let staged = credential_update(Some("omi_dev_staged"), None);
@@ -1739,7 +1973,12 @@ mod tests {
         .unwrap();
 
         let error = finalize_staged_omi_keychain_update(&path, &store, &staged).unwrap_err();
-        assert!(format!("{error:#}").contains("exact prior keychain values restored"));
+        let error = format!("{error:#}");
+        assert!(error.contains("before a complete keychain generation was staged"));
+        assert!(
+            error.contains("staged OMI developer API key changed before keychain finalization")
+        );
+        assert!(!error.contains("keychain values were restored"));
         assert_eq!(
             store
                 .get("omi_developer_api_key")
@@ -1756,6 +1995,65 @@ mod tests {
                 .unwrap()
                 .expose(),
             "concurrent-file-writer"
+        );
+    }
+
+    #[test]
+    fn failed_keychain_stage_never_claims_restore_when_rollback_failed() {
+        struct RollbackFailureStore {
+            set_calls: std::sync::atomic::AtomicUsize,
+        }
+
+        impl crate::config::keychain::SecretStore for RollbackFailureStore {
+            fn get(&self, _key: &str) -> Result<Option<SecretString>> {
+                Ok(Some(SecretString::from("prior-value")))
+            }
+
+            fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
+                let call = self
+                    .set_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if call == 0 {
+                    Ok(())
+                } else {
+                    bail!("injected keychain write failure")
+                }
+            }
+
+            fn delete(&self, _key: &str) -> Result<()> {
+                bail!("unexpected keychain delete")
+            }
+
+            fn backend_name(&self) -> &'static str {
+                "rollback-failure-test"
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("credentials.yaml");
+        let staged = credential_update(
+            Some("omi_dev_staged"),
+            Some("0123456789abcdef0123456789abcdef"),
+        );
+        Credentials {
+            omi_developer_api_key: staged.developer_api_key.clone(),
+            omi_ingest_token: staged.native_ingest_token.clone(),
+            ..Default::default()
+        }
+        .write(&path)
+        .unwrap();
+        let store = RollbackFailureStore {
+            set_calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+
+        let error = finalize_staged_omi_keychain_update(&path, &store, &staged).unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("before a complete keychain generation was staged"));
+        assert!(error.contains("rollback also failed"));
+        assert!(!error.contains("keychain values were restored"));
+        assert_eq!(
+            store.set_calls.load(std::sync::atomic::Ordering::Relaxed),
+            4
         );
     }
 
@@ -1995,6 +2293,68 @@ mod tests {
     }
 
     #[test]
+    fn configure_rejects_concurrent_credential_generation_before_receipt() {
+        use std::sync::{Arc, mpsc};
+
+        let home = tempfile::tempdir().unwrap();
+        write_configure_fixture(home.path());
+        let configure_home = home.path().to_path_buf();
+        let writer_home = home.path().to_path_buf();
+        let (published_tx, published_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let reload_called = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let configure_reload_called = Arc::clone(&reload_called);
+        let configure = std::thread::spawn(move || {
+            configure_omi_at_with_reload_and_hooks(
+                &configure_home,
+                configure_request(),
+                move |home| {
+                    configure_reload_called.store(true, Ordering::SeqCst);
+                    Ok((home.join(".reload-requested-test"), 7))
+                },
+                || {},
+                || {
+                    published_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                },
+            )
+        });
+        published_rx.recv().unwrap();
+
+        let writer = std::thread::spawn(move || {
+            persist_omi_credential_update(
+                &writer_home,
+                &credential_update(Some("omi_dev_concurrent"), None),
+            )
+        });
+        assert_eq!(writer.join().unwrap().unwrap(), SecretsBackend::File);
+        release_tx.send(()).unwrap();
+
+        let error = configure.join().unwrap().unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("Developer key changed before verified readback"));
+        assert!(!error.contains("omi_dev_configure"));
+        assert!(!error.contains("omi_dev_concurrent"));
+        assert!(!reload_called.load(Ordering::SeqCst));
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            pair.credentials
+                .omi_developer_api_key
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "omi_dev_concurrent"
+        );
+        assert_eq!(
+            pair.credentials.omi_ingest_token.as_ref().unwrap().expose(),
+            "0123456789abcdef0123456789abcdef"
+        );
+    }
+
+    #[test]
     fn confirmation_is_fail_closed() {
         assert!(require_confirmation(false, "OMI purge").is_err());
         assert!(require_confirmation(true, "OMI purge").is_ok());
@@ -2105,6 +2465,7 @@ mod tests {
         let segments: Vec<_> = std::fs::read_dir(home.path().join("wal"))
             .unwrap()
             .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wal"))
             .collect();
         assert_eq!(segments.len(), 1);
         assert!(
@@ -2114,6 +2475,14 @@ mod tests {
                 .to_string_lossy()
                 .starts_with("omi-operator-")
         );
-        assert!(std::fs::metadata(&segments[0]).unwrap().len() > 0);
+        let bytes = std::fs::read(&segments[0]).unwrap();
+        let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let frame = crate::wal::frame::decode_frame(&bytes[segment_header.header_len()..]).unwrap();
+        assert_eq!(frame.header.event_type, EVENT_TYPE_EXTENDED);
+        assert_eq!(
+            frame.header.event_subtype,
+            ExtendedSubtype::OmiLifecycleAudit as u8
+        );
+        assert!(home.path().join("wal").join("hmac.key").exists());
     }
 }

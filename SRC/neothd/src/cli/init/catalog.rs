@@ -2,7 +2,9 @@
 //! (GOLD-ARCH-05): provider + hemisphere-model prompts, local presets,
 //! catalog lookups, council-depth cost warning. Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(feature = "wizard")]
+use anyhow::Context as _;
+use anyhow::Result;
 
 use super::{InitArgs, ProviderKind};
 
@@ -343,14 +345,6 @@ pub(crate) fn prompt_inference_provider(
     Ok(options[pick])
 }
 
-#[cfg(not(feature = "wizard"))]
-pub(crate) fn prompt_inference_provider(
-    _prompt: &str,
-    default: Option<crate::config::inference::InferenceProvider>,
-) -> Result<crate::config::inference::InferenceProvider> {
-    Ok(default.unwrap_or(crate::config::inference::InferenceProvider::ClaudeCli))
-}
-
 /// Per-role recommendation from SPEC_hemisphere_provider_selection.md §2.
 /// Surfaced as a *suggestion* in the wizard — never enforced. Returning
 /// `InferenceProvider` (not `Option`) lets the prompt always pre-select
@@ -526,6 +520,7 @@ pub(crate) fn collect_ollama_model_refs(
 /// privacy-positive `local-only` preset wins; otherwise `single`
 /// remains the default because CPU Qwen is too slow for daily Council
 /// mode.
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn topology_default_idx_for_probe(probe: &crate::daemon::accelerator::Probe) -> usize {
     if probe.picked != crate::daemon::accelerator::Accelerator::Cpu {
         3
@@ -534,6 +529,7 @@ pub(crate) fn topology_default_idx_for_probe(probe: &crate::daemon::accelerator:
     }
 }
 
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn recommended_provider_for_role(
     role: &str,
 ) -> crate::config::inference::InferenceProvider {
@@ -577,6 +573,7 @@ pub(crate) fn recommended_local_provider_for_role(
 /// populated yet. The K-Models-Discovery catalog
 /// (`~/.neoth/models_catalog.json`) overrides these when present —
 /// see [`catalog_or_bundled_default_model_for`].
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn default_model_for(
     role: &str,
     provider: crate::config::inference::InferenceProvider,
@@ -664,6 +661,7 @@ pub(crate) fn catalog_key_for_provider(
 ///
 /// Pure helper — no network calls, no daemon dependencies. Wizard
 /// runs this synchronously during step5 / step5b.
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn catalog_or_bundled_default_model_for(
     role: &str,
     provider: crate::config::inference::InferenceProvider,
@@ -770,15 +768,6 @@ pub(crate) fn catalog_model_ids_for_provider(
         .unwrap_or_default()
 }
 
-#[cfg(not(feature = "wizard"))]
-pub(crate) fn prompt_hemisphere_model(
-    _role: &str,
-    _provider: crate::config::inference::InferenceProvider,
-    inherited_default: &Option<String>,
-) -> Result<Option<String>> {
-    Ok(inherited_default.clone())
-}
-
 /// Parse the `--inference-mode` flag. None → Single.
 pub(crate) fn parse_topology_mode_arg(
     arg: Option<&str>,
@@ -795,6 +784,7 @@ pub(crate) fn parse_topology_mode_arg(
 /// Operator-facing Telegram prompt text. The argument is retained for resume
 /// compatibility with older wizard call sites; Pear presence is irrelevant
 /// because Pear Runtime is not a Keet chat integration surface.
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn k4b_telegram_prompt_text(_legacy_pear_present: bool) -> &'static str {
     "[6/9] Set up a Telegram bot now? (optional, can add later)"
 }

@@ -218,9 +218,14 @@ by default and every data/effect boundary is separately controlled.
 - **Dedicated credentials.** Developer import/export requires an `omi_dev_*`
   key. Native ingest requires a separate bearer token of at least 32 bytes even
   on loopback. File and keychain backends share the same effective load path;
-  status surfaces only presence, never secret values. Desktop writes use the
-  bounded-stdin `neoth omi set-credentials` path, so secrets never enter argv
-  and encrypted/keychain storage plus unrelated credential fields are preserved.
+  status surfaces only presence, never secret values. The desktop Settings
+  card sends its complete surfaced settings snapshot plus optional credential
+  replacements through bounded stdin to `neoth omi configure`; secrets never
+  enter argv, omitted values are preserved, and credential values appear in the
+  success receipt only as presence booleans. The credential-only
+  `neoth omi set-credentials` path remains
+  available for onboarding and existing automation. Both paths preserve the
+  encrypted/keychain backend and unrelated credential fields.
 - **Independent consent controls.** Audio, images, video frames, raw transcript
   retention, summaries, task creation, ground-truth seeding, OMI cloud API use,
   and provider-backed cloud summaries are independent. Media byte and connection

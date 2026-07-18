@@ -458,6 +458,12 @@ Run the routing policy against a synthetic load table to show what `pick_peer` w
 - `--peers <SPEC>` — Synthetic peers: `name:tokens_per_sec,name:tokens_per_sec,...`
 - `--policy <POLICY>` — Policy override for this invocation. `local-only` or `least-loaded`. Defaults to `least-loaded` when peers are supplied, `local-only` otherwise
 
+### `neoth cluster request-sync`
+
+Ask the running daemon to accelerate durable WAL catch-up for one paired peer. The request is coalesced and persisted in views.db; only the daemon-owned authenticated transport can consume it
+
+- `--peer <PEER_PK>` — Exact 64-character public key of an already-paired peer
+
 ### `neoth cluster restore`
 
 Restore same-origin peer-backup frames into local recall/memory
@@ -1523,6 +1529,12 @@ Internal terminal readiness handshake that does not change the saved GUI/CLI pre
 
 Private authenticated-release helper surface
 
+### `neoth internal background-worker`
+
+Execute a private durable `/background` job in a detached process
+
+- `--job <PATH>`
+
 ### `neoth internal bundle-transaction`
 
 Apply an authenticated, exact portable release bundle
@@ -1561,7 +1573,7 @@ List + validate scheduled jobs defined in `~/.neoth/jobs.yaml`
 - `--preview <ID>` — AR-04 (Session 24) — dry-run one job by id: prints the next 3 fire times, the predicted EUR token cost via the existing cost predictor, and whether the operator's current autonomy level would allow / confirm / block the call when it eventually fires. No WAL writes, no provider calls, no scheduler side effects — purely diagnostic. Pairs with `--file` for inspecting a draft jobs.yaml before commit
 - `--file <PATH>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
 - `--run <COMMAND>` — GOLD-ADAPT-ODY-07b — run COMMAND as a DETACHED background job. Its stdout+stderr stream to `~/.neoth/bgjobs/<id>.log` and its exit code to `<id>.exit`; the running daemon's bg-monitor tracks completion (and runs any auto-continue callback). Quote the whole command, e.g. `neoth jobs --run "cargo build --release" --label build`
-- `--label <NAME>` — Optional label for the `--run` job id (sanitised to `[a-z0-9_-]`; default `job`). The on-disk id is `<label>-<unix_ts>`
+- `--label <NAME>` — Optional label for the `--run` job id (sanitised to `[a-z0-9_-]`; default `job`). The on-disk id is `<label>-<unix_ts>-<random>`
 - `--bg` — GOLD-ADAPT-ODY-07b — list the detached background jobs in `~/.neoth/bgjobs/` with their status (running / completed + exit code)
 
 ## `neoth kanban`
@@ -2127,6 +2139,10 @@ Remove stale recovery state and a purge tombstone after a durable operator inten
 
 - `<CONVERSATION_ID>`
 - `--yes` — Confirm that the remote source may restore previously deleted data
+
+### `neoth omi configure`
+
+Crash-recoverably configure the complete surfaced OMI settings and optional credentials from bounded JSON stdin
 
 ### `neoth omi enforce-retention`
 
@@ -2916,7 +2932,7 @@ Verify an artifact against the public key pinned into this binary. CI uses this 
 
 ## `neoth reload`
 
-Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. `operator_id` and the complete constructed provider runtime are restart-bound. This includes provider kind, binary, key reference, endpoint, model, aliases, region/API version, inference/recursive-subslot topology, fallback chain, Claude CLI runtime, provider transport settings and provider decorators such as history compaction. Changing one of these fields emits a `CONFIG_RELOAD_REJECTED` audit frame and leaves the active provider graph on its previous generation. Tunable policy, prompt and channel fields such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter
+Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. `operator_id`, `provider_kind`, and startup-bound provider runtime fields are rejected with a `CONFIG_RELOAD_REJECTED` audit frame until restart. That runtime set includes the secrets backend; provider binary, key, endpoint, model, aliases, region and API version; inference/fallback/Claude topology; provider token/compaction controls; Hysteria; SSH tunnels; and recursive MAS. Tunable policy/prompt fields and channel bindings such as `telegram_user_id` reload without a daemon restart; the credential-aware reconciler then restarts only the affected adapter
 
 - `--home <DIR>` — Override `~/.neoth/` (mostly for tests)
 

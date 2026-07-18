@@ -733,6 +733,7 @@ export component ToastStack inherits Rectangle {
 export component NeothComboBox inherits Rectangle {
     in property <[string]> model: [];
     in-out property <int> current-index: 0;
+    in property <bool> enabled: true;
     callback selected(int);
 
     accessible-role: combobox;
@@ -740,15 +741,17 @@ export component NeothComboBox inherits Rectangle {
         ? "Selected " + root.model[root.current-index]
         : "No selection";
     accessible-expandable: true;
-    accessible-action-expand => { popup.show(); }
-    accessible-action-default => { popup.show(); }
+    accessible-enabled: root.enabled;
+    accessible-action-expand => { if root.enabled { popup.show(); } }
+    accessible-action-default => { if root.enabled { popup.show(); } }
 
     height: 44px;
     background: Theme.bg-card;
     border-radius: Theme.radius-button;
     border-width: 1px;
-    border-color: combo-focus.has-focus ? Theme.focus-ring
-        : trigger.has-hover ? Theme.accent-green : Theme.border-subtle;
+    border-color: root.enabled && combo-focus.has-focus ? Theme.focus-ring
+        : root.enabled && trigger.has-hover ? Theme.accent-green : Theme.border-subtle;
+    opacity: root.enabled ? 1.0 : 0.4;
 
     animate border-color {
         duration: Theme.duration-micro;
@@ -767,7 +770,7 @@ export component NeothComboBox inherits Rectangle {
             overflow: elide;
             font-family: Theme.font-display;
             font-size: Theme.font-size-body;
-            color: Theme.text-primary;
+            color: root.enabled ? Theme.text-primary : Theme.text-dim;
             vertical-alignment: center;
             horizontal-stretch: 1;
         }
@@ -775,12 +778,13 @@ export component NeothComboBox inherits Rectangle {
             text: "▾";
             font-family: Theme.font-display;
             font-size: Theme.font-size-body;
-            color: Theme.accent-green;
+            color: root.enabled ? Theme.accent-green : Theme.text-dim;
             vertical-alignment: center;
         }
     }
 
     combo-focus := FocusScope {
+        enabled: root.enabled;
         key-pressed(event) => {
             if event.text == "\n" || event.text == " " {
                 popup.show();
@@ -791,6 +795,7 @@ export component NeothComboBox inherits Rectangle {
     }
 
     trigger := TouchArea {
+        enabled: root.enabled;
         clicked => {
             combo-focus.focus();
             popup.show();
@@ -816,10 +821,13 @@ export component NeothComboBox inherits Rectangle {
                     accessible-role: radio-button;
                     accessible-label: entry;
                     accessible-checked: i == root.current-index;
+                    accessible-enabled: root.enabled;
                     accessible-action-default => {
-                        root.current-index = i;
-                        root.selected(i);
-                        popup.close();
+                        if root.enabled {
+                            root.current-index = i;
+                            root.selected(i);
+                            popup.close();
+                        }
                     }
                     height: 36px;
                     background: row-touch.has-hover ? Theme.bg-base : transparent;
@@ -852,6 +860,7 @@ export component NeothComboBox inherits Rectangle {
                     }
 
                     row-touch := TouchArea {
+                        enabled: root.enabled;
                         clicked => {
                             root.current-index = i;
                             root.selected(i);

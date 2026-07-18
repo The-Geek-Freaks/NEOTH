@@ -1,7 +1,9 @@
 //! Wizard provider step (GOLD-ARCH-05): step5 provider selection + key
 //! entry + CLI-installer offers. Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(feature = "wizard")]
+use anyhow::Context as _;
+use anyhow::Result;
 use tracing::debug;
 
 // `probe_local_bridge_sync` lives in `providers::local_probe` so the
@@ -17,6 +19,7 @@ use super::{
     ping_provider_key, prompt_provider_key, which_binary,
 };
 
+#[cfg(any(feature = "wizard", test))]
 fn cli_install_threshold(
     security_policy: &crate::config::SecurityPolicy,
 ) -> crate::security::osv_check::SeverityLevel {

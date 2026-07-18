@@ -43,7 +43,12 @@
 //! All tests use [`InMemorySecretStore`] — the real OS credential manager is
 //! never touched by `cargo test`.
 
-use anyhow::{Context, Result};
+#[cfg(all(
+    feature = "keychain",
+    any(windows, target_os = "macos", target_os = "linux")
+))]
+use anyhow::Context as _;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::secret::SecretString;

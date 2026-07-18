@@ -515,6 +515,38 @@ OMI uses dedicated credential fields rather than provider/channel tokens:
 [runbook_omi_privacy.md](runbook_omi_privacy.md) for the full mode and consent
 contract.
 
+Use the Settings → Privacy OMI card or `neoth omi configure` for runtime OMI
+changes. Both surfaces use the same complete surfaced settings snapshot:
+`enabled`, `mode`, `endpoint`, `listen_addr`, `retention_days`, the
+transcript/audio/image/video controls, the two cloud consents, and the
+summary/action/ground-truth controls. Advanced unsurfaced OMI bounds remain
+preserved.
+The command accepts at most 32 KiB of strict JSON on stdin and can carry optional
+`developer_api_key` and `native_ingest_token` replacements in the same request.
+Unknown or missing settings fields are rejected; omitting one optional
+credential preserves its existing value. The desktop does not call
+`omi set-credentials` while saving settings and never puts a secret in argv or
+reads an existing secret back into a widget.
+
+The public settings and file-backed credential image use one checksummed,
+owner-private recovery-journal protocol. With the keychain backend, new values
+are first staged as file overrides, written to the OS keychain, and then cleared
+from the file through a second credential-only pair transaction. A returned
+error states whether finalization failed before a complete keychain generation
+was staged, prior values were restored, the updated generation was retained
+because the file target may already be committed, or rollback itself failed.
+Never treat every non-zero exit as an automatic rollback.
+
+Before success, `omi configure` reads back the persisted effective pair, validates
+the submitted settings and required credential presence, hashes the exact
+`freedom.yaml` generation, and writes a reload request. Its secret-free receipt
+contains the operation ID, path, hashes, selected backend, updated field names,
+presence booleans, and reload timestamp. The desktop verifies that receipt
+against its submission and the file on disk, then performs a strict `omi status`
+readback. A successful receipt means reload was requested, not that asynchronous
+worker activation is already complete. If only that request fails after commit,
+run `neoth reload` and refresh OMI status.
+
 Common environment variables:
 
 | Variable | Purpose |
@@ -536,7 +568,7 @@ Common environment variables:
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
 | Provider config | Restart-bound. `neoth reload` rejects changes to the constructed provider runtime (kind, binary, key reference, endpoint, model/aliases, region/API version, inference and recursive-subslot topology, fallback chain, Claude CLI runtime, transport settings and provider decorators such as history compaction). The running provider graph remains on its previous generation until the supervised daemon restarts. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |
-| OMI | `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers; an invalid reload preserves the last valid runtime. |
+| OMI | `neoth omi configure` verifies the persisted effective generation and requests reload. `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers. Invalid changes that cross neither a privacy nor authentication boundary preserve the last valid runtime; after a credential/auth change or monotonic privacy reduction, the prior surface stays stopped rather than restoring stale authority or capture. A configure success receipt proves the request was written, not that asynchronous activation has completed. |
 | Cluster | `neoth cluster configure` saves one complete typed snapshot. Enabled lifecycle changes, and changes while a daemon owns the prior state, return `restart_required: true`; restart the supervised daemon to activate transport, mDNS or carrier changes. Gossip privacy/replay policy is hot-reloadable on Peeroxide and Iroh. Disabled plus stopped is already inert and returns `false`. |
 | Plugins | Restart after enabling/disabling code plugins. |
 | Policy | Reload where supported; restart for safest behavior. |

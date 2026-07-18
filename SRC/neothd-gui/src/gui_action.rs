@@ -357,6 +357,7 @@ impl CatalogRefreshAck {
         }
     }
 
+    #[cfg(test)]
     pub fn verify(
         &self,
         expected_path: &Path,
@@ -840,8 +841,73 @@ impl OmiStatusAck {
                 "OMI status acknowledged an invalid zero retention/poll window".to_string(),
             );
         }
-        if self.runtime_state.trim().is_empty() {
-            return Err("OMI status is missing its effective runtime state".to_string());
+        if !matches!(
+            self.runtime_state.as_str(),
+            "starting"
+                | "healthy"
+                | "disabled"
+                | "degraded"
+                | "failed"
+                | "stopped"
+                | "inactive"
+                | "unknown"
+        ) {
+            return Err(format!(
+                "OMI status acknowledged unsupported runtime state `{}`",
+                self.runtime_state
+            ));
+        }
+        if let Some(state) = self.runtime_persisted_state.as_deref()
+            && !matches!(
+                state,
+                "starting" | "healthy" | "disabled" | "degraded" | "failed" | "stopped"
+            )
+        {
+            return Err(format!(
+                "OMI status acknowledged unsupported persisted runtime state `{state}`"
+            ));
+        }
+        if self.runtime_pid == Some(0) || self.daemon_pid == Some(0) {
+            return Err("OMI status acknowledged an invalid zero process id".to_string());
+        }
+
+        // Core never publishes the persisted worker state directly unless the
+        // live daemon PID owns that exact status generation. Stale health must
+        // remain visibly inactive/unknown instead of becoming a false-green GUI.
+        let expected_runtime_state = if !self.enabled {
+            "disabled"
+        } else if self.daemon_pid.is_none() {
+            "inactive"
+        } else if self.runtime_pid != self.daemon_pid {
+            "unknown"
+        } else {
+            self.runtime_persisted_state.as_deref().unwrap_or("unknown")
+        };
+        if self.runtime_state != expected_runtime_state {
+            return Err(format!(
+                "OMI status runtime state `{}` contradicts the effective Core state `{expected_runtime_state}`",
+                self.runtime_state
+            ));
+        }
+        if self.enabled
+            && self.configuration_valid
+            && matches!(self.mode.as_str(), "developer_api" | "both")
+            && !self.developer_api_credential_present
+        {
+            return Err(
+                "OMI status claims a valid enabled Developer API mode without its credential"
+                    .to_string(),
+            );
+        }
+        if self.enabled
+            && self.configuration_valid
+            && matches!(self.mode.as_str(), "native_ingest" | "both")
+            && !self.native_ingest_credential_present
+        {
+            return Err(
+                "OMI status claims a valid enabled native-ingest mode without its token"
+                    .to_string(),
+            );
         }
         match (
             self.configuration_valid,
@@ -877,6 +943,48 @@ impl OmiProbeAck {
         ) {
             return Err(format!(
                 "OMI probe acknowledged unsupported mode `{}`",
+                self.mode
+            ));
+        }
+        if let Some(outcome) = self.local_endpoint.as_deref()
+            && !matches!(
+                outcome,
+                "reachable" | "port_closed" | "timeout" | "forbidden"
+            )
+        {
+            return Err(format!(
+                "OMI probe acknowledged unsupported local-endpoint outcome `{outcome}`"
+            ));
+        }
+        if let Some(outcome) = self.native_listener.as_deref()
+            && !matches!(outcome, "reachable" | "port_closed" | "timeout")
+        {
+            return Err(format!(
+                "OMI probe acknowledged unsupported native-listener outcome `{outcome}`"
+            ));
+        }
+        if let Some(outcome) = self.public_api.as_deref()
+            && outcome != "not_probed_auth_required"
+        {
+            return Err(format!(
+                "OMI probe acknowledged unsupported public-API outcome `{outcome}`"
+            ));
+        }
+
+        let local = self.local_endpoint.is_some();
+        let native = self.native_listener.is_some();
+        let public = self.public_api.is_some();
+        let polling = local ^ public;
+        let valid_shape = match self.mode.as_str() {
+            "developer_api" => polling && !native,
+            "native_ingest" => !local && native && !public,
+            "both" => polling && native,
+            "legacy_memories" => local && !native && !public,
+            _ => unreachable!("unsupported OMI mode returned above"),
+        };
+        if !valid_shape {
+            return Err(format!(
+                "OMI probe outcome fields contradict `{}` mode",
                 self.mode
             ));
         }
@@ -2728,6 +2836,20 @@ impl BgJobListRowAck {
     }
 }
 
+pub fn verify_bg_job_list(rows: &[BgJobListRowAck]) -> Result<(), String> {
+    let mut ids = std::collections::HashSet::with_capacity(rows.len());
+    for row in rows {
+        row.verify()?;
+        if !ids.insert(row.id.as_str()) {
+            return Err(format!(
+                "Background-job list contains duplicate id `{}`",
+                row.id
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// I13 — `neoth jobs --run "<command>" --label <l> --output json` ack.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2772,26 +2894,90 @@ pub struct BgRunAck {
 }
 
 impl BgRunAck {
-    pub fn verify(&self, expected_request_binding_sha256: &str) -> Result<(), String> {
+    pub fn verify(
+        &self,
+        expected_request_binding_sha256: &str,
+        neoth_home: &Path,
+    ) -> Result<(), String> {
         if self.action != "jobs_run" {
-            Err(format!(
+            return Err(format!(
                 "Background-run acknowledgement has wrong action `{}`",
                 self.action
-            ))
-        } else if !self.started
-            || self.id.trim().is_empty()
-            || self.pid == 0
-            || self.log_path.trim().is_empty()
-        {
-            Err("Background job did not confirm a started id".to_string())
-        } else if !valid_lower_sha256(&self.request_binding_sha256)
+            ));
+        }
+        if !self.started || self.pid == 0 || !valid_bg_job_id(&self.id) {
+            return Err("Background job did not confirm a valid started id".to_string());
+        }
+        if !valid_lower_sha256(&self.request_binding_sha256)
             || self.request_binding_sha256 != expected_request_binding_sha256
         {
-            Err("Background-run acknowledgement does not match the approved request".to_string())
-        } else {
+            return Err(
+                "Background-run acknowledgement does not match the approved request".to_string(),
+            );
+        }
+
+        let expected_log = neoth_home.join("bgjobs").join(format!("{}.log", self.id));
+        let acknowledged_log = Path::new(&self.log_path);
+        let expected_canonical = std::fs::canonicalize(&expected_log).map_err(|error| {
+            format!(
+                "Background job did not publish its expected log {}: {error}",
+                expected_log.display()
+            )
+        })?;
+        let acknowledged_canonical = std::fs::canonicalize(acknowledged_log).map_err(|error| {
+            format!(
+                "Background-run acknowledgement references an unreadable log {}: {error}",
+                acknowledged_log.display()
+            )
+        })?;
+        if expected_canonical != acknowledged_canonical {
+            return Err("Background-run acknowledgement references the wrong log path".to_string());
+        }
+        let metadata = std::fs::metadata(&expected_canonical).map_err(|error| {
+            format!(
+                "Background job log {} cannot be inspected: {error}",
+                expected_canonical.display()
+            )
+        })?;
+        if !metadata.is_file() {
+            return Err("Background job log is not a regular file".to_string());
+        }
+        Ok(())
+    }
+
+    pub fn verify_listed(&self, rows: &[BgJobListRowAck]) -> Result<(), String> {
+        verify_bg_job_list(rows)?;
+        if rows.iter().any(|row| row.id == self.id) {
             Ok(())
+        } else {
+            Err(format!(
+                "Started background job `{}` is absent from verified post-state",
+                self.id
+            ))
         }
     }
+}
+
+fn valid_bg_job_id(value: &str) -> bool {
+    let Some((prefix, nonce)) = value.rsplit_once('-') else {
+        return false;
+    };
+    if nonce.len() != 32
+        || !nonce
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return false;
+    }
+    let Some((label, timestamp)) = prefix.rsplit_once('-') else {
+        return false;
+    };
+    !label.is_empty()
+        && label.len() <= 64
+        && label.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
+        && timestamp.parse::<u64>().is_ok_and(|value| value > 0)
 }
 
 fn valid_lower_sha256(value: &str) -> bool {
@@ -3062,6 +3248,9 @@ mod tests {
         let acknowledgement =
             decode_json_output::<OmiStatusAck>(&output(0, valid, ""), "OMI status").unwrap();
         acknowledgement.verify().unwrap();
+        let verify_status = |body: &str| {
+            decode_json_output::<OmiStatusAck>(&output(0, body, ""), "OMI status")?.verify()
+        };
 
         let extended = valid.replacen(
             "\"last_retention_error\":null",
@@ -3081,6 +3270,209 @@ mod tests {
             decode_json_output::<OmiStatusAck>(&output(0, &contradictory, ""), "OMI status")
                 .unwrap();
         assert!(acknowledgement.verify().is_err());
+
+        let unknown_runtime = valid.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"future_state\"",
+            1,
+        );
+        let acknowledgement =
+            decode_json_output::<OmiStatusAck>(&output(0, &unknown_runtime, ""), "OMI status")
+                .unwrap();
+        assert!(acknowledgement.verify().is_err());
+
+        let missing_required_credential = valid.replacen(
+            "\"developer_api_credential_present\":true",
+            "\"developer_api_credential_present\":false",
+            1,
+        );
+        let acknowledgement = decode_json_output::<OmiStatusAck>(
+            &output(0, &missing_required_credential, ""),
+            "OMI status",
+        )
+        .unwrap();
+        assert!(acknowledgement.verify().is_err());
+
+        let disabled_wrong = valid.replacen("\"enabled\":true", "\"enabled\":false", 1);
+        assert!(verify_status(&disabled_wrong).is_err());
+        let disabled = disabled_wrong.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"disabled\"",
+            1,
+        );
+        verify_status(&disabled).unwrap();
+
+        let no_daemon_wrong = valid.replacen("\"daemon_pid\":12", "\"daemon_pid\":null", 1);
+        assert!(verify_status(&no_daemon_wrong).is_err());
+        let no_daemon = no_daemon_wrong.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"inactive\"",
+            1,
+        );
+        verify_status(&no_daemon).unwrap();
+
+        let stale_pid_wrong = valid.replacen("\"daemon_pid\":12", "\"daemon_pid\":13", 1);
+        assert!(verify_status(&stale_pid_wrong).is_err());
+        let stale_pid = stale_pid_wrong.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"unknown\"",
+            1,
+        );
+        verify_status(&stale_pid).unwrap();
+
+        let persisted_mismatch = valid.replacen(
+            "\"runtime_persisted_state\":\"healthy\"",
+            "\"runtime_persisted_state\":\"failed\"",
+            1,
+        );
+        assert!(verify_status(&persisted_mismatch).is_err());
+        let persisted_failure = persisted_mismatch.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"failed\"",
+            1,
+        );
+        verify_status(&persisted_failure).unwrap();
+
+        let missing_persisted = valid.replacen(
+            "\"runtime_persisted_state\":\"healthy\"",
+            "\"runtime_persisted_state\":null",
+            1,
+        );
+        assert!(verify_status(&missing_persisted).is_err());
+        let missing_persisted_unknown = missing_persisted.replacen(
+            "\"runtime_state\":\"healthy\"",
+            "\"runtime_state\":\"unknown\"",
+            1,
+        );
+        verify_status(&missing_persisted_unknown).unwrap();
+
+        let invalid_persisted = valid
+            .replacen(
+                "\"runtime_persisted_state\":\"healthy\"",
+                "\"runtime_persisted_state\":\"inactive\"",
+                1,
+            )
+            .replacen(
+                "\"runtime_state\":\"healthy\"",
+                "\"runtime_state\":\"inactive\"",
+                1,
+            );
+        assert!(verify_status(&invalid_persisted).is_err());
+
+        let zero_daemon_pid = valid.replacen("\"daemon_pid\":12", "\"daemon_pid\":0", 1);
+        assert!(verify_status(&zero_daemon_pid).is_err());
+        let zero_runtime_pid = valid.replacen("\"runtime_pid\":12", "\"runtime_pid\":0", 1);
+        assert!(verify_status(&zero_runtime_pid).is_err());
+    }
+
+    #[test]
+    fn omi_probe_receipt_enforces_core_mode_and_outcome_partition() {
+        let probe = |mode: &str,
+                     local_endpoint: Option<&str>,
+                     native_listener: Option<&str>,
+                     public_api: Option<&str>| OmiProbeAck {
+            mode: mode.to_string(),
+            local_endpoint: local_endpoint.map(str::to_string),
+            native_listener: native_listener.map(str::to_string),
+            public_api: public_api.map(str::to_string),
+        };
+
+        for outcome in ["reachable", "port_closed", "timeout", "forbidden"] {
+            probe("developer_api", Some(outcome), None, None)
+                .verify()
+                .unwrap();
+        }
+        probe(
+            "developer_api",
+            None,
+            None,
+            Some("not_probed_auth_required"),
+        )
+        .verify()
+        .unwrap();
+        for outcome in ["reachable", "port_closed", "timeout"] {
+            probe("native_ingest", None, Some(outcome), None)
+                .verify()
+                .unwrap();
+        }
+        probe("both", Some("reachable"), Some("timeout"), None)
+            .verify()
+            .unwrap();
+        probe(
+            "both",
+            None,
+            Some("port_closed"),
+            Some("not_probed_auth_required"),
+        )
+        .verify()
+        .unwrap();
+        probe("legacy_memories", Some("reachable"), None, None)
+            .verify()
+            .unwrap();
+
+        for mode in ["developer_api", "native_ingest", "both", "legacy_memories"] {
+            assert!(probe(mode, None, None, None).verify().is_err());
+        }
+        assert!(
+            probe(
+                "developer_api",
+                Some("reachable"),
+                None,
+                Some("not_probed_auth_required"),
+            )
+            .verify()
+            .is_err()
+        );
+        assert!(
+            probe("developer_api", Some("reachable"), Some("reachable"), None)
+                .verify()
+                .is_err()
+        );
+        assert!(
+            probe("native_ingest", Some("reachable"), Some("reachable"), None)
+                .verify()
+                .is_err()
+        );
+        assert!(
+            probe(
+                "both",
+                Some("reachable"),
+                Some("reachable"),
+                Some("not_probed_auth_required"),
+            )
+            .verify()
+            .is_err()
+        );
+        assert!(
+            probe(
+                "legacy_memories",
+                None,
+                None,
+                Some("not_probed_auth_required"),
+            )
+            .verify()
+            .is_err()
+        );
+        assert!(
+            probe("developer_api", Some("future_outcome"), None, None)
+                .verify()
+                .is_err()
+        );
+        assert!(
+            probe("native_ingest", None, Some("forbidden"), None)
+                .verify()
+                .is_err()
+        );
+        assert!(
+            probe("developer_api", None, None, Some("reachable"))
+                .verify()
+                .is_err()
+        );
+        assert!(
+            probe("future_mode", Some("reachable"), None, None)
+                .verify()
+                .is_err()
+        );
     }
 
     #[test]
@@ -3443,15 +3835,12 @@ mod tests {
             torn_snapshot,
             unexpected,
         ] {
-            match serde_json::from_value::<CatalogRefreshAck>(invalid) {
-                Ok(acknowledgement) => {
-                    assert!(
-                        acknowledgement
-                            .verify(&path, acknowledgement.stale_only)
-                            .is_err()
-                    )
-                }
-                Err(_) => {}
+            if let Ok(acknowledgement) = serde_json::from_value::<CatalogRefreshAck>(invalid) {
+                assert!(
+                    acknowledgement
+                        .verify(&path, acknowledgement.stale_only)
+                        .is_err()
+                )
             }
         }
     }
@@ -3686,7 +4075,7 @@ mod tests {
         });
         let forget: MemoryForgetAck = serde_json::from_value(forget_value.clone()).unwrap();
         forget.verify("AcmeCorp", &views, &wal).unwrap();
-        assert_eq!(forget.deleted_total().unwrap(), (1..=15).sum());
+        assert_eq!(forget.deleted_total().unwrap(), (1..=15).sum::<i64>());
         assert!(forget.verify("Other", &views, &wal).is_err());
         std::fs::write(&audit_path, b"tampered").unwrap();
         assert!(forget.verify("AcmeCorp", &views, &wal).is_err());
@@ -4055,6 +4444,9 @@ mod tests {
 
     #[test]
     fn background_run_ack_must_match_the_confirmed_request_binding() {
+        let home = tempfile::tempdir().unwrap();
+        let bgjobs = home.path().join("bgjobs");
+        std::fs::create_dir(&bgjobs).unwrap();
         let binding = "ab".repeat(32);
         let approval: BgRunApprovalAck = serde_json::from_value(serde_json::json!({
             "action": "jobs_approve_run",
@@ -4065,24 +4457,50 @@ mod tests {
         .unwrap();
         approval.verify().unwrap();
 
+        let id = format!("gui-42-{}", "ab".repeat(16));
+        let log_path = bgjobs.join(format!("{id}.log"));
+        std::fs::write(&log_path, b"").unwrap();
         let ack: BgRunAck = serde_json::from_value(serde_json::json!({
             "action": "jobs_run",
             "started": true,
-            "id": "gui-42-abcd",
+            "id": id,
             "pid": 42,
-            "log_path": "bgjobs/gui-42-abcd.log",
+            "log_path": log_path,
             "request_binding_sha256": approval.request_binding_sha256.clone(),
         }))
         .unwrap();
-        ack.verify(&approval.request_binding_sha256).unwrap();
-        assert!(ack.verify(&"cd".repeat(32)).is_err());
+        ack.verify(&approval.request_binding_sha256, home.path())
+            .unwrap();
+        let rows = vec![BgJobListRowAck {
+            id: ack.id.clone(),
+            status: "running".to_string(),
+            exit_code: None,
+        }];
+        ack.verify_listed(&rows).unwrap();
+        assert!(ack.verify(&"cd".repeat(32), home.path()).is_err());
+        assert!(ack.verify_listed(&[]).is_err());
+
+        let wrong_path: BgRunAck = serde_json::from_value(serde_json::json!({
+            "action": "jobs_run",
+            "started": true,
+            "id": ack.id,
+            "pid": 42,
+            "log_path": home.path().join("wrong.log"),
+            "request_binding_sha256": approval.request_binding_sha256.clone(),
+        }))
+        .unwrap();
+        assert!(
+            wrong_path
+                .verify(&approval.request_binding_sha256, home.path())
+                .is_err()
+        );
         assert!(
             serde_json::from_value::<BgRunAck>(serde_json::json!({
                 "action": "jobs_run",
                 "started": true,
-                "id": "gui-42-abcd",
+                "id": format!("gui-42-{}", "ab".repeat(16)),
                 "pid": 42,
-                "log_path": "bgjobs/gui-42-abcd.log",
+                "log_path": log_path,
                 "request_binding_sha256": approval.request_binding_sha256.clone(),
                 "unexpected": true,
             }))
@@ -4092,20 +4510,27 @@ mod tests {
 
     #[test]
     fn background_job_list_rows_are_strict_and_state_consistent() {
-        let running: BgJobListRowAck =
-            serde_json::from_str(r#"{"id":"build-42-abcd","status":"running","exit_code":null}"#)
-                .unwrap();
-        running.verify().unwrap();
-
-        let completed: BgJobListRowAck =
-            serde_json::from_str(r#"{"id":"build-42-abcd","status":"completed","exit_code":0}"#)
-                .unwrap();
-        completed.verify().unwrap();
+        let rows: Vec<BgJobListRowAck> = serde_json::from_str(
+            r#"[
+                {"id":"build-42-abcd","status":"running","exit_code":null},
+                {"id":"scan-43-abcd","status":"completed","exit_code":0}
+            ]"#,
+        )
+        .unwrap();
+        verify_bg_job_list(&rows).unwrap();
 
         let inconsistent: BgJobListRowAck =
             serde_json::from_str(r#"{"id":"build-42-abcd","status":"running","exit_code":0}"#)
                 .unwrap();
         assert!(inconsistent.verify().is_err());
+        let duplicate: Vec<BgJobListRowAck> = serde_json::from_str(
+            r#"[
+                {"id":"build-42-abcd","status":"running","exit_code":null},
+                {"id":"build-42-abcd","status":"completed","exit_code":0}
+            ]"#,
+        )
+        .unwrap();
+        assert!(verify_bg_job_list(&duplicate).is_err());
         assert!(
             serde_json::from_str::<BgJobListRowAck>(
                 r#"{"id":"build-42-abcd","status":"running","exit_code":null,"unexpected":true}"#,

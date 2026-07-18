@@ -437,6 +437,7 @@ pub(crate) fn update_raw_freedom_at<T>(
 /// Changing `secrets_backend` is intentionally rejected: the supplied
 /// effective credentials were resolved under the source generation's backend,
 /// so authorizing a target with another backend would be stale by definition.
+#[cfg(feature = "cluster")]
 pub(crate) fn update_raw_freedom_with_effective_credentials_at<T>(
     path: &Path,
     mutation: impl FnOnce(&str, &credentials::Credentials) -> Result<(String, T)>,

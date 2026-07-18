@@ -150,6 +150,29 @@ NEOTH_OMI_INGEST_TOKEN='<at-least-32-characters>' \
 
 neoth omi status --output json
 neoth omi probe
+# Complete surfaced OMI reconfiguration (32 KiB maximum, strict JSON schema)
+neoth --output json omi configure <<'JSON'
+{
+  "settings": {
+    "enabled": false,
+    "mode": "developer_api",
+    "endpoint": "http://127.0.0.1:8002",
+    "listen_addr": "127.0.0.1:8003",
+    "retention_days": 30,
+    "retain_transcripts": false,
+    "audio_enabled": false,
+    "visual_enabled": false,
+    "video_enabled": false,
+    "allow_cloud_api": false,
+    "allow_cloud_summary": false,
+    "create_actions": false,
+    "seed_groundtruth": false,
+    "summary_enabled": false
+  },
+  "credentials": {}
+}
+JSON
+# Credential-only automation remains available for existing scripts
 printf '%s' '{"developer_api_key":"omi_dev_..."}' | neoth omi set-credentials
 neoth omi enforce-retention
 neoth omi purge <conversation-id> --yes
@@ -160,11 +183,34 @@ neoth omi purge <conversation-id> --yes
 | `init --omi ...` | Configure OMI during first-run/reconfigure with the same mode, endpoint/listener, retention, transcript, audio, image, video, summary, action, and ground-truth controls as the desktop wizard. Use `NEOTH_OMI_DEVELOPER_API_KEY` / `NEOTH_OMI_INGEST_TOKEN`; OMI secrets have no init argv flags and are omitted from crash-resume checkpoints. |
 | `omi status` | Show mode, consent controls, credential presence, ledger counts, pending reconciliation, and PID-verified runtime health without exposing secrets or transcript content. |
 | `omi probe` | Probe only the configured local endpoint/native listener; authenticated public Developer APIs are not contacted. |
-| `omi set-credentials` | Read a bounded JSON update from standard input and preserve encryption, keychain selection, and unrelated credentials. Secret values never enter argv. |
+| `omi configure` | Read one strict, complete surfaced settings snapshot plus optional credential replacements from at most 32 KiB of JSON on standard input. The config/credential generation uses the crash-recovery journal protocol, is read back and validated, and is bound to a reload request before a success receipt is emitted; advanced unsurfaced bounds remain preserved. |
+| `omi set-credentials` | Credential-only compatibility path for automation and desktop onboarding: read at most 8 KiB of JSON from standard input and preserve encryption, keychain selection, and unrelated credentials. It is not the Settings-card save path. |
 | `omi resume --review-note <note>` | Resume an SC-18-halted stream after a durable operator review intent. |
 | `omi enforce-retention` | Apply `omi.retention_days` immediately. |
 | `omi purge <id> --yes` | Permanently delete one conversation and local derivatives, remove its native receipt, and retain an anti-reimport tombstone. |
 | `omi allow-reimport <id> --yes` | Explicitly remove the tombstone and stale reconciliation state so the remote source may restore the conversation. |
+
+`omi configure` rejects unknown fields at the request, `settings`, and
+`credentials` levels. `settings` must contain every field shown above;
+`credentials` may be empty or may replace `developer_api_key`,
+`native_ingest_token`, or both. Omit a credential field to preserve its current
+value. A Developer key must be a trimmed, non-empty `omi_dev_*` value, and a
+native token must be trimmed and at least 32 bytes. Secrets travel only through
+stdin and are absent from argv and the success receipt. The receipt includes the
+operation and request identity, config path, complete surfaced settings,
+selected backend, updated field names, credential-presence booleans, exact
+settings/configuration hashes, and reload-request state/timestamp.
+
+A success receipt proves the persisted effective config/credential generation
+was read back and validated and that a reload was requested; it does not claim
+that an asynchronous daemon reload has already completed. If the commit and
+readback succeeded but requesting reload failed, the command says so and asks
+the operator to run `neoth reload`. On keychain-finalization failure, trust the
+specific error: it distinguishes failure before a complete keychain generation
+was staged, a restored prior generation, a new generation retained because the
+file target may already be committed, and a rollback that also failed. Do not
+infer rollback merely from a non-zero exit; inspect
+`neoth omi status --output json` before retrying.
 
 OMI and every media type are off by default. Audio, images, video frames, raw
 transcript retention, public API access, cloud summaries, actions, and

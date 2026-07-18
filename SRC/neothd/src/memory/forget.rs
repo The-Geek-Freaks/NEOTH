@@ -687,6 +687,7 @@ pub(crate) fn redaction_blocks_claim(
 
 /// Active local forget topics. Receive-side raw gossip consults this registry
 /// before writing a peer frame back into the queryable backup surface.
+#[cfg(feature = "cluster")]
 pub(crate) fn active_tombstone_topics(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn
         .prepare(

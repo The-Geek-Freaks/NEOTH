@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "wizard")]
+use super::spawn_daemon_detached;
 use super::{
-    InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, spawn_daemon_detached,
-    try_inline_consent_grant, write_first_tour_marker,
+    InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, try_inline_consent_grant,
+    write_first_tour_marker,
 };
 
 /// Defaults owned by the onboarding contract rather than by `FreedomConfig`.
@@ -1557,7 +1559,7 @@ pub(crate) async fn write_config(neoth_dir: &std::path::Path, state: &WizardStat
         && (omi_update.developer_api_key.is_some() || omi_update.native_ingest_token.is_some())
     {
         crate::cli::omi::finalize_staged_omi_keychain_update(&cred_path, store, &omi_update).context(
-            "init config committed with safe OMI file overrides, but keychain finalization failed; the file overrides remain authoritative",
+            "init config committed, but OMI keychain finalization did not complete cleanly; inspect the retained or restored generation in the underlying error",
         )?;
     }
 

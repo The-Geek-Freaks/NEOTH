@@ -706,6 +706,13 @@ export component SettingsView inherits Rectangle {
     in property <bool> omi-native-token-present: false;
     in property <bool> omi-config-valid: false;
     in property <string> omi-config-error: "";
+    in property <bool> omi-status-verified: false;
+    in property <string> omi-status-error: "OMI status has not been verified yet.";
+    in property <bool> omi-mutation-in-flight: false;
+    in property <bool> omi-save-in-flight: false;
+    in property <bool> omi-status-operation-in-flight: false;
+    in-out property <bool> omi-draft-dirty: false;
+    property <bool> omi-controls-locked: root.omi-mutation-in-flight || root.omi-status-operation-in-flight;
     in property <string> omi-runtime-state: "unknown";
     in property <string> omi-runtime-detail: "";
     in property <int> omi-pending-audits: 0;
@@ -715,6 +722,7 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> omi-reimport-confirm: false;
     callback omi-refresh-clicked();
     callback omi-probe-clicked();
+    callback omi-draft-edited();
     callback omi-save-clicked(bool, string, string, string, string, bool, bool, bool, bool, bool, bool, bool, bool, bool, string, string);
     callback omi-resume-clicked(string);
     callback omi-retention-clicked();
@@ -2792,30 +2800,54 @@ export component SettingsView inherits Rectangle {
                                 color: Theme.accent-green;
                             }
                             Text {
-                                text: "runtime " + root.omi-runtime-state + " · pending " + root.omi-pending-audits;
+                                text: root.omi-draft-dirty
+                                    ? (root.omi-status-verified
+                                        ? "unsaved draft · last runtime " + root.omi-runtime-state
+                                        : "unsaved draft · runtime unverified")
+                                    : root.omi-status-verified
+                                    ? "runtime " + root.omi-runtime-state + " · pending " + root.omi-pending-audits
+                                    : "status unverified · last runtime " + root.omi-runtime-state;
                                 overflow: elide;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
-                                color: root.omi-runtime-state == "healthy" ? Theme.accent-green : Theme.accent-amber;
+                                color: root.omi-status-verified && root.omi-runtime-state == "healthy"
+                                    ? Theme.accent-green : Theme.accent-amber;
                             }
                         }
                         Text {
-                            text: root.omi-config-valid
+                            text: root.omi-draft-dirty
+                                ? (root.omi-status-verified
+                                    ? "Draft differs from the verified runtime configuration. Save it or discard and refresh."
+                                    : "Unsaved draft preserved. Runtime verification is stale: " + root.omi-status-error)
+                                : !root.omi-status-verified
+                                ? "Last verified OMI state is stale: " + root.omi-status-error
+                                : root.omi-config-valid
                                 ? (root.omi-runtime-detail == "" ? "Configuration valid" : root.omi-runtime-detail)
                                 : "Configuration invalid: " + root.omi-config-error;
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
-                            color: root.omi-config-valid ? Theme.text-muted : Theme.accent-pink;
+                            color: root.omi-status-verified && root.omi-config-valid
+                                ? Theme.text-muted : Theme.accent-pink;
+                            wrap: word-wrap;
+                        }
+                        if root.omi-mutation-in-flight: Text {
+                            text: "Applying OMI change and verifying the committed readback…";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
                             wrap: word-wrap;
                         }
                         NeothCheckBox {
                             text: "Enable OMI ingestion (explicit opt-in)";
                             checked <=> root.omi-enabled;
+                            enabled: !root.omi-controls-locked;
+                            toggled(checked) => { root.omi-draft-edited(); }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-base;
                             Text { text: "Mode"; color: Theme.text-secondary; vertical-alignment: center; width: 130px; }
                             NeothComboBox {
+                                enabled: !root.omi-controls-locked;
                                 model: ["developer_api", "native_ingest", "both", "legacy_memories"];
                                 current-index: root.omi-mode == "native_ingest" ? 1
                                     : root.omi-mode == "both" ? 2
@@ -2824,6 +2856,7 @@ export component SettingsView inherits Rectangle {
                                     root.omi-mode = i == 1 ? "native_ingest"
                                         : i == 2 ? "both"
                                         : i == 3 ? "legacy_memories" : "developer_api";
+                                    root.omi-draft-edited();
                                 }
                             }
                         }
@@ -2834,9 +2867,9 @@ export component SettingsView inherits Rectangle {
                             color: Theme.accent-amber;
                             wrap: word-wrap;
                         }
-                        NeothLineEdit { placeholder-text: "Developer/local endpoint"; text <=> root.omi-endpoint; }
-                        NeothLineEdit { placeholder-text: "Native listener, e.g. 127.0.0.1:8003"; text <=> root.omi-listen-addr; }
-                        NeothLineEdit { placeholder-text: "Retention days"; text <=> root.omi-retention-days; }
+                        NeothLineEdit { placeholder-text: "Developer/local endpoint"; text <=> root.omi-endpoint; enabled: !root.omi-controls-locked; edited(value) => { root.omi-draft-edited(); } }
+                        NeothLineEdit { placeholder-text: "Native listener, e.g. 127.0.0.1:8003"; text <=> root.omi-listen-addr; enabled: !root.omi-controls-locked; edited(value) => { root.omi-draft-edited(); } }
+                        NeothLineEdit { placeholder-text: "Retention days"; text <=> root.omi-retention-days; enabled: !root.omi-controls-locked; edited(value) => { root.omi-draft-edited(); } }
                         Text {
                             text: "Developer key: " + (root.omi-developer-key-present ? "stored" : "missing")
                                 + " · Native token: " + (root.omi-native-token-present ? "stored" : "missing")
@@ -2846,27 +2879,29 @@ export component SettingsView inherits Rectangle {
                             color: Theme.text-muted;
                             wrap: word-wrap;
                         }
-                        NeothLineEdit { placeholder-text: "New omi_dev_* key (leave blank to keep)"; password: true; text <=> root.omi-developer-key-draft; }
-                        NeothLineEdit { placeholder-text: "New native bearer token, min. 32 bytes (leave blank to keep)"; password: true; text <=> root.omi-native-token-draft; }
+                        NeothLineEdit { placeholder-text: "New omi_dev_* key (leave blank to keep)"; password: true; text <=> root.omi-developer-key-draft; enabled: !root.omi-controls-locked; edited(value) => { root.omi-draft-edited(); } }
+                        NeothLineEdit { placeholder-text: "New native bearer token, min. 32 bytes (leave blank to keep)"; password: true; text <=> root.omi-native-token-draft; enabled: !root.omi-controls-locked; edited(value) => { root.omi-draft-edited(); } }
                         Text {
                             text: "Independent data and effect consents";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-secondary;
                         }
-                        NeothCheckBox { text: "Retain raw transcripts locally"; checked <=> root.omi-retain-transcripts; }
-                        NeothCheckBox { text: "Accept/process audio"; checked <=> root.omi-audio-enabled; }
-                        NeothCheckBox { text: "Accept/process images"; checked <=> root.omi-image-enabled; }
-                        NeothCheckBox { text: "Accept/process video"; checked <=> root.omi-video-enabled; }
-                        NeothCheckBox { text: "Allow public Developer API reads + both-mode transcript exports (HTTPS only)"; checked <=> root.omi-allow-cloud-api; }
-                        NeothCheckBox { text: "Create bounded summaries"; checked <=> root.omi-summary-enabled; }
-                        NeothCheckBox { text: "Allow cloud model for summaries"; checked <=> root.omi-allow-cloud-summary; }
-                        NeothCheckBox { text: "Promote action items into local tasks"; checked <=> root.omi-create-actions; }
-                        NeothCheckBox { text: "Seed corroborated statements into ground truth"; checked <=> root.omi-seed-groundtruth; }
+                        NeothCheckBox { text: "Retain raw transcripts locally"; checked <=> root.omi-retain-transcripts; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Accept/process audio"; checked <=> root.omi-audio-enabled; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Accept/process images"; checked <=> root.omi-image-enabled; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Accept/process video"; checked <=> root.omi-video-enabled; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Allow public Developer API reads + both-mode transcript exports (HTTPS only)"; checked <=> root.omi-allow-cloud-api; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Create bounded summaries"; checked <=> root.omi-summary-enabled; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Allow cloud model for summaries"; checked <=> root.omi-allow-cloud-summary; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Promote action items into local tasks"; checked <=> root.omi-create-actions; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
+                        NeothCheckBox { text: "Seed corroborated statements into ground truth"; checked <=> root.omi-seed-groundtruth; enabled: !root.omi-controls-locked; toggled(checked) => { root.omi-draft-edited(); } }
                         HorizontalLayout {
                             spacing: Theme.space-base;
                             NeothButton {
                                 label: "Save & reload";
+                                enabled: !root.omi-controls-locked;
+                                loading: root.omi-save-in-flight;
                                 clicked => {
                                     root.omi-save-clicked(
                                         root.omi-enabled, root.omi-mode, root.omi-endpoint,
@@ -2879,29 +2914,36 @@ export component SettingsView inherits Rectangle {
                                         root.omi-native-token-draft);
                                 }
                             }
-                            NeothButton { label: "Refresh"; primary: false; clicked => { root.omi-refresh-clicked(); } }
-                            NeothButton { label: "Probe local"; primary: false; clicked => { root.omi-probe-clicked(); } }
-                            NeothButton { label: "Run retention"; primary: false; clicked => { root.omi-retention-clicked(); } }
+                            NeothButton {
+                                label: root.omi-draft-dirty ? "Discard & refresh" : "Refresh";
+                                primary: false;
+                                enabled: !root.omi-controls-locked;
+                                loading: root.omi-status-operation-in-flight;
+                                clicked => { root.omi-refresh-clicked(); }
+                            }
+                            NeothButton { label: "Probe local"; primary: false; enabled: !root.omi-controls-locked; clicked => { root.omi-probe-clicked(); } }
+                            NeothButton { label: "Run retention"; primary: false; enabled: !root.omi-controls-locked; clicked => { root.omi-retention-clicked(); } }
                         }
                         HorizontalLayout {
                             spacing: Theme.space-base;
-                            NeothLineEdit { placeholder-text: "SC-18 review note"; text <=> root.omi-review-note; horizontal-stretch: 1; }
+                            NeothLineEdit { placeholder-text: "SC-18 review note"; text <=> root.omi-review-note; horizontal-stretch: 1; enabled: !root.omi-controls-locked; }
                             NeothButton {
                                 label: "Resume sanitizer";
                                 primary: false;
-                                enabled: root.omi-review-note != "";
+                                enabled: !root.omi-controls-locked && root.omi-review-note != "";
                                 clicked => { root.omi-resume-clicked(root.omi-review-note); }
                             }
                         }
-                        NeothLineEdit { placeholder-text: "Conversation id for purge / allow-reimport"; text <=> root.omi-conversation-id; }
+                        NeothLineEdit { placeholder-text: "Conversation id for purge / allow-reimport"; text <=> root.omi-conversation-id; enabled: !root.omi-controls-locked; }
                         NeothCheckBox {
                             text: "Confirm permanent purge + anti-reimport tombstone";
                             checked <=> root.omi-purge-confirm;
+                            enabled: !root.omi-controls-locked;
                         }
                         NeothButton {
                             label: "Permanently purge conversation";
                             danger: true;
-                            enabled: root.omi-purge-confirm && root.omi-conversation-id != "";
+                            enabled: !root.omi-controls-locked && root.omi-purge-confirm && root.omi-conversation-id != "";
                             clicked => {
                                 root.omi-purge-clicked(root.omi-conversation-id);
                                 root.omi-purge-confirm = false;
@@ -2910,11 +2952,12 @@ export component SettingsView inherits Rectangle {
                         NeothCheckBox {
                             text: "Confirm remote source may restore purged data";
                             checked <=> root.omi-reimport-confirm;
+                            enabled: !root.omi-controls-locked;
                         }
                         NeothButton {
                             label: "Allow re-import";
                             danger: true;
-                            enabled: root.omi-reimport-confirm && root.omi-conversation-id != "";
+                            enabled: !root.omi-controls-locked && root.omi-reimport-confirm && root.omi-conversation-id != "";
                             clicked => {
                                 root.omi-reimport-clicked(root.omi-conversation-id);
                                 root.omi-reimport-confirm = false;

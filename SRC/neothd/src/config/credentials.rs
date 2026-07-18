@@ -1232,6 +1232,7 @@ impl Credentials {
     /// the exact before/after bytes. Every later runtime load recovers that
     /// journal first, so a process or machine crash can never activate a mixed
     /// public-policy/secret pair.
+    #[cfg(any(feature = "cluster", test))]
     pub(crate) fn update_with_freedom_at<F, R>(
         freedom_path: &Path,
         credentials_path: &Path,
@@ -1629,6 +1630,30 @@ enum DualFileFaultPoint {
     FreedomPublished,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("dual-file target publication crossed its recovery boundary")]
+struct DualFileTargetPublicationCrossed;
+
+fn target_publication_crossed_error(source: anyhow::Error) -> anyhow::Error {
+    if dual_file_target_publication_crossed(&source) {
+        return source;
+    }
+    source.context(DualFileTargetPublicationCrossed)
+}
+
+/// True only when a returned error may follow publication of the complete
+/// target pair. Callers that maintain a coupled external store (for example
+/// the OS keychain) must retain its new generation in this case: recovery may
+/// already have committed the new file generation, or may do so on next load.
+pub(crate) fn dual_file_target_publication_crossed(error: &anyhow::Error) -> bool {
+    error.is::<DualFileTargetPublicationCrossed>()
+}
+
+#[cfg(test)]
+pub(crate) fn test_target_publication_crossed_error(source: anyhow::Error) -> anyhow::Error {
+    target_publication_crossed_error(source)
+}
+
 fn validate_exact_pair_target(path: &Path, label: &str) -> Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -1694,6 +1719,7 @@ where
     W: FnOnce(&Path, &[u8]) -> Result<()>,
     H: FnMut(DualFileFaultPoint) -> Result<()>,
 {
+    let needs_freedom_publication = !freedom_before.same_as(freedom_after);
     let journal = DualFileJournal::prepared(
         freedom_path,
         credentials_path,
@@ -1711,9 +1737,16 @@ where
             freedom_dir,
             "credential phase failed",
             write_error,
+            !needs_freedom_publication,
         ));
     }
-    fault(DualFileFaultPoint::CredentialsPublished)?;
+    if let Err(error) = fault(DualFileFaultPoint::CredentialsPublished) {
+        return if needs_freedom_publication {
+            Err(error)
+        } else {
+            Err(target_publication_crossed_error(error))
+        };
+    }
 
     if let Some(write_freedom) = write_freedom {
         let target = freedom_after
@@ -1724,28 +1757,34 @@ where
                 freedom_dir,
                 "freedom config phase failed",
                 write_error,
+                true,
             ));
         }
     }
-    fault(DualFileFaultPoint::FreedomPublished)?;
+    fault(DualFileFaultPoint::FreedomPublished).map_err(target_publication_crossed_error)?;
 
-    let actual_freedom = FileSnapshot::capture(freedom_path)?;
-    let actual_credentials = FileSnapshot::capture(credentials_path)?;
+    let actual_freedom =
+        FileSnapshot::capture(freedom_path).map_err(target_publication_crossed_error)?;
+    let actual_credentials =
+        FileSnapshot::capture(credentials_path).map_err(target_publication_crossed_error)?;
     if !actual_freedom.same_as(freedom_after) || !actual_credentials.same_as(credentials_after) {
         return Err(transaction_write_error(
             freedom_dir,
             "dual-file publication verification failed",
             anyhow::anyhow!("published bytes do not match the PREPARED target"),
+            true,
         ));
     }
 
-    sync_transaction_directory(freedom_dir)?;
-    crate::util::atomic_write::durable_remove_file(&journal_path).with_context(|| {
-        format!(
-            "durably remove committed journal {}",
-            journal_path.display()
-        )
-    })?;
+    sync_transaction_directory(freedom_dir).map_err(target_publication_crossed_error)?;
+    crate::util::atomic_write::durable_remove_file(&journal_path)
+        .with_context(|| {
+            format!(
+                "durably remove committed journal {}",
+                journal_path.display()
+            )
+        })
+        .map_err(target_publication_crossed_error)?;
     Ok(value)
 }
 
@@ -2227,24 +2266,32 @@ fn recover_prepared_transaction_in(directory: &Path) -> Result<()> {
         )
     })?;
 
-    recover_prepared_journal_locked(directory, journal_path, journal)
+    recover_prepared_journal_locked(directory, journal_path, journal).map(|_| ())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DualFileRecoveryOutcome {
+    Committed,
+    RolledBack,
 }
 
 /// Recover while the caller already holds both canonical process and file
 /// locks. This is exclusively the returned-write-error path inside the normal
 /// transaction and must not attempt to reacquire non-reentrant file locks.
-fn recover_prepared_transaction_in_locked(directory: &Path) -> Result<()> {
+fn recover_prepared_transaction_in_locked(
+    directory: &Path,
+) -> Result<Option<DualFileRecoveryOutcome>> {
     let Some((journal_path, journal)) = read_prepared_transaction(directory)? else {
-        return Ok(());
+        return Ok(None);
     };
-    recover_prepared_journal_locked(directory, journal_path, journal)
+    recover_prepared_journal_locked(directory, journal_path, journal).map(Some)
 }
 
 fn recover_prepared_journal_locked(
     directory: &Path,
     journal_path: PathBuf,
     journal: DualFileJournal,
-) -> Result<()> {
+) -> Result<DualFileRecoveryOutcome> {
     let freedom_path = directory.join(&journal.freedom_file);
     let credentials_path = directory.join(&journal.credentials_file);
     let freedom_before = journal.freedom_before.decode("freedom_before")?;
@@ -2268,7 +2315,7 @@ fn recover_prepared_journal_locked(
         crate::util::atomic_write::durable_remove_file(&journal_path).with_context(|| {
             format!("durably clear committed journal {}", journal_path.display())
         })?;
-        return Ok(());
+        return Ok(DualFileRecoveryOutcome::Committed);
     }
 
     let freedom_result = freedom_before.restore(&freedom_path);
@@ -2294,19 +2341,34 @@ fn recover_prepared_journal_locked(
             journal_path.display()
         )
     })?;
-    Ok(())
+    Ok(DualFileRecoveryOutcome::RolledBack)
 }
 
 fn transaction_write_error(
     directory: &Path,
     phase: &str,
     write_error: anyhow::Error,
+    may_have_complete_target: bool,
 ) -> anyhow::Error {
     match recover_prepared_transaction_in_locked(directory) {
-        Ok(()) => write_error.context(format!("{phase}; prior bytes restored")),
-        Err(recovery_error) => anyhow::anyhow!(
-            "{phase} ({write_error:#}); PREPARED transaction recovery failed and the journal was retained: {recovery_error:#}"
-        ),
+        Ok(Some(DualFileRecoveryOutcome::Committed)) => {
+            target_publication_crossed_error(write_error.context(format!(
+                "{phase}; the complete published target pair was retained"
+            )))
+        }
+        Ok(Some(DualFileRecoveryOutcome::RolledBack) | None) => {
+            write_error.context(format!("{phase}; prior bytes restored"))
+        }
+        Err(recovery_error) => {
+            let error = anyhow::anyhow!(
+                "{phase} ({write_error:#}); PREPARED transaction recovery failed and the journal was retained: {recovery_error:#}"
+            );
+            if may_have_complete_target {
+                target_publication_crossed_error(error)
+            } else {
+                error
+            }
+        }
     }
 }
 
@@ -3011,6 +3073,53 @@ mod tests {
         );
     }
 
+    #[test]
+    fn reported_second_write_error_after_publication_retains_and_marks_new_pair() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let mut original_freedom = crate::config::FreedomConfig::default();
+        original_freedom.telegram_user_id = Some(111_111_111);
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&original_freedom).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let error = Credentials::update_with_freedom_at_using(
+            &freedom_path,
+            &credentials_path,
+            |freedom, credentials| {
+                freedom.telegram_user_id = Some(222_222_222);
+                credentials.telegram_token = Some(SecretString::from("222222222:new-token"));
+                Ok(())
+            },
+            Some(|path: &Path, body: &[u8]| {
+                crate::util::atomic_write::atomic_write_private(path, body)?;
+                anyhow::bail!("injected error after second target publication")
+            }),
+            InlineTelegramTokenPolicy::Preserve,
+            None,
+        )
+        .unwrap_err();
+
+        assert!(dual_file_target_publication_crossed(&error));
+        assert!(format!("{error:#}").contains("injected error after second target publication"));
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+        let loaded = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert_eq!(loaded.telegram_user_id, Some(222_222_222));
+        assert_eq!(
+            loaded.telegram_token.as_ref().unwrap().expose(),
+            "222222222:new-token"
+        );
+    }
+
     fn assert_dual_file_crash_recovery(
         point: DualFileFaultPoint,
         committed: bool,
@@ -3056,7 +3165,11 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(error.to_string().contains("injected process crash"));
+        assert_eq!(
+            dual_file_target_publication_crossed(&error),
+            point == DualFileFaultPoint::FreedomPublished
+        );
+        assert!(format!("{error:#}").contains("injected process crash"));
 
         let journal_path = dir.path().join(DUAL_FILE_JOURNAL_NAME);
         assert!(
@@ -3138,6 +3251,92 @@ mod tests {
     #[test]
     fn crash_after_freedom_rename_commits_before_runtime_load() {
         assert_dual_file_crash_recovery(DualFileFaultPoint::FreedomPublished, true, false, false);
+    }
+
+    #[test]
+    fn unchanged_freedom_target_marks_credentials_publication_as_complete_pair() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_target =
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap();
+        std::fs::write(&freedom_path, &freedom_target).unwrap();
+        Credentials {
+            telegram_token: Some(SecretString::from("111111111:old-token")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let staged_credentials_path = dir.path().join("staged-credentials.yaml");
+        Credentials {
+            telegram_token: Some(SecretString::from("222222222:new-token")),
+            ..Default::default()
+        }
+        .write(&staged_credentials_path)
+        .unwrap();
+        let credentials_target = std::fs::read(&staged_credentials_path).unwrap();
+        std::fs::remove_file(staged_credentials_path).unwrap();
+
+        let error = Credentials::publish_exact_raw_pair_at_using_fault(
+            &freedom_path,
+            &credentials_path,
+            Some(freedom_target.as_bytes()),
+            Some(&credentials_target),
+            |point| {
+                if point == DualFileFaultPoint::CredentialsPublished {
+                    anyhow::bail!("injected failure after complete credentials-only change");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(dual_file_target_publication_crossed(&error));
+        let loaded = Credentials::load_or_default(&credentials_path).unwrap();
+        assert_eq!(
+            loaded.telegram_token.as_ref().unwrap().expose(),
+            "222222222:new-token"
+        );
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[test]
+    fn credential_only_publication_error_is_marked_and_recovers_after_image() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, "operator_id: credential-only\n").unwrap();
+        Credentials {
+            provider_key: Some(SecretString::from("staged-provider")),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let error = Credentials::update_raw_freedom_with_credentials_at_using_fault(
+            &freedom_path,
+            &credentials_path,
+            |_source, credentials| {
+                credentials.provider_key = None;
+                Ok((None, ()))
+            },
+            |point| {
+                if point == DualFileFaultPoint::CredentialsPublished {
+                    anyhow::bail!("injected credential-only publication failure");
+                }
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert!(dual_file_target_publication_crossed(&error));
+        assert!(format!("{error:#}").contains("injected credential-only publication failure"));
+        assert!(dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path).unwrap();
+        assert!(pair.raw_credentials.provider_key.is_none());
+        assert_eq!(pair.config.operator_id.as_deref(), Some("credential-only"));
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
     }
 
     #[test]
@@ -3272,7 +3471,7 @@ mod tests {
             },
         )
         .unwrap_err();
-        assert!(interrupted.to_string().contains("injected post-pair crash"));
+        assert!(format!("{interrupted:#}").contains("injected post-pair crash"));
         let committed = crate::config::snapshot_raw_config_pair(&freedom_path).unwrap();
         assert_eq!(
             committed.freedom.as_ref().map(|bytes| bytes.as_slice()),

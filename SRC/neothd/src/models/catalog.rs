@@ -540,7 +540,8 @@ impl ModelsCatalog {
     /// SHA-256 of the exact JSON representation used by [`Self::save`] and
     /// [`Self::update_at`]. This avoids a second file read when callers already
     /// hold a strict catalog snapshot.
-    pub(crate) fn content_hash(&self) -> Result<String> {
+    #[cfg(test)]
+    fn content_hash(&self) -> Result<String> {
         Ok(Self::hash_serialized(&self.serialized_body()?))
     }
 
@@ -919,7 +920,6 @@ pub fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::Digest as _;
     use tempfile::tempdir;
 
     fn entry(id: &str) -> ModelEntry {

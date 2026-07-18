@@ -601,12 +601,15 @@ pub enum Commands {
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
     /// atomically swap its live `Arc<FreedomConfig>` via `arc-swap`.
     /// Touches a sentinel file `~/.neoth/.reload-requested`; the
-    /// daemon polls for it on every ingress tick. Identity/provider fields
-    /// (`operator_id`, `provider_kind`) are immutable and cause a
-    /// `CONFIG_RELOAD_REJECTED` audit frame. Tunable fields and channel
-    /// bindings such as `telegram_user_id` reload without a daemon restart;
-    /// the credential-aware reconciler then restarts only the affected
-    /// adapter.
+    /// daemon polls for it on every ingress tick. `operator_id`,
+    /// `provider_kind`, and startup-bound provider runtime fields are rejected
+    /// with a `CONFIG_RELOAD_REJECTED` audit frame until restart. That runtime
+    /// set includes the secrets backend; provider binary, key, endpoint, model,
+    /// aliases, region and API version; inference/fallback/Claude topology;
+    /// provider token/compaction controls; Hysteria; SSH tunnels; and recursive
+    /// MAS. Tunable policy/prompt fields and channel bindings such as
+    /// `telegram_user_id` reload without a daemon restart; the
+    /// credential-aware reconciler then restarts only the affected adapter.
     Reload(reload::ReloadArgs),
 
     /// Restore a previously-written backup into `~/.neoth/`.

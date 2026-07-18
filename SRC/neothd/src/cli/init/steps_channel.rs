@@ -6,9 +6,10 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "wizard")]
+use super::k4b_telegram_prompt_text;
 use super::{
-    InitArgs, WizardState, WizardStep, k4b_telegram_prompt_text, validate_telegram_token,
-    write_credential_import_sidecar,
+    InitArgs, WizardState, WizardStep, validate_telegram_token, write_credential_import_sidecar,
 };
 
 pub(crate) async fn step6_channel(

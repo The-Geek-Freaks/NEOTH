@@ -2,7 +2,9 @@
 //! environment detection, experience level, onboarding mode.
 //! Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(feature = "wizard")]
+use anyhow::Context as _;
+use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use super::{

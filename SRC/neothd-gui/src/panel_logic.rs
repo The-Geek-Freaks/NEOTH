@@ -219,8 +219,9 @@ pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
 
 // ── GR-03 trust panel (parse `neoth trust --output json`) ────────────────────
 
-/// Parsed `neoth omi status --output json`. Existing secrets are represented
-/// only by presence booleans; the GUI never reads secret values back.
+/// Verified snapshot derived from the typed `neoth omi status --output json`
+/// receipt. Existing secrets are represented only by presence booleans; the
+/// GUI never reads secret values back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmiSnapshot {
     pub enabled: bool,
@@ -244,89 +245,6 @@ pub struct OmiSnapshot {
     pub create_actions: bool,
     pub seed_groundtruth: bool,
     pub summary_enabled: bool,
-}
-
-impl Default for OmiSnapshot {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            mode: "developer_api".to_string(),
-            endpoint: "http://127.0.0.1:8002".to_string(),
-            listen_addr: "127.0.0.1:8003".to_string(),
-            configuration_valid: false,
-            configuration_error: String::new(),
-            developer_credential_present: false,
-            native_credential_present: false,
-            runtime_state: "unknown".to_string(),
-            runtime_detail: String::new(),
-            pending_audits: 0,
-            retention_days: 30,
-            retain_transcripts: false,
-            audio_enabled: false,
-            visual_enabled: false,
-            video_enabled: false,
-            allow_cloud_api: false,
-            allow_cloud_summary: false,
-            create_actions: true,
-            seed_groundtruth: true,
-            summary_enabled: true,
-        }
-    }
-}
-
-pub fn parse_omi_status(json: &str) -> OmiSnapshot {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(json) else {
-        return OmiSnapshot::default();
-    };
-    let defaults = OmiSnapshot::default();
-    let string = |key: &str, fallback: &str| {
-        value
-            .get(key)
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or(fallback)
-            .to_string()
-    };
-    let boolean = |key: &str, fallback: bool| {
-        value
-            .get(key)
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(fallback)
-    };
-    OmiSnapshot {
-        enabled: boolean("enabled", defaults.enabled),
-        mode: string("mode", &defaults.mode),
-        endpoint: string("endpoint", &defaults.endpoint),
-        listen_addr: string("listen_addr", &defaults.listen_addr),
-        configuration_valid: boolean("configuration_valid", defaults.configuration_valid),
-        configuration_error: string("configuration_error", &defaults.configuration_error),
-        developer_credential_present: boolean(
-            "developer_api_credential_present",
-            defaults.developer_credential_present,
-        ),
-        native_credential_present: boolean(
-            "native_ingest_credential_present",
-            defaults.native_credential_present,
-        ),
-        runtime_state: string("runtime_state", &defaults.runtime_state),
-        runtime_detail: string("runtime_detail", &defaults.runtime_detail),
-        pending_audits: value
-            .get("pending_audits")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(defaults.pending_audits),
-        retention_days: value
-            .get("retention_days")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(defaults.retention_days),
-        retain_transcripts: boolean("retain_transcripts", defaults.retain_transcripts),
-        audio_enabled: boolean("audio_enabled", defaults.audio_enabled),
-        visual_enabled: boolean("visual_enabled", defaults.visual_enabled),
-        video_enabled: boolean("video_enabled", defaults.video_enabled),
-        allow_cloud_api: boolean("allow_cloud_api", defaults.allow_cloud_api),
-        allow_cloud_summary: boolean("allow_cloud_summary", defaults.allow_cloud_summary),
-        create_actions: boolean("create_actions", defaults.create_actions),
-        seed_groundtruth: boolean("seed_groundtruth", defaults.seed_groundtruth),
-        summary_enabled: boolean("summary_enabled", defaults.summary_enabled),
-    }
 }
 
 /// One label→value row for the Trust panel (autonomy / privacy / recovery /
@@ -3792,56 +3710,6 @@ pub fn now_hhmm() -> String {
     format!("{hh:02}:{mm:02}:{ss:02} UTC")
 }
 
-// ── I13 bg-jobs parse ────────────────────────────────────────────────────────
-
-/// Parse `neoth jobs --bg --output json` → (id, status, exit_code_string) rows.
-///
-/// Expected shape: `[{"id":"build-1721...","status":"completed","exit_code":0}]`.
-/// `exit_code` is null while running. Malformed or inconsistent input is an
-/// explicit error and must never become the panel's honest empty state.
-#[derive(Debug, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BgJobWire {
-    id: String,
-    status: String,
-    exit_code: Option<i32>,
-}
-
-pub fn bg_job_rows(rows: Vec<BgJobWire>) -> Result<Vec<(String, String, String)>, String> {
-    let mut ids = std::collections::HashSet::with_capacity(rows.len());
-    rows.into_iter()
-        .map(|row| {
-            if row.id.trim().is_empty() || !ids.insert(row.id.clone()) {
-                return Err("background jobs returned an empty or duplicate id".to_string());
-            }
-            let exit = match (row.status.as_str(), row.exit_code) {
-                ("running", None) => String::new(),
-                ("completed", Some(code)) => code.to_string(),
-                ("completed", None) => "unknown".to_string(),
-                ("running", Some(_)) => {
-                    return Err(format!(
-                        "background job `{}` is running but already has an exit code",
-                        row.id
-                    ));
-                }
-                (status, _) => {
-                    return Err(format!(
-                        "background job `{}` returned unknown status `{status}`",
-                        row.id
-                    ));
-                }
-            };
-            Ok((row.id, row.status, exit))
-        })
-        .collect()
-}
-
-pub fn parse_bg_jobs(json: &str) -> Result<Vec<(String, String, String)>, String> {
-    let rows = serde_json::from_str::<Vec<BgJobWire>>(json)
-        .map_err(|error| format!("invalid background-jobs response: {error}"))?;
-    bg_job_rows(rows)
-}
-
 // ── H16 kanban bulk-selection store ──────────────────────────────────────────
 
 /// Selected kanban task ids ("#42" display form). Plain set semantics —
@@ -4038,15 +3906,15 @@ pub fn mesh_sync_rows(rows: Vec<MeshSyncWire>) -> Result<Vec<MeshSyncData>, Stri
         .collect()
 }
 
-pub fn parse_mesh_sync(json: &str) -> Result<Vec<MeshSyncData>, String> {
-    let rows = serde_json::from_str::<Vec<MeshSyncWire>>(json)
-        .map_err(|error| format!("invalid mesh sync-state response: {error}"))?;
-    mesh_sync_rows(rows)
-}
-
 #[cfg(test)]
 mod mesh_sync_parse_tests {
-    use super::parse_mesh_sync;
+    use super::{MeshSyncData, MeshSyncWire, mesh_sync_rows};
+
+    fn decode_mesh_sync(json: &str) -> Result<Vec<MeshSyncData>, String> {
+        serde_json::from_str::<Vec<MeshSyncWire>>(json)
+            .map_err(|error| format!("invalid mesh sync-state response: {error}"))
+            .and_then(mesh_sync_rows)
+    }
 
     #[test]
     fn parses_full_and_sparse_rows() {
@@ -4061,7 +3929,7 @@ mod mesh_sync_parse_tests {
              "acked_origin_seq":0,"pending_origin_seq":null,"pending_attempts":null,
              "inbound_next_expected_seq":null,"request_state":null,"request_last_error":null}
         ]"#;
-        let rows = parse_mesh_sync(json).unwrap();
+        let rows = decode_mesh_sync(json).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].peer_short, "abcdef0123456789…");
         assert_eq!(rows[0].pending, "121 (3×)");
@@ -4076,11 +3944,11 @@ mod mesh_sync_parse_tests {
 
     #[test]
     fn empty_is_distinct_from_malformed_or_inconsistent() {
-        assert!(parse_mesh_sync("[]").unwrap().is_empty());
-        assert!(parse_mesh_sync("not json").is_err());
-        assert!(parse_mesh_sync("{}").is_err());
+        assert!(decode_mesh_sync("[]").unwrap().is_empty());
+        assert!(decode_mesh_sync("not json").is_err());
+        assert!(decode_mesh_sync("{}").is_err());
         assert!(
-            parse_mesh_sync(
+            decode_mesh_sync(
                 r#"[{"peer_pk":"peer","cursor_segment":null,"cursor_offset":0,
                  "acked_origin_seq":0,"pending_origin_seq":1,"pending_attempts":null,
                  "inbound_next_expected_seq":null,"request_state":null,
@@ -4089,7 +3957,7 @@ mod mesh_sync_parse_tests {
             .is_err()
         );
         assert!(
-            parse_mesh_sync(
+            decode_mesh_sync(
                 r#"[{"peer_pk":"peer","cursor_segment":null,"cursor_offset":0,
                  "acked_origin_seq":0,"pending_origin_seq":null,"pending_attempts":null,
                  "inbound_next_expected_seq":null,"request_state":null,
@@ -4152,15 +4020,15 @@ pub fn slash_cmd_rows(
         .collect()
 }
 
-pub fn parse_slash_cmds(json: &str) -> Result<Vec<(String, String, String, bool)>, String> {
-    let snapshot = serde_json::from_str::<SlashCommandsWire>(json)
-        .map_err(|error| format!("invalid slash-command response: {error}"))?;
-    slash_cmd_rows(snapshot)
-}
-
 #[cfg(test)]
 mod slash_cmds_parse_tests {
-    use super::parse_slash_cmds;
+    use super::{SlashCommandsWire, slash_cmd_rows};
+
+    fn decode_slash_cmds(json: &str) -> Result<Vec<(String, String, String, bool)>, String> {
+        serde_json::from_str::<SlashCommandsWire>(json)
+            .map_err(|error| format!("invalid slash-command response: {error}"))
+            .and_then(slash_cmd_rows)
+    }
 
     #[test]
     fn parses_builtin_and_operator_rows() {
@@ -4168,7 +4036,7 @@ mod slash_cmds_parse_tests {
             {"name":"/help","source":"builtin","description":"list commands","enabled":true},
             {"name":"/deploy","source":"operator","description":"","enabled":false}
         ]}"#;
-        let rows = parse_slash_cmds(json).unwrap();
+        let rows = decode_slash_cmds(json).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -4186,59 +4054,21 @@ mod slash_cmds_parse_tests {
     #[test]
     fn empty_is_distinct_from_malformed_or_inconsistent() {
         assert!(
-            parse_slash_cmds(r#"{"count":0,"commands":[]}"#)
+            decode_slash_cmds(r#"{"count":0,"commands":[]}"#)
                 .unwrap()
                 .is_empty()
         );
-        assert!(parse_slash_cmds("not json").is_err());
-        assert!(parse_slash_cmds("[]").is_err());
-        assert!(parse_slash_cmds("{\"count\":0}").is_err());
-        assert!(parse_slash_cmds(
+        assert!(decode_slash_cmds("not json").is_err());
+        assert!(decode_slash_cmds("[]").is_err());
+        assert!(decode_slash_cmds("{\"count\":0}").is_err());
+        assert!(decode_slash_cmds(
             r#"{"count":2,"commands":[{"name":"help","source":"builtin","description":"","enabled":true}]}"#
         )
         .is_err());
-        assert!(parse_slash_cmds(
+        assert!(decode_slash_cmds(
             r#"{"count":1,"commands":[{"name":"help","source":"builtin","description":"","enabled":true,"unexpected":1}]}"#
         )
         .is_err());
-    }
-}
-
-#[cfg(test)]
-mod bg_jobs_parse_tests {
-    use super::parse_bg_jobs;
-
-    #[test]
-    fn parses_running_and_completed_rows() {
-        let json = r#"[
-            {"id":"build-1","status":"completed","exit_code":0},
-            {"id":"scan-2","status":"running","exit_code":null},
-            {"id":"fail-3","status":"completed","exit_code":101}
-        ]"#;
-        let rows = parse_bg_jobs(json).unwrap();
-        assert_eq!(
-            rows,
-            vec![
-                ("build-1".into(), "completed".into(), "0".into()),
-                ("scan-2".into(), "running".into(), String::new()),
-                ("fail-3".into(), "completed".into(), "101".into()),
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_is_distinct_from_malformed_or_inconsistent() {
-        assert!(parse_bg_jobs("[]").unwrap().is_empty());
-        assert!(parse_bg_jobs("not json").is_err());
-        assert!(parse_bg_jobs("{}").is_err());
-        assert!(parse_bg_jobs("[{\"status\":\"running\"}]").is_err());
-        assert!(parse_bg_jobs(r#"[{"id":"build-1","status":"running","exit_code":0}]"#).is_err());
-        assert!(
-            parse_bg_jobs(
-                r#"[{"id":"build-1","status":"running","exit_code":null,"unexpected":1}]"#
-            )
-            .is_err()
-        );
     }
 }
 
@@ -4264,8 +4094,9 @@ mod structured_load_truth_tests {
             .map(|offset| jobs_start + offset)
             .unwrap();
         let jobs = &rust[jobs_start..jobs_end];
-        assert!(jobs.contains("run_neothd_json_action::<Vec<panel_logic::BgJobWire>>"));
-        assert!(jobs.contains(".and_then(panel_logic::bg_job_rows)"));
+        assert!(jobs.contains("run_neothd_json_action::<Vec<gui_action::BgJobListRowAck>>"));
+        assert!(jobs.contains("gui_action::verify_bg_job_list(&rows)?"));
+        assert!(jobs.contains("BG_JOBS_UI_REVISION"));
         assert!(jobs.contains("set_bg_jobs_valid(true)"));
         assert!(jobs.contains("set_bg_jobs_valid(false)"));
 
@@ -5664,58 +5495,6 @@ mod tests {
     }
 
     // ── GR-03 trust panel parser ──────────────────────────────────────────
-    #[test]
-    fn parse_omi_status_keeps_secrets_presence_only_and_all_consent_switches() {
-        let snapshot = parse_omi_status(
-            r#"{
-                "enabled":true,"mode":"both","endpoint":"https://api.omi.me",
-                "listen_addr":"127.0.0.1:8003","configuration_valid":true,
-                "developer_api_credential_present":true,"native_ingest_credential_present":true,
-                "runtime_state":"healthy","runtime_detail":"ready","pending_audits":2,
-                "retention_days":14,"retain_transcripts":true,"audio_enabled":true,
-                "visual_enabled":false,"video_enabled":true,"allow_cloud_api":true,
-                "allow_cloud_summary":false,"create_actions":true,
-                "seed_groundtruth":false,"summary_enabled":true
-            }"#,
-        );
-        assert!(snapshot.enabled);
-        assert_eq!(snapshot.mode, "both");
-        assert_eq!(snapshot.runtime_state, "healthy");
-        assert_eq!(snapshot.pending_audits, 2);
-        assert!(snapshot.developer_credential_present);
-        assert!(snapshot.native_credential_present);
-        assert!(snapshot.retain_transcripts);
-        assert!(snapshot.audio_enabled);
-        assert!(!snapshot.visual_enabled);
-        assert!(snapshot.video_enabled);
-        assert!(snapshot.allow_cloud_api);
-        assert!(!snapshot.allow_cloud_summary);
-        assert!(snapshot.create_actions);
-        assert!(!snapshot.seed_groundtruth);
-        assert!(snapshot.summary_enabled);
-    }
-
-    #[test]
-    fn parse_omi_status_rejects_malformed_payload() {
-        assert_eq!(parse_omi_status("not json"), OmiSnapshot::default());
-    }
-
-    #[test]
-    fn parse_omi_status_sparse_payload_keeps_safe_manual_defaults() {
-        let snapshot = parse_omi_status(r#"{"enabled":true}"#);
-        assert!(snapshot.enabled);
-        assert_eq!(snapshot.mode, "developer_api");
-        assert_eq!(snapshot.endpoint, "http://127.0.0.1:8002");
-        assert_eq!(snapshot.listen_addr, "127.0.0.1:8003");
-        assert_eq!(snapshot.runtime_state, "unknown");
-        assert_eq!(snapshot.retention_days, 30);
-        assert!(snapshot.create_actions);
-        assert!(snapshot.seed_groundtruth);
-        assert!(snapshot.summary_enabled);
-        assert!(!snapshot.audio_enabled);
-        assert!(!snapshot.allow_cloud_api);
-    }
-
     #[test]
     fn parse_trust_extracts_all_four_sections() {
         let json = r#"{

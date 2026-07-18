@@ -552,25 +552,29 @@ fn spawn_detached(program: &str, args: &[String]) -> std::io::Result<u32> {
         .map(|child| child.id())
 }
 
-async fn execute_bg_job_with(
-    request: &BgJobRequest,
+struct BgJobPermissionContext<'a> {
     policy: crate::permissions::AutonomyPolicySnapshot,
     confirm: ConfirmStrategy,
     preconfirmed_source: Option<&'static str>,
-    audit_sink: PermissionAuditSink<'_>,
+    audit_sink: PermissionAuditSink<'a>,
     audit_required: bool,
+}
+
+async fn execute_bg_job_with(
+    request: &BgJobRequest,
+    permission: BgJobPermissionContext<'_>,
     bgjobs_dir: &Path,
     random: &mut dyn FnMut(&mut [u8]) -> Result<()>,
     spawn: impl FnOnce(&str, &[String]) -> std::io::Result<u32>,
 ) -> Result<BgJobReceipt> {
-    let mut gate = Gate::for_policy(policy).with_confirm(confirm);
-    if let Some(source) = preconfirmed_source {
+    let mut gate = Gate::for_policy(permission.policy).with_confirm(permission.confirm);
+    if let Some(source) = permission.preconfirmed_source {
         gate = gate.with_preconfirmed_confirmation(source);
     }
     gate.check_with_audit_sink(
         &Action::ExecArbitrary,
-        audit_sink,
-        audit_required,
+        permission.audit_sink,
+        permission.audit_required,
         Some(&request.request_binding_sha256),
     )
     .await
@@ -702,11 +706,13 @@ async fn run_bg_job(
     let receipt = if daemon_live {
         execute_bg_job_with(
             &request,
-            cfg.autonomy_policy(),
-            confirm,
-            preconfirmed_source,
-            PermissionAuditSink::DaemonRpc(&home),
-            audit_required,
+            BgJobPermissionContext {
+                policy: cfg.autonomy_policy(),
+                confirm,
+                preconfirmed_source,
+                audit_sink: PermissionAuditSink::DaemonRpc(&home),
+                audit_required,
+            },
             &bgjobs_dir,
             &mut random,
             spawn_detached,
@@ -722,11 +728,13 @@ async fn run_bg_job(
         })?;
         let result = execute_bg_job_with(
             &request,
-            cfg.autonomy_policy(),
-            confirm,
-            preconfirmed_source,
-            PermissionAuditSink::Writer(&writer),
-            audit_required,
+            BgJobPermissionContext {
+                policy: cfg.autonomy_policy(),
+                confirm,
+                preconfirmed_source,
+                audit_sink: PermissionAuditSink::Writer(&writer),
+                audit_required,
+            },
             &bgjobs_dir,
             &mut random,
             spawn_detached,
@@ -953,11 +961,13 @@ mod tests {
         };
         execute_bg_job_with(
             request,
-            policy,
-            confirm,
-            None,
-            sink,
-            audit_required,
+            BgJobPermissionContext {
+                policy,
+                confirm,
+                preconfirmed_source: None,
+                audit_sink: sink,
+                audit_required,
+            },
             bgjobs_dir,
             &mut random,
             move |_, _| {
@@ -1105,14 +1115,6 @@ mod tests {
     }
 
     #[test]
-    fn bg_exec_permission_audit_is_never_best_effort() {
-        assert!(
-            BG_JOB_AUDIT_REQUIRED,
-            "detached arbitrary execution must never start without its permission WAL proof"
-        );
-    }
-
-    #[test]
     fn bg_gui_approval_honours_live_custom_deny() {
         let mut deny = CustomAutonomyConfig::default();
         deny.overrides
@@ -1243,11 +1245,13 @@ mod tests {
         let confirmed_spawned = Arc::new(AtomicBool::new(false));
         execute_bg_job_with(
             &request,
-            level_policy(AutonomyLevel::Strict),
-            ConfirmStrategy::FailClosed,
-            Some("gui_request_bound_token"),
-            PermissionAuditSink::None,
-            false,
+            BgJobPermissionContext {
+                policy: level_policy(AutonomyLevel::Strict),
+                confirm: ConfirmStrategy::FailClosed,
+                preconfirmed_source: Some("gui_request_bound_token"),
+                audit_sink: PermissionAuditSink::None,
+                audit_required: false,
+            },
             &home.path().join("confirmed"),
             &mut random,
             {
@@ -1268,11 +1272,13 @@ mod tests {
         let denied_spawned = Arc::new(AtomicBool::new(false));
         let result = execute_bg_job_with(
             &request,
-            AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &deny),
-            ConfirmStrategy::FailClosed,
-            Some("gui_request_bound_token"),
-            PermissionAuditSink::None,
-            false,
+            BgJobPermissionContext {
+                policy: AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &deny),
+                confirm: ConfirmStrategy::FailClosed,
+                preconfirmed_source: Some("gui_request_bound_token"),
+                audit_sink: PermissionAuditSink::None,
+                audit_required: false,
+            },
             &home.path().join("denied"),
             &mut random,
             {

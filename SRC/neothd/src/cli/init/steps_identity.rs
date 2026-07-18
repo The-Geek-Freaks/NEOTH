@@ -1,7 +1,9 @@
 //! Wizard identity steps (GOLD-ARCH-05): operator id, language, HMAC
 //! backup, operator role. Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(any(feature = "wizard", test))]
+use anyhow::Context as _;
+use anyhow::Result;
 use tracing::debug;
 
 use super::{
@@ -175,6 +177,7 @@ pub(crate) fn step3b_hmac_backup(
     Ok(())
 }
 
+#[cfg(any(feature = "wizard", test))]
 pub(crate) fn backup_hmac_key_to_destination(
     neoth_dir: &std::path::Path,
     output: &std::path::Path,

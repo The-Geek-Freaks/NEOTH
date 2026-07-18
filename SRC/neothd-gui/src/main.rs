@@ -31,6 +31,24 @@ static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 // still current.
 static CLUSTER_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// OMI status reads are asynchronous. A read started before an accepted
+// mutation must never publish its now-stale snapshot after the mutation's
+// receipt-backed readback. Mutations also share one in-process guard below so
+// privacy actions cannot race each other.
+static OMI_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+// Editable OMI fields are a draft, not the verified runtime snapshot. User
+// edits advance this revision so a slow startup/status read can update health
+// metadata without overwriting a newer local draft.
+static OMI_DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static OMI_STATUS_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+// Multiple background-job refreshes can overlap (manual refresh, route entry,
+// and the automatic refresh after a successful spawn). Only the newest request
+// may publish its list or clear the loading state.
+static BG_JOBS_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(windows)]
 mod win_private {
     use std::fs::File;
@@ -618,6 +636,56 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
             w2.set_toasts(slint::ModelRc::new(std::rc::Rc::new(model2)));
         });
     });
+}
+
+fn mark_omi_status_unverified(window: &MainWindow, error: &str) {
+    window.set_omi_status_verified(false);
+    window.set_omi_status_error(error.into());
+}
+
+fn omi_draft_is_unchanged(
+    captured_revision: u64,
+    current_revision: u64,
+    draft_dirty: bool,
+) -> bool {
+    captured_revision == current_revision && !draft_dirty
+}
+
+fn begin_omi_mutation(
+    window: &slint::Weak<MainWindow>,
+    active: &std::sync::atomic::AtomicBool,
+    operation: &str,
+) -> Option<u64> {
+    let strong = window.upgrade()?;
+    if active.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        push_toast(
+            window,
+            "warn",
+            "OMI operation already running",
+            "Wait for the current receipt and verified readback.",
+        );
+        return None;
+    }
+    if OMI_STATUS_OPERATION_ACTIVE.load(std::sync::atomic::Ordering::Acquire) {
+        active.store(false, std::sync::atomic::Ordering::Release);
+        push_toast(
+            window,
+            "warn",
+            "OMI status read in progress",
+            "Wait for the current verified readback before changing OMI state.",
+        );
+        return None;
+    }
+    let revision = OMI_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .wrapping_add(1);
+    strong.set_omi_mutation_in_flight(true);
+    mark_omi_status_unverified(
+        &strong,
+        &format!("{operation} is in progress; displayed values are the last verified snapshot."),
+    );
+    strong.set_status_line(format!("{operation}: waiting for receipt and readback…").into());
+    Some(revision)
 }
 
 fn request_kanban_refresh(window: &slint::Weak<MainWindow>) {
@@ -3228,7 +3296,16 @@ fn main() -> Result<()> {
     // GR-10 + GU-01 — one-shot startup fetch of the read-only settings panels
     // (Safety Rails / Hemispheres / Skills). Off the UI thread (three quick
     // subprocesses), each result marshalled back via invoke_from_event_loop.
+    let weak_omi_draft = window.as_weak();
+    window.on_omi_draft_edited(move || {
+        OMI_DRAFT_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if let Some(window) = weak_omi_draft.upgrade() {
+            window.set_omi_draft_dirty(true);
+        }
+    });
     let weak_panels_init = window.as_weak();
+    let omi_startup_revision = OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+    let omi_startup_draft_revision = OMI_DRAFT_REVISION.load(std::sync::atomic::Ordering::Acquire);
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
@@ -3252,19 +3329,32 @@ fn main() -> Result<()> {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
-                match omi {
-                    Ok(snapshot) => apply_omi_snapshot(&w, snapshot),
-                    Err(error) => {
-                        w.set_omi_config_valid(false);
-                        w.set_omi_config_error(format!("OMI status is unverified: {error}").into());
-                        w.set_omi_runtime_state("unverified".into());
-                        w.set_omi_runtime_detail(
-                            "No live OMI state was applied; repair the configuration or CLI and refresh."
-                                .into(),
-                        );
-                        w.set_status_line(
-                            format!("OMI startup verification failed: {error}").into(),
-                        );
+                if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                    == omi_startup_revision
+                {
+                    match omi {
+                        Ok(snapshot) => {
+                            let replace_draft = omi_draft_is_unchanged(
+                                omi_startup_draft_revision,
+                                OMI_DRAFT_REVISION.load(std::sync::atomic::Ordering::Acquire),
+                                w.get_omi_draft_dirty(),
+                            );
+                            apply_omi_snapshot(&w, snapshot, replace_draft);
+                        }
+                        Err(error) => {
+                            mark_omi_status_unverified(
+                                &w,
+                                &format!("OMI startup verification failed: {error}"),
+                            );
+                            w.set_omi_runtime_state("unverified".into());
+                            w.set_omi_runtime_detail(
+                                "No live OMI state was applied; repair the configuration or CLI and refresh."
+                                    .into(),
+                            );
+                            w.set_status_line(
+                                format!("OMI startup verification failed: {error}").into(),
+                            );
+                        }
                     }
                 }
                 apply_hardware(&w, hardware);
@@ -3286,24 +3376,66 @@ fn main() -> Result<()> {
     // subprocess work runs off the UI thread. Secret updates use bounded child
     // stdin and the daemon's credential backend; they never enter argv or UI
     // read-back state.
+    let omi_mutation_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let weak_omi_refresh = window.as_weak();
+    let omi_mutation_active_for_refresh = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_refresh(move || {
+        if omi_mutation_active_for_refresh.load(std::sync::atomic::Ordering::Acquire) {
+            push_toast(
+                &weak_omi_refresh,
+                "warn",
+                "OMI change in progress",
+                "Wait for the mutation receipt before refreshing status.",
+            );
+            return;
+        }
+        if OMI_STATUS_OPERATION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            push_toast(
+                &weak_omi_refresh,
+                "info",
+                "OMI refresh already running",
+                "The current strict status readback is still in progress.",
+            );
+            return;
+        }
+        let revision = OMI_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .wrapping_add(1);
+        if let Some(window) = weak_omi_refresh.upgrade() {
+            window.set_omi_status_operation_in_flight(true);
+            window.set_status_line(
+                if window.get_omi_draft_dirty() {
+                    "Discarding the OMI draft and loading verified state…"
+                } else {
+                    "Refreshing verified OMI state…"
+                }
+                .into(),
+            );
+        }
         let weak = weak_omi_refresh.clone();
         std::thread::spawn(move || {
             let snapshot = fetch_verified_omi_snapshot(&default_neoth_home());
             let _ = slint::invoke_from_event_loop(move || {
+                OMI_STATUS_OPERATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+                if let Some(window) = weak.upgrade() {
+                    window.set_omi_status_operation_in_flight(false);
+                }
+                if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                    return;
+                }
                 if let Some(window) = weak.upgrade() {
                     match snapshot {
                         Ok(snapshot) => {
-                            apply_omi_snapshot(&window, snapshot);
+                            apply_omi_snapshot(&window, snapshot, true);
                             window.set_status_line("OMI state refreshed and verified.".into());
                         }
-                        Err(error) => window.set_status_line(
-                            format!(
+                        Err(error) => {
+                            let detail = format!(
                                 "OMI refresh failed; the last verified state was preserved: {error}"
-                            )
-                            .into(),
-                        ),
+                            );
+                            mark_omi_status_unverified(&window, &detail);
+                            window.set_status_line(detail.into());
+                        }
                     }
                 }
             });
@@ -3311,6 +3443,7 @@ fn main() -> Result<()> {
     });
 
     let weak_omi_save = window.as_weak();
+    let omi_mutation_active_for_save = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_save(
         move |enabled,
               mode,
@@ -3328,6 +3461,13 @@ fn main() -> Result<()> {
               summary_enabled,
               developer_key,
               native_token| {
+            let Some(revision) = begin_omi_mutation(
+                &weak_omi_save,
+                &omi_mutation_active_for_save,
+                "Save OMI settings",
+            ) else {
+                return;
+            };
             let weak = weak_omi_save.clone();
             let draft = OmiSettingsDraft {
                 enabled,
@@ -3347,9 +3487,26 @@ fn main() -> Result<()> {
                 developer_key: zeroize::Zeroizing::new(developer_key.to_string()),
                 native_token: zeroize::Zeroizing::new(native_token.to_string()),
             };
+            if let Some(window) = weak_omi_save.upgrade() {
+                // The worker owns the only remaining zeroizing copy. Never
+                // retain write-only credentials in Slint while I/O is pending.
+                window.set_omi_developer_key_draft("".into());
+                window.set_omi_native_token_draft("".into());
+                window.set_omi_save_in_flight(true);
+                window.set_omi_draft_dirty(true);
+            }
+            let mutation_active = std::sync::Arc::clone(&omi_mutation_active_for_save);
             std::thread::spawn(move || {
                 let home = default_neoth_home();
                 let result = (|| {
+                    // Serialize this external canonical transaction with every
+                    // legacy GUI read/modify/write worker. The CLI supplies its
+                    // own cross-process locks; this guard prevents a GUI worker
+                    // that read the previous generation from publishing after
+                    // the acknowledged OMI commit.
+                    let _gui_write_guard = FREEDOM_WRITE_LOCK
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner());
                     let receipt = save_omi_settings(&home, &draft)?;
                     let snapshot = fetch_verified_omi_snapshot(&home).map_err(|error| {
                         anyhow::anyhow!(
@@ -3359,10 +3516,16 @@ fn main() -> Result<()> {
                     Ok::<_, anyhow::Error>((receipt, snapshot))
                 })();
                 let _ = slint::invoke_from_event_loop(move || {
+                    mutation_active.store(false, std::sync::atomic::Ordering::Release);
                     if let Some(window) = weak.upgrade() {
+                        window.set_omi_mutation_in_flight(false);
+                        window.set_omi_save_in_flight(false);
+                        if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                            return;
+                        }
                         match result {
                             Ok((receipt, snapshot)) => {
-                                apply_omi_snapshot(&window, snapshot);
+                                apply_omi_snapshot(&window, snapshot, true);
                                 window.set_status_line(
                                     format!(
                                         "OMI settings saved, read back, and reload requested (generation {}).",
@@ -3371,12 +3534,13 @@ fn main() -> Result<()> {
                                     .into(),
                                 );
                             }
-                            Err(error) => window.set_status_line(
-                                format!(
-                                    "OMI settings could not be verified; the last verified state was preserved: {error:#}"
-                                )
-                                .into(),
-                            ),
+                            Err(error) => {
+                                let detail = format!(
+                                    "OMI settings could not be verified; the non-secret draft remains visible, credential drafts were cleared, and the last verified runtime status was preserved: {error:#}"
+                                );
+                                mark_omi_status_unverified(&window, &detail);
+                                window.set_status_line(detail.into());
+                            }
                         }
                     }
                 });
@@ -3385,10 +3549,34 @@ fn main() -> Result<()> {
     );
 
     let weak_omi_probe = window.as_weak();
+    let omi_mutation_active_for_probe = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_probe(move || {
+        if omi_mutation_active_for_probe.load(std::sync::atomic::Ordering::Acquire) {
+            push_toast(
+                &weak_omi_probe,
+                "info",
+                "OMI operation in progress",
+                "Wait for the current status or mutation receipt before probing.",
+            );
+            return;
+        }
+        if OMI_STATUS_OPERATION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            push_toast(
+                &weak_omi_probe,
+                "info",
+                "OMI status operation in progress",
+                "Wait for the current refresh or probe to complete.",
+            );
+            return;
+        }
+        let revision = OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire);
+        if let Some(window) = weak_omi_probe.upgrade() {
+            window.set_omi_status_operation_in_flight(true);
+            window.set_status_line("Probing the configured OMI transports…".into());
+        }
         let weak = weak_omi_probe.clone();
         std::thread::spawn(move || {
-            let result = (|| {
+            let result: std::result::Result<String, String> = (|| {
                 let acknowledgement = run_omi_json_action::<gui_action::OmiProbeAck>(
                     &default_neoth_home(),
                     &["probe".to_string()],
@@ -3399,6 +3587,13 @@ fn main() -> Result<()> {
             })();
             let status = result.unwrap_or_else(|error| format!("OMI probe failed: {error}"));
             let _ = slint::invoke_from_event_loop(move || {
+                OMI_STATUS_OPERATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+                if let Some(window) = weak.upgrade() {
+                    window.set_omi_status_operation_in_flight(false);
+                }
+                if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                    return;
+                }
                 if let Some(window) = weak.upgrade() {
                     window.set_status_line(status.into());
                 }
@@ -3407,9 +3602,18 @@ fn main() -> Result<()> {
     });
 
     let weak_omi_resume = window.as_weak();
+    let omi_mutation_active_for_resume = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_resume(move |note| {
+        let Some(revision) = begin_omi_mutation(
+            &weak_omi_resume,
+            &omi_mutation_active_for_resume,
+            "Resume OMI sanitizer",
+        ) else {
+            return;
+        };
         let weak = weak_omi_resume.clone();
         let note = note.to_string();
+        let mutation_active = std::sync::Arc::clone(&omi_mutation_active_for_resume);
         std::thread::spawn(move || {
             let home = default_neoth_home();
             let result = (|| {
@@ -3425,10 +3629,16 @@ fn main() -> Result<()> {
                 Ok::<_, String>((acknowledgement, snapshot))
             })();
             let _ = slint::invoke_from_event_loop(move || {
+                mutation_active.store(false, std::sync::atomic::Ordering::Release);
                 if let Some(window) = weak.upgrade() {
+                    window.set_omi_mutation_in_flight(false);
+                    if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                        return;
+                    }
                     match result {
                         Ok((acknowledgement, snapshot)) => {
-                            apply_omi_snapshot(&window, snapshot);
+                            let replace_draft = !window.get_omi_draft_dirty();
+                            apply_omi_snapshot(&window, snapshot, replace_draft);
                             window.set_omi_review_note("".into());
                             let status = if acknowledgement.resumed {
                                 "OMI sanitizer resumed; review evidence retained."
@@ -3437,12 +3647,13 @@ fn main() -> Result<()> {
                             };
                             window.set_status_line(status.into());
                         }
-                        Err(error) => window.set_status_line(
-                            format!(
+                        Err(error) => {
+                            let detail = format!(
                                 "OMI resume could not be verified; the last verified state was preserved: {error}"
-                            )
-                            .into(),
-                        ),
+                            );
+                            mark_omi_status_unverified(&window, &detail);
+                            window.set_status_line(detail.into());
+                        }
                     }
                 }
             });
@@ -3450,8 +3661,17 @@ fn main() -> Result<()> {
     });
 
     let weak_omi_retention = window.as_weak();
+    let omi_mutation_active_for_retention = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_retention(move || {
+        let Some(revision) = begin_omi_mutation(
+            &weak_omi_retention,
+            &omi_mutation_active_for_retention,
+            "Enforce OMI retention",
+        ) else {
+            return;
+        };
         let weak = weak_omi_retention.clone();
+        let mutation_active = std::sync::Arc::clone(&omi_mutation_active_for_retention);
         std::thread::spawn(move || {
             let home = default_neoth_home();
             let result = (|| {
@@ -3469,11 +3689,17 @@ fn main() -> Result<()> {
                 Ok::<_, String>((acknowledgement, snapshot))
             })();
             let _ = slint::invoke_from_event_loop(move || {
+                mutation_active.store(false, std::sync::atomic::Ordering::Release);
                 if let Some(window) = weak.upgrade() {
+                    window.set_omi_mutation_in_flight(false);
+                    if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                        return;
+                    }
                     match result {
                         Ok((acknowledgement, snapshot)) => {
                             let removed = acknowledgement.total_removed();
-                            apply_omi_snapshot(&window, snapshot);
+                            let replace_draft = !window.get_omi_draft_dirty();
+                            apply_omi_snapshot(&window, snapshot, replace_draft);
                             window.set_status_line(
                                 format!(
                                     "OMI retention completed and verified; {removed} local record(s) removed."
@@ -3481,12 +3707,13 @@ fn main() -> Result<()> {
                                 .into(),
                             );
                         }
-                        Err(error) => window.set_status_line(
-                            format!(
+                        Err(error) => {
+                            let detail = format!(
                                 "OMI retention could not be verified; the last verified state was preserved: {error}"
-                            )
-                            .into(),
-                        ),
+                            );
+                            mark_omi_status_unverified(&window, &detail);
+                            window.set_status_line(detail.into());
+                        }
                     }
                 }
             });
@@ -3494,15 +3721,30 @@ fn main() -> Result<()> {
     });
 
     let weak_omi_purge = window.as_weak();
+    let omi_mutation_active_for_purge = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_purge(move |conversation_id| {
+        if conversation_id.trim().is_empty() {
+            push_toast(
+                &weak_omi_purge,
+                "warn",
+                "Conversation id required",
+                "Enter the exact OMI conversation id before permanent purge.",
+            );
+            return;
+        }
+        let Some(revision) = begin_omi_mutation(
+            &weak_omi_purge,
+            &omi_mutation_active_for_purge,
+            "Purge OMI conversation",
+        ) else {
+            return;
+        };
         let weak = weak_omi_purge.clone();
         let conversation_id = conversation_id.to_string();
+        let mutation_active = std::sync::Arc::clone(&omi_mutation_active_for_purge);
         std::thread::spawn(move || {
             let home = default_neoth_home();
             let result = (|| {
-                if conversation_id.trim().is_empty() {
-                    return Err("a conversation id is required".to_string());
-                }
                 let acknowledgement = run_omi_json_action::<gui_action::OmiDeletionAck>(
                     &home,
                     &[
@@ -3519,11 +3761,17 @@ fn main() -> Result<()> {
                 Ok::<_, String>((acknowledgement, snapshot))
             })();
             let _ = slint::invoke_from_event_loop(move || {
+                mutation_active.store(false, std::sync::atomic::Ordering::Release);
                 if let Some(window) = weak.upgrade() {
+                    window.set_omi_mutation_in_flight(false);
+                    if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                        return;
+                    }
                     match result {
                         Ok((acknowledgement, snapshot)) => {
                             let removed = acknowledgement.total_removed();
-                            apply_omi_snapshot(&window, snapshot);
+                            let replace_draft = !window.get_omi_draft_dirty();
+                            apply_omi_snapshot(&window, snapshot, replace_draft);
                             window.set_status_line(
                                 format!(
                                     "OMI purge completed and verified; {removed} local record(s) removed."
@@ -3531,12 +3779,13 @@ fn main() -> Result<()> {
                                 .into(),
                             );
                         }
-                        Err(error) => window.set_status_line(
-                            format!(
+                        Err(error) => {
+                            let detail = format!(
                                 "OMI purge could not be verified; the last verified state was preserved: {error}"
-                            )
-                            .into(),
-                        ),
+                            );
+                            mark_omi_status_unverified(&window, &detail);
+                            window.set_status_line(detail.into());
+                        }
                     }
                 }
             });
@@ -3544,15 +3793,30 @@ fn main() -> Result<()> {
     });
 
     let weak_omi_reimport = window.as_weak();
+    let omi_mutation_active_for_reimport = std::sync::Arc::clone(&omi_mutation_active);
     window.on_omi_reimport(move |conversation_id| {
+        if conversation_id.trim().is_empty() {
+            push_toast(
+                &weak_omi_reimport,
+                "warn",
+                "Conversation id required",
+                "Enter the exact OMI conversation id before allowing re-import.",
+            );
+            return;
+        }
+        let Some(revision) = begin_omi_mutation(
+            &weak_omi_reimport,
+            &omi_mutation_active_for_reimport,
+            "Allow OMI re-import",
+        ) else {
+            return;
+        };
         let weak = weak_omi_reimport.clone();
         let conversation_id = conversation_id.to_string();
+        let mutation_active = std::sync::Arc::clone(&omi_mutation_active_for_reimport);
         std::thread::spawn(move || {
             let home = default_neoth_home();
             let result = (|| {
-                if conversation_id.trim().is_empty() {
-                    return Err("a conversation id is required".to_string());
-                }
                 let acknowledgement = run_omi_json_action::<gui_action::OmiAllowReimportAck>(
                     &home,
                     &[
@@ -3571,10 +3835,16 @@ fn main() -> Result<()> {
                 Ok::<_, String>((acknowledgement, snapshot))
             })();
             let _ = slint::invoke_from_event_loop(move || {
+                mutation_active.store(false, std::sync::atomic::Ordering::Release);
                 if let Some(window) = weak.upgrade() {
+                    window.set_omi_mutation_in_flight(false);
+                    if OMI_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                        return;
+                    }
                     match result {
                         Ok((acknowledgement, snapshot)) => {
-                            apply_omi_snapshot(&window, snapshot);
+                            let replace_draft = !window.get_omi_draft_dirty();
+                            apply_omi_snapshot(&window, snapshot, replace_draft);
                             let detail = match (
                                 acknowledgement.tombstone_cleared,
                                 acknowledgement.stale_native_receipt_removed,
@@ -3588,12 +3858,13 @@ fn main() -> Result<()> {
                                 format!("OMI re-import permission verified; {detail}.").into(),
                             );
                         }
-                        Err(error) => window.set_status_line(
-                            format!(
+                        Err(error) => {
+                            let detail = format!(
                                 "OMI allow-reimport could not be verified; the last verified state was preserved: {error}"
-                            )
-                            .into(),
-                        ),
+                            );
+                            mark_omi_status_unverified(&window, &detail);
+                            window.set_status_line(detail.into());
+                        }
                     }
                 }
             });
@@ -4743,6 +5014,9 @@ fn main() -> Result<()> {
             return;
         };
         w0.set_bg_jobs_running(true);
+        let revision = BG_JOBS_UI_REVISION
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            .wrapping_add(1);
         let weak = weak_bg_jobs.clone();
         std::thread::spawn(move || {
             let result = run_neothd_json_action::<Vec<gui_action::BgJobListRowAck>>(
@@ -4750,18 +5024,19 @@ fn main() -> Result<()> {
                 "Load background jobs",
             )
             .and_then(|rows| {
-                for row in &rows {
-                    row.verify()?;
-                }
+                gui_action::verify_bg_job_list(&rows)?;
                 Ok(rows)
             });
-            if let Err(error) = &result {
-                push_toast(&weak, "warn", "Background jobs unavailable", error);
-            }
             let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
+                if BG_JOBS_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                    return;
+                }
                 use slint::VecModel;
                 if let Some(w) = weak.upgrade() {
+                    if let Err(error) = &result {
+                        push_toast(&weak, "warn", "Background jobs unavailable", error);
+                    }
                     match result {
                         Ok(rows) => {
                             let count = rows.len();
@@ -4817,11 +5092,12 @@ fn main() -> Result<()> {
             } else {
                 label.to_string()
             };
+            let home = default_neoth_home();
             // The Slint confirm dialog is the human approval. Turn it into a
             // daemon-held, short-lived token bound to the exact canonical
             // request; the second process must consume that token before its
             // central ExecArbitrary gate may upgrade Confirm to Allow.
-            let result = (|| {
+            let result: std::result::Result<gui_action::BgRunAck, String> = (|| {
                 let approval = run_neothd_json_action::<gui_action::BgRunApprovalAck>(
                     &[
                         "jobs",
@@ -4846,7 +5122,12 @@ fn main() -> Result<()> {
                     ],
                     "Run background job",
                 )?;
-                ack.verify(&approval.request_binding_sha256)?;
+                ack.verify(&approval.request_binding_sha256, &home)?;
+                let rows = run_neothd_json_action::<Vec<gui_action::BgJobListRowAck>>(
+                    &["jobs", "--bg"],
+                    "Verify started background job",
+                )?;
+                ack.verify_listed(&rows)?;
                 Ok(ack)
             })();
             let weak2 = weak.clone();
@@ -11423,7 +11704,15 @@ fn validate_wizard_omi(state: &WizardSnapshot) -> Result<()> {
         && state.omi_developer_key.is_empty();
     let needs_existing_native =
         state.omi_enabled && omi_mode_listens(&state.omi_mode) && state.omi_native_token.is_empty();
-    let effective = (needs_existing_developer || needs_existing_native).then(fetch_omi_snapshot);
+    let effective = if needs_existing_developer || needs_existing_native {
+        Some(
+            fetch_verified_omi_snapshot(&default_neoth_home())
+                .map_err(anyhow::Error::msg)
+                .context("verify existing OMI credential state through the canonical CLI")?,
+        )
+    } else {
+        None
+    };
     let developer_present = effective
         .as_ref()
         .is_some_and(|snapshot| snapshot.developer_credential_present)
@@ -12861,7 +13150,7 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
 }
 
 /// Receipt-backed OMI readback used after operator actions and explicit
-/// refreshes. Unlike the legacy startup/settings probe below, this returns an
+/// refreshes. Unlike the former lenient startup/settings probe, this returns an
 /// error for a failed exit, missing/extended JSON, or invalid semantic fields;
 /// callers therefore keep the last verified UI state intact.
 fn fetch_verified_omi_snapshot(
@@ -12904,31 +13193,41 @@ fn omi_snapshot_from_status_ack(
     }
 }
 
-fn apply_omi_snapshot(window: &MainWindow, snapshot: panel_logic::OmiSnapshot) {
-    window.set_omi_enabled(snapshot.enabled);
-    window.set_omi_mode(snapshot.mode.into());
-    window.set_omi_endpoint(snapshot.endpoint.into());
-    window.set_omi_listen_addr(snapshot.listen_addr.into());
-    window.set_omi_retention_days(snapshot.retention_days.to_string().into());
-    window.set_omi_retain_transcripts(snapshot.retain_transcripts);
-    window.set_omi_audio_enabled(snapshot.audio_enabled);
-    window.set_omi_image_enabled(snapshot.visual_enabled);
-    window.set_omi_video_enabled(snapshot.video_enabled);
-    window.set_omi_allow_cloud_api(snapshot.allow_cloud_api);
-    window.set_omi_allow_cloud_summary(snapshot.allow_cloud_summary);
-    window.set_omi_create_actions(snapshot.create_actions);
-    window.set_omi_seed_groundtruth(snapshot.seed_groundtruth);
-    window.set_omi_summary_enabled(snapshot.summary_enabled);
+fn apply_omi_snapshot(
+    window: &MainWindow,
+    snapshot: panel_logic::OmiSnapshot,
+    replace_draft: bool,
+) {
+    if replace_draft {
+        window.set_omi_enabled(snapshot.enabled);
+        window.set_omi_mode(snapshot.mode.into());
+        window.set_omi_endpoint(snapshot.endpoint.into());
+        window.set_omi_listen_addr(snapshot.listen_addr.into());
+        window.set_omi_retention_days(snapshot.retention_days.to_string().into());
+        window.set_omi_retain_transcripts(snapshot.retain_transcripts);
+        window.set_omi_audio_enabled(snapshot.audio_enabled);
+        window.set_omi_image_enabled(snapshot.visual_enabled);
+        window.set_omi_video_enabled(snapshot.video_enabled);
+        window.set_omi_allow_cloud_api(snapshot.allow_cloud_api);
+        window.set_omi_allow_cloud_summary(snapshot.allow_cloud_summary);
+        window.set_omi_create_actions(snapshot.create_actions);
+        window.set_omi_seed_groundtruth(snapshot.seed_groundtruth);
+        window.set_omi_summary_enabled(snapshot.summary_enabled);
+        // Secret drafts are write-only and never survive an explicit draft
+        // replacement (successful save or explicit discard-and-refresh).
+        window.set_omi_developer_key_draft("".into());
+        window.set_omi_native_token_draft("".into());
+        window.set_omi_draft_dirty(false);
+    }
     window.set_omi_developer_key_present(snapshot.developer_credential_present);
     window.set_omi_native_token_present(snapshot.native_credential_present);
     window.set_omi_config_valid(snapshot.configuration_valid);
     window.set_omi_config_error(snapshot.configuration_error.into());
+    window.set_omi_status_verified(true);
+    window.set_omi_status_error("".into());
     window.set_omi_runtime_state(snapshot.runtime_state.into());
     window.set_omi_runtime_detail(snapshot.runtime_detail.into());
     window.set_omi_pending_audits(snapshot.pending_audits.min(i32::MAX as u64) as i32);
-    // Secret drafts are write-only and are cleared after every refresh/save.
-    window.set_omi_developer_key_draft("".into());
-    window.set_omi_native_token_draft("".into());
 }
 
 /// SL-03 — fetch the local resource snapshot via `neoth hardware --output json`.
@@ -18885,7 +19184,7 @@ mod tests {
         let source = include_str!("main.rs");
         let start = source.find("fn save_omi_settings(").unwrap();
         let end = source[start..]
-            .find("fn run_omi_json_action(")
+            .find("\nfn run_omi_json_action")
             .map(|offset| start + offset)
             .unwrap();
         let implementation = &source[start..end];
@@ -18908,8 +19207,83 @@ mod tests {
             .unwrap();
         let handler = &source[handler_start..handler_end];
         assert!(handler.contains("fetch_verified_omi_snapshot"));
+        assert!(handler.contains("begin_omi_mutation("));
+        assert!(handler.contains("FREEDOM_WRITE_LOCK"));
+        assert!(handler.contains("set_omi_developer_key_draft(\"\".into())"));
+        assert!(handler.contains("set_omi_native_token_draft(\"\".into())"));
+        assert!(handler.contains("set_omi_save_in_flight(true)"));
+        assert!(handler.contains("set_omi_save_in_flight(false)"));
+        assert!(handler.contains("OMI_UI_REVISION.load"));
         assert!(!handler.contains("fetch_omi_snapshot()"));
-        assert!(handler.contains("last verified state was preserved"));
+        assert!(handler.contains("last verified runtime status was preserved"));
+    }
+
+    #[test]
+    fn omi_status_projection_maps_every_rendered_field_exactly() {
+        let acknowledgement: gui_action::OmiStatusAck = serde_json::from_value(serde_json::json!({
+            "enabled": true,
+            "mode": "both",
+            "configuration_valid": true,
+            "configuration_error": null,
+            "developer_api_credential_present": true,
+            "native_ingest_credential_present": true,
+            "endpoint": "https://api.omi.me",
+            "listen_addr": "127.0.0.1:9113",
+            "retention_days": 17,
+            "poll_interval_secs": 19,
+            "retain_transcripts": true,
+            "audio_enabled": true,
+            "visual_enabled": false,
+            "video_enabled": true,
+            "allow_cloud_api": true,
+            "allow_cloud_summary": false,
+            "create_actions": false,
+            "seed_groundtruth": true,
+            "summary_enabled": false,
+            "ledger_initialized": true,
+            "conversations": 2,
+            "segments": 3,
+            "media": 4,
+            "actions": 5,
+            "tombstones": 6,
+            "pending_audits": 7,
+            "runtime_state": "degraded",
+            "runtime_persisted_state": "degraded",
+            "runtime_detail": "waiting for device",
+            "runtime_pid": 41,
+            "runtime_updated_ns": 42,
+            "daemon_pid": 41,
+            "sanitizer_halted": false,
+            "last_success_ns": 43,
+            "last_error": null,
+            "last_retention_purge_ns": 44,
+            "last_retention_error": null
+        }))
+        .unwrap();
+        acknowledgement.verify().unwrap();
+        let snapshot = omi_snapshot_from_status_ack(acknowledgement);
+
+        assert!(snapshot.enabled);
+        assert_eq!(snapshot.mode, "both");
+        assert_eq!(snapshot.endpoint, "https://api.omi.me");
+        assert_eq!(snapshot.listen_addr, "127.0.0.1:9113");
+        assert!(snapshot.configuration_valid);
+        assert_eq!(snapshot.configuration_error, "");
+        assert!(snapshot.developer_credential_present);
+        assert!(snapshot.native_credential_present);
+        assert_eq!(snapshot.runtime_state, "degraded");
+        assert_eq!(snapshot.runtime_detail, "waiting for device");
+        assert_eq!(snapshot.pending_audits, 7);
+        assert_eq!(snapshot.retention_days, 17);
+        assert!(snapshot.retain_transcripts);
+        assert!(snapshot.audio_enabled);
+        assert!(!snapshot.visual_enabled);
+        assert!(snapshot.video_enabled);
+        assert!(snapshot.allow_cloud_api);
+        assert!(!snapshot.allow_cloud_summary);
+        assert!(!snapshot.create_actions);
+        assert!(snapshot.seed_groundtruth);
+        assert!(!snapshot.summary_enabled);
     }
 
     #[test]
@@ -18923,10 +19297,63 @@ mod tests {
         let startup = &source[start..end];
 
         assert!(startup.contains("fetch_verified_omi_snapshot"));
-        assert!(startup.contains("OMI status is unverified"));
+        assert!(startup.contains("mark_omi_status_unverified"));
+        assert!(startup.contains("OMI_UI_REVISION.load"));
         assert!(startup.contains("No live OMI state was applied"));
-        assert!(!source.contains("fn fetch_omi_snapshot("));
+        let production = source
+            .split_once("\n#[cfg(test)]\nmod tests {")
+            .expect("main test module anchor")
+            .0;
+        assert!(!production.contains("fn fetch_omi_snapshot("));
         assert!(!startup.contains("OmiSnapshot::default"));
+    }
+
+    #[test]
+    fn omi_status_freshness_and_mutation_serialisation_are_visible_and_guarded() {
+        let source = include_str!("main.rs");
+        let settings = include_str!("../ui/settings.slint");
+        let root = include_str!("../ui/main.slint");
+        let callbacks_start = source.find("// OMI-MULTIMODAL-01").unwrap();
+        let callbacks_end = source[callbacks_start..].find("// SPEC-06").unwrap() + callbacks_start;
+        let callbacks = &source[callbacks_start..callbacks_end];
+
+        assert_eq!(callbacks.matches("begin_omi_mutation(").count(), 5);
+        assert!(source.contains("static OMI_UI_REVISION"));
+        assert!(source.contains("static OMI_DRAFT_REVISION"));
+        assert!(source.contains("static OMI_STATUS_OPERATION_ACTIVE"));
+        assert!(callbacks.contains("omi_mutation_active"));
+        assert_eq!(
+            callbacks
+                .matches("OMI_STATUS_OPERATION_ACTIVE.swap(true")
+                .count(),
+            2
+        );
+        assert!(source.contains("omi_draft_is_unchanged("));
+        assert!(source.contains("apply_omi_snapshot(&w, snapshot, replace_draft)"));
+        assert!(source.contains("set_omi_status_verified(true)"));
+        assert!(source.contains("mark_omi_status_unverified"));
+        assert!(settings.contains("omi-status-verified"));
+        assert!(settings.contains("omi-status-error"));
+        assert!(settings.contains("Last verified OMI state is stale"));
+        assert!(settings.contains("omi-mutation-in-flight"));
+        assert!(settings.contains("omi-save-in-flight"));
+        assert!(settings.contains("omi-status-operation-in-flight"));
+        assert!(settings.contains("omi-draft-dirty"));
+        assert!(settings.contains("omi-draft-edited"));
+        assert!(settings.contains("Discard & refresh"));
+        assert!(root.contains("omi-status-verified"));
+        assert!(root.contains("omi-mutation-in-flight"));
+        assert!(root.contains("omi-status-operation-in-flight"));
+        assert!(root.contains("omi-draft-dirty"));
+        assert!(root.contains("omi-draft-edited"));
+    }
+
+    #[test]
+    fn omi_startup_readback_never_overwrites_a_changed_or_dirty_draft() {
+        assert!(omi_draft_is_unchanged(7, 7, false));
+        assert!(!omi_draft_is_unchanged(7, 8, false));
+        assert!(!omi_draft_is_unchanged(7, 7, true));
+        assert!(!omi_draft_is_unchanged(7, 8, true));
     }
 
     #[test]
@@ -20325,6 +20752,12 @@ mod gui_bug_regression_tests {
         }
         assert!(actions.contains("fetch_verified_omi_snapshot"));
         assert!(actions.contains("last verified state was preserved"));
+        assert_eq!(actions.matches("begin_omi_mutation(").count(), 4);
+        assert_eq!(
+            actions.matches("set_omi_mutation_in_flight(false)").count(),
+            4
+        );
+        assert!(actions.contains("OMI_UI_REVISION.load"));
         assert!(
             !actions.contains("fetch_omi_snapshot()"),
             "runtime action callbacks must not publish a default-on-error snapshot"

@@ -1141,6 +1141,12 @@ export component MainWindow inherits Window {
     in property <bool> omi-native-token-present: false;
     in property <bool> omi-config-valid: false;
     in property <string> omi-config-error: "";
+    in property <bool> omi-status-verified: false;
+    in property <string> omi-status-error: "OMI status has not been verified yet.";
+    in property <bool> omi-mutation-in-flight: false;
+    in property <bool> omi-save-in-flight: false;
+    in property <bool> omi-status-operation-in-flight: false;
+    in-out property <bool> omi-draft-dirty: false;
     in property <string> omi-runtime-state: "unknown";
     in property <string> omi-runtime-detail: "";
     in property <int> omi-pending-audits: 0;
@@ -1148,6 +1154,7 @@ export component MainWindow inherits Window {
     in-out property <string> omi-conversation-id: "";
     callback omi-refresh();
     callback omi-probe();
+    callback omi-draft-edited();
     callback omi-save(bool, string, string, string, string, bool, bool, bool, bool, bool, bool, bool, bool, bool, string, string);
     callback omi-resume(string);
     callback omi-retention();
@@ -3320,6 +3327,12 @@ export component MainWindow inherits Window {
             omi-native-token-present: root.omi-native-token-present;
             omi-config-valid: root.omi-config-valid;
             omi-config-error: root.omi-config-error;
+            omi-status-verified: root.omi-status-verified;
+            omi-status-error: root.omi-status-error;
+            omi-mutation-in-flight: root.omi-mutation-in-flight;
+            omi-save-in-flight: root.omi-save-in-flight;
+            omi-status-operation-in-flight: root.omi-status-operation-in-flight;
+            omi-draft-dirty <=> root.omi-draft-dirty;
             omi-runtime-state: root.omi-runtime-state;
             omi-runtime-detail: root.omi-runtime-detail;
             omi-pending-audits: root.omi-pending-audits;
@@ -3327,6 +3340,7 @@ export component MainWindow inherits Window {
             omi-conversation-id <=> root.omi-conversation-id;
             omi-refresh-clicked => { root.omi-refresh(); }
             omi-probe-clicked => { root.omi-probe(); }
+            omi-draft-edited => { root.omi-draft-edited(); }
             omi-save-clicked(enabled, mode, endpoint, listen, retention, transcripts, audio, images, video, cloudapi, cloudsummary, actions, groundtruth, summary, developerkey, nativetoken) => {
                 root.omi-save(enabled, mode, endpoint, listen, retention, transcripts, audio, images, video, cloudapi, cloudsummary, actions, groundtruth, summary, developerkey, nativetoken);
             }

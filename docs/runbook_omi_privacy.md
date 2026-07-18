@@ -224,8 +224,12 @@ persists `starting`, `healthy`, `disabled`, `degraded`, `failed`, or `stopped`
 with its PID and bounded detail. If a valid candidate cannot start, the
 supervisor attempts to restore the last known-good config and credentials. A
 failed rollback is durable and visible rather than a tracing-only task exit.
-Invalid config or credentials are rejected before teardown and preserve the
-last valid runtime.
+Invalid changes that cross neither a privacy nor authentication boundary are
+rejected before teardown and preserve the last valid runtime. A changed/removed
+credential generation, a monotonic privacy reduction, or a candidate that fails
+after crossing either boundary is deliberately different: the prior surface
+stays stopped rather than restoring stale authority or capture, and status
+exposes the failed candidate.
 
 Privacy reductions are the exception to last-known-good rollback. A shorter
 retention window, disabled transcript/summary/action/ground-truth/media/cloud
@@ -255,16 +259,45 @@ The Settings → Privacy OMI card exposes the same mode, endpoint/listener,
 retention, independent audio/image/video/transcript/summary/action/ground-truth
 and cloud consents, credential-presence state, runtime health, pending intents,
 probe, resume, retention, purge, and re-import controls. Existing secrets are
-never read back into widgets. New secrets travel through bounded child stdin to
-`neoth omi set-credentials`, never through process arguments; that path keeps
-the cross-process lock, at-rest encryption, unrelated fields, and the selected
-file/keychain backend intact. Both the desktop custom onboarding wizard and the
-terminal `neoth init` flow expose the same opt-in and consent choices. Terminal
-automation supplies secrets only through `NEOTH_OMI_DEVELOPER_API_KEY` and
-`NEOTH_OMI_INGEST_TOKEN`; they are omitted from argv, `freedom.yaml`, and wizard
-crash-resume checkpoints. Init commits credentials before the public enabled
-configuration and merges only wizard-owned YAML fields, preserving unknown and
-advanced operator configuration during `--force` reconfiguration.
+never read back into widgets. Saving the card sends one strict, at-most-32-KiB
+JSON request to `neoth omi configure`: the complete surfaced settings snapshot
+and any newly entered credential replacements travel together through bounded
+child stdin, never through process arguments. Omitted credential fields preserve
+their existing values. The desktop zeroes its private submission buffer after
+the write attempt and clears the write-only credential drafts while the request
+is in flight.
+
+`omi configure` uses the shared owner-private, checksummed recovery-journal
+protocol while preserving unrelated and advanced fields. The first pair
+publication makes the public settings and file credential image crash-safe. For
+the keychain backend, values are staged as authoritative file overrides; after
+the OS-keychain writes, a second credential-only pair transaction clears those
+overrides. A failure therefore reports the real finalization state: failure
+before a complete keychain generation was staged, prior values restored after a
+pre-publication rollback, the updated generation retained because the file
+target may already be committed, or rollback failure reported explicitly. A
+non-zero exit alone is not proof that every write was undone; inspect the
+complete error and run `neoth omi status --output json` before retrying.
+
+A success receipt is secret-free and binds the exact submitted settings, config
+path and SHA-256 generation, credential backend/updated field names/presence,
+and reload request. The desktop verifies that receipt against the file on disk
+and then requires a strict `omi status` readback before replacing the last
+verified UI state. Secret drafts stay cleared on failure, the non-secret draft
+remains visible, and the last verified runtime status is preserved. Reload is
+requested only after persisted readback and validation; if the reload request
+itself fails after commit, run `neoth reload` and refresh status. A success
+receipt does not claim that asynchronous worker activation has already finished.
+
+Both the desktop custom onboarding wizard and the terminal `neoth init` flow
+expose the same opt-in and consent choices. Terminal automation supplies secrets
+only through `NEOTH_OMI_DEVELOPER_API_KEY` and `NEOTH_OMI_INGEST_TOKEN`; they are
+omitted from argv, `freedom.yaml`, and wizard crash-resume checkpoints. Init
+commits credentials before the public enabled configuration and merges only
+wizard-owned YAML fields, preserving unknown and advanced operator configuration
+during `--force` reconfiguration. The credential-only `omi set-credentials`
+command remains available for existing automation and is still used by desktop
+onboarding; it is not the Settings-card save path.
 
 ## Pre-flight checklist
 

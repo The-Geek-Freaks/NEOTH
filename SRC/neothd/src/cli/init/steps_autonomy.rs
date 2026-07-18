@@ -2,7 +2,9 @@
 //! level, step7b auto-update, step7c wasm plugin activation, step7d
 //! supervisor, inline consent grant. Split out of `cli/init.rs`.
 
-use anyhow::{Context, Result};
+#[cfg(feature = "wizard")]
+use anyhow::Context as _;
+use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use super::{InitArgs, ProviderKind, WizardState, WizardStep};

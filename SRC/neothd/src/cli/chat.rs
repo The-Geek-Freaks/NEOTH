@@ -1737,7 +1737,7 @@ async fn enforce_preflight(
             }
         };
         let now = crate::providers::quota::now_unix();
-        if !(provider.handles_nonstream_quota_backoff() && !args.stream)
+        if (!provider.handles_nonstream_quota_backoff() || args.stream)
             && let Some(state) = tracker.get(provider_name)
             && !state.is_healthy(now)
         {

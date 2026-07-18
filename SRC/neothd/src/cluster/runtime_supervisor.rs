@@ -950,9 +950,7 @@ async fn invalidate_runtime(
     let guard = AckInFlightGuard::acquire(Arc::clone(&deps.ack_in_flight));
     tokio::task::spawn_blocking(move || {
         let _guard = guard;
-        let result =
-            crate::cli::cluster::invalidate_cluster_runtime_at(&home, &config, &credentials);
-        result
+        crate::cli::cluster::invalidate_cluster_runtime_at(&home, &config, &credentials)
     })
     .await
     .context("join cluster runtime invalidation")?
@@ -1234,32 +1232,35 @@ pub(crate) async fn spawn_runtime_supervisor(
             {
                 continue;
             }
-            if runtime_degraded || desired != observed {
-                if let Err(error) = invalidate_runtime(&deps, &config, &credentials).await {
-                    let cause = error
-                        .context("invalidate active marker before cluster runtime reconciliation");
-                    let outcome = core.stop_active_fail_closed(cause).await;
-                    last_config = config;
-                    last_credentials = credentials;
-                    observed = desired;
-                    retry_after = Some(tokio::time::Instant::now() + FAILED_SWITCH_RETRY_INTERVAL);
-                    match outcome {
-                        ReconcileOutcome::StartFailedClean { error } => {
-                            warn!(%error, "cluster runtime marker invalidation failed; active generation stopped fail closed and no replacement will start before retry");
-                            if let Err(retry_error) =
-                                invalidate_runtime(&deps, &last_config, &last_credentials).await
-                            {
-                                warn!(%retry_error, "cluster runtime marker remained active after the immediate post-stop invalidation retry");
-                            }
+            let invalidation_error = if runtime_degraded || desired != observed {
+                invalidate_runtime(&deps, &config, &credentials).await.err()
+            } else {
+                None
+            };
+            if let Some(error) = invalidation_error {
+                let cause =
+                    error.context("invalidate active marker before cluster runtime reconciliation");
+                let outcome = core.stop_active_fail_closed(cause).await;
+                last_config = config;
+                last_credentials = credentials;
+                observed = desired;
+                retry_after = Some(tokio::time::Instant::now() + FAILED_SWITCH_RETRY_INTERVAL);
+                match outcome {
+                    ReconcileOutcome::StartFailedClean { error } => {
+                        warn!(%error, "cluster runtime marker invalidation failed; active generation stopped fail closed and no replacement will start before retry");
+                        if let Err(retry_error) =
+                            invalidate_runtime(&deps, &last_config, &last_credentials).await
+                        {
+                            warn!(%retry_error, "cluster runtime marker remained active after the immediate post-stop invalidation retry");
                         }
-                        ReconcileOutcome::TeardownUncertain { error } => {
-                            retry_after = None;
-                            warn!(%error, "cluster runtime marker invalidation failed and teardown is uncertain; supervisor poisoned");
-                        }
-                        ReconcileOutcome::Unchanged | ReconcileOutcome::Applied => unreachable!(),
                     }
-                    continue;
+                    ReconcileOutcome::TeardownUncertain { error } => {
+                        retry_after = None;
+                        warn!(%error, "cluster runtime marker invalidation failed and teardown is uncertain; supervisor poisoned");
+                    }
+                    ReconcileOutcome::Unchanged | ReconcileOutcome::Applied => unreachable!(),
                 }
+                continue;
             }
             last_config = config.clone();
             last_credentials = credentials.clone();

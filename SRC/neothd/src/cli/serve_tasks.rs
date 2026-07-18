@@ -1809,7 +1809,7 @@ pub(crate) fn spawn_companion_p2p_listener_task(
              P2P pairing unavailable; falling back to loopback HTTP only"
         );
         let _ = (home, companion_state, writer, shutdown);
-        return None;
+        None
     }
 
     #[cfg(feature = "cluster")]

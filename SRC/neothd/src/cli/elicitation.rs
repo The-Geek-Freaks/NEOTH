@@ -87,10 +87,13 @@ struct ElicitationRequest {
 
 #[derive(Debug, Deserialize)]
 struct PropertySchema {
+    #[cfg(feature = "wizard")]
     #[serde(rename = "type")]
     ty: Option<String>,
+    #[cfg(feature = "wizard")]
     #[serde(rename = "enum")]
     variants: Option<Vec<String>>,
+    #[cfg(feature = "wizard")]
     description: Option<String>,
 }
 
