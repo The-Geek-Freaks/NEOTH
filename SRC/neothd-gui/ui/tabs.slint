@@ -4,7 +4,8 @@
 // probe; Doctor runs `neoth doctor`.
 
 import { Theme } from "theme.slint";
-import { SegBar, Skeleton } from "components.slint";
+import { SegBar, Skeleton, Led, Kicker, NeothButton, RefreshFooter, EmptyState } from "components.slint";
+import { ScrollView } from "std-widgets.slint";
 
 // One labelled stat row (mono eyebrow + value).
 component StatRow inherits Rectangle {
@@ -424,6 +425,128 @@ export component DoctorView inherits Rectangle {
                     wrap: word-wrap;
                 }
             }
+        }
+    }
+}
+
+// ── I14 — Slash-command browser ───────────────────────────────────────
+// Structured rendering of `neoth slash list --output json`. Read-only by
+// design: `slash add/remove` verbs do not exist (R4-05 dead-button rule);
+// operator overrides live in ~/.neoth/commands/*.toml.
+export struct SlashCmdRow {
+    name: string,         // "/recall"
+    source: string,       // "builtin" | "operator"
+    description: string,
+    enabled: bool,
+}
+
+component SlashCmdCard inherits Rectangle {
+    in property <SlashCmdRow> cmd;
+
+    background: Theme.bg-card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalLayout {
+        padding: 12px; spacing: 10px;
+
+        Led {
+            state: root.cmd.enabled ? "live" : "off";
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.cmd.name;
+            color: Theme.text-primary;
+            font-family: Theme.font-mono;
+            font-size: Theme.font-size-xs;
+            vertical-alignment: center;
+        }
+        // source chip — operator overrides stand out from builtins
+        Rectangle {
+            width: src-txt.preferred-width + 12px; height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-pill;
+            background: root.cmd.source == "operator" ? Theme.surface-3 : Theme.surface-1;
+            border-width: 1px; border-color: Theme.border-subtle;
+            src-txt := Text {
+                text: root.cmd.source;
+                color: root.cmd.source == "operator" ? Theme.accent : Theme.text-tertiary;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                horizontal-alignment: center; vertical-alignment: center;
+                width: 100%; height: 100%;
+            }
+        }
+        Text {
+            text: root.cmd.description;
+            color: Theme.text-secondary;
+            font-family: Theme.font-sans;
+            font-size: Theme.font-size-2xs;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+
+    accessible-role: AccessibleRole.text;
+    accessible-label: "slash command " + root.cmd.name + " — "
+        + (root.cmd.enabled ? "enabled" : "disabled") + ", " + root.cmd.source;
+}
+
+export component SlashCmdsView inherits Rectangle {
+    // Entrance fade — same contract as EntranceFade (E-wave homogeneity).
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity { duration: Theme.duration-entrance; easing: cubic-bezier(0.16, 1, 0.3, 1); }
+
+    in property <[SlashCmdRow]> slash-cmds: [];
+    in property <bool>   slash-loading: false;
+    in property <string> slash-refreshed-at: "";
+
+    callback slash-refresh();
+
+    ScrollView {
+        VerticalLayout {
+            padding: Theme.space-base;
+            spacing: 14px;
+
+            HorizontalLayout {
+                spacing: 10px;
+                VerticalLayout {
+                    spacing: 2px;
+                    horizontal-stretch: 1;
+                    Kicker { text: "CHAT SURFACE"; }
+                    Text {
+                        text: "Slash Commands";
+                        color: Theme.text-primary;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-lg;
+                    }
+                    Text {
+                        text: "builtins + operator overrides from ~/.neoth/commands/*.toml (read-only here)";
+                        color: Theme.text-tertiary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-2xs;
+                    }
+                }
+                NeothButton {
+                    label: root.slash-loading ? "Loading…" : "Refresh";
+                    size: "sm";
+                    primary: false;
+                    enabled: !root.slash-loading;
+                    clicked => { root.slash-refresh(); }
+                }
+            }
+
+            if root.slash-cmds.length == 0: EmptyState {
+                glyph: "⧸";
+                title: "No slash commands loaded";
+                hint: "hit Refresh — builtins alone should list 24 commands";
+            }
+            for c in root.slash-cmds: SlashCmdCard { cmd: c; }
+
+            RefreshFooter { ts: root.slash-refreshed-at; }
         }
     }
 }

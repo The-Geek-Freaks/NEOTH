@@ -26,7 +26,7 @@ import { BuddyDock } from "buddy.slint";
 import { Sidebar, TopBar, StatusFooter } from "app_shell.slint";
 import { MiniOverlay } from "overlay.slint";
 export { MiniOverlay }
-import { ResourcesView, DoctorView, ProbeView } from "tabs.slint";
+import { ResourcesView, DoctorView, ProbeView, SlashCmdsView, SlashCmdRow } from "tabs.slint";
 import { AgentsView, AgentRow } from "agents_view.slint";
 import { WalInspectorView, WalEventRow } from "wal_inspector.slint";
 import { WalTimelineStrip, WalBucket } from "wal_timeline.slint";
@@ -50,7 +50,7 @@ import { WikiView, WikiRow } from "wiki.slint";
 import { BuddyConfigView, SelfActSkill } from "buddyconfig.slint";
 import { CompanionView } from "companion.slint";
 import { MeshView, MeshPeerRow, MeshForeignRow, MeshConflictRow } from "mesh.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, PaletteItem, AgentRow, WalEventRow, WalBucket, GraphNode, GraphEdge, CostSessionRow, PermRow, MenuItem, BgJobRow, SlashCmdRow }
 export { Theme }
 
 // SPEC-05 PresetRow/ProfilePresetRow now live in settings.slint (AOS-02
@@ -508,6 +508,9 @@ export component MainWindow inherits Window {
     in property <string> slash-output: "";
     in property <bool> slash-running: false;
     callback slash-run-clicked();
+    // I14 — structured slash-command browser model.
+    in property <[SlashCmdRow]> slash-cmds-model: [];
+    in property <string> slash-refreshed-at: "";
     in property <string> gt-output: "";
     in property <bool> gt-running: false;
     callback gt-run-clicked();
@@ -3762,14 +3765,13 @@ export component MainWindow inherits Window {
                     init => { if (root.credentials-output == "") { root.credentials-run-clicked(); } }
                 }
                 // GOLD-R4-05 — slash-command registry probe (neoth slash list).
-                if root.nav-active == "slash": ProbeView {
-                    blurb: "Registered slash commands (neoth slash list). Read-only.";
-                    action-label: "Refresh";
-                    output: root.slash-output;
-                    running: root.slash-running;
-                    empty-hint: "Click \"Refresh\" to load slash commands.";
-                    run-clicked => { root.slash-run-clicked(); }
-                    init => { if (root.slash-output == "") { root.slash-run-clicked(); } }
+                // I14 — structured browser replaces the raw ProbeView dump.
+                if root.nav-active == "slash": SlashCmdsView {
+                    slash-cmds: root.slash-cmds-model;
+                    slash-loading: root.slash-running;
+                    slash-refreshed-at: root.slash-refreshed-at;
+                    slash-refresh => { root.slash-run-clicked(); }
+                    init => { if (root.slash-cmds-model.length == 0) { root.slash-run-clicked(); } }
                 }
                 // Research P0 — ground-truth fact store (neoth groundtruth list)
                 // + L93 add-statement write action above the read-only list.

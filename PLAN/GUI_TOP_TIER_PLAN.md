@@ -272,9 +272,10 @@ Parity-Lücken (aus 134-Verb-Audit):
       `jobs --run --output json` typed BgRunAck (neuer JSON-Ack in
       cli/jobs.rs run_bg_job, fail-closed, auto-refresh danach).
       Chat-Prompt-Pfad /background lief schon über Slash-Chips (G16).
-- [ ] I14 Slash-Command-Browser im Agents-Panel: `neoth slash list --output json`
-      strukturiert rendern (~/.neoth/commands/*.toml sichtbar machen);
-      add/remove-Verben existieren NICHT → read-only, keine Dead-Buttons.
+- [x] I14 (2026-07-18): SlashCmdsView in tabs.slint — Cards mit Led on/off,
+      source-Chip (builtin/operator hervorgehoben), Description; ersetzt den
+      ProbeView-Dump im slash-Tab. Read-only by design (keine add/remove-Verben
+      → keine Dead-Buttons). parse_slash_cmds + 2 Tests.
 - [ ] I15 Channel-Pairing-Wizard (`connect`-Verb CLI-only) — größte tägliche
       Reibung, aber R4-07-Territorium → mit R4-07-Welle bündeln.
 

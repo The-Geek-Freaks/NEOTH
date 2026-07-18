@@ -3968,8 +3968,25 @@ fn main() -> Result<()> {
                 }
                 None => "neothd binary not on PATH — cannot list slash commands.".to_string(),
             };
+            // I14 — structured model beside the raw dump (SlashCmdsView).
+            let rows = panel_logic::parse_slash_cmds(&output);
+            let ts = panel_logic::now_hhmm();
             let _ = slint::invoke_from_event_loop(move || {
+                use slint::VecModel;
                 if let Some(w) = weak.upgrade() {
+                    let model: Vec<SlashCmdRow> = rows
+                        .into_iter()
+                        .map(|(name, source, description, enabled)| SlashCmdRow {
+                            name: name.into(),
+                            source: source.into(),
+                            description: description.into(),
+                            enabled,
+                        })
+                        .collect();
+                    w.set_slash_cmds_model(slint::ModelRc::new(std::rc::Rc::new(
+                        VecModel::from(model),
+                    )));
+                    w.set_slash_refreshed_at(ts.as_str().into());
                     w.set_slash_output(output.into());
                     w.set_slash_running(false);
                 }

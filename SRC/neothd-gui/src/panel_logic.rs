@@ -3707,6 +3707,73 @@ pub fn parse_bg_jobs(json: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+// ── I14 slash-command parse ──────────────────────────────────────────────────
+
+/// Parse `neoth slash list --output json` → (name, source, description,
+/// enabled) rows. Expected shape:
+/// `{"count":24,"commands":[{"name":"/help","source":"builtin",
+///   "description":"…","enabled":true}]}`.
+/// Malformed input yields an empty Vec (panel shows its empty state).
+pub fn parse_slash_cmds(json: &str) -> Vec<(String, String, String, bool)> {
+    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+    let Some(arr) = v.get("commands").and_then(|c| c.as_array()) else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|row| {
+            let name = row.get("name")?.as_str()?.to_string();
+            let source = row
+                .get("source")
+                .and_then(|s| s.as_str())
+                .unwrap_or("builtin")
+                .to_string();
+            let description = row
+                .get("description")
+                .and_then(|s| s.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let enabled = row
+                .get("enabled")
+                .and_then(|e| e.as_bool())
+                .unwrap_or(true);
+            Some((name, source, description, enabled))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod slash_cmds_parse_tests {
+    use super::parse_slash_cmds;
+
+    #[test]
+    fn parses_builtin_and_operator_rows() {
+        let json = r#"{"count":2,"commands":[
+            {"name":"/help","source":"builtin","description":"list commands","enabled":true},
+            {"name":"/deploy","source":"operator","description":"","enabled":false}
+        ]}"#;
+        let rows = parse_slash_cmds(json);
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    "/help".into(),
+                    "builtin".into(),
+                    "list commands".into(),
+                    true
+                ),
+                ("/deploy".into(), "operator".into(), String::new(), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_input_yields_empty() {
+        assert!(parse_slash_cmds("not json").is_empty());
+        assert!(parse_slash_cmds("[]").is_empty());
+        assert!(parse_slash_cmds("{\"count\":0}").is_empty());
+    }
+}
+
 #[cfg(test)]
 mod bg_jobs_parse_tests {
     use super::parse_bg_jobs;
