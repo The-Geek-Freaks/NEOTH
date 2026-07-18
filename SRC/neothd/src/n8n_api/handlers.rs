@@ -376,12 +376,9 @@ fn build_provider_request(
         effective_model.as_deref().unwrap_or("provider_default"),
         config.tokens.max_per_request,
     );
-    let budget = crate::tokens::budget::finalize_daemon_request(
-        enriched.prompt,
-        enriched.system,
-        cap,
-    )
-    .map_err(|e| anyhow::anyhow!("n8n provider_call over token cap: {e}"))?;
+    let budget =
+        crate::tokens::budget::finalize_daemon_request(enriched.prompt, enriched.system, cap)
+            .map_err(|e| anyhow::anyhow!("n8n provider_call over token cap: {e}"))?;
 
     Ok(crate::providers::Request {
         prompt: budget.prompt,

@@ -575,8 +575,8 @@ pub async fn spawn_session_sort_cron(
                 ticker = tokio::time::interval(current_interval);
                 ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             }
-            let wire_model =
-                crate::providers::provider_default_wire_model(provider.as_ref()).unwrap_or_default();
+            let wire_model = crate::providers::provider_default_wire_model(provider.as_ref())
+                .unwrap_or_default();
             let cap = crate::tokens::budget::effective_cap(
                 "",
                 &wire_model,

@@ -457,13 +457,8 @@ fn capability_mac(
     nonce_hex: &str,
     spec_sha256: &str,
 ) -> String {
-    let binding = capability_binding_bytes(
-        schema_version,
-        job_id,
-        expires_unix,
-        nonce_hex,
-        spec_sha256,
-    );
+    let binding =
+        capability_binding_bytes(schema_version, job_id, expires_unix, nonce_hex, spec_sha256);
     hex::encode(crate::util::hmac::sha256(key, binding.as_slice()))
 }
 
@@ -650,12 +645,7 @@ fn claim_mac(
     )
 }
 
-fn start_mac(
-    key: &[u8],
-    job_id: &str,
-    spec_sha256: &str,
-    claim_mac_sha256: &str,
-) -> String {
+fn start_mac(key: &[u8], job_id: &str, spec_sha256: &str, claim_mac_sha256: &str) -> String {
     control_mac(
         key,
         b"neoth.background-start.v1",
@@ -747,10 +737,7 @@ fn verify_claim_record(
     let live = live_process_snapshot(record.worker_pid)?;
     anyhow::ensure!(
         live.process_start_unix == record.worker_start_unix
-            && digest_hex_eq(
-                &live.executable_sha256,
-                &record.worker_executable_sha256
-            )
+            && digest_hex_eq(&live.executable_sha256, &record.worker_executable_sha256)
             && worker_command_matches_job(&live.command, job_path),
         "background worker claim does not match the live child process"
     );
@@ -890,12 +877,7 @@ pub async fn spawn_background_process(
             executable.display()
         ));
         drop(approval_key);
-        persist_background_worker_startup_error(
-            &bgjobs_dir,
-            &job_path,
-            &job_id,
-            &failure,
-        )?;
+        persist_background_worker_startup_error(&bgjobs_dir, &job_path, &job_id, &failure)?;
         return Err(failure);
     }
     let claim = match wait_for_authenticated_claim(
@@ -913,22 +895,12 @@ pub async fn spawn_background_process(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            persist_background_worker_startup_error(
-                &bgjobs_dir,
-                &job_path,
-                &job_id,
-                &error,
-            )?;
+            persist_background_worker_startup_error(&bgjobs_dir, &job_path, &job_id, &error)?;
             drop(approval_key);
             return Err(error);
         }
     };
-    let start = build_start_record(
-        approval_key.as_slice(),
-        &job_id,
-        &spec_sha256,
-        &claim,
-    );
+    let start = build_start_record(approval_key.as_slice(), &job_id, &spec_sha256, &claim);
     let start_bytes = zeroize::Zeroizing::new(
         serde_json::to_vec(&start).context("serialize background start acknowledgement")?,
     );
@@ -941,12 +913,7 @@ pub async fn spawn_background_process(
             "publish authenticated background start acknowledgement {}",
             start_path.display()
         ));
-        persist_background_worker_startup_error(
-            &bgjobs_dir,
-            &job_path,
-            &job_id,
-            &failure,
-        )?;
+        persist_background_worker_startup_error(&bgjobs_dir, &job_path, &job_id, &failure)?;
         drop(approval_key);
         return Err(failure);
     }
@@ -990,14 +957,7 @@ async fn wait_for_authenticated_claim(
             );
             let claim: BgClaimRecord =
                 serde_json::from_slice(&bytes).context("parse background worker claim")?;
-            verify_claim_record(
-                &claim,
-                key,
-                job_id,
-                spec_sha256,
-                child.id(),
-                job_path,
-            )?;
+            verify_claim_record(&claim, key, job_id, spec_sha256, child.id(), job_path)?;
             return Ok(claim);
         }
         if let Some(status) = child
@@ -1176,10 +1136,12 @@ async fn wait_for_authenticated_start(
 ) -> Result<()> {
     let deadline = Instant::now() + BG_STARTUP_ACK_TIMEOUT;
     loop {
-        if start_path
-            .try_exists()
-            .with_context(|| format!("inspect background start acknowledgement {}", start_path.display()))?
-        {
+        if start_path.try_exists().with_context(|| {
+            format!(
+                "inspect background start acknowledgement {}",
+                start_path.display()
+            )
+        })? {
             let bytes = zeroize::Zeroizing::new(
                 crate::updater::self_update::read_private_control_file_bounded(
                     instance_home,
@@ -1188,8 +1150,8 @@ async fn wait_for_authenticated_start(
                     "background start acknowledgement",
                 )?,
             );
-            let start: BgStartRecord = serde_json::from_slice(&bytes)
-                .context("parse background start acknowledgement")?;
+            let start: BgStartRecord =
+                serde_json::from_slice(&bytes).context("parse background start acknowledgement")?;
             verify_start_record(&start, key, job_id, spec_sha256, claim)?;
             return Ok(());
         }
@@ -1206,13 +1168,8 @@ async fn run_background_worker_with_key(
     job_path: &Path,
     approval_key: zeroize::Zeroizing<[u8; BG_APPROVAL_KEY_BYTES]>,
 ) -> Result<BgJobId> {
-    run_background_worker_with_key_and_attestor(
-        job_path,
-        approval_key,
-        verify_live_launcher,
-        true,
-    )
-    .await
+    run_background_worker_with_key_and_attestor(job_path, approval_key, verify_live_launcher, true)
+        .await
 }
 
 async fn run_background_worker_with_key_and_attestor(
@@ -1477,15 +1434,7 @@ pub async fn spawn_background_session(
         provider.as_ref(),
         requested_model.as_deref(),
     )?);
-    spawn_background_process(
-        label,
-        request,
-        instance_home,
-        config_path,
-        config,
-        writer,
-    )
-    .await
+    spawn_background_process(label, request, instance_home, config_path, config, writer).await
 }
 
 /// Thin headless provider call. Uses `provider.complete()` directly —
@@ -1523,10 +1472,7 @@ fn claim_worker_is_live(claim: &BgClaimRecord, job_path: &Path) -> bool {
     }
     live_process_snapshot(claim.worker_pid).is_ok_and(|live| {
         live.process_start_unix == claim.worker_start_unix
-            && digest_hex_eq(
-                &live.executable_sha256,
-                &claim.worker_executable_sha256,
-            )
+            && digest_hex_eq(&live.executable_sha256, &claim.worker_executable_sha256)
             && worker_command_matches_job(&live.command, job_path)
     })
 }
@@ -1542,17 +1488,19 @@ fn recover_one_background_job(
     let result_path = bgjobs_dir.join(format!("{}.result", job_id.as_str()));
     let exit_path = bgjobs_dir.join(format!("{}.exit", job_id.as_str()));
 
-    if exit_path.try_exists().with_context(|| {
-        format!("inspect background exit marker {}", exit_path.display())
-    })? {
+    if exit_path
+        .try_exists()
+        .with_context(|| format!("inspect background exit marker {}", exit_path.display()))?
+    {
         crate::util::atomic_write::durable_remove_file(&job_path)?;
         crate::util::atomic_write::durable_remove_file(&start_path)?;
         return Ok(());
     }
 
-    if claim_path.try_exists().with_context(|| {
-        format!("inspect background claim {}", claim_path.display())
-    })? {
+    if claim_path
+        .try_exists()
+        .with_context(|| format!("inspect background claim {}", claim_path.display()))?
+    {
         let claim = crate::updater::self_update::read_private_control_file_bounded(
             instance_home,
             &claim_path,
@@ -1561,24 +1509,23 @@ fn recover_one_background_job(
         )
         .ok()
         .and_then(|bytes| serde_json::from_slice::<BgClaimRecord>(&bytes).ok());
-        if claim
-            .as_ref()
-            .is_some_and(|claim| claim.job_id == job_id.as_str() && claim_worker_is_live(claim, &job_path))
-        {
+        if claim.as_ref().is_some_and(|claim| {
+            claim.job_id == job_id.as_str() && claim_worker_is_live(claim, &job_path)
+        }) {
             return Ok(());
         }
         if result_path.try_exists().with_context(|| {
-            format!("inspect recovered background result {}", result_path.display())
-        })? {
-            crate::util::atomic_write::write_private_create_new_durable(
-                &exit_path,
-                b"recovered\n",
+            format!(
+                "inspect recovered background result {}",
+                result_path.display()
             )
-            .or_else(|error| {
-                (error.kind() == std::io::ErrorKind::AlreadyExists)
-                    .then_some(())
-                    .ok_or(error)
-            })?;
+        })? {
+            crate::util::atomic_write::write_private_create_new_durable(&exit_path, b"recovered\n")
+                .or_else(|error| {
+                    (error.kind() == std::io::ErrorKind::AlreadyExists)
+                        .then_some(())
+                        .ok_or(error)
+                })?;
             crate::util::atomic_write::durable_remove_file(&job_path)?;
             crate::util::atomic_write::durable_remove_file(&start_path)?;
             return Ok(());
@@ -1602,9 +1549,8 @@ fn recover_one_background_job(
     .map(|spec| spec.queued_unix)
     .unwrap_or(i64::MIN);
     if crate::time::now_unix_i64().saturating_sub(queued_unix) >= BG_UNCLAIMED_RECOVERY_SECS {
-        let failure = anyhow::anyhow!(
-            "background worker never published an authenticated durable claim"
-        );
+        let failure =
+            anyhow::anyhow!("background worker never published an authenticated durable claim");
         persist_background_worker_startup_error(bgjobs_dir, &job_path, job_id, &failure)?;
     }
     Ok(())
@@ -1621,7 +1567,10 @@ fn recover_background_jobs(instance_home: &Path, bgjobs_dir: &Path) -> Result<()
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        let Some(id) = name.strip_suffix(".job").filter(|id| valid_background_id(id)) else {
+        let Some(id) = name
+            .strip_suffix(".job")
+            .filter(|id| valid_background_id(id))
+        else {
             continue;
         };
         recover_one_background_job(instance_home, bgjobs_dir, &BgJobId(id.to_owned()))?;
@@ -1715,16 +1664,13 @@ pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDeliver
                     && claim.job_id == id
                     && crate::time::now_unix_i64().saturating_sub(claim.claimed_unix)
                         < BG_DELIVERY_CLAIM_RECOVERY_SECS
-                    && live_process_snapshot(claim.process_pid).is_ok_and(|live| {
-                        live.process_start_unix == claim.process_start_unix
-                    })
+                    && live_process_snapshot(claim.process_pid)
+                        .is_ok_and(|live| live.process_start_unix == claim.process_start_unix)
             });
             if live_claim {
                 continue;
             }
-            if let Err(error) =
-                crate::util::atomic_write::durable_remove_file(&delivering_path)
-            {
+            if let Err(error) = crate::util::atomic_write::durable_remove_file(&delivering_path) {
                 warn!(id, %error, "bg_session: failed to recover stale delivery claim");
                 continue;
             }
@@ -2048,7 +1994,7 @@ mod tests {
             &config,
             crate::time::now_unix_i64(),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("specification binding mismatch"));
     }
 
@@ -2070,7 +2016,7 @@ mod tests {
             &tampered,
             crate::time::now_unix_i64(),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("specification binding mismatch"));
     }
 
@@ -2090,7 +2036,7 @@ mod tests {
             &config,
             approval.expires_unix.saturating_add(1),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("expired"));
     }
 
@@ -2112,7 +2058,7 @@ mod tests {
             &config,
             crate::time::now_unix_i64(),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("MAC mismatch"));
     }
 
@@ -2169,7 +2115,7 @@ mod tests {
             &config,
             crate::time::now_unix_i64(),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("MAC mismatch"));
     }
 
@@ -2190,7 +2136,7 @@ mod tests {
             &config,
             crate::time::now_unix_i64(),
         )
-            .unwrap_err();
+        .unwrap_err();
         assert!(error.to_string().contains("MAC mismatch"));
     }
 
@@ -2241,7 +2187,7 @@ mod tests {
                 &config,
                 now,
             )
-                .unwrap_err();
+            .unwrap_err();
             assert!(error.to_string().contains("MAC mismatch"));
         }
     }
@@ -2362,7 +2308,10 @@ mod tests {
         assert!(error.to_string().contains("specification binding mismatch"));
         assert!(!bgjobs.join(format!("{}.claimed", id.as_str())).exists());
         assert!(!bgjobs.join(format!("{}.result", id.as_str())).exists());
-        assert!(job.exists(), "failed authentication must not consume the job");
+        assert!(
+            job.exists(),
+            "failed authentication must not consume the job"
+        );
     }
 
     #[tokio::test]
@@ -2517,7 +2466,12 @@ mod tests {
             )
             .unwrap(),
         );
-        assert!(request.model.as_deref().is_some_and(|model| !model.is_empty()));
+        assert!(
+            request
+                .model
+                .as_deref()
+                .is_some_and(|model| !model.is_empty())
+        );
     }
 
     #[test]

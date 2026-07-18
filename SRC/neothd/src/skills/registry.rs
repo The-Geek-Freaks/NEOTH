@@ -217,7 +217,8 @@ mod watcher {
         // `notify` callbacks run on the watcher's own thread — bounce
         // each event onto the tokio runtime via unbounded mpsc so the
         // debounce loop can `select!` on it alongside cancellation.
-        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| match res {
+        let mut watcher =
+            notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(ev) => {
                     let _ = event_tx.send(ev);
                 }
@@ -225,13 +226,14 @@ mod watcher {
             })
             .context("construct skill filesystem watcher")?;
         let mut active_watches = BTreeMap::new();
-        reconcile_watches(&mut watcher, &registry.skills_dir, &mut active_watches)
-            .with_context(|| {
+        reconcile_watches(&mut watcher, &registry.skills_dir, &mut active_watches).with_context(
+            || {
                 format!(
                     "register skill filesystem watcher for {}",
                     registry.skills_dir.display()
                 )
-            })?;
+            },
+        )?;
         let watcher = Arc::new(std::sync::Mutex::new(watcher));
 
         info!(
@@ -411,14 +413,19 @@ mod watcher {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let parent = skills_dir.parent().ok_or_else(|| {
-                    anyhow::anyhow!("missing skill directory has no parent: {}", skills_dir.display())
+                    anyhow::anyhow!(
+                        "missing skill directory has no parent: {}",
+                        skills_dir.display()
+                    )
                 })?;
-                desired.insert(nearest_existing_directory(parent)?, WatchDepth::NonRecursive);
+                desired.insert(
+                    nearest_existing_directory(parent)?,
+                    WatchDepth::NonRecursive,
+                );
             }
             Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("inspect skill watch path {}", skills_dir.display())
-                });
+                return Err(error)
+                    .with_context(|| format!("inspect skill watch path {}", skills_dir.display()));
             }
         }
         Ok(desired)
@@ -467,7 +474,9 @@ mod watcher {
         if !kind_matches {
             return false;
         }
-        let freedom_path = skills_dir.parent().map(|parent| parent.join("freedom.yaml"));
+        let freedom_path = skills_dir
+            .parent()
+            .map(|parent| parent.join("freedom.yaml"));
         ev.paths.iter().any(|path| {
             if freedom_path.as_ref() == Some(path) {
                 return true;

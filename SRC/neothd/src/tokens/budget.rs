@@ -475,7 +475,9 @@ pub fn finalize_daemon_request(
     // Verify no drift (enforce_budget_to_fit does not mutate non-degradable blocks,
     // but a future code path might; a debug_assert keeps the accounting honest).
     debug_assert!(
-        items.iter().all(|i| i.tokens == count_tokens_upper_bound(&i.content)),
+        items
+            .iter()
+            .all(|i| i.tokens == count_tokens_upper_bound(&i.content)),
         "token-budget accounting drifted in finalize_daemon_request"
     );
 
