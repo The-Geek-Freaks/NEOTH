@@ -151,13 +151,33 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   match the bounded complete surfaced-settings request, staged keychain
   finalization, typed recovery-boundary errors, strict persisted readback and
   asynchronous reload semantics; generated `docs/cli-commands.md` is current.
-  CI now hard-gates the locked slim Core library and both public binaries with
-  no default features on every stable Ubuntu/macOS/Windows matrix leg, and
-  repeats the contract on pinned Rust 1.91.0 in Ubuntu gold-smoke before the
-  locked release build. Workflow definitions and local gates are not a green
-  exact-head run. The final README/channel/migration/architecture/release
-  reconciliation plus visible exact-head CI, Security and CodeQL remain
-  required.
+  The initial CI shape repeated the locked slim contract on every stable
+  platform and again in Gold Smoke, and performed five ordinary release-profile
+  workspace builds that were neither the real release artifact proof nor
+  bounded against test hangs. The 2026-07-18 correction now owns format, slim
+  Core, workspace Clippy and doctests once on pinned Rust 1.91 Linux; runs the
+  workspace test contract once per Linux/macOS/Windows through zero-retry
+  Nextest with per-test/global bounds and retained JUnit; and leaves beta as one
+  explicit advisory Ubuntu Clippy/compile probe. Gold Smoke uses runnable debug
+  launchers, while native optimized artifacts remain solely owned by the
+  complete release workflow. Keet, exact notices/bootstrap assets, isolated
+  signer, WASM examples, retained feature flags and Gold Smoke feed one
+  fail-closed `Gold CI` aggregate.
+
+  The same correction closes two CI false-hang/false-platform causes without
+  weakening production rails: the streaming cost-authorization regression now
+  drops every cloned authorizer/WAL sender before joining the writer; macOS test
+  fixtures canonicalize only their trusted OS temp root; Wiki publication
+  preserves private staging-root rename permission until atomic publication,
+  then verifies the whole baseline read-only; and installed candidates contain
+  no lexical `..`. Focused local evidence is cost authorization **1/1**, Wiki
+  release snapshot **15/15**, install transaction **17/17**, self-update
+  **2/2**, release bundle **1/1**, strict Core Clippy and workspace rustfmt.
+  Actionlint, workflow/TOML parsing, the checksum-verified pinned Nextest config
+  probe and release/isolation contracts **10/10** are green. These are source
+  and local workflow-definition proofs, not a completed exact-head run. The
+  final README/channel/migration/architecture/release reconciliation plus
+  visible exact-head CI, Security and CodeQL remain required.
 
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 

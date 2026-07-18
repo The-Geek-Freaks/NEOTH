@@ -1,0 +1,21 @@
+# CI is deliberately deterministic: a failure is evidence, not a request for
+# an automatic retry. Keep this profile aligned with .github/workflows/ci.yml.
+nextest-version = "0.9.134"
+
+[profile.ci]
+retries = 0
+fail-fast = { max-fail = 20 }
+global-timeout = "45m"
+slow-timeout = { period = "120s", terminate-after = 1, grace-period = "10s" }
+failure-output = "immediate-final"
+success-output = "never"
+status-level = "slow"
+final-status-level = "fail"
+
+[profile.ci.junit]
+# Paths are relative to target/nextest/<profile>, yielding
+# target/nextest/ci/junit.xml for the upload steps.
+path = "junit.xml"
+report-name = "neoth-nextest"
+store-success-output = false
+store-failure-output = true

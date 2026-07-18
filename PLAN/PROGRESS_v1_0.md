@@ -3,6 +3,34 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-18
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Current CI correctness and runtime correction (2026-07-18; no broad
+> R3/R4 box closed):** the multi-hour CI stall was not useful coverage. One
+> streaming cost-authorization test retained two cloned WAL senders while
+> joining the writer, so completion was impossible; the test now releases all
+> authorizer-owning providers before the join. macOS updater fixtures now
+> canonicalize the trusted OS temp root without weakening production no-follow
+> checks, and Wiki baseline materialization keeps only its private staging root
+> writable until the atomic rename, then verifies the complete published tree
+> read-only. Installed Wiki candidates are built without lexical `..` path
+> components. Focused frozen-source evidence is cost authorization **1/1**,
+> Wiki release snapshot **15/15**, install transaction **17/17**, self-update
+> **2/2**, release bundle **1/1**, strict Core Clippy, workspace rustfmt and
+> diff hygiene.
+>
+> Ordinary CI now runs the stable Rust 1.91 quality contracts once on Linux and
+> the platform test contract once each on Linux, macOS and Windows. Nextest
+> supplies per-test/global time bounds, immediate deterministic failure output
+> and retained JUnit reports with zero retries; beta is one explicit advisory
+> Ubuntu Clippy/compile probe. Native release-profile builds remain owned by
+> the release workflow instead of being repeated five times in ordinary CI,
+> while Keet, license/notices, the isolated signer, WASM examples, retained
+> feature flags and Gold Smoke remain hard dependencies of one `Gold CI`
+> aggregate. Workflow/TOML parsing, pinned-Action lint, the real pinned Nextest
+> config check and **10/10** release/isolation contract tests are locally
+> green. This is implementation evidence, not a completed exact-head workflow
+> verdict; R3-10 remains open until the pushed head's required workflows finish
+> green and the remaining public-truth reconciliation is complete.
+>
 > **Current control-plane integration wave (2026-07-18; no broad R3/R4 box
 > closed):** cluster runtime generations now have one stop-before-start
 > supervisor for carrier, gossip, applicable mDNS, worker-side execution and

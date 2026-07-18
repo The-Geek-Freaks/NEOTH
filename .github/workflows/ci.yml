@@ -43,29 +43,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0          # cleaner cache hits in CI
   RUST_BACKTRACE: 1
-  # CI-only release-profile overrides to stop the `cargo test --workspace
-  # --release` step OOM-killing the 16 GB GitHub runner while LINKING the
-  # release test binary. The committed [profile.release] uses lto="thin" +
-  # codegen-units=1 (max optimization, max link memory) — fine for the small
-  # shipped binaries built by release.yml, but the *test* binary bundles all
-  # ~10k unit tests + the test harness and exceeds 16 GB at link with those
-  # settings (root cause of the CI matrix being red since 2026-07-02; every
-  # test leg died SIGTERM/143 during the silent link phase before any test
-  # ran). These env vars override the profile for THIS workflow only — the
-  # shipped release artifact (release.yml) is unaffected and keeps full LTO.
-  # lto=false removes the whole-program link-memory spike; codegen-units=16
-  # parallelises codegen with a lower peak; debug=0 shrinks the binary.
-  CARGO_PROFILE_RELEASE_LTO: "false"
-  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-  CARGO_PROFILE_RELEASE_DEBUG: "0"
-  # Tests run under the dev/test profiles (debug, not --release). Those default
-  # to debug=2 (full DWARF) — for the monolithic neothd test binary (all ~10k
-  # tests in one link) that is GBs of debug sections and OOM-kills the 16 GB
-  # runner at link time, before any test runs (the actual reason the debug
-  # test step still died 143). debug=0 drops the debug info from the link;
-  # backtraces lose line numbers but tests pass identically. Combined with the
-  # inherently cheap dev link (opt-level 0, no LTO) this keeps every leg well
-  # under 16 GB.
+  # CI exercises debug test binaries. Full DWARF on the monolithic test binary
+  # adds several GB at link time and can exhaust a hosted runner before tests
+  # start. Release artifacts are built only by release.yml and are unaffected.
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_PROFILE_TEST_DEBUG: "0"
 
@@ -73,6 +53,7 @@ jobs:
   keet-bridge:
     name: Keet companion / frozen standalone
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -102,6 +83,7 @@ jobs:
   license-notices:
     name: Exact distribution license notices
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -127,6 +109,7 @@ jobs:
   release-signer:
     name: Isolated release signer
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -158,74 +141,32 @@ jobs:
         with:
           tool: cargo-audit
 
+      # ci.yml audits exactly one dependency graph. The primary workspace
+      # lockfile remains owned by security.yml; this isolated signer lockfile
+      # is not part of that workspace scan and must keep its own contract.
       - name: Audit signer lockfile without workspace exceptions
         working-directory: .github/release-tools/neoth-release-signer
         run: cargo audit
 
-  check:
-    name: ${{ matrix.os }} / ${{ matrix.toolchain }}
-    runs-on: ${{ matrix.os }}
-    # Ubuntu legs: cap cargo parallelism at 2. With a WARM cargo cache the
-    # dep tree is prebuilt, so clippy/build jump straight to the largest
-    # crate frontends (neoth + neothd-gui + migrate + relay + plugin-sdk) in parallel;
-    # at the default -j4 their combined rustc peak exceeds the 16 GB runner
-    # and the OOM killer takes the runner AGENT itself — the job dies with
-    # "The runner has received a shutdown signal" / SIGTERM 143 ~2-4 min in,
-    # no step error. Cold-cache runs survive because dep compilation staggers
-    # the big frontends (which is why runs directly after a cache eviction
-    # passed while every warm rerun died — 4x on 2026-07-11/12). macOS
-    # survives on 3 cores; Windows/MSVC has a lower frontend peak.
+  linux-quality:
+    name: Linux quality / Rust 1.91
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
     env:
-      CARGO_BUILD_JOBS: ${{ startsWith(matrix.os, 'ubuntu') && 2 || 4 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
-        toolchain: [stable, beta]
-        # Windows CI runs only on stable — beta on Windows would
-        # double the runtime budget for marginal value (beta-gated
-        # bugs are extremely rare on the MSVC target). Re-enable
-        # if a regression surfaces.
-        exclude:
-          - os: windows-2022
-            toolchain: beta
-
+      # Warm caches otherwise compile all large workspace frontends together
+      # and can exceed the hosted runner's memory budget.
+      CARGO_BUILD_JOBS: 2
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Setup Rust (${{ matrix.toolchain }})
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # master (toolchain selected below)
+      - name: Setup Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: '1.91.0'
           components: rustfmt, clippy
 
-      # ADV-11 (F4 finding): the `inventory` crate uses #[link_section]
-      # for plugin-hook registration. On x86_64-pc-windows-gnu (MinGW
-      # default without VS Build Tools), GNU ld silently garbage-
-      # collects custom link sections without --whole-archive, so
-      # `inventory::iter::<Hook>().count() == 0` even though `cargo
-      # build` succeeds. NEOTH targets MSVC on Windows for this reason.
-      # Fail the job if a GNU toolchain ever slips in.
-      - name: Enforce MSVC toolchain on Windows (ADV-11)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          host=$(rustc --version --verbose | grep '^host:' | awk '{print $2}')
-          echo "rustc host triple: $host"
-          if [[ "$host" != *"-msvc" ]]; then
-            echo "::error::ADV-11: Windows builds require an MSVC host triple."
-            echo "::error::Got '$host'. inventory!{} link-section registration"
-            echo "::error::silently breaks on GNU ld; switch to a -msvc toolchain."
-            exit 1
-          fi
-
-      # neothd-gui pulls Slint's Femtovg backend on Linux, which needs
-      # fontconfig + X11 dev headers via yeslogic-fontconfig-sys + x11rb.
-      # Skip the install on non-Linux runners (Windows + macOS ship the
-      # required libs in their SDK).
       - name: Install Linux build deps (fontconfig + X11)
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
@@ -242,138 +183,171 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             SRC/target/
-          key: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          key: linux-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-${{ matrix.toolchain }}-cargo-
+            linux-1.91-cargo-
 
-      # Advisory, NOT a merge gate: the autonomous build loop deliberately
-      # does not run `cargo fmt` (huge cross-file diffs collide with parallel
-      # work), so fmt drift must not block the real correctness gates below
-      # (clippy -D warnings, build, test, audit). Reports drift without
-      # skipping the steps that actually prove the code works.
-      - name: cargo fmt --check (workspace, advisory)
-        continue-on-error: true
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-nextest@0.9.134
+
+      - name: cargo fmt --check (workspace)
+        timeout-minutes: 5
         working-directory: SRC
         run: cargo fmt --all -- --check
 
-      # CDX-08 cross-crate guarantee.
-      #
-      # We do NOT pass `--all-features` here: that activates `qwen-cuda`,
-      # whose cudarc dep panics in build.rs when `nvcc` is not on PATH —
-      # which is the case on macOS-14 and Windows-2022 GitHub-hosted
-      # runners. The dedicated `feature-flag compile / qwen-cuda` job
-      # further down covers that feature on a CUDA-capable host.
-      #
-      # Stable toolchain: `-D warnings` (hard gate). Beta toolchain:
-      # `-W warnings` (advisory) — beta catches stabilising clippy
-      # lints early, but they shouldn't block the merge gate.
-      #
-      # GOLD-SEC-16 is a separate supported build contract. The workspace
-      # command below unifies in `wizard`, so it cannot prove that the slim
-      # solo-node binaries and library stay warning-free when wizard, cluster,
-      # and keychain are all compiled out.
-      - name: cargo clippy slim core (stable, hard gate)
-        if: matrix.toolchain == 'stable'
+      # GOLD-SEC-16: keep the supported no-default-feature launcher contract
+      # separate because workspace feature unification enables wizard.
+      - name: cargo clippy slim core
+        timeout-minutes: 20
         working-directory: SRC
         run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
 
-      - name: cargo clippy --workspace (stable, hard gate)
-        if: matrix.toolchain == 'stable'
+      # CDX-08 cross-crate guarantee. qwen-cuda remains in the dedicated
+      # feature matrix because hosted runners do not provide nvcc.
+      - name: cargo clippy workspace
+        timeout-minutes: 30
         working-directory: SRC
-        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -D warnings
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -D warnings
 
-      - name: cargo clippy --workspace (beta, advisory)
-        if: matrix.toolchain == 'beta'
+      - name: cargo doctest workspace
+        timeout-minutes: 20
         working-directory: SRC
-        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -W warnings
+        run: cargo test --workspace --doc --locked
 
-      - name: cargo build --workspace --release
+      - name: cargo nextest workspace (Linux)
+        timeout-minutes: 50
         working-directory: SRC
-        run: cargo build --workspace --release
+        run: |
+          rm -f target/nextest/ci/junit.xml
+          cargo nextest run --workspace --locked --profile ci
 
-      # Tests run in DEBUG, not --release.  The release *test* binary (all
-      # ~10k unit tests + integration tests + the harness) OOM-killed the
-      # 16 GB GitHub runners while LINKING with the committed lto/cu=1
-      # profile — the root cause of the CI matrix being red since 2026-07-02
-      # (every leg died during the silent link phase before any test ran).
-      # Debug test binaries link cheaply (no LTO, opt-level 0, cu=256) and
-      # the tests are logic tests that pass identically in debug (verified
-      # locally: `cargo test -p neoth --lib` = 10344/0).  Release *compile*
-      # coverage is retained by the `cargo build --workspace --release` step
-      # above; release.yml still ships the fully-optimized binary.
-      # Unix runners: parallel test execution (default).
-      - name: cargo test --workspace (unix)
-        if: runner.os != 'Windows'
-        working-directory: SRC
-        run: cargo test --workspace
+      - name: Upload Linux JUnit report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nextest-junit-linux
+          path: SRC/target/nextest/ci/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
 
-      # Windows runner: serialise tests with --test-threads=1.
-      # Rationale: webhook_listener port-binding tests race on the
-      # localhost ephemeral-port pool under parallel execution on
-      # Windows. The race is harmless in production (the daemon binds
-      # one port total) but trips CI. Documented as a known flake in
-      # HANDOFF_2026-05-18 §8.
-      - name: cargo test --workspace (windows, single-threaded)
+  platform-tests:
+    name: ${{ matrix.os }} tests / Rust 1.91
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      CARGO_BUILD_JOBS: 4
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            test_threads: 4
+            junit_name: macos
+          - os: windows-2022
+            # Localhost port-binding tests race on Windows under parallel
+            # process execution; serial execution preserves the real contract.
+            test_threads: 1
+            junit_name: windows
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Rust 1.91
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+
+      - name: Enforce MSVC toolchain on Windows (ADV-11)
         if: runner.os == 'Windows'
-        working-directory: SRC
-        run: cargo test --workspace -- --test-threads=1
+        shell: bash
+        run: |
+          host=$(rustc --version --verbose | grep '^host:' | awk '{print $2}')
+          echo "rustc host triple: $host"
+          if [[ "$host" != *"-msvc" ]]; then
+            echo "::error::ADV-11: Windows builds require an MSVC host triple."
+            echo "::error::Got '$host'. inventory!{} link-section registration"
+            echo "::error::silently breaks on GNU ld; switch to a -msvc toolchain."
+            exit 1
+          fi
 
-      # cargo-audit runs only on Linux to save 2-3 minutes per CI cycle
-      # — the advisory database is OS-independent so one run covers the
-      # whole matrix.
-      - name: Install cargo-audit
-        if: matrix.os == 'ubuntu-24.04'
+      - name: Cache Cargo registry + target
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-1.91-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-1.91-cargo-
+
+      - name: Install cargo-nextest
         uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: cargo-audit
+          tool: cargo-nextest@0.9.134
 
-      - name: cargo audit (workspace lockfile)
-        if: matrix.os == 'ubuntu-24.04'
+      - name: cargo nextest workspace
+        timeout-minutes: 50
+        shell: bash
         working-directory: SRC
-        # RUSTSEC ignores live in SRC/.cargo/audit.toml (read automatically
-        # from the working directory) — shared with security.yml's audit job.
-        # deny.toml [advisories].ignore is the hand-synced mirror with the
-        # full reasons. The prior bare invocation had NO ignores while
-        # security.yml carried 7 — that drift kept ubuntu CI red on every
-        # push once RUSTSEC-2026-0187 (lopdf) + RUSTSEC-2023-0071 (rsa)
-        # landed in the DB (root-caused 2026-07-02).
-        run: cargo audit
+        run: |
+          rm -f target/nextest/ci/junit.xml
+          cargo nextest run --workspace --locked --profile ci --test-threads ${{ matrix.test_threads }}
 
-      # Artifact upload: one binary per OS, restricted to non-PR pushes.
-      # Without the PR guard, fork-PR runs would publish untrusted binaries
-      # under the repo's artifact namespace (Release Engineer review).
-      - name: Upload binary artifact (linux)
-        if: |
-          matrix.os == 'ubuntu-24.04' &&
-          matrix.toolchain == 'stable' &&
-          github.event_name != 'pull_request'
+      - name: Upload JUnit report
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: neoth-linux-x86_64-ci
-          path: SRC/target/release/neoth
-          retention-days: 3
+          name: nextest-junit-${{ matrix.junit_name }}
+          path: SRC/target/nextest/ci/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
 
-      - name: Upload binary artifact (macos)
-        if: |
-          matrix.os == 'macos-14' &&
-          matrix.toolchain == 'stable' &&
-          github.event_name != 'pull_request'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: neoth-macos-arm64-ci
-          path: SRC/target/release/neoth
-          retention-days: 3
+  beta-advisory:
+    name: Ubuntu beta compile + Clippy (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    continue-on-error: true
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Upload binary artifact (windows)
-        if: |
-          matrix.os == 'windows-2022' &&
-          matrix.toolchain == 'stable' &&
-          github.event_name != 'pull_request'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - name: Setup Rust beta
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # beta selected below
         with:
-          name: neoth-windows-x86_64-ci
-          path: SRC/target/release/neoth.exe
-          retention-days: 3
+          toolchain: beta
+          components: clippy
+
+      - name: Install Linux build deps (fontconfig + X11)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: linux-beta-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            linux-beta-cargo-
+
+      - name: cargo clippy workspace (beta)
+        timeout-minutes: 40
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" --locked -- -W warnings
 
   # ──────────────────────────────────────────────────────────────────
   # Pick #34 wasm32 step (Session 19, 2026-05-21)
@@ -389,6 +363,7 @@ jobs:
   wasm-plugin:
     name: example WASM plugins build against ABI v1
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -468,6 +443,7 @@ jobs:
   feature-matrix:
     name: feature-flag compile / ${{ matrix.feature }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     # 2026-05-26: cudarc 0.13.9's build.rs unconditionally execs `nvcc`
     # and panics when it's missing — the old comment claiming "nvcc not
     # actually invoked" was outdated. Free GitHub-hosted runners don't
@@ -513,17 +489,19 @@ jobs:
           key: ${{ runner.os }}-feature-${{ matrix.feature }}-${{ hashFiles('SRC/Cargo.lock') }}
 
       - name: Pre-flight — verify nvcc available (qwen-cuda only)
+        id: cuda-preflight
         if: matrix.feature == 'qwen-cuda'
         run: |
           if command -v nvcc >/dev/null 2>&1; then
             nvcc --version
+            echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "::warning::nvcc not on PATH; cudarc build.rs will panic. Skipping qwen-cuda compile-check on this runner (continue-on-error)."
-            exit 0
+            echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: cargo check --features ${{ matrix.feature }}
-        if: matrix.feature != 'qwen-cuda' || hashFiles('/usr/local/cuda/bin/nvcc', '/usr/bin/nvcc') != ''
+        if: matrix.feature != 'qwen-cuda' || steps.cuda-preflight.outputs.available == 'true'
         working-directory: SRC
         run: cargo check -p neoth --features ${{ matrix.feature }}
 
@@ -534,14 +512,13 @@ jobs:
   # exits non-zero on any case failure → this job gates the build. The
   # report.json + report.md are uploaded as artifacts (even on failure) so
   # a maintainer can see exactly which smoke case broke.
-  # The `check` job above already build+tests default + neoth-gui + the mcp
-  # core via `cargo {build,test} --workspace --release`; the feature-matrix
-  # job above adds cluster-iroh — together these cover the requested
-  # default + cluster-iroh + gui + mcp matrix.
+  # The Linux quality and platform-test jobs cover the default workspace,
+  # including GUI and MCP. The feature matrix adds cluster-iroh coverage.
   # ──────────────────────────────────────────────────────────────────
   gold-smoke:
     name: gold-smoke eval suite
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -549,7 +526,6 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
           toolchain: '1.91.0'
-          components: clippy
 
       - name: Cache cargo
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -563,21 +539,18 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gold-smoke-cargo-
 
-      # GOLD-SEC-16 is a public supported-build contract, not only a
-      # current-stable lint probe. Pin the declared MSRV and compile both public
-      # launchers with every default feature removed before the smoke build.
-      - name: MSRV 1.91 slim library + binary contract
+      # The Linux quality job owns the MSRV/no-default Clippy contract. Smoke
+      # only needs runnable launchers; debug avoids a second release/LTO build.
+      - name: Build neoth + neothd compatibility launchers (debug)
+        timeout-minutes: 25
         working-directory: SRC
-        run: cargo clippy -p neoth --lib --bins --no-default-features --locked --no-deps -- -D warnings
-
-      - name: Build neoth + neothd compatibility launcher (release)
-        working-directory: SRC
-        run: cargo build -p neoth --bins --release --locked
+        run: cargo build -p neoth --bins --locked
 
       - name: Run gold-smoke eval suite
+        timeout-minutes: 10
         working-directory: SRC
         run: |
-          export PATH="$PWD/target/release:$PATH"
+          export PATH="$PWD/target/debug:$PATH"
           neoth eval neothd/eval-suites/gold-smoke.json --out-dir "$GITHUB_WORKSPACE/eval-report"
 
       - name: Upload eval report (report.json + report.md)
@@ -589,3 +562,55 @@ jobs:
             eval-report/report.json
             eval-report/report.md
           if-no-files-found: error
+
+  # One stable branch-protection target. `always()` is essential: without it,
+  # a failed prerequisite would skip this job and could leave an old required
+  # check looking green. Advisory beta is intentionally not a dependency.
+  gold-ci:
+    name: Gold CI
+    if: ${{ always() }}
+    needs:
+      - keet-bridge
+      - license-notices
+      - release-signer
+      - linux-quality
+      - platform-tests
+      - wasm-plugin
+      - feature-matrix
+      - gold-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every Gold contract
+        shell: bash
+        env:
+          KEET_BRIDGE: ${{ needs['keet-bridge'].result }}
+          LICENSE_NOTICES: ${{ needs['license-notices'].result }}
+          RELEASE_SIGNER: ${{ needs['release-signer'].result }}
+          LINUX_QUALITY: ${{ needs['linux-quality'].result }}
+          PLATFORM_TESTS: ${{ needs['platform-tests'].result }}
+          WASM_PLUGIN: ${{ needs['wasm-plugin'].result }}
+          FEATURE_MATRIX: ${{ needs['feature-matrix'].result }}
+          GOLD_SMOKE: ${{ needs['gold-smoke'].result }}
+        run: |
+          failed=0
+          for contract in \
+            "keet-bridge=$KEET_BRIDGE" \
+            "license-notices=$LICENSE_NOTICES" \
+            "release-signer=$RELEASE_SIGNER" \
+            "linux-quality=$LINUX_QUALITY" \
+            "platform-tests=$PLATFORM_TESTS" \
+            "wasm-plugin=$WASM_PLUGIN" \
+            "feature-matrix=$FEATURE_MATRIX" \
+            "gold-smoke=$GOLD_SMOKE"
+          do
+            name="${contract%%=*}"
+            result="${contract#*=}"
+            if [[ "$result" != "success" ]]; then
+              echo "::error::$name finished with result '$result'"
+              failed=1
+            else
+              echo "$name: success"
+            fi
+          done
+          exit "$failed"
