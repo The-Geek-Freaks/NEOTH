@@ -264,7 +264,10 @@ Kanban TOP (Backend-Felder existieren, GUI rendert sie nicht):
       (store.rs-Test belegt), Helper format_eta_at clock-injectable, 13 Tests.
 - [x] I11 (2026-07-18): proportionale Summary-Bar (14px, horizontal-stretch je
       Spalten-Count, Spalten-Akzentfarben, versteckt bei leerem Board).
-- [ ] I12 = H13 Space-Peek auf Karten (Detail-Overlay ohne Navigation, Esc schließt).
+- [x] I12 = H13 Space-Peek (2026-07-18): hover-move-Callback-Kette Card→Column→
+      Board, board-lokaler FocusScope (Space öffnet, Esc schließt, reject für
+      LineEdits), Overlay 520px mit id/Titel/Hemisphere/Spalte/I10-Chips.
+      Pure Slint, 0 Rust-Wiring.
 
 Parity-Lücken (aus 134-Verb-Audit):
 - [x] I13 (2026-07-18): neue ui/bgjobs.slint — strukturierte Job-Cards
@@ -287,12 +290,17 @@ Homogenität (UX-Research "aus einem Guss"-Checkliste):
       app_shell Font-Token-Sweep (7 Literale → 2xs/xl); EntranceFade-Kontrakt
       inline auf ChatView/AgentsView/MemoryGraphView/LoopPanel/Resources/
       Probe/DoctorView.
-- [~] I17 Toast: Countdown-Hairline (drain über duration-toast-life, led-Farbe,
-      mode-0-safe) ✅ 2026-07-18. **Residual:** Format-Vertrag der Rust-seitigen
-      push_toast-Texte, max-3-Stack, Undo-Toast (`neoth undo`).
-- [ ] I18 Focus-Ring-Standard (2px accent, 2px offset) app-weit = D3-Konkretisierung;
-      Empty-State-Familie vereinheitlichen (loop/dreaming/n8n/calendar inline-Texte
-      → EmptyState-Komponente).
+- [~] I17 Toast: Countdown-Hairline ✅ + max-3-Stack ✅ (push_toast kappt,
+      ältester fliegt) 2026-07-18. Format-Sweep der 141 Sites geprüft: nach G18
+      schon spezifisch (Titel+Fehlerbody) → kein Churn-Sweep. **Residual:**
+      Undo-Toast (`neoth undo`).
+- [~] I18 (2026-07-18): Empty-State-Familie ✅ (loop ∞ / dreaming ☽ / n8n ⇶ /
+      calendar ◷ → EmptyState; Transient-Loader bewusst belassen). Focus-Ring
+      konstante-Border-Regel jetzt auf NavBtn/CheckBox/NeothButton/Complexity-
+      Segmente/Theme-Toggle (+ Toggle hat jetzt FocusScope+Enter/Space).
+      **Residual:** restliche Views systematisch (= D3).
+      ⚠ D4-Erkenntnis: Slint-Strings haben KEIN contains/starts-with →
+      Filter-as-you-type MUSS Rust-seitig filtern (Modell filtern, nicht View).
 
 ## Gates (BSOD-Regeln beachten)
 - Slint: `SRC/_gui_check.bat` (mit `-j` VOR `--`).

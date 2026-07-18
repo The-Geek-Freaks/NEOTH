@@ -14,7 +14,7 @@
 //   - Structs exported from this file must be re-exported from main.slint.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -248,24 +248,10 @@ export component DreamingView inherits Rectangle {
                                 }
 
                                 // Empty state
-                                if root.dr-days.length == 0: VerticalLayout {
-                                    spacing: 6px;
-                                    alignment: center;
-                                    Text {
-                                        text: "no dreams yet";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: Theme.font-size-sm;
-                                        horizontal-alignment: center;
-                                    }
-                                    Text {
-                                        text: "NEOTH dreams during idle windows";
-                                        color: Theme.text-disabled;
-                                        font-family: Theme.font-mono;
-                                        font-size: 10px;
-                                        letter-spacing: Theme.letter-spacing-tight;
-                                        horizontal-alignment: center;
-                                    }
+                                if root.dr-days.length == 0: EmptyState {
+                                    glyph: "☽";
+                                    title: "No dreams yet";
+                                    hint: "NEOTH dreams during idle windows";
                                 }
 
                                 // Hairline separator before detail pane
@@ -512,12 +498,10 @@ export component DreamingView inherits Rectangle {
                                 }
 
                                 // Hint when no reflection has been run yet
-                                if root.dr-reflect-result == "": Text {
-                                    text: "No reflection on record yet.\nPress Reflect to run the digest.";
-                                    color: Theme.text-disabled;
-                                    font-family: Theme.font-mono;
-                                    font-size: Theme.font-size-xs;
-                                    wrap: word-wrap;
+                                if root.dr-reflect-result == "": EmptyState {
+                                    glyph: "☽";
+                                    title: "No reflection yet";
+                                    hint: "press Reflect to run the digest";
                                 }
 
                                 RefreshFooter { ts: root.dr-refreshed-at; }

@@ -285,6 +285,10 @@ component KanbanTaskCard inherits Rectangle {
     /// A4 — fires on right-click up; x/y approximate absolute position
     /// (card.absolute-position + mouse offset within card).
     callback context-menu(length, length);
+    /// H13 Space-Peek — fires on pointer-move while the mouse is inside
+    /// this card. The KanbanColumn for-loop captures the bound `entry`
+    /// and forwards it to the board as the current peek-candidate.
+    callback hover-move();
 
     min-height: 90px;
     background: Theme.bg-card;
@@ -308,6 +312,11 @@ component KanbanTaskCard inherits Rectangle {
                     root.absolute-position.x + self.mouse-x,
                     root.absolute-position.y + self.mouse-y,
                 );
+            }
+            // H13: notify the board of the hovered card on every move event so
+            // peek-task stays current as the mouse travels across the board.
+            if (ev.kind == PointerEventKind.move) {
+                root.hover-move();
             }
         }
     }
@@ -464,6 +473,13 @@ component KanbanColumn inherits Rectangle {
     callback task-clicked(string);
     /// A4 — forwards right-click from a card to the parent view.
     callback task-context(string /*task-id*/, length /*x*/, length /*y*/);
+    /// H13 Space-Peek — delivers the full KanbanTaskRow for the card the
+    /// mouse is currently over; wired in the for-loop so the bound `entry`
+    /// value carries the struct without additional threading.
+    callback task-hovered(KanbanTaskRow);
+    /// H13 — grants keyboard focus to the board-level FocusScope. Called on
+    /// card click so the user can immediately press Space to open the peek.
+    callback give-board-focus();
 
     property <bool> over-wip: root.wip-limit > 0 && root.tasks.length >= root.wip-limit;
 
@@ -516,8 +532,9 @@ component KanbanColumn inherits Rectangle {
                 parent-ref: entry.parent-ref;
                 has-patch: entry.has-patch;
                 selected: entry.task-id == root.selected-task-id;
-                clicked => { root.task-clicked(entry.task-id); }
+                clicked => { root.task-clicked(entry.task-id); root.give-board-focus(); }
                 context-menu(x, y) => { root.task-context(entry.task-id, x, y); }
+                hover-move => { root.task-hovered(entry); }
             }
         }
     }
@@ -852,6 +869,14 @@ export component SettingsView inherits Rectangle {
     in property <string> kanban-selected-hemisphere: "";
     in property <string> kanban-selected-description: "";
     in property <[KanbanCommentRow]> kanban-selected-comments: [];
+
+    // H13 Space-Peek — board-level hover preview. Pure Slint, no Rust wiring.
+    // peek-task holds the last-hovered KanbanTaskRow (struct copy stays stable
+    // even if board data refreshes while the overlay is open). peek-status is
+    // the column label string set alongside peek-task. peek-open gates the overlay.
+    property <KanbanTaskRow> peek-task;
+    property <string> peek-status: "";
+    property <bool> peek-open: false;
 
     // ODY-11 — current density selection (0=compact 1=normal 2=spacious).
     // Rust sets this at startup from ~/.neoth/.gui-density; the density
@@ -4202,6 +4227,8 @@ export component SettingsView inherits Rectangle {
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
+                                task-hovered(row) => { root.peek-task = row; root.peek-status = "BACKLOG"; }
+                                give-board-focus => { board-focus.focus(); }
                             }
                             KanbanColumn {
                                 label: "TODO";
@@ -4211,6 +4238,8 @@ export component SettingsView inherits Rectangle {
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
+                                task-hovered(row) => { root.peek-task = row; root.peek-status = "TODO"; }
+                                give-board-focus => { board-focus.focus(); }
                             }
                             KanbanColumn {
                                 label: "IN PROGRESS";
@@ -4223,6 +4252,8 @@ export component SettingsView inherits Rectangle {
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
+                                task-hovered(row) => { root.peek-task = row; root.peek-status = "IN PROGRESS"; }
+                                give-board-focus => { board-focus.focus(); }
                             }
                             KanbanColumn {
                                 label: "REVIEW";
@@ -4233,6 +4264,8 @@ export component SettingsView inherits Rectangle {
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
+                                task-hovered(row) => { root.peek-task = row; root.peek-status = "REVIEW"; }
+                                give-board-focus => { board-focus.focus(); }
                             }
                             KanbanColumn {
                                 label: "DONE";
@@ -4242,6 +4275,28 @@ export component SettingsView inherits Rectangle {
                                 selected-task-id: root.kanban-selected-task-id;
                                 task-clicked(id) => { root.kanban-task-selected(id); }
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
+                                task-hovered(row) => { root.peek-task = row; root.peek-status = "DONE"; }
+                                give-board-focus => { board-focus.focus(); }
+                            }
+                        }
+
+                        // H13 Space-Peek — zero-height keyboard handler. Card clicks call
+                        // give-board-focus → board-focus.focus() so Space reaches here.
+                        // Space opens the overlay; Escape closes it. FocusScope only handles
+                        // these two keys; all others are rejected so text inputs in sibling
+                        // panels (NEW SPEC Expander) are never intercepted.
+                        board-focus := FocusScope {
+                            height: 0;
+                            key-pressed(ev) => {
+                                if (ev.text == " " && root.peek-task.task-id != "" && !root.peek-open) {
+                                    root.peek-open = true;
+                                    return accept;
+                                }
+                                if (ev.text == Key.Escape && root.peek-open) {
+                                    root.peek-open = false;
+                                    return accept;
+                                }
+                                return reject;
                             }
                         }
                     }
@@ -5245,6 +5300,226 @@ export component SettingsView inherits Rectangle {
                 }
             }
             }
+            }
+
+            // H13 Space-Peek overlay ─────────────────────────────────────────
+            // Mounted only when peek-open is true and the code-sessions tab is
+            // active. Positioned absolutely (x/y 0,0 + parent w/h) so it covers
+            // the entire content panel — sibling of ScrollView, z-above it because
+            // it is declared later. The content Rectangle's clip:true bounds it.
+            //
+            // Interaction contract (no state mutation):
+            //   • board-focus FocusScope (inside code-sessions VerticalBox)
+            //     opens via Space and closes via Escape.
+            //   • Clicking the scrim area (outside the card) closes it.
+            //   • Clicking inside the card does nothing (inner TouchArea absorbs).
+            //   • No focus trap — overlay is read-only.
+            if root.peek-open && root.active == SettingsTab.code-sessions: Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                background: Theme.scrim;
+
+                // Scrim dismiss — full-panel TouchArea, card's inner TouchArea
+                // absorbs clicks that land on the card so they don't reach here.
+                TouchArea {
+                    clicked => { root.peek-open = false; }
+                }
+
+                // ── Centered peek card ────────────────────────────────────────
+                Rectangle {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: min(520px, parent.width - 2 * Theme.space-screen);
+                    background: Theme.surface-2;
+                    border-radius: Theme.radius-lg;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    accessible-role: text;
+                    accessible-label: "Task peek: " + root.peek-task.task-id + " — " + root.peek-task.title;
+
+                    // Entrance fade. duration-fast already returns 0ms when
+                    // animation-mode == 0, so no explicit reduced-motion gate needed.
+                    animate opacity {
+                        duration: Theme.duration-fast;
+                        easing: ease-out;
+                    }
+
+                    VerticalLayout {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+
+                        // ── id chip + title ───────────────────────────────────
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+
+                            if root.peek-task.task-id != "": Rectangle {
+                                border-radius: Theme.radius-xs;
+                                background: Theme.text-dim.with-alpha(0.12);
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    padding-top: 3px;
+                                    padding-bottom: 3px;
+                                    Text {
+                                        text: root.peek-task.task-id;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-dim;
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: root.peek-task.title;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-lg;
+                                font-weight: Theme.weight-light;
+                                color: Theme.text-primary;
+                                wrap: word-wrap;
+                                horizontal-stretch: 1;
+                            }
+                        }
+
+                        // ── hemisphere badge + column status ──────────────────
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+
+                            Rectangle {
+                                width: 80px;
+                                height: 20px;
+                                border-radius: Theme.radius-xs;
+                                border-width: 1px;
+                                border-color:
+                                    root.peek-task.hemisphere == "cerebellum" ? Theme.accent-green :
+                                    root.peek-task.hemisphere == "right"      ? Theme.accent-pink :
+                                    root.peek-task.hemisphere == "left"       ? Theme.text-muted :
+                                                                                 Theme.border-subtle;
+                                Text {
+                                    text: root.peek-task.hemisphere == "unassigned" ? "—" : root.peek-task.hemisphere;
+                                    overflow: elide;
+                                    font-family: Theme.font-display;
+                                    font-size: 9px;
+                                    font-weight: Theme.weight-bold;
+                                    letter-spacing: Theme.letter-spacing-tight;
+                                    color:
+                                        root.peek-task.hemisphere == "cerebellum" ? Theme.accent-green :
+                                        root.peek-task.hemisphere == "right"      ? Theme.accent-pink :
+                                        root.peek-task.hemisphere == "left"       ? Theme.text-muted :
+                                                                                     Theme.text-dim;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+
+                            Text {
+                                text: root.peek-status;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: Theme.letter-spacing-wide;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        // ── I10 chip row (mirrors card chips, read-only) ──────
+                        if root.peek-task.type-chip != "" || root.peek-task.worker != ""
+                                || root.peek-task.tests != "" || root.peek-task.eta != ""
+                                || root.peek-task.parent-ref != "" || root.peek-task.has-patch: HorizontalLayout {
+                            spacing: 4px;
+                            alignment: start;
+
+                            if root.peek-task.type-chip != "": Rectangle {
+                                border-radius: 3px;
+                                background: Theme.text-dim.with-alpha(0.12);
+                                border-width: 1px;
+                                border-color: Theme.border-subtle;
+                                HorizontalLayout {
+                                    padding-left: 4px; padding-right: 4px;
+                                    padding-top: 2px; padding-bottom: 2px;
+                                    Text {
+                                        text: root.peek-task.type-chip;
+                                        overflow: elide;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: Theme.text-muted;
+                                    }
+                                }
+                            }
+                            if root.peek-task.worker != "": Text {
+                                text: root.peek-task.worker;
+                                overflow: elide;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-dim;
+                            }
+                            if root.peek-task.tests != "": Rectangle {
+                                border-radius: 3px;
+                                background: root.peek-task.tests-failing
+                                    ? Theme.warning.with-alpha(0.12)
+                                    : Theme.accent-green.with-alpha(0.12);
+                                border-width: 1px;
+                                border-color: root.peek-task.tests-failing ? Theme.warning : Theme.accent-green;
+                                HorizontalLayout {
+                                    padding-left: 4px; padding-right: 4px;
+                                    padding-top: 2px; padding-bottom: 2px;
+                                    Text {
+                                        text: root.peek-task.tests;
+                                        overflow: elide;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-caption;
+                                        color: root.peek-task.tests-failing ? Theme.warning : Theme.accent-green;
+                                    }
+                                }
+                            }
+                            if root.peek-task.eta != "": Text {
+                                text: root.peek-task.eta;
+                                overflow: elide;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-dim;
+                            }
+                            if root.peek-task.parent-ref != "": Text {
+                                text: root.peek-task.parent-ref;
+                                overflow: elide;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-dim;
+                            }
+                            if root.peek-task.has-patch: Text {
+                                text: "⌁";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+
+                        // ── Divider ───────────────────────────────────────────
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+
+                        // ── Hint footer ───────────────────────────────────────
+                        Text {
+                            text: "esc  close";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-dim;
+                            horizontal-alignment: right;
+                        }
+                    }
+
+                    // Absorb clicks on the card so they do not reach the scrim
+                    // TouchArea and accidentally close the overlay.
+                    TouchArea { }
+                }
             }
         }
     }

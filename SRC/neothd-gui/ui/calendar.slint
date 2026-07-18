@@ -7,7 +7,7 @@
 // Layout: EntranceFade > ScrollView > NEXT EVENTS card + ADD EVENT card.
 
 import { Theme } from "theme.slint";
-import { Card, EntranceFade, NeothButton, NeothLineEdit, Kicker, RefreshFooter } from "components.slint";
+import { Card, EntranceFade, NeothButton, NeothLineEdit, Kicker, RefreshFooter, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -132,16 +132,10 @@ export component CalendarView inherits Rectangle {
 
                         Kicker { label: "NEXT EVENTS"; }
 
-                        if root.cal-events.length == 0: Rectangle {
-                            height: 48px;
-                            Text {
-                                text: "no upcoming events";
-                                color: Theme.text-disabled;
-                                font-size: Theme.font-size-sm;
-                                font-family: Theme.font-mono;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                        if root.cal-events.length == 0: EmptyState {
+                            glyph: "◷";
+                            title: "No upcoming events";
+                            hint: "events from CalDAV appear here";
                         }
 
                         for ev in root.cal-events: EventRow {

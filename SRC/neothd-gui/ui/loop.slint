@@ -10,7 +10,7 @@
 // is off; this file always compiles (Slint has no cfg).
 
 import { Theme } from "theme.slint";
-import { NeothButton, NeothLineEdit, SegBar, Led, Card } from "components.slint";
+import { NeothButton, NeothLineEdit, SegBar, Led, Card, EmptyState } from "components.slint";
 
 /// One outer round of a loop run — mirrors `loop_engine::LoopRound`.
 export struct LoopRoundRow {
@@ -152,10 +152,10 @@ export component LoopPanel inherits Rectangle {
                     vertical-stretch: 1;
                     VerticalLayout {
                         spacing: 4px;
-                        if root.history.length == 0: Text {
-                            text: "(no loop runs yet)";
-                            color: Theme.text-tertiary; font-family: Theme.font-mono;
-                            font-size: Theme.font-size-2xs;
+                        if root.history.length == 0: EmptyState {
+                            glyph: "∞";
+                            title: "No runs yet";
+                            hint: "start a loop above";
                         }
                         for run in root.history: Rectangle {
                             height: 54px;
@@ -297,13 +297,16 @@ export component LoopPanel inherits Rectangle {
                 vertical-stretch: 1;
                 VerticalLayout {
                     spacing: 6px;
-                    if root.rounds.length == 0: Text {
-                        text: root.running
-                            ? "Loop running — rounds land here when the record is written."
-                            : "Select a run on the left, or start one above.";
+                    if root.rounds.length == 0 && root.running: Text {
+                        text: "Loop running — rounds land here when the record is written.";
                         wrap: word-wrap;
                         color: Theme.text-tertiary; font-family: Theme.font-mono;
                         font-size: Theme.font-size-sm;
+                    }
+                    if root.rounds.length == 0 && !root.running: EmptyState {
+                        glyph: "∞";
+                        title: "No run selected";
+                        hint: "select a run on the left, or start one above";
                     }
                     for r in root.rounds: RoundRow { entry: r; }
                 }

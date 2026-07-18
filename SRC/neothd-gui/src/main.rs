@@ -568,6 +568,11 @@ fn push_toast(window: &slint::Weak<MainWindow>, kind: &'static str, title: &str,
             .collect();
         let id = panel_logic::next_toast_id(&current);
         current.push((id, kind.to_string(), title.clone(), body.clone()));
+        // I17 — max 3 stacked toasts (hallmark/Smashing guidance): the 4th
+        // pushes out the oldest. Its prune timer later no-ops harmlessly.
+        while current.len() > 3 {
+            current.remove(0);
+        }
 
         let model: slint::VecModel<ToastData> = slint::VecModel::from(
             current

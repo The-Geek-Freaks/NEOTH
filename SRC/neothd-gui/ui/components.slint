@@ -50,9 +50,11 @@ export component NeothButton inherits Rectangle {
     // from the surrounding cards. An accent-tinted fill + accent border reads as
     // a clear primary CTA (secondary stays outline-only), without being flashy.
     background: root.primary ? root.accent-color.with-alpha(0.16) : transparent;
-    border-width: key-focus.has-focus ? 2px : 1px;
+    // Constant border-width — focus flips colour only (hallmark: no
+    // geometry shift on focus; same fix as NavBtn/NeothCheckBox).
+    border-width: 2px;
     border-color: key-focus.has-focus ? Theme.focus-ring
-        : root.enabled ? root.accent-color : Theme.border-subtle;
+        : root.enabled ? root.accent-color.with-alpha(0.55) : Theme.border-subtle;
     opacity: root.enabled ? 1.0 : 0.4;
 
     // Sovereign-Curve hover lift via a thin accent bar at the
@@ -116,6 +118,13 @@ export component NeothButton inherits Rectangle {
     }
 
     states [
+        // Pressed acknowledgment (hallmark microinteractions) — fill deepens
+        // on pointer-down; instant in, quick out.
+        pressed when touch.pressed && root.enabled && !root.loading: {
+            root.background: root.primary
+                ? root.accent-color.with-alpha(0.28)
+                : root.accent-color.with-alpha(0.10);
+        }
         hovered when touch.has-hover && root.enabled && !root.loading: {
             underline.width: root.width - Theme.space-base * 2;
             txt.color: Theme.text-primary;

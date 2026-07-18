@@ -131,8 +131,11 @@ component ComplexitySeg inherits Rectangle {
             accessible-action-default => { root.set-level(i); }
             border-radius: Theme.radius-sm;
             background: root.level == i ? Theme.accent-tint : transparent;
-            border-width: seg-focus.has-focus ? 2px : (root.level == i ? 1px : 0px);
-            border-color: seg-focus.has-focus ? Theme.focus-ring : Theme.border-accent;
+            // Constant border-width — focus/active flip colour only
+            // (hallmark: no geometry shift on focus).
+            border-width: 2px;
+            border-color: seg-focus.has-focus ? Theme.focus-ring
+                : root.level == i ? Theme.border-accent : transparent;
             Text {
                 text: seg; color: root.level == i ? Theme.accent : Theme.text-tertiary;
                 font-family: Theme.font-mono; font-size: Theme.font-size-2xs;
@@ -341,6 +344,9 @@ export component Sidebar inherits Rectangle {
             Rectangle {
                 width: 28px; height: 28px; border-radius: Theme.radius-sm;
                 background: ta.has-hover ? Theme.surface-2 : transparent;
+                // D3 — keyboard path + constant-width focus ring.
+                border-width: 2px;
+                border-color: theme-focus.has-focus ? Theme.focus-ring : transparent;
                 Text {
                     text: Theme.dark ? "☀" : "☾"; color: Theme.text-secondary; font-size: Theme.font-size-sm;
                     horizontal-alignment: center; vertical-alignment: center;
@@ -350,7 +356,17 @@ export component Sidebar inherits Rectangle {
                 accessible-role: button;
                 accessible-label: Theme.dark ? "switch to light theme" : "switch to dark theme";
                 accessible-action-default => { Theme.dark = !Theme.dark; root.toggle-theme(); }
-                ta := TouchArea { clicked => { Theme.dark = !Theme.dark; root.toggle-theme(); } }
+                theme-focus := FocusScope {
+                    key-pressed(event) => {
+                        if event.text == "\n" || event.text == " " {
+                            Theme.dark = !Theme.dark;
+                            root.toggle-theme();
+                            return accept;
+                        }
+                        return reject;
+                    }
+                }
+                ta := TouchArea { clicked => { theme-focus.focus(); Theme.dark = !Theme.dark; root.toggle-theme(); } }
             }
         }
     }

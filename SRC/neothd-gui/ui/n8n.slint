@@ -7,7 +7,7 @@
 // Visual language: Wave-3 idioms — Kicker, InfoRow, Led, Card, RefreshFooter.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, EmptyState } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire structs ──────────────────────────────────────────────────────────────
@@ -150,16 +150,10 @@ export component N8nView inherits Rectangle {
 
                         Kicker { label: "BUNDLED WORKFLOWS"; }
 
-                        if root.n8n-workflows.length == 0: Rectangle {
-                            height: 48px;
-                            Text {
-                                text: "no bundled workflows";
-                                color: Theme.text-disabled;
-                                font-size: Theme.font-size-sm;
-                                font-family: Theme.font-mono;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                        if root.n8n-workflows.length == 0: EmptyState {
+                            glyph: "⇶";
+                            title: "No bundled workflows";
+                            hint: "trigger workflows from the n8n UI";
                         }
 
                         for wf in root.n8n-workflows: WorkflowRow {
