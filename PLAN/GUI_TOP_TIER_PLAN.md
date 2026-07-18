@@ -223,25 +223,30 @@ request-sync-real, task-priority/label, message-branch-nav, artifact-canvas,
 inline-patch-diff (Chat), rollback-apply).
 
 Dead-Ends / Bugs (kleine Diffs, hoher Wert):
-- [ ] I1 **BUG: Chat-Channel-Kontextmenü feuert ins Leere** — main.slint definiert
-      Remove Channel/Copy Name, main.rs hat keine Handler (silent no-op).
-- [ ] I2 **VERIFY: Self-Reprog "Apply to Source"** — selfreprog.slint Button vorhanden,
-      kein main.rs-Handler gefunden; verifizieren + verdrahten oder Button gaten.
-- [ ] I3 WAL-Inspector: Sidebar-NavBtn fehlt (nur Palette erreichbar; NAV_PANELS 26
-      Einträge ohne `wal`) + `WalTimelineStrip` (wal_timeline.slint, H1-Komponente)
-      ist fertig aber NICHT in WalInspectorView importiert/verdrahtet.
-- [ ] I4 memgraph + groundtruth: nur Palette-erreichbar, kein Sidebar-Eintrag —
-      für Nicht-Palette-Nutzer unsichtbar.
-- [ ] I5 Dreaming: "Dream Now" refresht die Day-List nicht (kein Auto-Refresh nach
-      Aktion; Kontrast: kanban move ruft invoke_kanban_refresh_clicked()).
-- [ ] I6 Cron-Run-Button: schlägt bei laufendem Daemon IMMER fehl, sieht aber
-      klickbar aus → disabled + Tooltip "managed by live daemon" statt Fehl-Toast.
+- [x] I1 ~~Chat-Channel-Kontextmenü~~ **FEHLBEFUND** (verified 2026-07-18):
+      on_channel_copy_name main.rs:6630 + on_channel_remove :7045 existieren,
+      ConfirmDialog gated. Agent-Report war falsch.
+- [x] I2 ~~Self-Reprog Apply~~ **FEHLBEFUND**: on_sd_apply_source_clicked
+      main.rs:5356, volle Kette inkl. Confirm-Popup verdrahtet.
+- [x] I3 ~~WAL Sidebar/Timeline~~ **FEHLBEFUND**: NavBtn "WAL" app_shell.slint:289;
+      WalTimelineStrip importiert main.slint:32, instanziert :3939, Rust füllt
+      Buckets main.rs:6297. (NAV_PANELS = Deep-Link-Chip-Allowlist, nicht Sidebar.)
+- [x] I4 ~~memgraph/groundtruth unsichtbar~~ **FEHLBEFUND**: Sidebar-Einträge
+      app_shell.slint:264/265.
+- [x] I5 ~~Dreaming kein Refresh~~ **FEHLBEFUND**: refresh_dreaming läuft nach
+      Dream Now (main.rs:5608).
+      ⚠ LEHRE: Inventory-Agent-TOP-15 war 5/6 falsch — JEDES Wave-I-Item vor
+      Build am Code verifizieren (bekannte Regel, erneut bestätigt).
+- [x] I6 Cron-Run-Button gated: disabled + TooltipArea "Managed by the live
+      daemon" solange `daemon-state == "live"` (cron.slint CronJobCard,
+      main.slint Instanziierung). 2026-07-18.
 
 Buddy lebendig — Restausbau (GOLD-R4-06):
-- [ ] I7 Forward-Infra-Moods verdrahten: MemoryRecall, ConsentGate, AuditVerify,
-      Secured, ProviderFallback haben GuiActivity-Varianten aber keine
-      WAL-Subscription (gui_stream.rs FOLLOW_TYPES) — Opcodes prüfen + mappen.
-      Quota-Breach 0xF0 fehlt komplett (Orb zeigt nichts bei Disk-Ceiling).
+- [x] I7 Forward-Infra-Moods verdrahtet (2026-07-18): 0x25→ProviderFallback,
+      0x65/0xDC→ConsentGate, 0x9F→MemoryRecall, 0xAE/0xAF→AuditVerify,
+      0xD9/0xDB/0xF2→Secured, 0xF0→QuotaBreached (neue Variante, mood
+      "problem"). Provider-Hot-Lane 0x20..0x23 bewusst NICHT subscribed.
+      Test `every_followed_type_maps` pinnt Subscription⊆Mapping.
 - [ ] I8 Idle-Variety (Pet-UX-Research): 5+ zufällig gecycelte Idle-Micro-Behaviors
       (blink, look-around, yawn, einschlafen nach Lang-Idle, aufwachen+grüßen bei
       Rückkehr); Event-Reaktionen: Task-Done=Celebration, Error=Concerned.

@@ -14,7 +14,7 @@
 // Note: jobs.yaml has NO hot-reload; changes take effect on next daemon restart.
 
 import { Theme } from "theme.slint";
-import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox, EmptyState } from "components.slint";
+import { Card, Led, EntranceFade, NeothButton, Kicker, InfoRow, RefreshFooter, NeothLineEdit, NeothCheckBox, EmptyState, TooltipArea } from "components.slint";
 import { ScrollView } from "std-widgets.slint";
 
 // ── Wire struct ───────────────────────────────────────────────────────────────
@@ -36,6 +36,9 @@ export struct CronJobRow {
 
 component CronJobCard inherits Rectangle {
     in property <CronJobRow> job;
+    // I6 — while the daemon is live it owns the schedule and `cron run`
+    // is refused; the button gates off instead of promising a run.
+    in property <bool> daemon-live: false;
     callback run-clicked(string);
     callback toggle-clicked(string, bool);   // (id, new_enabled)
     callback remove-clicked(string);
@@ -112,11 +115,17 @@ component CronJobCard inherits Rectangle {
         HorizontalLayout {
             spacing: 6px; alignment: end;
 
-            NeothButton {
-                label: "Run";
-                size: "sm";
-                primary: false;
-                clicked => { root.run-clicked(job.id); }
+            TooltipArea {
+                text: root.daemon-live
+                    ? "Managed by the live daemon — runs on its schedule"
+                    : "";
+                NeothButton {
+                    label: "Run";
+                    size: "sm";
+                    primary: false;
+                    enabled: !root.daemon-live;
+                    clicked => { root.run-clicked(job.id); }
+                }
             }
             NeothButton {
                 label: job.enabled ? "Disable" : "Enable";
@@ -140,6 +149,7 @@ export component CronView inherits Rectangle {
     // ── props ───────────────────────────────────────────────────────────────
     in property <[CronJobRow]> cron-jobs;
     in property <bool>         cron-running: false;
+    in property <bool>         daemon-live: false;
     in property <string>       cron-refreshed-at: "";
 
     // Add-form fields (in-out so Slint can two-way bind from Rust if needed).
@@ -347,6 +357,7 @@ export component CronView inherits Rectangle {
 
                 for j in root.cron-jobs: CronJobCard {
                     job: j;
+                    daemon-live: root.daemon-live;
                     run-clicked(id) => { root.cron-run(id); }
                     toggle-clicked(id, en) => { root.cron-toggle(id, en); }
                     remove-clicked(id) => { root.cron-remove(id); }

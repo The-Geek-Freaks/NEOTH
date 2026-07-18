@@ -21,9 +21,9 @@ use crate::buddy_activity::GuiActivity;
 /// Event types the follower subscribes to. Must stay a subset of the
 /// mapping in [`wal_event_to_activity`] — the daemon-side filter merely
 /// trims the stream; the mapping is the source of truth.
-const FOLLOW_TYPES: &str = "0x00,0x1C,0x1D,0x1E,0x32,0x40,0x41,0x42,0x43,0x44,0x45,0x46,\
-     0x60,0x61,0x62,0x63,0x64,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,\
-     0x7C,0x7D,0x7E,0x7F,0xBE,0xBF,0xF4";
+const FOLLOW_TYPES: &str = "0x00,0x1C,0x1D,0x1E,0x25,0x32,0x40,0x41,0x42,0x43,0x44,0x45,0x46,\
+     0x60,0x61,0x62,0x63,0x64,0x65,0x70,0x71,0x72,0x73,0x74,0x75,0x76,0x77,0x78,0x79,0x7A,0x7B,\
+     0x7C,0x7D,0x7E,0x7F,0x9F,0xAE,0xAF,0xBE,0xBF,0xD9,0xDB,0xDC,0xF0,0xF2,0xF4";
 
 /// Seconds without a WAL event before the orb reverts to idle.
 const IDLE_AFTER_SECS: u64 = 8;
@@ -38,11 +38,24 @@ pub fn wal_event_to_activity(event_type: u8, subtype: u8) -> Option<GuiActivity>
             _ => return None,
         },
         0x1C..=0x1E | 0xBE | 0xBF => GuiActivity::SelfImproving,
+        // PROVIDER_FALLBACK_ATTEMPTED — deliberately NOT the 0x20..0x23
+        // provider hot-lane (request/response/chunk would flood the orb).
+        0x25 => GuiActivity::ProviderFallback,
         0x32 => GuiActivity::ChannelIngress,
         0x40..=0x46 => GuiActivity::CronRunning,
         0x60..=0x64 => GuiActivity::CouncilDeliberating,
+        // CONSENT_DECISION pending / CONSENT_REVOKED — operator attention.
+        0x65 | 0xDC => GuiActivity::ConsentGate,
         0x70..=0x7B => GuiActivity::AgentParallel,
         0x7C..=0x7F => GuiActivity::LoopRunning,
+        // MEMORY_PIPELINE_SCORECARD_TICK — periodic monitor pulse.
+        0x9F => GuiActivity::MemoryRecall,
+        // AUDIT_RPC_ACCEPT / AUDIT_RPC_REJECT.
+        0xAE | 0xAF => GuiActivity::AuditVerify,
+        // HMAC_KEY_ROTATED / CONSENT_GRANTED / PRE_MUTATION_SNAPSHOT.
+        0xD9 | 0xDB | 0xF2 => GuiActivity::Secured,
+        // QUOTA_BREACHED — WAL writes are being refused.
+        0xF0 => GuiActivity::QuotaBreached,
         0xF4 => GuiActivity::Dreaming,
         _ => return None,
     })
@@ -175,6 +188,53 @@ mod tests {
             wal_event_to_activity(0x7C, 0),
             Some(GuiActivity::LoopRunning)
         );
+        // I7 — daemon-pushed trust/resource lanes.
+        assert_eq!(
+            wal_event_to_activity(0x25, 0),
+            Some(GuiActivity::ProviderFallback)
+        );
+        assert_eq!(
+            wal_event_to_activity(0x65, 0),
+            Some(GuiActivity::ConsentGate)
+        );
+        assert_eq!(
+            wal_event_to_activity(0xDC, 0),
+            Some(GuiActivity::ConsentGate)
+        );
+        assert_eq!(
+            wal_event_to_activity(0x9F, 0),
+            Some(GuiActivity::MemoryRecall)
+        );
+        assert_eq!(
+            wal_event_to_activity(0xAE, 0),
+            Some(GuiActivity::AuditVerify)
+        );
+        assert_eq!(
+            wal_event_to_activity(0xAF, 0),
+            Some(GuiActivity::AuditVerify)
+        );
+        assert_eq!(wal_event_to_activity(0xD9, 0), Some(GuiActivity::Secured));
+        assert_eq!(wal_event_to_activity(0xDB, 0), Some(GuiActivity::Secured));
+        assert_eq!(wal_event_to_activity(0xF2, 0), Some(GuiActivity::Secured));
+        assert_eq!(
+            wal_event_to_activity(0xF0, 0),
+            Some(GuiActivity::QuotaBreached)
+        );
+    }
+
+    /// Every opcode in FOLLOW_TYPES must map to Some — a subscribed-but-
+    /// unmapped type would be silently dropped stream traffic.
+    #[test]
+    fn every_followed_type_maps() {
+        for tok in FOLLOW_TYPES.split(',') {
+            let et = u8::from_str_radix(tok.trim().trim_start_matches("0x"), 16)
+                .expect("FOLLOW_TYPES token parses");
+            let sub = if et == 0x00 { 0x01 } else { 0 };
+            assert!(
+                wal_event_to_activity(et, sub).is_some(),
+                "followed type 0x{et:02X} has no activity mapping"
+            );
+        }
     }
 
     #[test]

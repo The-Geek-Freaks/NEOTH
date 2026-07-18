@@ -11,13 +11,13 @@
 //! in-progress=amber stay meaning-bearing — the same semantics the surfaces use
 //! quietly, the Buddy uses brightly.
 
-// Some variants are wired to live GUI events today (chat, channel-test, kanban,
-// autonomy, memory-forget, settings writes); the rest are forward-infra for
-// daemon-pushed activity that has no GUI click-source yet (background memory
-// recall, audit verification, consent gates, channel ingress, provider
-// fallback). Mirrors the core's `domain_events` forward-infra pattern — the
-// vocabulary is complete + tested now; the daemon→GUI push that fires the
-// remaining ones lands when the gui-stream activity channel does.
+// Variants are fired from two sources: GUI clicks (chat, channel-test, kanban,
+// autonomy, memory-forget, settings writes) and the WAL follower in
+// `gui_stream.rs` (dreaming, council, self-improve, cron, loops, agents,
+// channel ingress — and since I7 also consent gates 0x65/0xDB/0xDC, audit RPC
+// 0xAE/0xAF, provider fallback 0x25, memory scorecard 0x9F, security ops
+// 0xD9/0xF2, quota breach 0xF0). Only ModelLoading + AgentDeploy remain
+// click-source forward-infra.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuiActivity {
@@ -68,6 +68,10 @@ pub enum GuiActivity {
     // ── Generic settings write ───────────────────────────────────────
     SettingsApplied,
     SettingsError,
+
+    // ── Resource guard (WAL 0xF0) ────────────────────────────────────
+    /// WAL disk quota ceiling hit — writes are being refused (I7).
+    QuotaBreached,
 }
 
 impl GuiActivity {
@@ -108,6 +112,8 @@ impl GuiActivity {
 
             GuiActivity::SettingsApplied => ("success", "saved"),
             GuiActivity::SettingsError => ("alert", "action failed"),
+
+            GuiActivity::QuotaBreached => ("problem", "disk quota hit"),
         }
     }
 }
@@ -174,6 +180,7 @@ mod tests {
         GuiActivity::LoopRunning,
         GuiActivity::SettingsApplied,
         GuiActivity::SettingsError,
+        GuiActivity::QuotaBreached,
     ];
 
     #[test]

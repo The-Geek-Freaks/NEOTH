@@ -3979,6 +3979,7 @@ export component MainWindow inherits Window {
                 if root.nav-active == "automation": CronView {
                     cron-jobs: root.cron-jobs;
                     cron-running: root.cron-running;
+                    daemon-live: root.daemon-state == "live";
                     cron-refreshed-at: root.cron-refreshed-at;
                     cron-refresh => { root.cron-refresh-clicked(); }
                     cron-add(id, name, cron, prompt, tz, ch, rcpt, tmo) => {
