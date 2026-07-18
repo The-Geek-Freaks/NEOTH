@@ -778,6 +778,60 @@ const KANBAN_LATEST_SESSION: i64 = -1;
 static KANBAN_SELECTION: std::sync::LazyLock<std::sync::Mutex<panel_logic::KanbanSelection>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(panel_logic::KanbanSelection::default()));
 
+const KANBAN_BULK_FAILURES_SHOWN: usize = 3;
+const KANBAN_BULK_REASON_CHARS: usize = 160;
+
+/// Keep partial bulk results actionable without allowing an arbitrarily large
+/// subprocess diagnostic to take over the toast surface. The CLI action layer
+/// already redacts paths and bounds each diagnostic; this second bound keeps a
+/// multi-task failure readable.
+fn format_kanban_bulk_failure(moved: usize, failed: &[(String, String)]) -> String {
+    let mut details: Vec<String> = failed
+        .iter()
+        .take(KANBAN_BULK_FAILURES_SHOWN)
+        .map(|(task_id, reason)| {
+            let reason: String = reason.chars().take(KANBAN_BULK_REASON_CHARS).collect();
+            format!("{task_id} — {reason}")
+        })
+        .collect();
+    if failed.len() > KANBAN_BULK_FAILURES_SHOWN {
+        details.push(format!(
+            "+{} more failure(s)",
+            failed.len() - KANBAN_BULK_FAILURES_SHOWN
+        ));
+    }
+    format!(
+        "Partially executed: {moved} succeeded, {} failed. {}",
+        failed.len(),
+        details.join("; ")
+    )
+}
+
+#[cfg(test)]
+mod kanban_bulk_failure_tests {
+    use super::format_kanban_bulk_failure;
+
+    #[test]
+    fn partial_summary_keeps_reasons_bounded_and_names_omitted_rows() {
+        let long_reason = "x".repeat(220);
+        let failures = vec![
+            ("#42".to_string(), "task already archived".to_string()),
+            ("#61".to_string(), long_reason),
+            ("#88".to_string(), "daemon unavailable".to_string()),
+            ("#99".to_string(), "receipt mismatch".to_string()),
+        ];
+
+        let summary = format_kanban_bulk_failure(17, &failures);
+        assert!(summary.starts_with("Partially executed: 17 succeeded, 4 failed."));
+        assert!(summary.contains("#42 — task already archived"));
+        assert!(summary.contains("#61 — "));
+        assert!(summary.contains("#88 — daemon unavailable"));
+        assert!(summary.contains("+1 more failure(s)"));
+        assert!(!summary.contains("#99"));
+        assert!(!summary.contains(&"x".repeat(161)));
+    }
+}
+
 static KANBAN_SESSION_OVERRIDE: std::sync::atomic::AtomicI64 =
     std::sync::atomic::AtomicI64::new(KANBAN_LATEST_SESSION);
 
@@ -4181,9 +4235,10 @@ fn main() -> Result<()> {
                     .ok()
             });
             let (kind, body): (&str, String) = match refreshed {
-                Some(o) if o.status.success() => {
-                    ("success", "Model catalog rebuilt from providers.".to_string())
-                }
+                Some(o) if o.status.success() => (
+                    "success",
+                    "Model catalog rebuilt from providers.".to_string(),
+                ),
                 Some(o) => {
                     let err = String::from_utf8_lossy(&o.stderr);
                     let msg: String = err.trim().chars().take(160).collect();
@@ -4210,7 +4265,9 @@ fn main() -> Result<()> {
                     .arg("--output")
                     .arg("json")
                     .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "catalog list refresh spawn failed"))
+                    .inspect_err(
+                        |e| tracing::warn!(error = %e, "catalog list refresh spawn failed"),
+                    )
                     .ok()
             });
             let output = match listed {
@@ -4393,7 +4450,8 @@ fn main() -> Result<()> {
                         s.push_str(&err);
                     }
                     if s.trim().is_empty() {
-                        "no routing weights learned yet (fresh install or council unused).".to_string()
+                        "no routing weights learned yet (fresh install or council unused)."
+                            .to_string()
                     } else {
                         s
                     }
@@ -6059,7 +6117,7 @@ fn main() -> Result<()> {
             let weak = weak_bulk.clone();
             std::thread::spawn(move || {
                 let mut moved = 0usize;
-                let mut failed: Vec<String> = Vec::new();
+                let mut failed: Vec<(String, String)> = Vec::new();
                 for display_id in &ids {
                     let id = display_id.trim_start_matches('#').to_string();
                     let result = run_neothd_json_action::<gui_action::KanbanMoveAck>(
@@ -6069,7 +6127,7 @@ fn main() -> Result<()> {
                     .and_then(|ack| ack.verify(&id, &status));
                     match result {
                         Ok(()) => moved += 1,
-                        Err(_) => failed.push(display_id.clone()),
+                        Err(error) => failed.push((display_id.clone(), error)),
                     }
                 }
                 if failed.is_empty() {
@@ -6084,18 +6142,24 @@ fn main() -> Result<()> {
                         &weak,
                         "warn",
                         "Kanban bulk move partial",
-                        &format!("{moved} moved, failed: {}", failed.join(", ")),
+                        &format_kanban_bulk_failure(moved, &failed),
                     );
                 }
+                let failed_count = failed.len();
                 {
                     let mut sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
                     sel.clear();
+                    // Successful rows leave the batch; failed rows remain
+                    // selected so the operator can inspect or retry them.
+                    for (task_id, _) in &failed {
+                        sel.toggle(task_id);
+                    }
                 }
                 let _ = slint::invoke_from_event_loop({
                     let weak2 = weak.clone();
                     move || {
                         if let Some(w) = weak2.upgrade() {
-                            w.set_kanban_selected_count(0);
+                            w.set_kanban_selected_count(failed_count as i32);
                             w.invoke_kanban_refresh_clicked();
                         }
                     }
@@ -6643,14 +6707,16 @@ fn main() -> Result<()> {
         });
         let weak_mesh_poll = window.as_weak();
         let mesh_auto_poll = mesh_auto.clone();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            // Stop the loop once the UI event loop has shut down.
-            if slint::invoke_from_event_loop(|| {}).is_err() {
-                break;
-            }
-            if mesh_auto_poll.load(std::sync::atomic::Ordering::Relaxed) {
-                refresh_mesh(weak_mesh_poll.clone());
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                // Stop the loop once the UI event loop has shut down.
+                if slint::invoke_from_event_loop(|| {}).is_err() {
+                    break;
+                }
+                if mesh_auto_poll.load(std::sync::atomic::Ordering::Relaxed) {
+                    refresh_mesh(weak_mesh_poll.clone());
+                }
             }
         });
 
@@ -6712,8 +6778,8 @@ fn main() -> Result<()> {
 
         // L73 — mesh peer context menu: copy peer ID to clipboard.
         window.on_mesh_peer_copy_id(move |peer_id| {
-            if let Err(e) = arboard::Clipboard::new()
-                .and_then(|mut c| c.set_text(peer_id.to_string()))
+            if let Err(e) =
+                arboard::Clipboard::new().and_then(|mut c| c.set_text(peer_id.to_string()))
             {
                 tracing::warn!(error = %e, "peer id clipboard copy failed");
             }
@@ -6721,8 +6787,7 @@ fn main() -> Result<()> {
 
         // L37 — channel context menu: copy channel name to clipboard.
         window.on_channel_copy_name(move |name| {
-            if let Err(e) = arboard::Clipboard::new()
-                .and_then(|mut c| c.set_text(name.to_string()))
+            if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(name.to_string()))
             {
                 tracing::warn!(error = %e, "channel name clipboard copy failed");
             }
@@ -6741,9 +6806,7 @@ fn main() -> Result<()> {
                     let mut c = spawn_neothd_plain(&bin);
                     c.arg("cluster").arg("revoke").arg(peer.as_str());
                     c.output()
-                        .inspect_err(|e| {
-                            tracing::warn!(error = %e, "cluster revoke spawn failed")
-                        })
+                        .inspect_err(|e| tracing::warn!(error = %e, "cluster revoke spawn failed"))
                         .ok()
                 });
                 match result {

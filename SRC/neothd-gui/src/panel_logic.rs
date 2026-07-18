@@ -3767,8 +3767,7 @@ impl KanbanSelection {
 
     /// Drop ids that no longer exist on the board (stale after refresh).
     pub fn retain_known(&mut self, known: &[String]) {
-        let known: std::collections::HashSet<&str> =
-            known.iter().map(String::as_str).collect();
+        let known: std::collections::HashSet<&str> = known.iter().map(String::as_str).collect();
         self.0.retain(|id| known.contains(id.as_str()));
     }
 }
@@ -4859,8 +4858,14 @@ mod kanban_card_helpers_tests {
         assert!(!t.has_patch);
         assert!(t.parent_task_id.is_none());
         // chip helpers return "" for all-None → chip row stays hidden
-        assert_eq!(format_tests_string(t.tests_passing, t.tests_failing, t.tests_total), "");
-        assert_eq!(format_eta_at(t.eta_ns, t.started_ns, 9_999_999_999_999_999_999), "");
+        assert_eq!(
+            format_tests_string(t.tests_passing, t.tests_failing, t.tests_total),
+            ""
+        );
+        assert_eq!(
+            format_eta_at(t.eta_ns, t.started_ns, 9_999_999_999_999_999_999),
+            ""
+        );
     }
 }
 
