@@ -3793,41 +3793,21 @@ fn main() -> Result<()> {
             } else {
                 ar
             };
-            let result = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("mcp")
-                    .arg("call")
-                    .arg(srv.trim())
-                    .arg(tl.trim())
-                    .arg("--args")
-                    .arg(&args_val)
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "mcp call spawn failed"))
-                    .ok()
+            let result = run_neothd_json_action::<gui_action::McpToolCallAck>(
+                &["mcp", "call", srv.trim(), tl.trim(), "--args", &args_val],
+                "MCP call",
+            )
+            .and_then(|acknowledgement| {
+                acknowledgement.verify_success()?;
+                serde_json::to_string_pretty(&acknowledgement)
+                    .map_err(|error| format!("MCP call returned invalid output: {error}"))
             });
             let (kind, output) = match result {
-                Some(o) if o.status.success() => {
-                    let s = String::from_utf8_lossy(&o.stdout).to_string();
-                    (
-                        "success",
-                        if s.trim().is_empty() {
-                            "(empty response)".to_string()
-                        } else {
-                            s
-                        },
-                    )
+                Ok(output) => ("success", output),
+                Err(error) => {
+                    tracing::warn!(error = %error, "mcp call failed");
+                    ("error", error)
                 }
-                Some(o) => {
-                    let err: String =
-                        String::from_utf8_lossy(&o.stderr).trim().chars().take(240).collect();
-                    ("error", err)
-                }
-                None => (
-                    "error",
-                    "neothd unavailable (not on PATH, or the located binary failed to spawn — see logs) — cannot call MCP tool.".to_string(),
-                ),
             };
             push_toast(&weak, kind, "MCP call", &output);
             let _ = slint::invoke_from_event_loop(move || {

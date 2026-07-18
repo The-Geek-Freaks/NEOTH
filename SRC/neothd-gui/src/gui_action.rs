@@ -8,14 +8,34 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 const MAX_DIAGNOSTIC_CHARS: usize = 400;
 
 pub struct JsonReceipt<T> {
     pub acknowledgement: T,
     pub stderr: Option<String>,
+}
+
+/// Exact `neoth mcp call --output json` wire acknowledgement. MCP reports
+/// tool-level failures inside an otherwise valid JSON-RPC response, so the GUI
+/// must verify `isError` in addition to the child process exit status.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpToolCallAck {
+    pub content: Vec<serde_json::Value>,
+    #[serde(rename = "isError")]
+    pub is_error: bool,
+}
+
+impl McpToolCallAck {
+    pub fn verify_success(&self) -> Result<(), String> {
+        if self.is_error {
+            return Err("MCP tool reported an execution failure".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1297,6 +1317,63 @@ mod tests {
     }
 
     #[test]
+    fn mcp_tool_error_is_a_failed_typed_receipt() {
+        let success = decode_json_output::<McpToolCallAck>(
+            &output(
+                0,
+                r#"{"content":[{"type":"text","text":"done"}],"isError":false}"#,
+                "",
+            ),
+            "MCP call",
+        )
+        .unwrap();
+        success.verify_success().unwrap();
+
+        let tool_error = decode_json_output::<McpToolCallAck>(
+            &output(
+                0,
+                r#"{"content":[{"type":"text","text":"denied"}],"isError":true}"#,
+                "",
+            ),
+            "MCP call",
+        )
+        .unwrap();
+        assert!(tool_error.verify_success().is_err());
+        assert!(
+            decode_json_output::<McpToolCallAck>(&output(0, r#"{"content":[]}"#, ""), "MCP call",)
+                .is_err(),
+            "missing isError must fail closed"
+        );
+        assert!(
+            decode_json_output::<McpToolCallAck>(
+                &output(0, r#"{"content":[],"isError":false,"unexpected":true}"#, "",),
+                "MCP call",
+            )
+            .is_err(),
+            "uncontracted MCP fields must fail closed"
+        );
+    }
+
+    #[test]
+    fn mcp_gui_callback_cannot_infer_success_from_exit_status() {
+        let source = include_str!("main.rs");
+        let start = source.find("C4 — MCP call:").expect("MCP callback marker");
+        let end = source[start..]
+            .find("Research P0 — hooks probe")
+            .map(|offset| start + offset)
+            .expect("MCP callback end marker");
+        let callback = &source[start..end];
+        assert!(callback.contains("run_neothd_json_action::<gui_action::McpToolCallAck>"));
+        assert!(callback.contains("acknowledgement.verify_success()?"));
+        for unchecked in ["spawn_neothd_plain", ".output()", "status.success()"] {
+            assert!(
+                !callback.contains(unchecked),
+                "MCP callback regressed to unchecked boundary: {unchecked}"
+            );
+        }
+    }
+
+    #[test]
     fn permission_and_kanban_receipts_fail_closed_on_process_or_schema_errors() {
         let success_looking = r#"{"ok":true,"action":"move","task_id":42,"status":"done"}"#;
         assert!(
@@ -1856,7 +1933,10 @@ mod tests {
     #[test]
     fn scrub_diagnostic_strips_noise_and_paths() {
         // Panic header + anyhow chain continuation + empty → dropped.
-        assert_eq!(super::scrub_diagnostic("thread 'main' panicked at 'boom'"), None);
+        assert_eq!(
+            super::scrub_diagnostic("thread 'main' panicked at 'boom'"),
+            None
+        );
         assert_eq!(super::scrub_diagnostic("caused by: io error"), None);
         assert_eq!(super::scrub_diagnostic("   "), None);
         // "Error:" prefix dropped; a real message survives.

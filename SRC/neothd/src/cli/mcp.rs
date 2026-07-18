@@ -371,6 +371,18 @@ async fn run_call(
             }
         }
     }
+    verify_tool_call_succeeded(&result, server_id, tool)?;
+    Ok(())
+}
+
+/// MCP encodes tool-level failures in a successful JSON-RPC response. Keep the
+/// structured result on stdout for automation, but make the process exit
+/// non-zero so GUI and shell callers cannot mistake `isError: true` for a
+/// successful tool effect.
+fn verify_tool_call_succeeded(result: &ToolCallResult, server_id: &str, tool: &str) -> Result<()> {
+    if result.is_error {
+        anyhow::bail!("MCP `{server_id}::{tool}` reported a tool execution failure");
+    }
     Ok(())
 }
 
@@ -577,6 +589,20 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not valid JSON"));
+    }
+
+    #[test]
+    fn tool_level_error_cannot_exit_successfully() {
+        let result = ToolCallResult {
+            content: Vec::new(),
+            is_error: true,
+        };
+        let error = verify_tool_call_succeeded(&result, "filesystem", "write")
+            .expect_err("MCP isError=true must produce a failing process result");
+        assert!(error.to_string().contains("filesystem::write"));
+
+        verify_tool_call_succeeded(&ToolCallResult::default(), "filesystem", "read")
+            .expect("a successful MCP result must remain successful");
     }
 
     #[tokio::test]
