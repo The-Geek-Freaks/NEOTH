@@ -66,11 +66,26 @@
 pub(crate) mod test_env {
     use std::sync::{Mutex, MutexGuard, OnceLock};
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
         ENV_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Create a fixture below the canonical OS temp root.
+    ///
+    /// macOS exposes its temporary directory through `/var`, which is a
+    /// system symlink to `/private/var`. Security-sensitive path tests must
+    /// keep rejecting caller-supplied symlink ancestors, so the test harness
+    /// resolves only this trusted, already-existing root before creating its
+    /// private child directory.
+    pub(crate) fn canonical_tempdir() -> std::io::Result<tempfile::TempDir> {
+        let root = std::fs::canonicalize(std::env::temp_dir())?;
+        tempfile::Builder::new()
+            .prefix("neoth-test-")
+            .tempdir_in(root)
     }
 }
 

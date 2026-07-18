@@ -1387,7 +1387,7 @@ mod tests {
 
     #[test]
     fn portable_marker_is_generated_inside_the_release_transaction() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = crate::test_env::canonical_tempdir().unwrap();
         let bundle = fixture.path().join("bundle");
         let install = fixture.path().join("installed");
         fs::create_dir_all(&bundle).unwrap();

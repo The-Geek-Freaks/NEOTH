@@ -425,6 +425,8 @@ impl VerifiedReleaseSnapshot {
                     "materialized release self-knowledge identity collides with different bytes"
                 );
             }
+            ensure_tree_read_only(&baseline_dir)
+                .context("verify materialized release self-knowledge permissions")?;
         } else {
             self.copy_new_baseline(&releases_dir, &baseline_dir)?;
         }
@@ -508,8 +510,20 @@ NEOTH upgrades never overwrite this directory or any file below it.\n\n\
                 anyhow::bail!("staged self-knowledge payload identity changed during copy");
             }
             set_tree_read_only(&stage)?;
+            // Darwin's rename(2) rejects a write-disabled source directory,
+            // even for a same-parent rename that does not change `..`. Keep
+            // only the private stage root owner-writable until publication;
+            // every payload file and child directory is already read-only.
+            #[cfg(target_os = "macos")]
+            make_path_owner_writable(&stage)
+                .context("keep macOS self-knowledge stage root renameable")?;
             match fs::rename(&stage, destination) {
-                Ok(()) => Ok(()),
+                Ok(()) => {
+                    #[cfg(target_os = "macos")]
+                    set_path_read_only(destination)
+                        .context("finalize macOS release baseline permissions")?;
+                    Ok(())
+                }
                 // Windows commonly reports a destination race as
                 // PermissionDenied instead of AlreadyExists. Inspect the
                 // destination after *any* rename failure and accept only an
@@ -523,6 +537,9 @@ NEOTH upgrades never overwrite this directory or any file below it.\n\n\
                                 "concurrent self-knowledge materialization wrote different bytes"
                             );
                         }
+                        ensure_tree_read_only(destination).context(
+                            "verify concurrently materialized release self-knowledge permissions",
+                        )?;
                         Ok(())
                     }
                     Err(inspect_error) if inspect_error.kind() == std::io::ErrorKind::NotFound => {
@@ -702,18 +719,17 @@ pub(crate) fn installed_candidates_for_executable(executable: &Path) -> Vec<Path
     let Some(bin_dir) = executable.parent() else {
         return Vec::new();
     };
-    vec![
+    let mut candidates = vec![
         bin_dir
             .join(crate::updater::release_bundle::PORTABLE_SUPPORT_DIR)
             .join("self-knowledge"),
         bin_dir.join("self-knowledge"),
-        bin_dir
-            .join("..")
-            .join("share")
-            .join("neoth")
-            .join("self-knowledge"),
-        bin_dir.join("..").join("Resources").join("self-knowledge"),
-    ]
+    ];
+    if let Some(prefix) = bin_dir.parent() {
+        candidates.push(prefix.join("share").join("neoth").join("self-knowledge"));
+        candidates.push(prefix.join("Resources").join("self-knowledge"));
+    }
+    candidates
 }
 
 fn read_verified_utf8(root: &Path, entry: &ReleaseSnapshotFile) -> Result<String> {
@@ -1786,22 +1802,40 @@ fn set_tree_read_only(root: &Path) -> Result<()> {
         .chain(std::iter::once(MANIFEST_FILE.to_string()))
     {
         let path = safe_join(root, &relative)?;
-        let mut permissions = fs::metadata(&path)?.permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(&path, permissions)
-            .with_context(|| format!("make release baseline read-only: {}", path.display()))?;
+        set_path_read_only(&path)?;
     }
     let mut directories = collect_real_directories(root)?;
     directories.sort_by_key(|path| std::cmp::Reverse(path.components().count()));
     for path in directories {
-        let mut permissions = fs::metadata(&path)?.permissions();
-        permissions.set_readonly(true);
-        fs::set_permissions(&path, permissions).with_context(|| {
-            format!(
-                "make release baseline directory read-only: {}",
-                path.display()
-            )
-        })?;
+        set_path_read_only(&path)?;
+    }
+    Ok(())
+}
+
+fn set_path_read_only(path: &Path) -> Result<()> {
+    let mut permissions = fs::metadata(path)?.permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(path, permissions)
+        .with_context(|| format!("make release baseline read-only: {}", path.display()))?;
+    if !fs::metadata(path)?.permissions().readonly() {
+        anyhow::bail!(
+            "release baseline remained writable after permission update: {}",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn ensure_tree_read_only(root: &Path) -> Result<()> {
+    let files = collect_payload_paths(root)?
+        .into_iter()
+        .chain(std::iter::once(MANIFEST_FILE.to_string()))
+        .map(|relative| safe_join(root, &relative))
+        .collect::<Result<Vec<_>>>()?;
+    for path in files.into_iter().chain(collect_real_directories(root)?) {
+        if !fs::metadata(&path)?.permissions().readonly() {
+            anyhow::bail!("release baseline is writable: {}", path.display());
+        }
     }
     Ok(())
 }
@@ -2179,6 +2213,22 @@ mod tests {
     }
 
     #[test]
+    fn writable_materialized_baseline_fails_closed() {
+        let source = fixture();
+        let snapshot = VerifiedReleaseSnapshot::open(source.path()).unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let wiki = vault.path().join("NEOTH-Wiki");
+        let materialized = snapshot.materialize_into(&wiki).unwrap();
+
+        make_path_owner_writable(&materialized.baseline_dir).unwrap();
+        let error = snapshot.materialize_into(&wiki).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("release baseline is writable"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
     fn destination_race_accepts_only_the_verified_identical_baseline() {
         let source = fixture();
         let snapshot = VerifiedReleaseSnapshot::open(source.path()).unwrap();
@@ -2351,6 +2401,23 @@ mod tests {
             Some(executable),
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn installed_candidates_never_depend_on_parent_dir_components() {
+        let candidates = installed_candidates_for_executable(Path::new("prefix/bin/neoth"));
+        assert!(candidates.iter().all(|candidate| {
+            !candidate
+                .components()
+                .any(|component| component == Component::ParentDir)
+        }));
+        assert!(candidates.iter().any(|candidate| {
+            candidate
+                == &PathBuf::from("prefix")
+                    .join("share")
+                    .join("neoth")
+                    .join("self-knowledge")
+        }));
     }
 
     #[test]

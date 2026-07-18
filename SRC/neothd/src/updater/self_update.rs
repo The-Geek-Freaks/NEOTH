@@ -3842,7 +3842,7 @@ mod tests {
         hasher.update(&archive_bytes);
         let digest = hex_encode(&hasher.finalize());
 
-        let dir = tempdir().unwrap();
+        let dir = crate::test_env::canonical_tempdir().unwrap();
         let stage_dir = dir.path().join("staged");
         std::fs::create_dir_all(&stage_dir).unwrap();
         let asset_name = expected_asset_name("neoth", "v9.9.9", target);
@@ -4899,7 +4899,7 @@ mod tests {
             target,
         );
         let digest = hex_encode(&Sha256::digest(&archive));
-        let install = tempdir().unwrap();
+        let install = crate::test_env::canonical_tempdir().unwrap();
         let core = install.path().join(&core_name);
         std::fs::write(&core, b"old-core").unwrap();
         crate::updater::release_bundle::write_test_portable_ownership_marker(install.path())

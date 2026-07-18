@@ -2171,7 +2171,7 @@ mod tests {
 
     impl StandardFixture {
         fn new() -> Self {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::test_env::canonical_tempdir().unwrap();
             seed_standard(temp.path());
             let install_root = temp.path().join("install");
             Self {
@@ -2232,8 +2232,9 @@ mod tests {
     }
 
     #[test]
-    fn canonical_existing_file_keeps_exact_object_identity() {
-        let temp = tempfile::tempdir().unwrap();
+    fn canonical_temp_fixture_has_no_link_ancestors_and_keeps_file_identity() {
+        let temp = crate::test_env::canonical_tempdir().unwrap();
+        ensure_no_link_components(temp.path()).unwrap();
         let file = temp.path().join("member.bin");
         fs::write(&file, b"member").unwrap();
         let (resolved, existed) = canonical_future_path(&file).unwrap();
@@ -2533,7 +2534,7 @@ mod tests {
 
     #[test]
     fn deep_missing_root_reinstantiation_uses_the_same_anchor_and_recovers() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_env::canonical_tempdir().unwrap();
         fs::write(temp.path().join("source.bin"), b"fresh").unwrap();
         let before = fresh_transaction(temp.path());
         assert!(!before.install_root().exists());
@@ -2556,7 +2557,7 @@ mod tests {
 
     #[test]
     fn identical_old_and_new_digest_recovers_after_install_rename() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_env::canonical_tempdir().unwrap();
         fs::create_dir(temp.path().join("install")).unwrap();
         fs::write(temp.path().join("same-source.bin"), b"same").unwrap();
         fs::write(temp.path().join("install/same.bin"), b"same").unwrap();
@@ -2579,7 +2580,7 @@ mod tests {
 
     #[test]
     fn absent_members_commit_and_crash_recovery_restores_old() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_env::canonical_tempdir().unwrap();
         seed_absent(temp.path());
         absent_transaction(temp.path())
             .apply(&absent_members(temp.path()))
@@ -2609,7 +2610,7 @@ mod tests {
         ];
 
         for (hook, committed) in cases {
-            let temp = tempfile::tempdir().unwrap();
+            let temp = crate::test_env::canonical_tempdir().unwrap();
             seed_absent(temp.path());
             spawn_child(temp.path(), "absent", "apply", hook);
             let outcome = absent_transaction(temp.path()).recover().unwrap();
@@ -2727,7 +2728,7 @@ mod tests {
 
     #[test]
     fn private_journal_temp_collisions_never_clobber_existing_objects() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_env::canonical_tempdir().unwrap();
         let target = temp.path().join("journal.json");
         let collision_nonce = "11".repeat(16);
         let safe_nonce = "22".repeat(16);
@@ -2771,7 +2772,7 @@ mod tests {
     fn private_journal_temp_symlink_collision_is_skipped() {
         use std::os::unix::fs::symlink;
 
-        let temp = tempfile::tempdir().unwrap();
+        let temp = crate::test_env::canonical_tempdir().unwrap();
         let target = temp.path().join("journal.json");
         let collision_nonce = "33".repeat(16);
         let safe_nonce = "44".repeat(16);
