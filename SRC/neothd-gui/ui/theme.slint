@@ -73,15 +73,15 @@ export global Theme {
     out property <color> ink-850:  #121212;
     out property <color> ink-800:  #161616;
     out property <color> ink-700:  #1c1c1c;
-    out property <color> ink-600:  #242424;
-    out property <color> ink-500:  #2e2e2e;
-    out property <color> ink-400:  #3a3a3a;
-    out property <color> ink-300:  #5a5a5a;
-    out property <color> ink-200:  #8a8a8a;
-    out property <color> ink-150:  #aaaaaa;
-    out property <color> ink-100:  #c9c9c9;
-    out property <color> ink-50:   #e6e6e6;
-    out property <color> ink-0:    #ffffff;
+    out property <color> ink-600:  #3c3c40;  // +chroma ≈ hue 255
+    out property <color> ink-500:  #2d2d30;
+    out property <color> ink-400:  #393940;
+    out property <color> ink-300:  #595960;
+    out property <color> ink-200:  #8a8a92;
+    out property <color> ink-150:  #aaaab2;
+    out property <color> ink-100:  #c9c9d2;
+    out property <color> ink-50:   #e6e6ee;
+    out property <color> ink-0:    #f4f4f5;  // near-white; pure #ffffff banned
 
     // ══ SIGNAL COLOURS — the three meaning-carrying neons ═══════════════
     // GREEN = MEMORY (primary / live / accent).
@@ -249,8 +249,8 @@ export global Theme {
     out property <length> letter-spacing-tight:      1px;
     out property <length> letter-spacing-wide:       1.5px;
     out property <length> letter-spacing-extra-wide: 2px;
-    out property <length> letter-spacing-brand-bar:  4px;
-    out property <length> letter-spacing-mono-caps:  2.6px;  // ≈ tracking-widest on eyebrows
+    out property <length> letter-spacing-brand-bar:  2px;    // ≈ 0.133em @15px — under 0.14em Hallmark cap
+    out property <length> letter-spacing-mono-caps:  1.5px;  // ≈ 0.136em @11px — under 0.14em Hallmark cap
 
     // ══ MOTION ═════════════════════════════════════════════════════════
     // The "Sovereign Curve" — fast start, long majestic settle.

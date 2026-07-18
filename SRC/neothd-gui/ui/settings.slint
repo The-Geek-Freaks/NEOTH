@@ -202,7 +202,7 @@ component TabButton inherits Rectangle {
     height: 36px;
     // GUI-overhaul: tint the active tab with the accent (was a flat bg-card fill)
     // so the selected tab reads clearly and matches its accent indicator bar.
-    background: root.active ? Theme.accent-green.with-alpha(0.10) : transparent;
+    background: root.active ? Theme.accent-tint : transparent;
     border-radius: Theme.radius-button;
     border-width: key-focus.has-focus ? 2px : 0px;
     border-color: key-focus.has-focus ? Theme.focus-ring : transparent;
@@ -248,11 +248,11 @@ component TabButton inherits Rectangle {
     }
 
     // G-25 fix: subtle hover affordance for desktop mouse pointers.
-    // Inactive tabs lift to a 50% bg-card overlay + text moves to
-    // primary for a frame; never overrides the active-state styling.
+    // Inactive tabs lift to surface-2 + text moves to primary; never
+    // overrides the active-state styling.
     states [
         hovered when touch.has-hover && !root.active: {
-            background: Theme.bg-card.with-alpha(0.5);
+            background: Theme.surface-2;
             txt.color: Theme.text-primary;
         }
     ]

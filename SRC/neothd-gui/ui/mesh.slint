@@ -145,7 +145,7 @@ component PeerCard inherits Rectangle {
                         text: root.role;
                         color: Theme.text-tertiary;
                         font-family: Theme.font-mono;
-                        font-size: 9px;
+                        font-size: Theme.font-size-2xs;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                         letter-spacing: Theme.letter-spacing-wide;
@@ -159,7 +159,7 @@ component PeerCard inherits Rectangle {
                     overflow: elide;
                     color: Theme.text-disabled;
                     font-family: Theme.font-mono;
-                    font-size: 9px;
+                    font-size: Theme.font-size-2xs;
                     vertical-alignment: center;
                     width: 40px;
                     horizontal-alignment: right;
@@ -178,7 +178,7 @@ component PeerCard inherits Rectangle {
                         overflow: elide;
                         color: Theme.text-disabled;
                         font-family: Theme.font-mono;
-                        font-size: 9px;
+                        font-size: Theme.font-size-2xs;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -818,12 +818,12 @@ export component MeshView inherits Rectangle {
                                     height: 18px;
                                     width: 36px;
                                     border-radius: Theme.radius-pill;
-                                    background: Theme.warning-tint;
+                                    background: Theme.audit-tint;
                                     border-width: 1px;
-                                    border-color: Theme.warning;
+                                    border-color: Theme.audit;
                                     Text {
                                         text: "\{root.gossip-events.length}";
-                                        color: Theme.warning;
+                                        color: Theme.audit;
                                         font-family: Theme.font-mono;
                                         font-size: 9px;
                                         horizontal-alignment: center;
@@ -887,9 +887,9 @@ export component MeshView inherits Rectangle {
                             // DES-13 backup-at-rest
                             Rectangle {
                                 border-radius: Theme.radius-md;
-                                background: Theme.accent-green.with-alpha(0.08);
+                                background: Theme.memory-tint;
                                 border-width: 1px;
-                                border-color: Theme.accent-green.with-alpha(0.35);
+                                border-color: Theme.memory;
 
                                 VerticalLayout {
                                     padding: 14px;

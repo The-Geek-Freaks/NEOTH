@@ -137,13 +137,12 @@ export component Card inherits Rectangle {
     border-radius: Theme.radius-card;
     border-width: 1px;
     border-color: Theme.border-subtle;
-    // FIX-5 — subtle elevation: ambient accent-glow halo.
-    // A very-low-alpha glow lifts the card 1px above the canvas read.
-    // No binding loop: drop-shadow props are static, no self-reference.
-    drop-shadow-blur: 10px;
+    // FIX-5 — subtle elevation: neutral dark shadow (no accent halo on every
+    // card; accent-glow is reserved for focused/selected states only).
+    drop-shadow-blur: 4px;
     drop-shadow-offset-x: 0px;
     drop-shadow-offset-y: 1px;
-    drop-shadow-color: Theme.accent-glow;
+    drop-shadow-color: #00000040;
 
     // Clipped overlay so the gradient never spills past the Noble Curve.
     // Declared before the instantiation children, so content (transparent
@@ -632,20 +631,8 @@ component Toast inherits Rectangle {
     // because Toast is a VerticalLayout child — the layout engine owns `x`.
     // Opacity-only fade is the correct Slint 1.8 equivalent.
     opacity: 0;
-    init => { self.opacity = 1; self.life = 0; }
+    init => { self.opacity = 1; }
     animate opacity { duration: Theme.duration-toast-in; easing: cubic-bezier(0.16, 1, 0.3, 1); }
-
-    // I17 — visible lifetime countdown (Linear/Smashing toast guidance):
-    // hairline drains left→right over duration-toast-life. Rust owns the
-    // actual prune; this is purely informational. Collapses at mode 0.
-    property <float> life: 1.0;
-    animate life { duration: Theme.duration-toast-life; easing: linear; }
-    Rectangle {
-        x: 0; y: parent.height - self.height;
-        height: 2px;
-        width: parent.width * root.life;
-        background: root.led-color.with-alpha(0.55);
-    }
 
     VerticalLayout {
         padding: 12px; spacing: 6px;
@@ -905,7 +892,7 @@ export component NeothCheckBox inherits Rectangle {
             y: (parent.height - 20px) / 2;
             background: root.checked ? Theme.accent-green.with-alpha(0.18) : Theme.bg-card;
             border-radius: Theme.radius-xs;
-            border-width: check-focus.has-focus ? 2px : 1px;
+            border-width: 2px;
             border-color:
                 !root.enabled              ? Theme.border-subtle :
                 check-focus.has-focus      ? Theme.focus-ring :
@@ -986,16 +973,22 @@ export component NeothLineEdit inherits Rectangle {
     background: Theme.bg-base;
     border-radius: Theme.radius-button;
     border-width: 1px;
-    border-color:
-        !root.enabled        ? Theme.border-subtle :
-        input.has-focus      ? Theme.accent-green :
-        touch.has-hover      ? Theme.accent-green.with-alpha(0.6) :
-                                Theme.border-subtle;
+    // Default (also covers disabled): border-subtle. States drive focus/hover.
+    border-color: Theme.border-subtle;
 
-    animate border-color {
-        duration: Theme.duration-micro;
-        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
+    // Focus snaps instantly (WCAG 2.2 §3.3.3); hover retains smooth transition.
+    states [
+        focused when input.has-focus && root.enabled: {
+            border-color: Theme.accent-green;
+            in { animate border-color { duration: 0ms; } }
+            out { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+        }
+        hovered when touch.has-hover && root.enabled: {
+            border-color: Theme.accent-green.with-alpha(0.6);
+            in { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+            out { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+        }
+    ]
 
     HorizontalLayout {
         padding-left: Theme.space-base;
@@ -1065,16 +1058,22 @@ export component NeothTextArea inherits Rectangle {
     background: Theme.bg-base;
     border-radius: Theme.radius-button;
     border-width: 1px;
-    border-color:
-        !root.enabled        ? Theme.border-subtle :
-        input.has-focus      ? Theme.accent-green :
-        touch.has-hover      ? Theme.accent-green.with-alpha(0.6) :
-                                Theme.border-subtle;
+    // Default (also covers disabled): border-subtle. States drive focus/hover.
+    border-color: Theme.border-subtle;
 
-    animate border-color {
-        duration: Theme.duration-micro;
-        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
-    }
+    // Focus snaps instantly (WCAG 2.2 §3.3.3); hover retains smooth transition.
+    states [
+        focused when input.has-focus && root.enabled: {
+            border-color: Theme.accent-green;
+            in { animate border-color { duration: 0ms; } }
+            out { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+        }
+        hovered when touch.has-hover && root.enabled: {
+            border-color: Theme.accent-green.with-alpha(0.6);
+            in { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+            out { animate border-color { duration: Theme.duration-micro; easing: cubic-bezier(0.2, 0.8, 0.2, 1); } }
+        }
+    ]
 
     HorizontalLayout {
         padding: Theme.space-base;
