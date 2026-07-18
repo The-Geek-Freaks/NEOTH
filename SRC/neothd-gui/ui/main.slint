@@ -3076,6 +3076,26 @@ export component MainWindow inherits Window {
                 if (event.modifiers.control && event.text == "5") {
                     root.nav-active = "channels"; root.step = WizardStep.settings; return accept;
                 }
+                // Ctrl+6..9 — stable work/system surfaces (R4-09 step 4).
+                // Targets bypass sidebar complexity gating on purpose: the
+                // shortcut sets nav-active directly, like the palette.
+                if (event.modifiers.control && event.text == "6") {
+                    root.nav-active = "agents"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "7") {
+                    root.nav-active = "automation"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "8") {
+                    root.nav-active = "mesh"; root.step = WizardStep.settings; return accept;
+                }
+                if (event.modifiers.control && event.text == "9") {
+                    root.nav-active = "doctor"; root.step = WizardStep.settings; return accept;
+                }
+                // Ctrl+B — sidebar collapse/expand (R4-09 step 4).
+                if (event.modifiers.control && (event.text == "b" || event.text == "B")) {
+                    Theme.sidebar-collapsed = !Theme.sidebar-collapsed;
+                    return accept;
+                }
                 // Ctrl+, — settings/config, the desktop-app convention.
                 if (event.modifiers.control && event.text == ",") {
                     root.nav-active = "config"; root.step = WizardStep.settings; return accept;
@@ -4447,6 +4467,8 @@ export component MainWindow inherits Window {
                 for sc in [
                     { keys: "Ctrl+K", what: "Command palette — jump anywhere" },
                     { keys: "Ctrl+1…5", what: "Chat · Overview · Coding · Memory · Channels" },
+                    { keys: "Ctrl+6…9", what: "Agents · Automation · Mesh · Doctor" },
+                    { keys: "Ctrl+B", what: "Collapse / expand sidebar" },
                     { keys: "Ctrl+,", what: "Config" },
                     { keys: "Ctrl+/", what: "This cheatsheet" },
                     { keys: "Enter / Shift+Enter", what: "Send · newline (composer)" },
