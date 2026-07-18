@@ -909,6 +909,25 @@ impl OmiProbeAck {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct OmiConfigureSettingsAck {
+    pub enabled: bool,
+    pub mode: String,
+    pub endpoint: String,
+    pub listen_addr: String,
+    pub retention_days: u64,
+    pub retain_transcripts: bool,
+    pub audio_enabled: bool,
+    pub visual_enabled: bool,
+    pub video_enabled: bool,
+    pub allow_cloud_api: bool,
+    pub allow_cloud_summary: bool,
+    pub create_actions: bool,
+    pub seed_groundtruth: bool,
+    pub summary_enabled: bool,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryForgetAck {
@@ -1064,6 +1083,91 @@ impl MemoryForgetAck {
                 != "neoth memory erase-communication-profile --confirm"
         {
             return Err("memory forget communication-profile boundary is inconsistent".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiConfigureCredentialAck {
+    pub backend: String,
+    pub updated_fields: Vec<String>,
+    pub developer_api_key_present: bool,
+    pub native_ingest_token_present: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OmiConfigureAck {
+    pub operation: String,
+    pub operation_id: String,
+    pub path: String,
+    pub settings_sha256: String,
+    pub config_sha256: String,
+    pub reload_requested: bool,
+    pub reload_ts_unix: u64,
+    pub settings: OmiConfigureSettingsAck,
+    pub credentials: OmiConfigureCredentialAck,
+}
+
+impl OmiConfigureAck {
+    pub fn verify(
+        &self,
+        expected: &OmiConfigureSettingsAck,
+        expected_path: &Path,
+        developer_key_submitted: bool,
+        native_token_submitted: bool,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "omi.configure")?;
+        require_exact_path(&self.path, expected_path)?;
+        require_lower_hex(&self.operation_id, 32, "OMI operation id")?;
+        require_lower_hex(&self.settings_sha256, 64, "OMI settings SHA-256")?;
+        require_lower_hex(&self.config_sha256, 64, "OMI config SHA-256")?;
+        if !self.reload_requested || self.reload_ts_unix == 0 {
+            return Err("OMI acknowledgement does not bind a reload request".to_string());
+        }
+        if self.settings != *expected {
+            return Err(
+                "OMI acknowledgement settings do not match the submitted snapshot".to_string(),
+            );
+        }
+        if !matches!(self.credentials.backend.as_str(), "file" | "keychain") {
+            return Err(format!(
+                "OMI acknowledgement returned unknown credential backend `{}`",
+                self.credentials.backend
+            ));
+        }
+        let mut expected_fields = Vec::with_capacity(2);
+        if developer_key_submitted {
+            expected_fields.push("omi_developer_api_key".to_string());
+        }
+        if native_token_submitted {
+            expected_fields.push("omi_ingest_token".to_string());
+        }
+        if self.credentials.updated_fields != expected_fields {
+            return Err(
+                "OMI acknowledgement credential fields do not match the private submission"
+                    .to_string(),
+            );
+        }
+        if developer_key_submitted && !self.credentials.developer_api_key_present {
+            return Err("OMI acknowledgement did not verify the submitted Developer key".into());
+        }
+        if native_token_submitted && !self.credentials.native_ingest_token_present {
+            return Err("OMI acknowledgement did not verify the submitted native token".into());
+        }
+        if expected.enabled
+            && matches!(expected.mode.as_str(), "developer_api" | "both")
+            && !self.credentials.developer_api_key_present
+        {
+            return Err("enabled OMI Developer API mode has no verified credential".into());
+        }
+        if expected.enabled
+            && matches!(expected.mode.as_str(), "native_ingest" | "both")
+            && !self.credentials.native_ingest_token_present
+        {
+            return Err("enabled native OMI mode has no verified credential".into());
         }
         Ok(())
     }
@@ -1783,6 +1887,20 @@ fn require_action(actual: &str, expected: &str) -> Result<(), String> {
     } else {
         Err(format!(
             "acknowledged action `{actual}`, expected `{expected}`"
+        ))
+    }
+}
+
+fn require_lower_hex(value: &str, length: usize, label: &str) -> Result<(), String> {
+    if value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "{label} must contain exactly {length} lowercase hexadecimal characters"
         ))
     }
 }
@@ -4186,6 +4304,78 @@ mod tests {
                 "legacy Kanban mutation regressed to unchecked boundary: {unchecked}"
             );
         }
+    }
+
+    #[test]
+    fn omi_configure_receipt_binds_settings_credentials_generation_and_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let raw = serde_json::json!({
+            "operation": "omi.configure",
+            "operation_id": "0123456789abcdef0123456789abcdef",
+            "path": path.display().to_string(),
+            "settings_sha256": "a".repeat(64),
+            "config_sha256": "b".repeat(64),
+            "reload_requested": true,
+            "reload_ts_unix": 42,
+            "settings": {
+                "enabled": true,
+                "mode": "both",
+                "endpoint": "https://api.omi.me",
+                "listen_addr": "127.0.0.1:8003",
+                "retention_days": 14,
+                "retain_transcripts": true,
+                "audio_enabled": true,
+                "visual_enabled": true,
+                "video_enabled": false,
+                "allow_cloud_api": true,
+                "allow_cloud_summary": false,
+                "create_actions": true,
+                "seed_groundtruth": false,
+                "summary_enabled": true
+            },
+            "credentials": {
+                "backend": "keychain",
+                "updated_fields": ["omi_developer_api_key", "omi_ingest_token"],
+                "developer_api_key_present": true,
+                "native_ingest_token_present": true
+            }
+        });
+        let ack: OmiConfigureAck = serde_json::from_value(raw.clone()).unwrap();
+        let expected = OmiConfigureSettingsAck {
+            enabled: true,
+            mode: "both".into(),
+            endpoint: "https://api.omi.me".into(),
+            listen_addr: "127.0.0.1:8003".into(),
+            retention_days: 14,
+            retain_transcripts: true,
+            audio_enabled: true,
+            visual_enabled: true,
+            video_enabled: false,
+            allow_cloud_api: true,
+            allow_cloud_summary: false,
+            create_actions: true,
+            seed_groundtruth: false,
+            summary_enabled: true,
+        };
+        ack.verify(&expected, &path, true, true).unwrap();
+
+        let mut wrong = expected.clone();
+        wrong.retention_days = 15;
+        assert!(ack.verify(&wrong, &path, true, true).is_err());
+        assert!(ack.verify(&expected, &path, false, true).is_err());
+
+        let mut bad_hash = raw.clone();
+        bad_hash["config_sha256"] = serde_json::Value::String("ABC".to_string());
+        assert!(
+            serde_json::from_value::<OmiConfigureAck>(bad_hash)
+                .unwrap()
+                .verify(&expected, &path, true, true)
+                .is_err()
+        );
+        let mut unknown = raw;
+        unknown["unexpected"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<OmiConfigureAck>(unknown).is_err());
     }
 
     #[test]

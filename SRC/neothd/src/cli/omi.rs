@@ -38,6 +38,8 @@ pub enum OmiAction {
     Probe,
     /// Read a bounded JSON credential update from stdin. Secret values never enter argv.
     SetCredentials,
+    /// Atomically configure public OMI settings and optional credentials from bounded JSON stdin.
+    Configure,
     /// Permanently delete one conversation and every local derivative (privacy deletion wins over audit failure).
     Purge {
         conversation_id: String,
@@ -68,7 +70,7 @@ struct OmiContext {
     credentials: Credentials,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct OmiCredentialUpdate {
     #[serde(default)]
@@ -78,6 +80,10 @@ pub(crate) struct OmiCredentialUpdate {
 }
 
 impl OmiCredentialUpdate {
+    fn is_empty(&self) -> bool {
+        self.developer_api_key.is_none() && self.native_ingest_token.is_none()
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         if self.developer_api_key.is_none() && self.native_ingest_token.is_none() {
             bail!("OMI credential update contains no fields");
@@ -111,6 +117,119 @@ impl OmiCredentialUpdate {
         }
         fields
     }
+}
+
+/// Secret-free settings owned by the OMI Privacy panel. Advanced OMI bounds
+/// that are not surfaced there remain byte-for-byte present in freedom.yaml.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct OmiConfigureSettings {
+    enabled: bool,
+    mode: OmiIngestMode,
+    endpoint: String,
+    listen_addr: String,
+    retention_days: u64,
+    retain_transcripts: bool,
+    audio_enabled: bool,
+    visual_enabled: bool,
+    video_enabled: bool,
+    allow_cloud_api: bool,
+    allow_cloud_summary: bool,
+    create_actions: bool,
+    seed_groundtruth: bool,
+    summary_enabled: bool,
+}
+
+impl OmiConfigureSettings {
+    fn apply_to(&self, config: &mut crate::config::OmiConfig) {
+        config.enabled = self.enabled;
+        config.mode = self.mode;
+        config.endpoint.clone_from(&self.endpoint);
+        config.listen_addr.clone_from(&self.listen_addr);
+        config.retention_days = self.retention_days;
+        config.retain_transcripts = self.retain_transcripts;
+        config.audio_enabled = self.audio_enabled;
+        config.visual_enabled = self.visual_enabled;
+        config.video_enabled = self.video_enabled;
+        config.allow_cloud_api = self.allow_cloud_api;
+        config.allow_cloud_summary = self.allow_cloud_summary;
+        config.create_actions = self.create_actions;
+        config.seed_groundtruth = self.seed_groundtruth;
+        config.summary_enabled = self.summary_enabled;
+    }
+
+    fn overlay_yaml(&self, root: &mut serde_yaml::Value) -> Result<()> {
+        let root = root
+            .as_mapping_mut()
+            .context("freedom.yaml root must be a YAML mapping")?;
+        let omi_key = serde_yaml::Value::String("omi".to_string());
+        let mut omi = match root.remove(&omi_key) {
+            Some(serde_yaml::Value::Mapping(omi)) => omi,
+            Some(_) => bail!("freedom.yaml omi field must be a YAML mapping"),
+            None => serde_yaml::Mapping::new(),
+        };
+        let surfaced = serde_yaml::to_value(self).context("serialize submitted OMI settings")?;
+        let surfaced = surfaced
+            .as_mapping()
+            .context("submitted OMI settings did not serialize to a mapping")?;
+        for (key, value) in surfaced {
+            omi.insert(key.clone(), value.clone());
+        }
+        root.insert(omi_key, serde_yaml::Value::Mapping(omi));
+        Ok(())
+    }
+}
+
+impl From<&crate::config::OmiConfig> for OmiConfigureSettings {
+    fn from(config: &crate::config::OmiConfig) -> Self {
+        Self {
+            enabled: config.enabled,
+            mode: config.mode,
+            endpoint: config.endpoint.clone(),
+            listen_addr: config.listen_addr.clone(),
+            retention_days: config.retention_days,
+            retain_transcripts: config.retain_transcripts,
+            audio_enabled: config.audio_enabled,
+            visual_enabled: config.visual_enabled,
+            video_enabled: config.video_enabled,
+            allow_cloud_api: config.allow_cloud_api,
+            allow_cloud_summary: config.allow_cloud_summary,
+            create_actions: config.create_actions,
+            seed_groundtruth: config.seed_groundtruth,
+            summary_enabled: config.summary_enabled,
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OmiConfigureRequest {
+    settings: OmiConfigureSettings,
+    #[serde(default)]
+    credentials: OmiCredentialUpdate,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct OmiConfigureCredentialReceipt {
+    backend: String,
+    updated_fields: Vec<String>,
+    developer_api_key_present: bool,
+    native_ingest_token_present: bool,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct OmiConfigureReceipt {
+    operation: String,
+    operation_id: String,
+    path: String,
+    settings_sha256: String,
+    config_sha256: String,
+    reload_requested: bool,
+    reload_ts_unix: u64,
+    settings: OmiConfigureSettings,
+    credentials: OmiConfigureCredentialReceipt,
 }
 
 impl OmiContext {
@@ -388,21 +507,38 @@ fn read_status(path: &Path) -> Result<Option<crate::memory::omi::OmiStatus>> {
         .context("read OMI ledger status; run `neoth migrate` or start the daemon")
 }
 
-fn read_omi_credential_update() -> Result<OmiCredentialUpdate> {
-    const MAX_STDIN_BYTES: u64 = 8 * 1024;
+fn read_private_json_stdin<T>(label: &str, max_bytes: u64) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
     let mut body = zeroize::Zeroizing::new(Vec::new());
     std::io::stdin()
         .lock()
-        .take(MAX_STDIN_BYTES + 1)
+        .take(max_bytes + 1)
         .read_to_end(&mut body)
-        .context("read OMI credential update from stdin")?;
-    if body.len() as u64 > MAX_STDIN_BYTES {
-        bail!("OMI credential update exceeds {MAX_STDIN_BYTES} bytes");
+        .with_context(|| format!("read {label} from stdin"))?;
+    if body.len() as u64 > max_bytes {
+        bail!("{label} exceeds {max_bytes} bytes");
     }
+    serde_json::from_slice(&body).with_context(|| format!("parse {label} JSON from stdin"))
+}
+
+fn read_omi_credential_update() -> Result<OmiCredentialUpdate> {
+    const MAX_STDIN_BYTES: u64 = 8 * 1024;
     let update: OmiCredentialUpdate =
-        serde_json::from_slice(&body).context("parse OMI credential update JSON from stdin")?;
+        read_private_json_stdin("OMI credential update", MAX_STDIN_BYTES)?;
     update.validate()?;
     Ok(update)
+}
+
+fn read_omi_configure_request() -> Result<OmiConfigureRequest> {
+    const MAX_STDIN_BYTES: u64 = 32 * 1024;
+    let request: OmiConfigureRequest =
+        read_private_json_stdin("OMI configure request", MAX_STDIN_BYTES)?;
+    if !request.credentials.is_empty() {
+        request.credentials.validate()?;
+    }
+    Ok(request)
 }
 
 pub(crate) fn rollback_omi_keychain_updates(
@@ -461,32 +597,99 @@ pub(crate) fn stage_omi_keychain_update(
 }
 
 pub(crate) fn persist_omi_keychain_update(
+    freedom_path: &Path,
     credentials_path: &Path,
     store: &dyn crate::config::keychain::SecretStore,
     update: &OmiCredentialUpdate,
 ) -> Result<()> {
-    let applied = stage_omi_keychain_update(store, update)?;
+    // Stage both values as file overrides in one durable pair transaction
+    // before touching a non-transactional OS keychain. A process crash after
+    // any later keychain write therefore leaves the complete new generation
+    // reachable through the authoritative file overrides.
+    let expected_source = Credentials::update_raw_freedom_with_credentials_at(
+        freedom_path,
+        credentials_path,
+        |source, credentials| {
+            if let Some(value) = update.developer_api_key.as_ref() {
+                credentials.omi_developer_api_key = Some(value.clone());
+            }
+            if let Some(value) = update.native_ingest_token.as_ref() {
+                credentials.omi_ingest_token = Some(value.clone());
+            }
+            Ok((None, source.map(|body| body.as_bytes().to_vec())))
+        },
+    )
+    .context("stage OMI keychain values as crash-safe file overrides")?;
+    finalize_staged_omi_keychain_update_if_source(
+        freedom_path,
+        credentials_path,
+        store,
+        update,
+        expected_source.as_deref(),
+    )
+}
 
-    // File values intentionally override keychain values. Clear only the two
-    // updated OMI fields after the store writes succeed, otherwise an old
-    // emergency-file value would silently mask the newly stored credential.
-    if let Err(error) = Credentials::update_at(credentials_path, |credentials| {
-        if update.developer_api_key.is_some() {
-            credentials.omi_developer_api_key = None;
-        }
-        if update.native_ingest_token.is_some() {
-            credentials.omi_ingest_token = None;
-        }
-        Ok(())
-    }) {
-        let rollback = rollback_omi_keychain_updates(store, &applied);
+fn finalize_staged_omi_keychain_update_if_source(
+    freedom_path: &Path,
+    credentials_path: &Path,
+    store: &dyn crate::config::keychain::SecretStore,
+    update: &OmiCredentialUpdate,
+    expected_freedom_source: Option<&[u8]>,
+) -> Result<()> {
+    let mut applied = None;
+    let committed = Credentials::update_raw_freedom_with_credentials_at(
+        freedom_path,
+        credentials_path,
+        |source, credentials| {
+            anyhow::ensure!(
+                source.map(str::as_bytes) == expected_freedom_source,
+                "freedom.yaml changed before OMI keychain finalization"
+            );
+            if let Some(expected) = update.developer_api_key.as_ref() {
+                anyhow::ensure!(
+                    credentials
+                        .omi_developer_api_key
+                        .as_ref()
+                        .is_some_and(|current| current.expose() == expected.expose()),
+                    "staged OMI developer API key changed before keychain finalization"
+                );
+            }
+            if let Some(expected) = update.native_ingest_token.as_ref() {
+                anyhow::ensure!(
+                    credentials
+                        .omi_ingest_token
+                        .as_ref()
+                        .is_some_and(|current| current.expose() == expected.expose()),
+                    "staged OMI ingest token changed before keychain finalization"
+                );
+            }
+
+            // The exact config generation and both file receipts are checked
+            // while every pair lock is held. Only then may keychain writes
+            // begin; their prior values remain available for returned-error
+            // rollback, while a hard crash is masked by the file overrides.
+            applied = Some(stage_omi_keychain_update(store, update)?);
+            if update.developer_api_key.is_some() {
+                credentials.omi_developer_api_key = None;
+            }
+            if update.native_ingest_token.is_some() {
+                credentials.omi_ingest_token = None;
+            }
+            Ok((None, ()))
+        },
+    );
+    if let Err(error) = committed {
+        let rollback = applied
+            .as_deref()
+            .map(|applied| rollback_omi_keychain_updates(store, applied))
+            .unwrap_or_default();
         if rollback.is_empty() {
             return Err(error).context(
-                "clear OMI emergency-file overrides after keychain update; keychain rolled back",
+                "finalize staged OMI keychain values; file overrides remain authoritative and exact prior keychain values were restored",
             );
         }
         bail!(
-            "clear OMI emergency-file overrides failed ({error:#}); keychain rollback also failed: {}",
+            "finalize staged OMI keychain values failed ({error:#}); file overrides remain authoritative, but keychain rollback also failed: {}",
             rollback.join("; ")
         );
     }
@@ -494,76 +697,84 @@ pub(crate) fn persist_omi_keychain_update(
 }
 
 /// Finalize OMI values that were already committed as file overrides by the
-/// init pair transaction. The file values are a compare-and-swap receipt: a
-/// concurrent OMI writer wins and causes exact keychain rollback instead of
-/// having its newer file value silently cleared.
+/// init pair transaction. The exact current freedom generation is captured and
+/// compare-and-swapped so a concurrent config writer wins loudly instead of
+/// having its credentials silently cleared.
 pub(crate) fn finalize_staged_omi_keychain_update(
     credentials_path: &Path,
     store: &dyn crate::config::keychain::SecretStore,
     update: &OmiCredentialUpdate,
 ) -> Result<()> {
-    let applied = stage_omi_keychain_update(store, update)?;
-    let committed = Credentials::update_at(credentials_path, |credentials| {
-        if let Some(expected) = update.developer_api_key.as_ref() {
-            anyhow::ensure!(
-                credentials
-                    .omi_developer_api_key
-                    .as_ref()
-                    .is_some_and(|current| current.expose() == expected.expose()),
-                "staged OMI developer API key changed before keychain finalization"
-            );
-            credentials.omi_developer_api_key = None;
+    let freedom_path = credentials_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("freedom.yaml");
+    let expected_source = match std::fs::read(&freedom_path) {
+        Ok(source) => Some(source),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "read {} before OMI keychain finalization",
+                    freedom_path.display()
+                )
+            });
         }
-        if let Some(expected) = update.native_ingest_token.as_ref() {
-            anyhow::ensure!(
-                credentials
-                    .omi_ingest_token
-                    .as_ref()
-                    .is_some_and(|current| current.expose() == expected.expose()),
-                "staged OMI ingest token changed before keychain finalization"
-            );
-            credentials.omi_ingest_token = None;
-        }
-        Ok(())
-    });
-    if let Err(error) = committed {
-        let rollback = rollback_omi_keychain_updates(store, &applied);
-        if rollback.is_empty() {
-            return Err(error).context(
-                "finalize staged OMI keychain values; exact prior keychain values restored",
-            );
-        }
-        bail!(
-            "finalize staged OMI keychain values failed ({error:#}); keychain rollback also failed: {}",
-            rollback.join("; ")
-        );
-    }
-    Ok(())
+    };
+    finalize_staged_omi_keychain_update_if_source(
+        &freedom_path,
+        credentials_path,
+        store,
+        update,
+        expected_source.as_deref(),
+    )
 }
 
 pub(crate) fn persist_omi_credential_update(
     home: &Path,
-    backend: SecretsBackend,
     update: &OmiCredentialUpdate,
-) -> Result<()> {
-    let path = home.join("credentials.yaml");
-    match backend {
-        SecretsBackend::File => Credentials::update_at(&path, |credentials| {
+) -> Result<SecretsBackend> {
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    let (expected_source, backend) = Credentials::update_raw_freedom_with_credentials_at(
+        &freedom_path,
+        &credentials_path,
+        |source, credentials| {
+            let backend = source
+                .map(serde_yaml::from_str::<FreedomConfig>)
+                .transpose()
+                .context("parse freedom.yaml before OMI credential update")?
+                .map(|config| config.secrets_backend)
+                .unwrap_or(SecretsBackend::File);
             if let Some(value) = update.developer_api_key.as_ref() {
                 credentials.omi_developer_api_key = Some(value.clone());
             }
             if let Some(value) = update.native_ingest_token.as_ref() {
                 credentials.omi_ingest_token = Some(value.clone());
             }
-            Ok(())
-        })
-        .context("merge OMI credentials into the encrypted/private credential file"),
+            Ok((None, (source.map(|body| body.as_bytes().to_vec()), backend)))
+        },
+    )
+    .context("stage crash-safe OMI credential generation")?;
+    match backend {
+        SecretsBackend::File => {}
         SecretsBackend::Keychain => {
             let store = crate::config::keychain::open_store()
                 .context("open configured OS keychain for OMI credential update")?;
-            persist_omi_keychain_update(&path, store.as_ref(), update)
+            finalize_staged_omi_keychain_update_if_source(
+                &freedom_path,
+                &credentials_path,
+                store.as_ref(),
+                update,
+                expected_source.as_deref(),
+            )
+            .context(
+                "OMI credentials remain available through safe file overrides, but keychain finalization failed",
+            )?;
         }
     }
+    Ok(backend)
 }
 
 fn print_credential_update(
@@ -827,30 +1038,257 @@ async fn print_probe(context: &OmiContext, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+fn secrets_backend_name(backend: SecretsBackend) -> &'static str {
+    match backend {
+        SecretsBackend::File => "file",
+        SecretsBackend::Keychain => "keychain",
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+fn new_omi_operation_id() -> Result<String> {
+    let mut random = [0_u8; 16];
+    getrandom::getrandom(&mut random)
+        .map_err(|error| anyhow::anyhow!("OS RNG unavailable for OMI operation id: {error}"))?;
+    Ok(hex::encode(random))
+}
+
+fn render_omi_configure_target(
+    source: &str,
+    settings: &OmiConfigureSettings,
+) -> Result<(String, FreedomConfig)> {
+    anyhow::ensure!(
+        !source.trim().is_empty(),
+        "freedom.yaml is empty. Run `neoth init` first to generate it."
+    );
+    let mut persisted: serde_yaml::Value =
+        serde_yaml::from_str(source).context("parse freedom.yaml for OMI configure")?;
+    settings.overlay_yaml(&mut persisted)?;
+    let body = serde_yaml::to_string(&persisted)
+        .context("serialize losslessly merged OMI configuration")?;
+    let candidate: FreedomConfig =
+        serde_yaml::from_str(&body).context("validate merged OMI configuration")?;
+    anyhow::ensure!(
+        OmiConfigureSettings::from(&candidate.omi) == *settings,
+        "merged OMI settings do not match the submitted snapshot"
+    );
+    let _ = candidate.public_yaml()?;
+    Ok((body, candidate))
+}
+
+fn configure_omi_at_with_reload<R>(
+    home: &Path,
+    request: OmiConfigureRequest,
+    request_reload: R,
+) -> Result<OmiConfigureReceipt>
+where
+    R: FnOnce(&Path) -> Result<(PathBuf, u64)>,
+{
+    configure_omi_at_with_reload_and_validation_hook(home, request, request_reload, || {})
+}
+
+fn configure_omi_at_with_reload_and_validation_hook<R, H>(
+    home: &Path,
+    request: OmiConfigureRequest,
+    request_reload: R,
+    after_validation: H,
+) -> Result<OmiConfigureReceipt>
+where
+    R: FnOnce(&Path) -> Result<(PathBuf, u64)>,
+    H: FnOnce(),
+{
+    let freedom_path = home.join("freedom.yaml");
+    let credentials_path = home.join("credentials.yaml");
+    anyhow::ensure!(
+        freedom_path
+            .try_exists()
+            .with_context(|| format!("check {}", freedom_path.display()))?,
+        "freedom.yaml not found at {}. Run `neoth init` first to generate it.",
+        freedom_path.display()
+    );
+    if !request.credentials.is_empty() {
+        request.credentials.validate()?;
+    }
+
+    let operation_id = new_omi_operation_id()?;
+    let settings_body =
+        serde_json::to_vec(&request.settings).context("encode OMI settings binding")?;
+    let settings_sha256 = sha256_hex(&settings_body);
+    let updated_fields = request
+        .credentials
+        .updated_field_names()
+        .into_iter()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let settings = request.settings;
+    let credential_update = request.credentials;
+    let mut keychain_store: Option<Box<dyn crate::config::keychain::SecretStore>> = None;
+
+    // One recovery journal binds the exact before/after bytes for both files.
+    // The closure executes while the transaction lock plus both legacy locks
+    // are held, so neither an older CLI nor a concurrent daemon writer can
+    // publish between validation and the two durable renames.
+    let (expected_config, backend) = Credentials::update_raw_freedom_with_credentials_at(
+        &freedom_path,
+        &credentials_path,
+        |source, credentials| {
+            let source = source
+                .with_context(|| format!("freedom.yaml not found at {}", freedom_path.display()))?;
+            let (body, candidate) = render_omi_configure_target(source, &settings)?;
+
+            if let Some(value) = credential_update.developer_api_key.as_ref() {
+                credentials.omi_developer_api_key = Some(value.clone());
+            }
+            if let Some(value) = credential_update.native_ingest_token.as_ref() {
+                credentials.omi_ingest_token = Some(value.clone());
+            }
+
+            let backend = candidate.secrets_backend;
+            let mut effective_credentials = credentials.clone();
+            if backend == SecretsBackend::Keychain {
+                let store = crate::config::keychain::open_store()
+                    .context("open configured OS keychain for OMI configure")?;
+                crate::config::keychain::supplement_from_store(
+                    &mut effective_credentials,
+                    store.as_ref(),
+                )
+                .context("load coherent OMI credentials from the OS keychain")?;
+                keychain_store = Some(store);
+            }
+            candidate
+                .omi
+                .validate_with_credentials(&effective_credentials)
+                .map_err(anyhow::Error::msg)
+                .context("validate submitted OMI settings and effective credentials")?;
+            after_validation();
+            let expected = body.as_bytes().to_vec();
+            Ok((Some(body), (expected, backend)))
+        },
+    )
+    .context("commit crash-recoverable OMI settings/credential transaction")?;
+
+    if backend == SecretsBackend::Keychain && !credential_update.is_empty() {
+        let store = keychain_store
+            .as_deref()
+            .context("OMI keychain store was not retained for finalization")?;
+        finalize_staged_omi_keychain_update_if_source(
+            &freedom_path,
+            &credentials_path,
+            store,
+            &credential_update,
+            Some(&expected_config),
+        )
+        .context(
+            "OMI config committed with safe file overrides, but keychain finalization failed; retry configure after resolving the reported conflict",
+        )?;
+    }
+
+    // Read back and reload while the exact pair generation is locked. A newer
+    // writer in either inter-transaction gap wins loudly; no stale GUI success
+    // receipt is emitted. The committed generation hash lets operators and the
+    // GUI identify precisely what was verified.
+    crate::config::with_config_credential_migration_lock(&freedom_path, || {
+        let current_config = std::fs::read(&freedom_path)
+            .with_context(|| format!("read back committed {}", freedom_path.display()))?;
+        anyhow::ensure!(
+            current_config == expected_config,
+            "OMI configuration committed, but freedom.yaml changed before verified readback; refresh and retry"
+        );
+        let pair = crate::config::load_runtime_config_pair_from_path(&freedom_path)
+            .context("reload committed OMI config/credential generation")?;
+        let readback_settings = OmiConfigureSettings::from(&pair.config.omi);
+        anyhow::ensure!(
+            readback_settings == settings,
+            "OMI configuration readback does not match the submitted settings"
+        );
+        pair.config
+            .omi
+            .validate_with_credentials(&pair.credentials)
+            .map_err(anyhow::Error::msg)
+            .context("validate committed OMI readback")?;
+        let developer_present = pair.credentials.omi_developer_api_key.is_some();
+        let native_present = pair.credentials.omi_ingest_token.is_some();
+        if credential_update.developer_api_key.is_some() {
+            anyhow::ensure!(
+                developer_present,
+                "OMI Developer key is absent after commit"
+            );
+        }
+        if credential_update.native_ingest_token.is_some() {
+            anyhow::ensure!(native_present, "OMI native token is absent after commit");
+        }
+        anyhow::ensure!(
+            pair.config.secrets_backend == backend,
+            "OMI secrets backend changed before verified readback"
+        );
+        let (_, reload_ts_unix) = request_reload(home).context(
+            "OMI configuration committed and verified, but its reload request failed; run `neoth reload` and refresh OMI status",
+        )?;
+        Ok(OmiConfigureReceipt {
+            operation: "omi.configure".to_string(),
+            operation_id,
+            path: freedom_path.display().to_string(),
+            settings_sha256,
+            config_sha256: sha256_hex(&current_config),
+            reload_requested: true,
+            reload_ts_unix,
+            settings: readback_settings,
+            credentials: OmiConfigureCredentialReceipt {
+                backend: secrets_backend_name(backend).to_string(),
+                updated_fields,
+                developer_api_key_present: developer_present,
+                native_ingest_token_present: native_present,
+            },
+        })
+    })
+}
+
+fn print_configure_receipt(output: OutputFormat, receipt: &OmiConfigureReceipt) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(receipt)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(receipt)?),
+        OutputFormat::Table => {
+            println!("OMI configuration committed and verified: {}", receipt.path);
+            println!("  operation id    : {}", receipt.operation_id);
+            println!("  config sha256   : {}", receipt.config_sha256);
+            println!("  credential store: {}", receipt.credentials.backend);
+            println!("  reload requested: {}", receipt.reload_requested);
+        }
+    }
+    Ok(())
+}
+
 pub async fn run_omi(args: OmiArgs) -> Result<()> {
     if matches!(&args.action, OmiAction::SetCredentials) {
         let home = args
             .home
             .clone()
             .unwrap_or_else(FreedomConfig::default_neoth_home);
-        let config_path = home.join("freedom.yaml");
-        let backend = if config_path.exists() {
-            FreedomConfig::load_from_path(&config_path)
-                .with_context(|| format!("load OMI config from {}", config_path.display()))?
-                .secrets_backend
-        } else {
-            SecretsBackend::File
-        };
         let update = read_omi_credential_update()?;
         let updated_fields = update.updated_field_names();
-        persist_omi_credential_update(&home, backend, &update)?;
+        let backend = persist_omi_credential_update(&home, &update)?;
         return print_credential_update(args.output, backend, &updated_fields);
+    }
+    if matches!(&args.action, OmiAction::Configure) {
+        let home = args
+            .home
+            .clone()
+            .unwrap_or_else(FreedomConfig::default_neoth_home);
+        let request = read_omi_configure_request()?;
+        let receipt = configure_omi_at_with_reload(&home, request, |home| {
+            crate::cli::reload::request_reload_at(home)
+        })?;
+        return print_configure_receipt(args.output, &receipt);
     }
     let context = OmiContext::load(args.home)?;
     match args.action {
         OmiAction::Status => print_status(&context, args.output),
         OmiAction::Probe => print_probe(&context, args.output).await,
         OmiAction::SetCredentials => unreachable!("handled before OMI context load"),
+        OmiAction::Configure => unreachable!("handled before OMI context load"),
         OmiAction::Purge {
             conversation_id,
             yes,
@@ -1204,7 +1642,10 @@ mod tests {
             Some("omi_dev_replacement"),
             Some("0123456789abcdef0123456789abcdef"),
         );
-        persist_omi_credential_update(home.path(), SecretsBackend::File, &update).unwrap();
+        assert_eq!(
+            persist_omi_credential_update(home.path(), &update).unwrap(),
+            SecretsBackend::File
+        );
 
         let loaded = Credentials::load_or_default(&path).unwrap();
         assert_eq!(
@@ -1248,7 +1689,8 @@ mod tests {
             Some("0123456789abcdef0123456789abcdef"),
         );
 
-        persist_omi_keychain_update(&path, &store, &update).unwrap();
+        persist_omi_keychain_update(&home.path().join("freedom.yaml"), &path, &store, &update)
+            .unwrap();
 
         let file = Credentials::load_or_default(&path).unwrap();
         assert_eq!(
@@ -1314,6 +1756,241 @@ mod tests {
                 .unwrap()
                 .expose(),
             "concurrent-file-writer"
+        );
+    }
+
+    fn configure_settings() -> OmiConfigureSettings {
+        OmiConfigureSettings {
+            enabled: true,
+            mode: OmiIngestMode::Both,
+            endpoint: "https://api.omi.me".to_string(),
+            listen_addr: "127.0.0.1:8003".to_string(),
+            retention_days: 14,
+            retain_transcripts: true,
+            audio_enabled: true,
+            visual_enabled: true,
+            video_enabled: false,
+            allow_cloud_api: true,
+            allow_cloud_summary: false,
+            create_actions: true,
+            seed_groundtruth: false,
+            summary_enabled: true,
+        }
+    }
+
+    fn configure_request() -> OmiConfigureRequest {
+        OmiConfigureRequest {
+            settings: configure_settings(),
+            credentials: credential_update(
+                Some("omi_dev_configure"),
+                Some("0123456789abcdef0123456789abcdef"),
+            ),
+        }
+    }
+
+    fn write_configure_fixture(home: &Path) {
+        std::fs::write(
+            home.join("freedom.yaml"),
+            concat!(
+                "operator_id: alice\n",
+                "future_extension: keep-me\n",
+                "omi:\n",
+                "  poll_interval_secs: 45\n",
+                "  confidence_threshold: 0.8\n",
+            ),
+        )
+        .unwrap();
+        Credentials {
+            provider_key: Some(SecretString::from("provider-stays")),
+            ..Default::default()
+        }
+        .write(&home.join("credentials.yaml"))
+        .unwrap();
+    }
+
+    #[test]
+    fn configure_commits_one_verified_pair_and_secret_free_receipt() {
+        let home = tempfile::tempdir().unwrap();
+        write_configure_fixture(home.path());
+        let receipt = configure_omi_at_with_reload(home.path(), configure_request(), |home| {
+            let sentinel = home.join(".reload-requested-test");
+            std::fs::write(&sentinel, b"reload\n")?;
+            Ok((sentinel, 42))
+        })
+        .unwrap();
+
+        assert_eq!(receipt.operation, "omi.configure");
+        assert_eq!(receipt.operation_id.len(), 32);
+        assert_eq!(
+            receipt.settings_sha256,
+            sha256_hex(&serde_json::to_vec(&configure_settings()).unwrap())
+        );
+        assert_eq!(
+            receipt.config_sha256,
+            sha256_hex(&std::fs::read(home.path().join("freedom.yaml")).unwrap())
+        );
+        assert_eq!(receipt.reload_ts_unix, 42);
+        assert_eq!(receipt.settings, configure_settings());
+        assert_eq!(
+            receipt.credentials.updated_fields,
+            vec!["omi_developer_api_key", "omi_ingest_token"]
+        );
+        assert!(receipt.credentials.developer_api_key_present);
+        assert!(receipt.credentials.native_ingest_token_present);
+
+        let public = std::fs::read_to_string(home.path().join("freedom.yaml")).unwrap();
+        assert!(public.contains("future_extension: keep-me"));
+        assert!(public.contains("poll_interval_secs: 45"));
+        assert!(public.contains("confidence_threshold: 0.8"));
+        assert!(!public.contains("omi_dev_configure"));
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            OmiConfigureSettings::from(&pair.config.omi),
+            configure_settings()
+        );
+        assert_eq!(
+            pair.credentials.provider_key.as_ref().unwrap().expose(),
+            "provider-stays"
+        );
+        assert_eq!(
+            pair.credentials
+                .omi_developer_api_key
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "omi_dev_configure"
+        );
+
+        let wire = serde_json::to_string(&receipt).unwrap();
+        assert!(!wire.contains("omi_dev_configure"));
+        assert!(!wire.contains("0123456789abcdef"));
+        let mut unknown: serde_json::Value = serde_json::from_str(&wire).unwrap();
+        unknown["unexpected"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<OmiConfigureReceipt>(unknown).is_err());
+    }
+
+    #[test]
+    fn configure_validation_failure_preserves_both_files_exactly() {
+        let home = tempfile::tempdir().unwrap();
+        write_configure_fixture(home.path());
+        let freedom_path = home.path().join("freedom.yaml");
+        let credentials_path = home.path().join("credentials.yaml");
+        let freedom_before = std::fs::read(&freedom_path).unwrap();
+        let credentials_before = std::fs::read(&credentials_path).unwrap();
+        let mut request = configure_request();
+        request.settings.visual_enabled = false;
+        request.settings.video_enabled = true;
+        let reload_called = std::cell::Cell::new(false);
+
+        let error = configure_omi_at_with_reload(home.path(), request, |_| {
+            reload_called.set(true);
+            anyhow::bail!("must not reload")
+        })
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("video_enabled"));
+        assert!(!reload_called.get());
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+    }
+
+    #[test]
+    fn configure_reload_failure_reports_committed_state_without_success_receipt() {
+        let home = tempfile::tempdir().unwrap();
+        write_configure_fixture(home.path());
+        let error = configure_omi_at_with_reload(home.path(), configure_request(), |_| {
+            anyhow::bail!("injected reload failure")
+        })
+        .unwrap_err();
+        let error = format!("{error:#}");
+        assert!(error.contains("configuration committed and verified"));
+        assert!(error.contains("injected reload failure"));
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            OmiConfigureSettings::from(&pair.config.omi),
+            configure_settings()
+        );
+        pair.config
+            .omi
+            .validate_with_credentials(&pair.credentials)
+            .unwrap();
+    }
+
+    #[test]
+    fn configure_serializes_concurrent_config_writer_without_lost_update() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let home = tempfile::tempdir().unwrap();
+        write_configure_fixture(home.path());
+        let configure_home = home.path().to_path_buf();
+        let writer_path = home.path().join("freedom.yaml");
+        let (validated_tx, validated_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let configure = std::thread::spawn(move || {
+            configure_omi_at_with_reload_and_validation_hook(
+                &configure_home,
+                configure_request(),
+                |home| Ok((home.join(".reload-requested-test"), 7)),
+                || {
+                    validated_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                },
+            )
+        });
+        validated_rx.recv().unwrap();
+
+        let (writer_done_tx, writer_done_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            FreedomConfig::update_at(&writer_path, |config| {
+                config.operator_id = Some("concurrent-writer".to_string());
+                Ok(())
+            })
+            .unwrap();
+            writer_done_tx.send(()).unwrap();
+        });
+        assert!(
+            writer_done_rx
+                .recv_timeout(Duration::from_millis(150))
+                .is_err(),
+            "concurrent writer must wait through OMI validation and pair publication"
+        );
+        release_tx.send(()).unwrap();
+        let configure_result = configure.join().unwrap();
+        writer_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        writer.join().unwrap();
+        if let Err(error) = configure_result {
+            assert!(
+                format!("{error:#}").contains("changed before verified readback"),
+                "a concurrent winner must produce the explicit CAS conflict"
+            );
+        }
+
+        let pair =
+            crate::config::load_runtime_config_pair_from_path(&home.path().join("freedom.yaml"))
+                .unwrap();
+        assert_eq!(
+            pair.config.operator_id.as_deref(),
+            Some("concurrent-writer")
+        );
+        assert_eq!(
+            OmiConfigureSettings::from(&pair.config.omi),
+            configure_settings()
+        );
+        assert_eq!(
+            pair.credentials
+                .omi_developer_api_key
+                .as_ref()
+                .unwrap()
+                .expose(),
+            "omi_dev_configure"
         );
     }
 

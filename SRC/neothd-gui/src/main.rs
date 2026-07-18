@@ -3334,16 +3334,13 @@ fn main() -> Result<()> {
                 native_token: native_token.to_string(),
             };
             std::thread::spawn(move || {
-                let existing = fetch_omi_snapshot();
-                let result = save_omi_settings(
-                    &default_neoth_home(),
-                    &draft,
-                    existing.developer_credential_present,
-                    existing.native_credential_present,
-                );
+                let result = save_omi_settings(&default_neoth_home(), &draft);
                 let snapshot = fetch_omi_snapshot();
                 let status = match result {
-                    Ok(()) => "OMI settings saved; reload requested.".to_string(),
+                    Ok(receipt) => format!(
+                        "OMI settings saved, read back, and reload requested (generation {}).",
+                        receipt.config_sha256.chars().take(12).collect::<String>()
+                    ),
                     Err(error) => format!("OMI settings rejected: {error:#}"),
                 };
                 let _ = slint::invoke_from_event_loop(move || {
@@ -11444,6 +11441,20 @@ struct OmiSettingsDraft {
     native_token: String,
 }
 
+#[derive(Serialize)]
+struct OmiConfigureCredentialInput<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    developer_api_key: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native_ingest_token: Option<&'a str>,
+}
+
+#[derive(Serialize)]
+struct OmiConfigureRequestInput<'a> {
+    settings: &'a gui_action::OmiConfigureSettingsAck,
+    credentials: OmiConfigureCredentialInput<'a>,
+}
+
 fn persist_omi_credentials_via_cli(
     home: &Path,
     developer_key: &str,
@@ -11506,108 +11517,61 @@ fn persist_omi_credentials_via_cli(
 fn save_omi_settings(
     home: &Path,
     draft: &OmiSettingsDraft,
-    developer_key_present: bool,
-    native_token_present: bool,
-) -> Result<()> {
-    let retention_days = validate_omi_fields(
-        draft.enabled,
-        &draft.mode,
-        &draft.endpoint,
-        &draft.listen_addr,
-        &draft.retention_days,
-        draft.allow_cloud_api,
-        draft.allow_cloud_summary,
-        draft.summary_enabled,
-        draft.audio_enabled,
-        draft.image_enabled,
-        draft.video_enabled,
-        developer_key_present,
-        native_token_present,
-        &draft.developer_key,
-        &draft.native_token,
-    )?;
-    std::fs::create_dir_all(home).with_context(|| format!("create {}", home.display()))?;
-    let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-
-    // Secrets commit first through the daemon's strict, cross-process-locked
-    // credential API. The bounded JSON travels over child stdin, never argv;
-    // encrypted files and the configured keychain backend therefore retain
-    // their normal semantics. A later config-write failure can leave an unused
-    // secret, but never an enabled runtime missing its required credential.
-    persist_omi_credentials_via_cli(home, &draft.developer_key, &draft.native_token)?;
-
-    let freedom_path = home.join("freedom.yaml");
-    let mut root = if freedom_path.exists() {
-        let body = std::fs::read_to_string(&freedom_path)
-            .with_context(|| format!("read {}", freedom_path.display()))?;
-        serde_yaml::from_str::<serde_yaml::Value>(&body)
-            .with_context(|| format!("parse {}", freedom_path.display()))?
-    } else {
-        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+) -> Result<gui_action::OmiConfigureAck> {
+    let retention_days = draft
+        .retention_days
+        .parse::<u64>()
+        .context("OMI retention days must be an integer")?;
+    let settings = gui_action::OmiConfigureSettingsAck {
+        enabled: draft.enabled,
+        mode: draft.mode.clone(),
+        endpoint: draft.endpoint.clone(),
+        listen_addr: draft.listen_addr.clone(),
+        retention_days,
+        retain_transcripts: draft.retain_transcripts,
+        audio_enabled: draft.audio_enabled,
+        visual_enabled: draft.image_enabled,
+        video_enabled: draft.video_enabled,
+        allow_cloud_api: draft.allow_cloud_api,
+        allow_cloud_summary: draft.allow_cloud_summary,
+        create_actions: draft.create_actions,
+        seed_groundtruth: draft.seed_groundtruth,
+        summary_enabled: draft.summary_enabled,
     };
-    let root_map = root
-        .as_mapping_mut()
-        .context("freedom.yaml is not a YAML mapping")?;
-    let omi_key = serde_yaml::Value::from("omi");
-    let mut omi = root_map
-        .get(&omi_key)
-        .and_then(serde_yaml::Value::as_mapping)
-        .cloned()
-        .unwrap_or_default();
-    for (key, value) in [
-        ("enabled", serde_yaml::Value::from(draft.enabled)),
-        ("mode", serde_yaml::Value::from(draft.mode.clone())),
-        ("endpoint", serde_yaml::Value::from(draft.endpoint.clone())),
-        (
-            "listen_addr",
-            serde_yaml::Value::from(draft.listen_addr.clone()),
-        ),
-        ("retention_days", serde_yaml::Value::from(retention_days)),
-        (
-            "retain_transcripts",
-            serde_yaml::Value::from(draft.retain_transcripts),
-        ),
-        (
-            "audio_enabled",
-            serde_yaml::Value::from(draft.audio_enabled),
-        ),
-        (
-            "visual_enabled",
-            serde_yaml::Value::from(draft.image_enabled),
-        ),
-        (
-            "video_enabled",
-            serde_yaml::Value::from(draft.video_enabled),
-        ),
-        (
-            "allow_cloud_api",
-            serde_yaml::Value::from(draft.allow_cloud_api),
-        ),
-        (
-            "allow_cloud_summary",
-            serde_yaml::Value::from(draft.allow_cloud_summary),
-        ),
-        (
-            "create_actions",
-            serde_yaml::Value::from(draft.create_actions),
-        ),
-        (
-            "seed_groundtruth",
-            serde_yaml::Value::from(draft.seed_groundtruth),
-        ),
-        (
-            "summary_enabled",
-            serde_yaml::Value::from(draft.summary_enabled),
-        ),
-    ] {
-        omi.insert(serde_yaml::Value::from(key), value);
-    }
-    root_map.insert(omi_key, serde_yaml::Value::Mapping(omi));
-    let body = serde_yaml::to_string(&root).context("serialise OMI settings")?;
-    write_mode_0600(&freedom_path, body.as_bytes())?;
-    std::fs::write(home.join(".reload-requested"), b"reload\n")
-        .context("write OMI reload sentinel")?;
-    Ok(())
+    let developer_key_submitted = !draft.developer_key.is_empty();
+    let native_token_submitted = !draft.native_token.is_empty();
+    let request = OmiConfigureRequestInput {
+        settings: &settings,
+        credentials: OmiConfigureCredentialInput {
+            developer_api_key: developer_key_submitted.then_some(draft.developer_key.as_str()),
+            native_ingest_token: native_token_submitted.then_some(draft.native_token.as_str()),
+        },
+    };
+    let mut private_body = zeroize::Zeroizing::new(
+        serde_json::to_vec(&request).context("encode private OMI configure request")?,
+    );
+    let bin = which_neothd().context("NEOTH CLI not found; reinstall or repair PATH")?;
+    let mut command = spawn_neothd_plain(&bin);
+    command
+        .args(["--output", "json", "omi"])
+        .arg("--home")
+        .arg(home)
+        .arg("configure");
+    let acknowledgement = gui_action::run_json_with_private_stdin::<gui_action::OmiConfigureAck>(
+        &mut command,
+        "OMI configure",
+        private_body.as_mut_slice(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    acknowledgement
+        .verify(
+            &settings,
+            &home.join("freedom.yaml"),
+            developer_key_submitted,
+            native_token_submitted,
+        )
+        .map_err(anyhow::Error::msg)?;
+    Ok(acknowledgement)
 }
 
 fn run_omi_json_action<T>(
@@ -18909,60 +18873,25 @@ mod tests {
     }
 
     #[test]
-    fn omi_settings_save_preserves_unrelated_config_and_existing_credentials() {
-        let dir = TempDir::new().unwrap();
-        std::fs::write(
-            dir.path().join("freedom.yaml"),
-            "operator_id: alice\ninference:\n  mode: triplet\nomi:\n  poll_interval_secs: 45\n",
-        )
-        .unwrap();
-        std::fs::write(
-            dir.path().join("credentials.yaml"),
-            concat!(
-                "provider_key: keep-me\n",
-                "telegram_token: keep-too\n",
-                "omi_developer_api_key: omi_dev_existing\n",
-                "omi_ingest_token: 0123456789abcdef0123456789abcdef\n",
-            ),
-        )
-        .unwrap();
-        let draft = OmiSettingsDraft {
-            enabled: true,
-            mode: "both".into(),
-            endpoint: "https://api.omi.me".into(),
-            listen_addr: "127.0.0.1:8003".into(),
-            retention_days: "14".into(),
-            retain_transcripts: true,
-            audio_enabled: true,
-            image_enabled: true,
-            video_enabled: false,
-            allow_cloud_api: true,
-            allow_cloud_summary: false,
-            create_actions: true,
-            seed_groundtruth: false,
-            summary_enabled: true,
-            developer_key: String::new(),
-            native_token: String::new(),
-        };
-        save_omi_settings(dir.path(), &draft, true, true).unwrap();
+    fn omi_settings_save_uses_only_the_private_typed_cli_transaction() {
+        let source = include_str!("main.rs");
+        let start = source.find("fn save_omi_settings(").unwrap();
+        let end = source[start..]
+            .find("fn run_omi_subcommand(")
+            .map(|offset| start + offset)
+            .unwrap();
+        let implementation = &source[start..end];
 
-        let freedom = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
-        assert!(freedom.contains("mode: triplet"));
-        assert!(freedom.contains("poll_interval_secs: 45"));
-        assert!(freedom.contains("retain_transcripts: true"));
-        assert!(freedom.contains("audio_enabled: true"));
-        assert!(freedom.contains("visual_enabled: true"));
-        assert!(freedom.contains("video_enabled: false"));
-        assert!(freedom.contains("seed_groundtruth: false"));
-        assert!(!freedom.contains("omi_dev_existing"));
-        assert!(!freedom.contains("0123456789abcdef"));
-
-        let credentials = std::fs::read_to_string(dir.path().join("credentials.yaml")).unwrap();
-        assert!(credentials.contains("provider_key: keep-me"));
-        assert!(credentials.contains("telegram_token: keep-too"));
-        assert!(credentials.contains("omi_developer_api_key: omi_dev_existing"));
-        assert!(credentials.contains("omi_ingest_token: 0123456789abcdef0123456789abcdef"));
-        assert!(dir.path().join(".reload-requested").exists());
+        assert!(implementation.contains("OmiConfigureRequestInput"));
+        assert!(implementation.contains("zeroize::Zeroizing::new"));
+        assert!(implementation.contains("run_json_with_private_stdin::<"));
+        assert!(implementation.contains("gui_action::OmiConfigureAck"));
+        assert!(implementation.contains(".arg(\"configure\")"));
+        assert!(implementation.contains("acknowledgement\n        .verify("));
+        assert!(!implementation.contains("persist_omi_credentials_via_cli"));
+        assert!(!implementation.contains("FREEDOM_WRITE_LOCK"));
+        assert!(!implementation.contains("write_mode_0600"));
+        assert!(!implementation.contains(".reload-requested"));
     }
 
     #[test]
