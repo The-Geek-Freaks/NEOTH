@@ -4174,124 +4174,160 @@ fn main() -> Result<()> {
 
     // Research P0 — catalog probe: `neoth catalog list --output json`.
     let weak_catalog = window.as_weak();
+    let catalog_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let catalog_list_in_flight = std::sync::Arc::clone(&catalog_in_flight);
     window.on_catalog_run_clicked(move || {
+        if catalog_list_in_flight
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            push_toast(
+                &weak_catalog,
+                "info",
+                "Model catalog",
+                "A catalog operation is already running.",
+            );
+            return;
+        }
         let Some(w0) = weak_catalog.upgrade() else {
+            catalog_list_in_flight.store(false, std::sync::atomic::Ordering::Release);
             return;
         };
         w0.set_catalog_running(true);
         let weak = weak_catalog.clone();
+        let in_flight = std::sync::Arc::clone(&catalog_list_in_flight);
         std::thread::spawn(move || {
-            let output = match which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("catalog")
-                    .arg("list")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .ok()
-            }) {
-                Some(o) => {
-                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    if !err.trim().is_empty() {
-                        s.push('\n');
-                        s.push_str(&err);
-                    }
-                    if s.trim().is_empty() {
-                        "the model catalog is empty (run `neoth catalog refresh`).".to_string()
-                    } else {
-                        s
-                    }
-                }
-                None => "neothd binary not on PATH — cannot load catalog.".to_string(),
-            };
-            let _ = slint::invoke_from_event_loop(move || {
+            let expected_path = default_neoth_home().join("models_catalog.json");
+            let output = neothd_json_command(&["catalog", "list"]).and_then(|mut command| {
+                gui_action::run_catalog_list(
+                    &mut command,
+                    "Catalog list",
+                    &expected_path,
+                    None,
+                    None,
+                )
+            });
+            if let Err(error) = &output {
+                tracing::warn!(error = %error, "catalog list failed verification");
+                push_toast(&weak, "error", "Model catalog", error);
+            }
+            let in_flight_for_ui = std::sync::Arc::clone(&in_flight);
+            if slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.set_catalog_output(output.into());
+                    if let Ok(output) = output {
+                        w.set_catalog_output(output.into());
+                    }
                     w.set_catalog_running(false);
                 }
-            });
+                in_flight_for_ui.store(false, std::sync::atomic::Ordering::Release);
+            })
+            .is_err()
+            {
+                in_flight.store(false, std::sync::atomic::Ordering::Release);
+            }
         });
     });
 
-    // L97 — rebuild the model catalog from providers (`neoth catalog refresh`),
-    // then re-list. Status-checked: a failed rebuild shows an error toast.
+    // L97 — rebuild the model catalog from providers (`neoth catalog refresh`).
+    // A zero exit is insufficient: operation, result sets, and the exact
+    // instance path must verify before the GUI reports success or re-lists.
     let weak_catalog_refresh = window.as_weak();
+    let catalog_refresh_in_flight = std::sync::Arc::clone(&catalog_in_flight);
     window.on_catalog_refresh_clicked(move || {
+        if catalog_refresh_in_flight
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            push_toast(
+                &weak_catalog_refresh,
+                "info",
+                "Catalog rebuild",
+                "A catalog refresh is already running.",
+            );
+            return;
+        }
         let Some(w0) = weak_catalog_refresh.upgrade() else {
+            catalog_refresh_in_flight.store(false, std::sync::atomic::Ordering::Release);
             return;
         };
         w0.set_catalog_running(true);
         let weak = weak_catalog_refresh.clone();
+        let in_flight = std::sync::Arc::clone(&catalog_refresh_in_flight);
         std::thread::spawn(move || {
-            let refreshed = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("catalog")
-                    .arg("refresh")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(|e| tracing::warn!(error = %e, "catalog refresh spawn failed"))
-                    .ok()
+            let expected_path = default_neoth_home().join("models_catalog.json");
+            let refreshed = neothd_json_command(&["catalog", "refresh"]).and_then(|mut command| {
+                gui_action::run_catalog_refresh(
+                    &mut command,
+                    "Catalog refresh",
+                    &expected_path,
+                    false,
+                )
             });
-            let (kind, body): (&str, String) = match refreshed {
-                Some(o) if o.status.success() => (
-                    "success",
-                    "Model catalog rebuilt from providers.".to_string(),
-                ),
-                Some(o) => {
-                    let err = String::from_utf8_lossy(&o.stderr);
-                    let msg: String = err.trim().chars().take(160).collect();
-                    (
-                        "error",
-                        if msg.is_empty() {
-                            "catalog refresh exited non-zero".to_string()
-                        } else {
-                            msg
-                        },
-                    )
+            let (kind, body, output): (&'static str, String, Option<String>) = match refreshed {
+                Ok(outcome) => {
+                    let mut kind = outcome.toast_kind();
+                    let mut body = outcome.message().to_string();
+                    let (expected_generation, expected_hash) = match outcome.committed_snapshot() {
+                        Some((generation, hash)) => (Some(generation), Some(hash)),
+                        None => (None, None),
+                    };
+                    let readback = if outcome.catalog_changed() && expected_generation.is_none() {
+                        Err("Catalog refresh changed state without a committed snapshot"
+                            .to_string())
+                    } else {
+                        neothd_json_command(&["catalog", "list"]).and_then(|mut command| {
+                            gui_action::run_catalog_list(
+                                &mut command,
+                                "Catalog readback",
+                                &expected_path,
+                                expected_generation,
+                                expected_hash,
+                            )
+                        })
+                    };
+                    let output = match readback {
+                        Ok(output) => Some(output),
+                        Err(error) => {
+                            // A refresh receipt alone never updates GUI state;
+                            // even an unchanged snapshot must survive exact
+                            // typed readback before it is presented as loaded.
+                            kind = "warn";
+                            body = format!("{body} Verified catalog readback failed: {error}");
+                            None
+                        }
+                    };
+                    (kind, body, output)
                 }
-                None => (
-                    "error",
-                    "neothd binary not on PATH — cannot rebuild catalog.".to_string(),
-                ),
+                Err(error) => {
+                    tracing::warn!(error = %error, "catalog refresh failed verification");
+                    ("error", error, None)
+                }
             };
             push_toast(&weak, kind, "Catalog rebuild", &body);
-            // Re-list so the panel reflects the rebuilt catalog.
-            let listed = which_neothd().and_then(|bin| {
-                spawn_neothd_plain(&bin)
-                    .arg("catalog")
-                    .arg("list")
-                    .arg("--output")
-                    .arg("json")
-                    .output()
-                    .inspect_err(
-                        |e| tracing::warn!(error = %e, "catalog list refresh spawn failed"),
-                    )
-                    .ok()
-            });
-            let output = match listed {
-                Some(o) => {
-                    let mut s = String::from_utf8_lossy(&o.stdout).to_string();
-                    let e = String::from_utf8_lossy(&o.stderr);
-                    if !e.trim().is_empty() {
-                        s.push('\n');
-                        s.push_str(&e);
-                    }
-                    if s.trim().is_empty() {
-                        "the model catalog is empty (run `neoth catalog refresh`).".to_string()
-                    } else {
-                        s
-                    }
-                }
-                None => "neothd binary not on PATH — cannot load catalog.".to_string(),
-            };
-            let _ = slint::invoke_from_event_loop(move || {
+            let in_flight_for_ui = std::sync::Arc::clone(&in_flight);
+            if slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    w.set_catalog_output(output.into());
+                    if let Some(output) = output {
+                        w.set_catalog_output(output.into());
+                    }
                     w.set_catalog_running(false);
                 }
-            });
+                in_flight_for_ui.store(false, std::sync::atomic::Ordering::Release);
+            })
+            .is_err()
+            {
+                in_flight.store(false, std::sync::atomic::Ordering::Release);
+            }
         });
     });
 
