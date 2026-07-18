@@ -773,6 +773,11 @@ const KANBAN_LATEST_SESSION: i64 = -1;
 /// A3 — session-selector override: `KANBAN_LATEST_SESSION` = the newest active
 /// session over the warm stream, otherwise the concrete historical/live id the
 /// operator pinned. Read by every board fetch (click handler, refresh, poll).
+/// H16 — batch-select set ("#42" display ids). Stamped onto every board
+/// snapshot in `apply_kanban_snapshot`; mutated by the three H16 callbacks.
+static KANBAN_SELECTION: std::sync::LazyLock<std::sync::Mutex<panel_logic::KanbanSelection>> =
+    std::sync::LazyLock::new(|| std::sync::Mutex::new(panel_logic::KanbanSelection::default()));
+
 static KANBAN_SESSION_OVERRIDE: std::sync::atomic::AtomicI64 =
     std::sync::atomic::AtomicI64::new(KANBAN_LATEST_SESSION);
 
@@ -6148,6 +6153,86 @@ fn main() -> Result<()> {
                     }
                 }
             });
+        });
+
+        // H16 — batch-select: toggle one card's membership + restamp models.
+        let weak_sel = window.as_weak();
+        window.on_kanban_select_toggled(move |task_id| {
+            let Some(w) = weak_sel.upgrade() else { return };
+            {
+                let mut sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+                sel.toggle(task_id.as_str());
+            }
+            restamp_kanban_selection(&w);
+        });
+
+        // H16 — bulk-move every selected task, then refresh + clear.
+        let weak_bulk = window.as_weak();
+        window.on_kanban_bulk_move(move |status| {
+            let status = status.to_string();
+            let ids = {
+                let sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+                sel.sorted_ids()
+            };
+            if ids.is_empty() {
+                return;
+            }
+            let weak = weak_bulk.clone();
+            std::thread::spawn(move || {
+                let mut moved = 0usize;
+                let mut failed: Vec<String> = Vec::new();
+                for display_id in &ids {
+                    let id = display_id.trim_start_matches('#').to_string();
+                    let result = run_neothd_json_action::<gui_action::KanbanMoveAck>(
+                        &["kanban", "move", id.as_str(), status.as_str()],
+                        "Kanban bulk move",
+                    )
+                    .and_then(|ack| ack.verify(&id, &status));
+                    match result {
+                        Ok(()) => moved += 1,
+                        Err(_) => failed.push(display_id.clone()),
+                    }
+                }
+                if failed.is_empty() {
+                    push_toast(
+                        &weak,
+                        "success",
+                        "Kanban bulk move",
+                        &format!("{moved} task(s) → {status}"),
+                    );
+                } else {
+                    push_toast(
+                        &weak,
+                        "warn",
+                        "Kanban bulk move partial",
+                        &format!("{moved} moved, failed: {}", failed.join(", ")),
+                    );
+                }
+                {
+                    let mut sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+                    sel.clear();
+                }
+                let _ = slint::invoke_from_event_loop({
+                    let weak2 = weak.clone();
+                    move || {
+                        if let Some(w) = weak2.upgrade() {
+                            w.set_kanban_selected_count(0);
+                            w.invoke_kanban_refresh_clicked();
+                        }
+                    }
+                });
+            });
+        });
+
+        // H16 — clear selection without touching the board.
+        let weak_clr = window.as_weak();
+        window.on_kanban_selection_cleared(move || {
+            let Some(w) = weak_clr.upgrade() else { return };
+            {
+                let mut sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+                sel.clear();
+            }
+            restamp_kanban_selection(&w);
         });
 
         // H14 — hemisphere assignment from the card menu.
@@ -13577,6 +13662,8 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
                 .unwrap_or_default()
                 .into(),
             has_patch: task.patch_path.is_some(),
+            // H16 — stamped later by apply_kanban_snapshot.
+            selected: false,
         };
         // Wire-form status names mirror `TaskStatus::as_str` in
         // `neothd::coding::types`. Unknown statuses go to BACKLOG so
@@ -13675,6 +13762,8 @@ fn board_json_to_snapshot(b: GuiBoardJson) -> KanbanBoardSnapshot {
                 .unwrap_or_default()
                 .into(),
             has_patch: t.has_patch,
+            // H16 — stamped later by apply_kanban_snapshot.
+            selected: false,
         };
         match t.status.as_str() {
             "todo" => snap.todo.push(row),
@@ -14277,12 +14366,63 @@ fn format_hms_from_ns(ts_ns: u64) -> String {
     format!("{h:02}:{m:02}")
 }
 
+/// H16 — re-stamp `selected` flags on the five in-memory column models from
+/// the KANBAN_SELECTION store, without refetching the board. Runs on the
+/// event loop (models are UI-thread-owned).
+fn restamp_kanban_selection(window: &MainWindow) {
+    use slint::{Model as _, ModelRc, VecModel};
+    let sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+    let stamp = |model: ModelRc<KanbanTaskRow>| -> ModelRc<KanbanTaskRow> {
+        let rows: Vec<KanbanTaskRow> = model
+            .iter()
+            .map(|mut r| {
+                r.selected = sel.contains(r.task_id.as_str());
+                r
+            })
+            .collect();
+        ModelRc::new(VecModel::from(rows))
+    };
+    window.set_kanban_backlog(stamp(window.get_kanban_backlog()));
+    window.set_kanban_todo(stamp(window.get_kanban_todo()));
+    window.set_kanban_in_progress(stamp(window.get_kanban_in_progress()));
+    window.set_kanban_review(stamp(window.get_kanban_review()));
+    window.set_kanban_done(stamp(window.get_kanban_done()));
+    window.set_kanban_selected_count(sel.len() as i32);
+}
+
 /// Push a `KanbanBoardSnapshot` into the Slint properties. Warm snapshots and
 /// degraded catalog probes preserve the selector; a successful catalog probe
 /// replaces it even when empty. The caller must pass the selection-generation
 /// guard before invoking this function.
-fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
+fn apply_kanban_snapshot(window: &MainWindow, mut snap: KanbanBoardSnapshot) {
     use slint::{ModelRc, VecModel};
+    // H16 — stamp batch-selection onto the fresh rows and drop stale ids
+    // (tasks that vanished from the board must not stay silently selected).
+    {
+        let mut sel = KANBAN_SELECTION.lock().expect("kanban selection lock");
+        let known: Vec<String> = snap
+            .backlog
+            .iter()
+            .chain(&snap.todo)
+            .chain(&snap.in_progress)
+            .chain(&snap.review)
+            .chain(&snap.done)
+            .map(|r| r.task_id.to_string())
+            .collect();
+        sel.retain_known(&known);
+        for col in [
+            &mut snap.backlog,
+            &mut snap.todo,
+            &mut snap.in_progress,
+            &mut snap.review,
+            &mut snap.done,
+        ] {
+            for task in col.iter_mut() {
+                task.selected = sel.contains(task.task_id.as_str());
+            }
+        }
+        window.set_kanban_selected_count(sel.len() as i32);
+    }
     window.set_kanban_backlog(ModelRc::new(VecModel::from(snap.backlog)));
     window.set_kanban_todo(ModelRc::new(VecModel::from(snap.todo)));
     window.set_kanban_in_progress(ModelRc::new(VecModel::from(snap.in_progress)));

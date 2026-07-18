@@ -202,7 +202,11 @@ Kanban (Linear/Height/GH-Projects):
 - [ ] H13 **Space-Peek-Panel** (Karte nicht-disruptiv previewen). (Killer)
 - [x] H14 **AI-Agent als First-Class-Assignee** auf Karten (Linear-Agents-Modell — Hemisphere-Zuordnung sichtbar/steuerbar). (Killer)
 - [ ] H15 Inline-Diffs in Karten (syntax-highlighted). (High)
-- [ ] H16 Batch-Select + Bulk-Actions, WIP-Limits, Saved-Filter-Views, Swimlanes. (High)
+- [~] H16 (2026-07-18): Batch-Select ✅ (Ctrl+Click via pointer-event, amber
+      2px-Border + Tint; KanbanSelection-Store Rust-seitig, retain_known bei
+      Refresh) + Bulk-Bar ✅ (→Spalten/Archive/Block/Clear, count-getrieben,
+      Teilfehler-Toast). WIP-Limit-Viz war schon da (G5).
+      **Residual:** Saved-Filter-Views, Swimlanes.
 
 Chat (Claude/ChatGPT/Perplexity-Research):
 - [ ] H17 **Edit-and-Branch mit Variant-Navigator**. (Killer)

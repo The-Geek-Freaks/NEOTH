@@ -39,6 +39,7 @@ export struct KanbanTaskRow {
     eta: string,              // humanized remaining time ("~5m") or ""
     parent-ref: string,       // "#<id>" or "" (`parent` is a Slint keyword)
     has-patch: bool,          // ⌁ patch glyph when true
+    selected: bool,           // H16 — true when in the batch-select set (Rust-owned)
 }
 
 /// One row in the Code Sessions activity feed (right rail). Rust side
@@ -289,24 +290,44 @@ component KanbanTaskCard inherits Rectangle {
     /// this card. The KanbanColumn for-loop captures the bound `entry`
     /// and forwards it to the board as the current peek-candidate.
     callback hover-move();
+    /// H16 batch-select — true when this card is in the multi-select set.
+    /// Driven by KanbanTaskRow.selected (Rust-owned); distinct from
+    /// `selected` which is the single detail-pane pick.
+    in property <bool> batch-selected: false;
+    /// H16 — fires when the operator Ctrl+clicks this card to toggle
+    /// membership in the batch-select set.
+    callback select-toggled();
 
     min-height: 90px;
-    background: Theme.bg-card;
+    background: root.batch-selected ? Theme.accent-amber.with-alpha(0.08) : Theme.bg-card;
     border-radius: Theme.radius-button;
-    border-width: 1px;
-    border-color: root.selected ? Theme.accent-green : Theme.border-subtle;
+    border-width: root.batch-selected ? 2px : 1px;
+    border-color: root.batch-selected ? Theme.accent-amber
+                : root.selected ? Theme.accent-green : Theme.border-subtle;
 
     animate border-color {
         duration: Theme.duration-micro;
         easing: cubic-bezier(0.2, 0.8, 0.2, 1);
     }
+    animate background {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
 
     touch := TouchArea {
-        clicked => { root.clicked(); }
-        // A4: right-click fires context-menu with approximate window-space coords.
-        // root.absolute-position is the card's top-left in logical px from the window
-        // origin; self.mouse-x/y is the pointer offset within this TouchArea.
+        // H16: `clicked` is intentionally absent here. All left-button-up events
+        // are routed through pointer-event so we can inspect ev.modifiers.control:
+        //   Ctrl+click → select-toggled() (batch-select toggle, no detail open)
+        //   plain click → clicked()       (open detail pane, as before)
         pointer-event(ev) => {
+            if (ev.button == PointerEventButton.left && ev.kind == PointerEventKind.up) {
+                if (ev.modifiers.control) {
+                    root.select-toggled();
+                } else {
+                    root.clicked();
+                }
+            }
+            // A4: right-click fires context-menu with approximate window-space coords.
             if (ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
                 root.context-menu(
                     root.absolute-position.x + self.mouse-x,
@@ -480,6 +501,9 @@ component KanbanColumn inherits Rectangle {
     /// H13 — grants keyboard focus to the board-level FocusScope. Called on
     /// card click so the user can immediately press Space to open the peek.
     callback give-board-focus();
+    /// H16 — fires when the operator Ctrl+clicks a card in this column;
+    /// bubbles the task-id up to the board for Rust dispatch.
+    callback task-select-toggled(string /*task-id*/);
 
     property <bool> over-wip: root.wip-limit > 0 && root.tasks.length >= root.wip-limit;
 
@@ -532,9 +556,11 @@ component KanbanColumn inherits Rectangle {
                 parent-ref: entry.parent-ref;
                 has-patch: entry.has-patch;
                 selected: entry.task-id == root.selected-task-id;
+                batch-selected: entry.selected;
                 clicked => { root.task-clicked(entry.task-id); root.give-board-focus(); }
                 context-menu(x, y) => { root.task-context(entry.task-id, x, y); }
                 hover-move => { root.task-hovered(entry); }
+                select-toggled => { root.task-select-toggled(entry.task-id); }
             }
         }
     }
@@ -942,6 +968,19 @@ export component SettingsView inherits Rectangle {
     /// (card.absolute-position + mouse-within-card). The orchestrator uses
     /// these to position the shared ContextMenu overlay mounted in main.slint.
     callback kanban-task-context(string /*task id*/, length /*x*/, length /*y*/);
+    /// H16 — Ctrl+clicked a card: Rust toggles KanbanTaskRow.selected on that
+    /// task, then repopulates all 5 column arrays (and kanban-selected-count).
+    callback kanban-select-toggled(string /*task-id*/);
+    /// H16 — bulk-move all selected tasks to the given status column.
+    /// status: "backlog" | "todo" | "in_progress" | "review" | "done"
+    ///       | "archived" | "blocked"
+    callback kanban-bulk-move(string /*status*/);
+    /// H16 — clear all selected flags; Rust repopulates columns + sets
+    /// kanban-selected-count to 0.
+    callback kanban-selection-cleared;
+    /// H16 — count of currently batch-selected tasks; Rust writes this
+    /// whenever the selection changes. Drives the bulk-action bar visibility.
+    in property <int> kanban-selected-count: 0;
     /// G-5 fix — operator clicked "← Chat" in the sidebar header so
     /// they can leave Settings. Without this they were trapped
     /// because the ⚙ icon lives in the Chat sidebar (not visible
@@ -4215,6 +4254,80 @@ export component SettingsView inherits Rectangle {
                             }
                         }
 
+                        // H16 — bulk-action bar. Appears only when at least one card is
+                        // Ctrl+selected. Rust keeps kanban-selected-count accurate.
+                        if root.kanban-selected-count > 0: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+                            accessible-role: AccessibleRole.text;
+                            accessible-label: root.kanban-selected-count == 1
+                                ? "1 task selected — bulk actions"
+                                : "\{root.kanban-selected-count} tasks selected — bulk actions";
+
+                            Text {
+                                text: "\{root.kanban-selected-count} selected";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-primary;
+                                vertical-alignment: center;
+                            }
+                            // Separator dot
+                            Text {
+                                text: "·";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                            NeothButton {
+                                label: "→ To-Do";
+                                size: "xs";
+                                primary: false;
+                                clicked => { root.kanban-bulk-move("todo"); }
+                            }
+                            NeothButton {
+                                label: "→ In Progress";
+                                size: "xs";
+                                primary: false;
+                                clicked => { root.kanban-bulk-move("in_progress"); }
+                            }
+                            NeothButton {
+                                label: "→ Review";
+                                size: "xs";
+                                primary: false;
+                                clicked => { root.kanban-bulk-move("review"); }
+                            }
+                            NeothButton {
+                                label: "→ Done";
+                                size: "xs";
+                                primary: false;
+                                clicked => { root.kanban-bulk-move("done"); }
+                            }
+                            NeothButton {
+                                label: "Archive";
+                                size: "xs";
+                                primary: false;
+                                danger: true;
+                                clicked => { root.kanban-bulk-move("archived"); }
+                            }
+                            NeothButton {
+                                label: "Block";
+                                size: "xs";
+                                primary: false;
+                                danger: true;
+                                clicked => { root.kanban-bulk-move("blocked"); }
+                            }
+                            NeothButton {
+                                label: "Clear";
+                                size: "xs";
+                                primary: false;
+                                clicked => { root.kanban-selection-cleared(); }
+                            }
+                        }
+
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             alignment: stretch;
@@ -4229,6 +4342,7 @@ export component SettingsView inherits Rectangle {
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                                 task-hovered(row) => { root.peek-task = row; root.peek-status = "BACKLOG"; }
                                 give-board-focus => { board-focus.focus(); }
+                                task-select-toggled(id) => { root.kanban-select-toggled(id); }
                             }
                             KanbanColumn {
                                 label: "TODO";
@@ -4240,6 +4354,7 @@ export component SettingsView inherits Rectangle {
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                                 task-hovered(row) => { root.peek-task = row; root.peek-status = "TODO"; }
                                 give-board-focus => { board-focus.focus(); }
+                                task-select-toggled(id) => { root.kanban-select-toggled(id); }
                             }
                             KanbanColumn {
                                 label: "IN PROGRESS";
@@ -4254,6 +4369,7 @@ export component SettingsView inherits Rectangle {
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                                 task-hovered(row) => { root.peek-task = row; root.peek-status = "IN PROGRESS"; }
                                 give-board-focus => { board-focus.focus(); }
+                                task-select-toggled(id) => { root.kanban-select-toggled(id); }
                             }
                             KanbanColumn {
                                 label: "REVIEW";
@@ -4266,6 +4382,7 @@ export component SettingsView inherits Rectangle {
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                                 task-hovered(row) => { root.peek-task = row; root.peek-status = "REVIEW"; }
                                 give-board-focus => { board-focus.focus(); }
+                                task-select-toggled(id) => { root.kanban-select-toggled(id); }
                             }
                             KanbanColumn {
                                 label: "DONE";
@@ -4277,6 +4394,7 @@ export component SettingsView inherits Rectangle {
                                 task-context(id, x, y) => { root.kanban-task-context(id, x, y); }
                                 task-hovered(row) => { root.peek-task = row; root.peek-status = "DONE"; }
                                 give-board-focus => { board-focus.focus(); }
+                                task-select-toggled(id) => { root.kanban-select-toggled(id); }
                             }
                         }
 

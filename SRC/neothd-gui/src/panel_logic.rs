@@ -3707,6 +3707,79 @@ pub fn parse_bg_jobs(json: &str) -> Vec<(String, String, String)> {
         .collect()
 }
 
+// ── H16 kanban bulk-selection store ──────────────────────────────────────────
+
+/// Selected kanban task ids ("#42" display form). Plain set semantics —
+/// the GUI layer owns one instance behind a Mutex and re-stamps the board
+/// model's `selected` flags after every mutation.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct KanbanSelection(std::collections::HashSet<String>);
+
+impl KanbanSelection {
+    pub fn toggle(&mut self, id: &str) {
+        let id = id.trim();
+        if id.is_empty() {
+            return;
+        }
+        if !self.0.remove(id) {
+            self.0.insert(id.to_string());
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.0.contains(id.trim())
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Ids in deterministic order for the bulk-mutation loop.
+    pub fn sorted_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = self.0.iter().cloned().collect();
+        ids.sort();
+        ids
+    }
+
+    /// Drop ids that no longer exist on the board (stale after refresh).
+    pub fn retain_known(&mut self, known: &[String]) {
+        let known: std::collections::HashSet<&str> =
+            known.iter().map(String::as_str).collect();
+        self.0.retain(|id| known.contains(id.as_str()));
+    }
+}
+
+#[cfg(test)]
+mod kanban_selection_tests {
+    use super::KanbanSelection;
+
+    #[test]
+    fn toggle_clear_retain_roundtrip() {
+        let mut sel = KanbanSelection::default();
+        sel.toggle("#1");
+        sel.toggle("#2");
+        sel.toggle("#1"); // off again
+        assert!(!sel.contains("#1"));
+        assert!(sel.contains("#2"));
+        assert_eq!(sel.len(), 1);
+        sel.toggle("  "); // ignored
+        assert_eq!(sel.len(), 1);
+        sel.toggle("#3");
+        sel.retain_known(&["#2".into()]);
+        assert_eq!(sel.sorted_ids(), vec!["#2".to_string()]);
+        sel.clear();
+        assert!(sel.is_empty());
+    }
+}
+
 // ── F2 mesh sync-state parse ─────────────────────────────────────────────────
 
 /// One display row from `neoth cluster sync-state --output json`

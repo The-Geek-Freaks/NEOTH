@@ -1084,6 +1084,11 @@ export component MainWindow inherits Window {
     // Confirm gate for the destructive Remove Channel (deletes credentials).
     in-out property <bool>   channel-remove-confirm-open: false;
     callback kanban-move-task(string, string);
+    // H16 — batch-select surface.
+    in property <int> kanban-selected-count: 0;
+    callback kanban-select-toggled(string);
+    callback kanban-bulk-move(string);
+    callback kanban-selection-cleared();
     callback kanban-copy-task-id(string);
     // H14 — assign a card to a hemisphere worker from the context menu.
     callback kanban-assign-task(string, string);
@@ -3280,6 +3285,11 @@ export component MainWindow inherits Window {
             kanban-sessions: root.kanban-sessions;
             kanban-session-idx <=> root.kanban-session-idx;
             kanban-session-selected(i) => { root.kanban-session-selected(i); }
+            // H16 — batch-select plumbing.
+            kanban-selected-count: root.kanban-selected-count;
+            kanban-select-toggled(id) => { root.kanban-select-toggled(id); }
+            kanban-bulk-move(status) => { root.kanban-bulk-move(status); }
+            kanban-selection-cleared => { root.kanban-selection-cleared(); }
             cerebellum-bound: root.cerebellum-bound;
             safety-rails: root.safety-rails;
             rails-engaged-count: root.rails-engaged-count;
