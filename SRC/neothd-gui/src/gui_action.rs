@@ -911,6 +911,161 @@ impl OmiProbeAck {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct MemoryForgetAck {
+    pub operation: String,
+    pub confirmed: bool,
+    pub topic: String,
+    pub episode_rows: i64,
+    pub consolidated_rows: i64,
+    pub longterm_rows: i64,
+    pub raw_turn_rows: i64,
+    pub groundtruth_revoked: i64,
+    pub embedding_rows: i64,
+    pub profile_rows: i64,
+    pub profile_pending_rows: i64,
+    pub profile_outbox_rows: i64,
+    pub entity_rows: i64,
+    pub relation_rows: i64,
+    pub link_rows: i64,
+    pub contradiction_rows: i64,
+    pub foreign_event_rows: i64,
+    pub people_rows: i64,
+    pub commit: MemoryForgetCommitAck,
+    pub anti_resurrection_sentinel: MemoryForgetSentinelAck,
+    pub audit: MemoryForgetAuditAck,
+    pub communication_profile: MemoryForgetCommunicationProfileAck,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryForgetCommitAck {
+    pub database_path: String,
+    pub sqlite_cascade_committed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryForgetSentinelAck {
+    pub field: String,
+    pub active: bool,
+    pub never_recreate: bool,
+    pub asserted_by: String,
+    pub asserted_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryForgetAuditAck {
+    pub event_type: String,
+    pub segment_path: String,
+    pub segment_sha256: String,
+    pub persisted: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MemoryForgetCommunicationProfileAck {
+    pub subjects_deleted: usize,
+    pub topic_addressable: bool,
+    pub reason: String,
+    pub erase_with: String,
+}
+
+impl MemoryForgetAck {
+    pub fn deleted_total(&self) -> Result<i64, String> {
+        self.counts().into_iter().try_fold(0_i64, |total, count| {
+            if count < 0 {
+                return Err(
+                    "memory forget acknowledgement contains a negative mutation count".into(),
+                );
+            }
+            total.checked_add(count).ok_or_else(|| {
+                "memory forget acknowledgement mutation count overflowed".to_string()
+            })
+        })
+    }
+
+    fn counts(&self) -> [i64; 15] {
+        [
+            self.episode_rows,
+            self.consolidated_rows,
+            self.longterm_rows,
+            self.raw_turn_rows,
+            self.groundtruth_revoked,
+            self.embedding_rows,
+            self.profile_rows,
+            self.profile_pending_rows,
+            self.profile_outbox_rows,
+            self.entity_rows,
+            self.relation_rows,
+            self.link_rows,
+            self.contradiction_rows,
+            self.foreign_event_rows,
+            self.people_rows,
+        ]
+    }
+
+    pub fn verify(
+        &self,
+        expected_topic: &str,
+        expected_database: &Path,
+        expected_wal_dir: &Path,
+    ) -> Result<(), String> {
+        require_action(&self.operation, "memory.forget")?;
+        require_id(&self.topic, expected_topic)?;
+        if !self.confirmed || !self.commit.sqlite_cascade_committed {
+            return Err("memory forget did not acknowledge a committed confirmed mutation".into());
+        }
+        require_exact_path(&self.commit.database_path, expected_database)?;
+        self.deleted_total()?;
+        let expected_sentinel = format!("_tombstone.{}", expected_topic.trim().to_lowercase());
+        if self.anti_resurrection_sentinel.field != expected_sentinel
+            || !self.anti_resurrection_sentinel.active
+            || !self.anti_resurrection_sentinel.never_recreate
+            || self
+                .anti_resurrection_sentinel
+                .asserted_by
+                .trim()
+                .is_empty()
+            || self.anti_resurrection_sentinel.asserted_at <= 0
+        {
+            return Err(
+                "memory forget acknowledgement has invalid anti-resurrection evidence".into(),
+            );
+        }
+        require_action(&self.audit.event_type, "TOMBSTONE_REQUESTED")?;
+        if !self.audit.persisted || !is_sha256(&self.audit.segment_sha256) {
+            return Err("memory forget acknowledgement has invalid durable audit evidence".into());
+        }
+        let audit_path = Path::new(&self.audit.segment_path);
+        let expected_parent = std::path::absolute(expected_wal_dir)
+            .map_err(|error| format!("could not normalize expected WAL directory: {error}"))?;
+        let actual_parent = audit_path
+            .parent()
+            .ok_or_else(|| "memory forget audit receipt has no parent directory".to_string())?;
+        require_exact_path(actual_parent.to_string_lossy().as_ref(), &expected_parent)?;
+        if !audit_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("memory-forget-") && name.ends_with(".wal"))
+        {
+            return Err("memory forget audit receipt has an unexpected segment name".into());
+        }
+        if self.communication_profile.subjects_deleted != 0
+            || self.communication_profile.topic_addressable
+            || self.communication_profile.reason
+                != "typed_communication_evidence_is_not_topic_addressable"
+            || self.communication_profile.erase_with
+                != "neoth memory erase-communication-profile --confirm"
+        {
+            return Err("memory forget communication-profile boundary is inconsistent".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[allow(dead_code)] // Keep the complete status wire shape fail-closed as it evolves.
 pub struct ClusterStatusAck {
     pub mode: String,
@@ -972,6 +1127,146 @@ impl ClusterStatusAck {
                     peer.id
                 ));
             }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterPeerRevokeAck {
+    pub operation: String,
+    pub requested_peer: String,
+    pub canonical_peer: Option<String>,
+    pub removed: bool,
+    pub noop: bool,
+    pub post_state: ClusterPeerRevokePostStateAck,
+    pub audit: ClusterPeerRevokeAuditAck,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterPeerRevokePostStateAck {
+    pub registry_path: String,
+    pub registry_file_present: bool,
+    pub registry_sha256: Option<String>,
+    pub peer_count: usize,
+    pub canonical_peer_absent: bool,
+    pub verified: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterPeerRevokeAuditAck {
+    pub required: bool,
+    pub state: String,
+    pub event_type: Option<String>,
+    pub sidecar_path: Option<String>,
+    pub durable_handoff_persisted: bool,
+}
+
+impl ClusterPeerRevokeAck {
+    pub fn verify(&self, expected_peer: &str, expected_home: &Path) -> Result<(), String> {
+        require_action(&self.operation, "cluster.peer.revoke")?;
+        require_id(&self.requested_peer, expected_peer)?;
+        if self.removed == self.noop
+            || !self.post_state.verified
+            || !self.post_state.canonical_peer_absent
+        {
+            return Err("cluster revoke acknowledgement has inconsistent mutation state".into());
+        }
+        require_exact_path(
+            &self.post_state.registry_path,
+            &expected_home.join("cluster.yaml"),
+        )?;
+        match (
+            self.post_state.registry_file_present,
+            self.post_state.registry_sha256.as_deref(),
+        ) {
+            (true, Some(hash)) if is_sha256(hash) => {}
+            (false, None) if self.noop => {}
+            _ => return Err("cluster revoke acknowledgement has invalid registry evidence".into()),
+        }
+        if self.removed {
+            let canonical = self
+                .canonical_peer
+                .as_deref()
+                .ok_or_else(|| "cluster revoke omitted the canonical peer".to_string())?;
+            if canonical.len() != 64
+                || !canonical
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err("cluster revoke returned an invalid canonical peer key".into());
+            }
+            let requested_key = expected_peer.trim().to_ascii_lowercase();
+            if !requested_key.is_empty()
+                && requested_key
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                && !canonical.starts_with(&requested_key)
+            {
+                return Err(
+                    "cluster revoke canonical peer does not match the requested key prefix".into(),
+                );
+            }
+            if !self.audit.required
+                || self.audit.state != "sidecar_committed_for_wal_ingest"
+                || self.audit.event_type.as_deref() != Some("CLUSTER_PEER_REVOKED")
+                || !self.audit.durable_handoff_persisted
+            {
+                return Err(
+                    "cluster revoke acknowledgement has invalid audit handoff evidence".into(),
+                );
+            }
+            let sidecar = self
+                .audit
+                .sidecar_path
+                .as_deref()
+                .ok_or_else(|| "cluster revoke omitted its audit sidecar path".to_string())?;
+            let sidecar = Path::new(sidecar);
+            let parent = sidecar
+                .parent()
+                .ok_or_else(|| "cluster revoke audit sidecar has no parent".to_string())?;
+            require_exact_path(
+                parent.to_string_lossy().as_ref(),
+                &expected_home.join("pending_audit"),
+            )?;
+            if !sidecar
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| {
+                    name.starts_with("cluster_peer_revoked_") && name.ends_with(".json")
+                })
+            {
+                return Err("cluster revoke audit sidecar name is invalid".into());
+            }
+        } else if self.canonical_peer.is_some()
+            || self.audit.required
+            || self.audit.state != "not_required_noop"
+            || self.audit.event_type.is_some()
+            || self.audit.sidecar_path.is_some()
+            || self.audit.durable_handoff_persisted
+        {
+            return Err("cluster revoke no-op acknowledgement claims mutation evidence".into());
+        }
+        Ok(())
+    }
+
+    pub fn verify_readback(&self, status: &ClusterStatusAck) -> Result<(), String> {
+        status.verify()?;
+        if status.peer_count != self.post_state.peer_count {
+            return Err(format!(
+                "cluster revoke readback returned {} peers, receipt committed {}",
+                status.peer_count, self.post_state.peer_count
+            ));
+        }
+        if let Some(canonical) = self.canonical_peer.as_deref()
+            && status.peers.iter().any(|peer| peer.id == canonical)
+        {
+            return Err(format!(
+                "cluster revoke readback still contains peer `{canonical}`"
+            ));
         }
         Ok(())
     }
@@ -1494,6 +1789,13 @@ fn require_task_id(actual: i64, expected: &str) -> Result<(), String> {
             "acknowledged task id `{actual}`, expected `{expected}`"
         ))
     }
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn require_exact_path(actual: &str, expected_path: &Path) -> Result<(), String> {
@@ -3106,6 +3408,158 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    #[test]
+    fn sensitive_receipts_bind_forget_and_revoke_to_durable_evidence() {
+        let home = tempfile::tempdir().unwrap();
+        let views = home.path().join("views.db");
+        let wal = home.path().join("wal");
+        let forget_value = serde_json::json!({
+            "operation": "memory.forget",
+            "confirmed": true,
+            "topic": "AcmeCorp",
+            "episode_rows": 1,
+            "consolidated_rows": 2,
+            "longterm_rows": 3,
+            "raw_turn_rows": 4,
+            "groundtruth_revoked": 5,
+            "embedding_rows": 6,
+            "profile_rows": 7,
+            "profile_pending_rows": 8,
+            "profile_outbox_rows": 9,
+            "entity_rows": 10,
+            "relation_rows": 11,
+            "link_rows": 12,
+            "contradiction_rows": 13,
+            "foreign_event_rows": 14,
+            "people_rows": 15,
+            "commit": {
+                "database_path": views,
+                "sqlite_cascade_committed": true
+            },
+            "anti_resurrection_sentinel": {
+                "field": "_tombstone.acmecorp",
+                "active": true,
+                "never_recreate": true,
+                "asserted_by": "cli",
+                "asserted_at": 1_700_000_000_i64
+            },
+            "audit": {
+                "event_type": "TOMBSTONE_REQUESTED",
+                "segment_path": wal.join("memory-forget-1700000000.wal"),
+                "segment_sha256": "ab".repeat(32),
+                "persisted": true
+            },
+            "communication_profile": {
+                "subjects_deleted": 0,
+                "topic_addressable": false,
+                "reason": "typed_communication_evidence_is_not_topic_addressable",
+                "erase_with": "neoth memory erase-communication-profile --confirm"
+            }
+        });
+        let forget: MemoryForgetAck = serde_json::from_value(forget_value.clone()).unwrap();
+        forget.verify("AcmeCorp", &views, &wal).unwrap();
+        assert_eq!(forget.deleted_total().unwrap(), (1..=15).sum());
+        assert!(forget.verify("Other", &views, &wal).is_err());
+        let mut unknown_forget = forget_value;
+        unknown_forget["uncontracted"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<MemoryForgetAck>(unknown_forget).is_err());
+
+        let canonical = "cd".repeat(32);
+        let revoke_value = serde_json::json!({
+            "operation": "cluster.peer.revoke",
+            "requested_peer": "cdcd",
+            "canonical_peer": canonical.clone(),
+            "removed": true,
+            "noop": false,
+            "post_state": {
+                "registry_path": home.path().join("cluster.yaml"),
+                "registry_file_present": true,
+                "registry_sha256": "ef".repeat(32),
+                "peer_count": 1,
+                "canonical_peer_absent": true,
+                "verified": true
+            },
+            "audit": {
+                "required": true,
+                "state": "sidecar_committed_for_wal_ingest",
+                "event_type": "CLUSTER_PEER_REVOKED",
+                "sidecar_path": home.path().join("pending_audit/cluster_peer_revoked_1.json"),
+                "durable_handoff_persisted": true
+            }
+        });
+        let revoke: ClusterPeerRevokeAck = serde_json::from_value(revoke_value).unwrap();
+        revoke.verify("cdcd", home.path()).unwrap();
+
+        let status_value = serde_json::json!({
+            "mode": "cluster",
+            "policy": "trusted-only",
+            "peer_count": 1,
+            "conflict_count": 0,
+            "operator_id": "operator",
+            "node_id": "node",
+            "cluster_name": "test",
+            "cluster_passphrase_set": true,
+            "cluster_identity_configured": true,
+            "cluster_enabled": true,
+            "restart_required": false,
+            "transport_active": true,
+            "transport": "active",
+            "listen_port": 4242,
+            "mdns_enabled": true,
+            "trusted_ssids": [],
+            "peers": [{
+                "id": "ef".repeat(32),
+                "label": "survivor",
+                "last_seen": "now",
+                "last_seen_unix": 1_700_000_000_i64,
+                "reachable": true
+            }],
+            "gossip": {"replicate_raw_ingress": false, "replay_budget_days": 7}
+        });
+        let status: ClusterStatusAck = serde_json::from_value(status_value.clone()).unwrap();
+        revoke.verify_readback(&status).unwrap();
+        let mut stale = status_value;
+        stale["peers"][0]["id"] = serde_json::json!(canonical);
+        let stale: ClusterStatusAck = serde_json::from_value(stale).unwrap();
+        assert!(revoke.verify_readback(&stale).is_err());
+    }
+
+    #[test]
+    fn sensitive_gui_mutations_cannot_infer_success_from_process_exit() {
+        let source = include_str!("main.rs");
+        let revoke_start = source
+            .find("L73 — mesh peer context menu: revoke")
+            .expect("cluster revoke callback marker");
+        let revoke_end = source[revoke_start..]
+            .find("let weak_conflict_resolve")
+            .map(|offset| revoke_start + offset)
+            .expect("cluster revoke callback end marker");
+        let revoke = &source[revoke_start..revoke_end];
+        assert!(revoke.contains("run_neothd_json_action::<gui_action::ClusterPeerRevokeAck>"));
+        assert!(revoke.contains("ack.verify(&peer, &expected_home)?"));
+        assert!(revoke.contains("ack.verify_readback(&readback)?"));
+
+        let forget_start = source
+            .find("GUI-overhaul feature parity — Memory \"forget a topic\", permanent")
+            .expect("memory forget callback marker");
+        let forget_end = source[forget_start..]
+            .find("GUI-overhaul (gap panel")
+            .map(|offset| forget_start + offset)
+            .expect("memory forget callback end marker");
+        let forget = &source[forget_start..forget_end];
+        assert!(forget.contains("run_neothd_json_action::<gui_action::MemoryForgetAck>"));
+        assert!(forget.contains("ack.verify(&topic, &expected_database, &expected_wal_dir)?"));
+
+        for (name, callback) in [("cluster revoke", revoke), ("memory forget", forget)] {
+            for unchecked in ["spawn_neothd_plain", ".output()", "status.success()"] {
+                assert!(
+                    !callback.contains(unchecked),
+                    "{name} mutation regressed to unchecked boundary: {unchecked}"
+                );
+            }
+        }
     }
 
     #[test]

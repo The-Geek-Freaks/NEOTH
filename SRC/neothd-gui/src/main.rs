@@ -7051,42 +7051,44 @@ fn main() -> Result<()> {
             let weak = weak_mesh_revoke.clone();
             let peer = peer_id.to_string();
             std::thread::spawn(move || {
-                // Revoke is destructive — check the exit status so a failure is
-                // NOT reported as success. run_neothd_probe merges stderr and
-                // drops the status, so spawn directly here.
-                let result = which_neothd().and_then(|bin| {
-                    let mut c = spawn_neothd_plain(&bin);
-                    c.arg("cluster").arg("revoke").arg(peer.as_str());
-                    c.output()
-                        .inspect_err(|e| tracing::warn!(error = %e, "cluster revoke spawn failed"))
-                        .ok()
+                let expected_home = default_neoth_home();
+                let result = run_neothd_json_action::<gui_action::ClusterPeerRevokeAck>(
+                    &["cluster", "revoke", peer.as_str()],
+                    "Cluster peer revoke",
+                )
+                .and_then(|ack| {
+                    ack.verify(&peer, &expected_home)?;
+                    let readback = run_neothd_json_action::<gui_action::ClusterStatusAck>(
+                        &["cluster", "status"],
+                        "Cluster revoke readback",
+                    )?;
+                    ack.verify_readback(&readback)?;
+                    Ok(ack)
                 });
                 match result {
-                    Some(o) if o.status.success() => {
+                    Ok(ack) => {
+                        let body = if ack.removed {
+                            let canonical = ack.canonical_peer.as_deref().unwrap_or(peer.as_str());
+                            format!(
+                                "Removed peer {canonical}; registry and audit handoff verified."
+                            )
+                        } else {
+                            format!("Peer {peer} was already absent; registry readback verified.")
+                        };
                         push_toast(
                             &weak,
                             "success",
-                            "Mesh peer removed",
-                            &format!("Removed peer {peer}."),
+                            if ack.removed {
+                                "Mesh peer removed"
+                            } else {
+                                "Mesh peer already absent"
+                            },
+                            &body,
                         );
                         refresh_mesh(weak.clone());
                     }
-                    Some(o) => {
-                        let err = String::from_utf8_lossy(&o.stderr);
-                        let msg: String = err.trim().chars().take(160).collect();
-                        push_toast(
-                            &weak,
-                            "error",
-                            "Revoke failed",
-                            if msg.is_empty() {
-                                "cluster revoke exited non-zero"
-                            } else {
-                                msg.as_str()
-                            },
-                        );
-                    }
-                    None => {
-                        push_toast(&weak, "error", "Revoke failed", "neoth binary not found");
+                    Err(error) => {
+                        push_toast(&weak, "error", "Revoke failed", &error);
                     }
                 }
             });
@@ -7656,27 +7658,39 @@ fn main() -> Result<()> {
         let weak = weak_mem_confirm.clone();
         let topic = topic.to_string();
         std::thread::spawn(move || {
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("memory")
-                        .arg("--forget")
-                        .arg(&topic)
-                        .arg("--confirm")
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
-            let memory = fetch_memory_snapshot();
+            let expected_home = default_neoth_home();
+            let expected_database = expected_home.join("views.db");
+            let expected_wal_dir = expected_home.join("wal");
+            let result = run_neothd_json_action::<gui_action::MemoryForgetAck>(
+                &["memory", "--forget", topic.as_str(), "--confirm"],
+                "Memory forget",
+            )
+            .and_then(|ack| {
+                ack.verify(&topic, &expected_database, &expected_wal_dir)?;
+                let deleted_total = ack.deleted_total()?;
+                Ok((ack, deleted_total))
+            });
+            let memory = result.as_ref().ok().map(|_| fetch_memory_snapshot());
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    apply_memory(&w, memory);
-                    w.set_status_line(if ok {
-                        format!("Forgot \"{topic}\" — memory wiped.").into()
-                    } else {
-                        format!("Forget \"{topic}\" failed (is neothd on PATH?).").into()
-                    });
+                    match (result, memory) {
+                        (Ok((_ack, deleted_total)), Some(memory)) => {
+                            apply_memory(&w, memory);
+                            w.set_status_line(
+                                format!(
+                                    "Forgot \"{topic}\" — {} records changed; durable audit and replay guard verified.",
+                                    deleted_total
+                                )
+                                .into(),
+                            );
+                        }
+                        (Err(error), _) => {
+                            w.set_status_line(
+                                format!("Forget \"{topic}\" was not verified: {error}").into(),
+                            );
+                        }
+                        (Ok(_), None) => unreachable!("successful receipt always refreshes memory"),
+                    }
                 }
             });
         });
