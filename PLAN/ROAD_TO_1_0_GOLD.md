@@ -331,14 +331,20 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   request-bound receipts and verified post-state; malformed structured reads
   remain visible errors. Memory Forget and peer revoke bind destructive success
   to durable post-state and audit evidence, with collision-resistant receipt
-  paths and rollback-safe registry mutation. Configured external chat channels
-  remain visible but explicitly disabled because no chat route exists, and
-  historical chat sessions are explicitly read-only because transcript/session
-  control is not implemented.
+  paths and rollback-safe registry mutation. `backup.create-default` (2026-07-19,
+  `e3d5756f`) now binds the default GUI backup to a self-identifying `BackupAck`
+  receipt plus an on-disk archive readback (non-empty regular file at the
+  acknowledged path) and refuses any receipt claiming bundled plaintext
+  credentials the GUI never requested — promoting that operation row from Partial
+  to Verified. Configured external chat channels remain visible but explicitly
+  disabled because no chat route exists, and historical chat sessions are
+  explicitly read-only because transcript/session control is not implemented.
 
-  This is not complete R4-05 parity. `backup.create-default` and
-  `omi.set-credentials` remain partial, `interface.show` and day-two CLI
-  switching remain partial, and `restore.archive` remains unwired. The nested
+  This is not complete R4-05 parity. The remaining `OPERATION_INVENTORY` gaps are
+  `omi.set-credentials` (first-run compatibility leaf, checks only process exit),
+  `interface.show` (no day-two show/refresh action) and day-two CLI switching
+  (no readback of the saved interface preference before handoff) — all partial —
+  and `restore.archive`, which remains unwired. The nested
   manifest does not yet decompose every public CLI capability; external-channel
   chat routing and a real chat-session controller remain absent, and the broader
   onboarding/Buddy/accessibility work is unchanged.
