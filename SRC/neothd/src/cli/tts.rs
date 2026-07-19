@@ -318,8 +318,10 @@ mod tests {
     #[test]
     fn cli_source_has_no_legacy_provider_or_direct_http() {
         let source = include_str!("tts.rs");
-        assert!(!source.contains("tools::tts"));
-        assert!(!source.contains("api.elevenlabs.io"));
+        let legacy_provider = ["tools", "::", "tts"].concat();
+        let direct_http_host = ["api.", "elevenlabs", ".io"].concat();
+        assert!(!source.contains(&legacy_provider));
+        assert!(!source.contains(&direct_http_host));
         assert!(source.contains("synthesize_to_file_at"));
         assert!(source.contains("confirm_mode: TtsConfirmMode::InteractiveCli"));
     }

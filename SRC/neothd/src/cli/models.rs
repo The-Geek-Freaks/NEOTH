@@ -1135,9 +1135,10 @@ mod tests {
         let clip = resolve_managed_model(&neoth_home, "clip", None, &cfg).unwrap();
         assert_eq!(
             clip.cache_path(),
-            neoth_home
-                .join("models")
-                .join("openai-clip-vit-base-patch32")
+            crate::providers::clip_engine::cache_dir_at(
+                &neoth_home.join("models"),
+                crate::providers::clip_engine::DEFAULT_CLIP_REPO,
+            )
         );
         assert!(!clip.cache_path().starts_with(&process_home));
 
@@ -1206,11 +1207,12 @@ mod tests {
     #[test]
     fn list_marks_structurally_corrupt_whisper_cache_as_not_cached() {
         let home = tempfile::tempdir().unwrap();
-        let cache = home.path().join("models").join("openai-whisper-base");
-        std::fs::create_dir_all(&cache).unwrap();
-        std::fs::write(cache.join("tokenizer.json"), b"{}").unwrap();
+        let cache = crate::providers::whisper::materialize_structural_test_cache(
+            &home.path().join("models"),
+            "openai/whisper-base",
+        )
+        .unwrap();
         std::fs::write(cache.join("config.json"), b"not-json").unwrap();
-        std::fs::write(cache.join("model.safetensors"), b"truncated").unwrap();
 
         let rows = build_list_rows(home.path(), &FreedomConfig::default()).unwrap();
         let candle = rows

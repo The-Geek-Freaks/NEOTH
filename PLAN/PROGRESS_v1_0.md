@@ -45,6 +45,20 @@
 > verdict; R3-10 remains open until the pushed head's required workflows finish
 > green and the remaining public-truth reconciliation is complete.
 >
+> **Current Windows/cross-platform CI correction (2026-07-18; R3-10 remains
+> open):** forensic logs for exact head `d73227ca` identified 20 Windows
+> failures rather than treating the failed aggregate as one opaque result.
+> Production fixes now make typed config-key deletion real while preserving
+> unknown YAML structure and split-secret fields, emit Cron runtime-state v1,
+> and validate CLIP caches structurally. Manifest-derived sparse CLIP/Whisper
+> fixtures, a real v32 migration fixture, canonical Windows-path comparison,
+> authenticated vector-clock origin, honest cost-before-autonomy assertions and
+> fail-closed malformed-sidecar tests replace stale contracts. Doctor help no
+> longer advertises 31 checks when registry and runbook contain 57. Focused
+> evidence: **25/25** original/sidecar contracts, CLIP health **3/3**, generated
+> CLI docs **1/1**, rustfmt/diff hygiene and independent integration review
+> PASS. Exact-head workflow green is still required before closing R3-10.
+>
 > **Current control-plane integration wave (2026-07-18; no broad R3/R4 box
 > closed):** cluster runtime generations now have one stop-before-start
 > supervisor for carrier, gossip, applicable mDNS, worker-side execution and

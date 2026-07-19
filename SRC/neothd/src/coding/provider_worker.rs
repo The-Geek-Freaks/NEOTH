@@ -973,8 +973,11 @@ mod tests {
 
     #[tokio::test]
     async fn strict_autonomy_blocks_the_worker_provider_call() {
-        // GR-069 — under Strict the PaidProviderCall gate Denies, so the worker
-        // makes NO provider round-trip and the task fails loudly.
+        // GR-069 — the exact provider leaf is cost-classified before autonomy
+        // is evaluated. This non-local test provider has no reviewed price row,
+        // so it truthfully reaches the UnboundedPaidProviderCall gate. Strict
+        // requires confirmation; the detached worker is fail-closed and must
+        // make no provider round-trip.
         let provider = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
         let worker = worker_with_level(
             "",
@@ -983,9 +986,12 @@ mod tests {
             None,
         );
         let err = worker.execute(&sample_task()).await.unwrap_err();
+        let diagnostic = format!("{err:#}");
         assert!(
-            format!("{err:#}").contains("autonomy gate"),
-            "expected an autonomy-gate block, got: {err:#}"
+            diagnostic.contains("daemon-mode fail-closed")
+                && diagnostic.contains("strict: paid provider invocation")
+                && diagnostic.contains("no proven finite whole-invocation cost bound"),
+            "expected a fail-closed Strict unbounded-paid-call block, got: {diagnostic}"
         );
         assert_eq!(
             provider.count(),
@@ -993,7 +999,8 @@ mod tests {
             "no paid provider call may fire under Strict"
         );
 
-        // Standard auto-confirms the action class → the call goes through.
+        // Standard also requires live confirmation for an unbounded paid leaf;
+        // a detached fail-closed worker cannot silently approve it.
         let provider2 = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
         let worker2 = worker_with_level(
             "",
@@ -1001,12 +1008,27 @@ mod tests {
             crate::permissions::AutonomyLevel::Standard,
             None,
         );
-        worker2.execute(&sample_task()).await.unwrap();
+        let err = worker2.execute(&sample_task()).await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("standard: paid provider invocation"),
+            "expected a Standard unbounded-paid-call block, got: {err:#}"
+        );
         assert_eq!(
             provider2.count(),
-            1,
-            "Standard allows the worker provider call"
+            0,
+            "Standard cannot auto-approve an unbounded paid provider call"
         );
+
+        // Full explicitly permits the same classified leaf.
+        let provider3 = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
+        let worker3 = worker_with_level(
+            "",
+            provider3.clone(),
+            crate::permissions::AutonomyLevel::Full,
+            None,
+        );
+        worker3.execute(&sample_task()).await.unwrap();
+        assert_eq!(provider3.count(), 1, "Full permits the provider call");
     }
 
     #[tokio::test]

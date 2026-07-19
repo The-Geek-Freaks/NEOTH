@@ -539,11 +539,9 @@ mod tests {
     fn set_and_clear_override_round_trip_atomically() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("freedom.yaml");
-        std::fs::write(
-            &path,
-            serde_yaml::to_string(&config(AutonomyLevel::Custom)).unwrap(),
-        )
-        .unwrap();
+        let mut source = serde_yaml::to_string(&config(AutonomyLevel::Custom)).unwrap();
+        source.push_str("future_extension:\n  keep: true\n");
+        std::fs::write(&path, source).unwrap();
 
         set_override_at(&path, ActionKind::ExternalHttpRequest, CustomDecision::Deny).unwrap();
         let loaded = FreedomConfig::load_from_path(&path).unwrap();
@@ -563,6 +561,9 @@ mod tests {
                 .overrides
                 .contains_key(&ActionKind::ExternalHttpRequest)
         );
+        let raw: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(raw["future_extension"]["keep"].as_bool(), Some(true));
     }
 
     #[test]

@@ -966,9 +966,8 @@ mod tests {
             dir.path(),
             "operator_id: alice\nauto_update:\n  channel: beta\n",
         );
-        let error = FreedomConfig::load_from_path(&path)
-            .unwrap_err()
-            .to_string();
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        let error = format!("{error:#}");
         assert!(error.contains("unknown variant") || error.contains("stable"));
     }
 
@@ -979,9 +978,8 @@ mod tests {
             dir.path(),
             "operator_id: alice\nauto_update:\n  target_triple: riscv64gc-unknown-linux-gnu\n",
         );
-        let error = FreedomConfig::load_from_path(&path)
-            .unwrap_err()
-            .to_string();
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        let error = format!("{error:#}");
         assert!(error.contains("unsupported auto_update.target_triple"));
         assert!(error.contains("x86_64-unknown-linux-gnu"));
     }
@@ -993,9 +991,8 @@ mod tests {
             dir.path(),
             "operator_id: alice\nauto_update:\n  repo: example/fork/releases\n",
         );
-        let error = FreedomConfig::load_from_path(&path)
-            .unwrap_err()
-            .to_string();
+        let error = FreedomConfig::load_from_path(&path).unwrap_err();
+        let error = format!("{error:#}");
         assert!(error.contains("invalid auto_update.repo"));
         assert!(error.contains("owner/repo"));
     }

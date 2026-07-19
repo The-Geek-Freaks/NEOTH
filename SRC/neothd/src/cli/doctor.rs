@@ -87,8 +87,8 @@ pub struct DoctorArgs {
     pub live: bool,
     /// GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to
     /// the cheap `inference.utility_provider` for an LLM root-cause + first-fix.
-    /// NEOTH's 31 structured checks are a richer signal than a raw log dump, so
-    /// the LLM reasons over them. Best-effort; needs a configured provider.
+    /// NEOTH's structured check battery is a richer signal than a raw log dump,
+    /// so the LLM reasons over it. Best-effort; needs a configured provider.
     #[arg(long)]
     pub diagnose: bool,
     /// Output format inherited from the global `--output` flag.
@@ -422,7 +422,7 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_thirty_one() {
+    fn check_docs_listed_count_matches_runtime_contract() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
@@ -442,8 +442,9 @@ mod tests {
         // +7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
         // synthesis_cron, skill_curator, auto_skill_extract) = 52;
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
-        // + canonical TTS runtime/provider readiness = 54.
-        assert_eq!(all_check_docs().count(), 54);
+        // + canonical TTS runtime/provider readiness = 54;
+        // + ppt_master, graphify and officecli readiness = 57.
+        assert_eq!(all_check_docs().count(), 57);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1203,7 +1204,7 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 31 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // Count progression: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
         // mDNS announcer (Session 21 bite #2) + refusal recovery
@@ -1219,8 +1220,9 @@ mod tests {
         // + 7 ZF-08 advisable hints (proactive, dreaming, ecology, companion,
         // synthesis_cron, skill_curator, auto_skill_extract) = 52;
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
-        // + canonical TTS runtime/provider readiness = 54.
-        assert_eq!(outs.len(), 54);
+        // + canonical TTS runtime/provider readiness = 54;
+        // + ppt_master, graphify and officecli readiness = 57.
+        assert_eq!(outs.len(), 57);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

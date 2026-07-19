@@ -1757,6 +1757,43 @@ fn overlay_public_known_yaml(target: &mut serde_yaml::Value, source: serde_yaml:
     }
 }
 
+/// Remove typed keys that disappeared from the canonical rendering after a
+/// mutation. The normal overlay handles additions and replacements, but an
+/// empty map cannot express deletion: overlaying `overrides: {}` onto an
+/// existing override map otherwise leaves every old entry behind.
+///
+/// Both `before` and `after` come from the typed `FreedomConfig`, so a key that
+/// exists only in the raw YAML is an extension-owned/unknown field and is never
+/// considered for removal here.
+fn remove_deleted_public_known_yaml(
+    target: &mut serde_yaml::Value,
+    before: &serde_yaml::Value,
+    after: &serde_yaml::Value,
+) {
+    let (
+        serde_yaml::Value::Mapping(target),
+        serde_yaml::Value::Mapping(before),
+        serde_yaml::Value::Mapping(after),
+    ) = (target, before, after)
+    else {
+        return;
+    };
+
+    for (key, before_value) in before {
+        let Some(after_value) = after.get(key) else {
+            if let Some(mut removed) = target.remove(key) {
+                zeroize_public_yaml_value(&mut removed);
+            }
+            continue;
+        };
+        if before_value != after_value
+            && let Some(target_value) = target.get_mut(key)
+        {
+            remove_deleted_public_known_yaml(target_value, before_value, after_value);
+        }
+    }
+}
+
 fn remove_public_yaml_key(mapping: &mut serde_yaml::Mapping, name: &str) {
     if let Some(mut removed) = mapping.remove(serde_yaml::Value::String(name.to_string())) {
         zeroize_public_yaml_value(&mut removed);
@@ -1820,6 +1857,7 @@ fn render_public_freedom_preserving_unknown(
     path: &Path,
     source: &[u8],
     config: &FreedomConfig,
+    previous_public: Option<&str>,
 ) -> Result<zeroize::Zeroizing<Vec<u8>>> {
     let mut merged = SensitivePublicYaml(
         serde_yaml::from_slice(source)
@@ -1831,7 +1869,13 @@ fn render_public_freedom_preserving_unknown(
     let mut known: serde_yaml::Value =
         serde_yaml::from_str(&public).context("parse canonical public FreedomConfig rendering")?;
     remove_split_secret_fields(&mut known);
-    overlay_public_known_yaml(&mut merged.0, known);
+    overlay_public_known_yaml(&mut merged.0, known.clone());
+    if let Some(previous_public) = previous_public {
+        let mut previous_known: serde_yaml::Value = serde_yaml::from_str(previous_public)
+            .context("parse previous canonical public FreedomConfig rendering")?;
+        remove_split_secret_fields(&mut previous_known);
+        remove_deleted_public_known_yaml(&mut merged.0, &previous_known, &known);
+    }
 
     let target = zeroize::Zeroizing::new(
         serde_yaml::to_string(&merged.0)
@@ -1849,13 +1893,13 @@ fn mutate_public_freedom_source<T>(
     mutation: impl FnOnce(&mut FreedomConfig) -> Result<T>,
 ) -> Result<(Option<zeroize::Zeroizing<Vec<u8>>>, T)> {
     let mut config = parse_public_freedom_yaml(path, source)?;
-    let before = zeroize::Zeroizing::new(config.public_yaml()?.into_bytes());
+    let before = zeroize::Zeroizing::new(config.public_yaml()?);
     let value = mutation(&mut config)?;
-    let after = zeroize::Zeroizing::new(config.public_yaml()?.into_bytes());
+    let after = zeroize::Zeroizing::new(config.public_yaml()?);
     if before == after {
         return Ok((None, value));
     }
-    let target = render_public_freedom_preserving_unknown(path, source, &config)?;
+    let target = render_public_freedom_preserving_unknown(path, source, &config, Some(&before))?;
     Ok((Some(target), value))
 }
 
@@ -2007,7 +2051,7 @@ impl FreedomConfig {
                     path.display()
                 )
             })?);
-            let target = render_public_freedom_preserving_unknown(&path, &source, self)?;
+            let target = render_public_freedom_preserving_unknown(&path, &source, self, None)?;
             crate::util::atomic_write::atomic_write_private(&path, &target)
                 .with_context(|| format!("atomically write {}", path.display()))
         })

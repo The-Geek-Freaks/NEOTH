@@ -85,7 +85,7 @@ async fn serve_fails_with_helpful_error_when_freedom_yaml_missing() {
         allow_clock_rollback: false,
     };
     let err = run_serve(args).await.unwrap_err();
-    assert!(err.to_string().contains("neoth init"));
+    assert!(format!("{err:#}").contains("neoth init"));
 }
 
 #[tokio::test]

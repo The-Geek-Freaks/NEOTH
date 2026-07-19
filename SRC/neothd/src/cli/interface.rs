@@ -636,9 +636,10 @@ mod tests {
         let ready = launch.join("ready");
 
         let committed = commit_terminal_ready(home.path(), &ready, "ceremony-token").unwrap();
+        let expected = launch.canonicalize().unwrap().join("ready");
 
-        assert_eq!(committed, ready);
-        assert_eq!(std::fs::read(&ready).unwrap(), b"ceremony-token");
+        assert_eq!(committed, expected);
+        assert_eq!(std::fs::read(&committed).unwrap(), b"ceremony-token");
         assert_eq!(
             interface_preference::load_at(home.path()).unwrap(),
             None,

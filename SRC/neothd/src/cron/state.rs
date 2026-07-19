@@ -18,7 +18,7 @@ use super::schema::{DeliveryMode, Job};
 
 static STATE_LOCK: Mutex<()> = Mutex::new(());
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeState {
     #[serde(default = "state_version")]
     pub version: u32,
@@ -85,6 +85,16 @@ fn state_version() -> u32 {
     1
 }
 
+impl Default for RuntimeState {
+    fn default() -> Self {
+        Self {
+            version: state_version(),
+            jobs: BTreeMap::new(),
+            deliveries: BTreeMap::new(),
+        }
+    }
+}
+
 pub fn path(home: &Path) -> PathBuf {
     home.join("cron_runtime_state.json")
 }
@@ -108,10 +118,7 @@ impl RuntimeState {
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    version: state_version(),
-                    ..Default::default()
-                });
+                return Ok(Self::default());
             }
             Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
         };
@@ -351,7 +358,6 @@ mod tests {
     fn delivery_round_trip_keeps_correlation() {
         let home = tempfile::tempdir().unwrap();
         let mut state = RuntimeState::default();
-        state.version = state_version();
         state.begin_delivery(
             "abc".into(),
             "j".into(),

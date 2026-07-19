@@ -198,14 +198,11 @@ pub(crate) fn freedom_uses_claude_cli(home: &Path) -> bool {
 pub(crate) fn check_model_caches(home: &Path) -> CheckOutcome {
     use crate::providers::clip_engine;
 
-    let clip_dir = clip_engine::cache_dir_at(&home.join("models"), clip_engine::DEFAULT_CLIP_REPO);
-    let clip_present = [
-        clip_engine::CONFIG_FILE,
-        clip_engine::SAFETENSORS_FILE,
-        clip_engine::TOKENIZER_FILE,
-    ]
-    .iter()
-    .all(|f| clip_dir.join(f).exists());
+    let models_root = home.join("models");
+    let clip_dir = clip_engine::cache_dir_at(&models_root, clip_engine::DEFAULT_CLIP_REPO);
+    let clip_health = clip_engine::cache_health_at(&models_root, clip_engine::DEFAULT_CLIP_REPO);
+    let clip_ready = clip_health.is_ready();
+    let clip_detail = format!("{} ({clip_health})", clip_dir.display());
 
     let config = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
         .unwrap_or_default();
@@ -231,25 +228,30 @@ pub(crate) fn check_model_caches(home: &Path) -> CheckOutcome {
         Err(error) => (false, false, error.to_string()),
     };
 
-    let detail = match (clip_present, whisper_required, whisper_present) {
-        (true, true, true) => format!("clip + configured whisper cached ({whisper_detail})"),
+    let detail = match (clip_ready, whisper_required, whisper_present) {
+        (true, true, true) => format!(
+            "clip cached at {} + configured whisper cached ({whisper_detail})",
+            clip_dir.display()
+        ),
         (true, true, false) => format!(
             "configured whisper cache not ready ({whisper_detail}) — run `neoth models pull whisper`"
         ),
         (false, true, true) => {
-            "clip missing — run `neoth models pull clip`; configured whisper cached".to_string()
+            format!(
+                "clip cache not ready ({clip_detail}) — run `neoth models pull clip`; configured whisper cached"
+            )
         }
         (false, true, false) => format!(
-            "clip missing + configured whisper cache not ready ({whisper_detail}) — run `neoth models pull clip`, then `neoth models pull whisper`"
+            "clip cache not ready ({clip_detail}) + configured whisper cache not ready ({whisper_detail}) — run `neoth models pull clip`, then `neoth models pull whisper`"
         ),
         (true, false, _) => format!(
             "clip cached; configured STT has no managed local Whisper cache ({whisper_detail})"
         ),
         (false, false, _) => format!(
-            "clip missing — run `neoth models pull clip`; configured STT has no managed local Whisper cache ({whisper_detail})"
+            "clip cache not ready ({clip_detail}) — run `neoth models pull clip`; configured STT has no managed local Whisper cache ({whisper_detail})"
         ),
     };
-    let status = if clip_present && (!whisper_required || whisper_present) {
+    let status = if clip_ready && (!whisper_required || whisper_present) {
         CheckStatus::Pass
     } else {
         CheckStatus::Warn
@@ -760,51 +762,20 @@ pub(crate) const DOCS: &[CheckDoc] = &[
 mod tests {
     use super::*;
 
-    fn minimal_safetensors() -> Vec<u8> {
-        let header = br#"{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
-        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(header);
-        bytes.extend_from_slice(&[0_u8; 4]);
-        bytes
-    }
-
-    fn materialize_files(path: &Path, files: &[&str]) {
-        std::fs::create_dir_all(path).unwrap();
-        for file in files {
-            let bytes = if file.ends_with(".json") {
-                b"{}".to_vec()
-            } else if file.ends_with(".safetensors") {
-                minimal_safetensors()
-            } else {
-                b"fixture".to_vec()
-            };
-            std::fs::write(path.join(file), bytes).unwrap();
-        }
+    fn materialize_clip_cache(home: &Path) -> std::path::PathBuf {
+        crate::providers::clip_engine::materialize_structural_test_cache(&home.join("models"))
+            .unwrap()
     }
 
     #[test]
     fn model_cache_check_uses_exact_home_and_configured_whisper_size() {
         let home = tempfile::tempdir().unwrap();
-        materialize_files(
-            &home
-                .path()
-                .join("models")
-                .join("openai-clip-vit-base-patch32"),
-            &[
-                crate::providers::clip_engine::CONFIG_FILE,
-                crate::providers::clip_engine::SAFETENSORS_FILE,
-                crate::providers::clip_engine::TOKENIZER_FILE,
-            ],
-        );
-        materialize_files(
-            &home.path().join("models").join("openai-whisper-base"),
-            &[
-                crate::providers::whisper::CONFIG_FILE,
-                crate::providers::whisper::SAFETENSORS_FILE,
-                crate::providers::whisper::TOKENIZER_FILE,
-            ],
-        );
+        materialize_clip_cache(home.path());
+        crate::providers::whisper::materialize_structural_test_cache(
+            &home.path().join("models"),
+            "openai/whisper-base",
+        )
+        .unwrap();
 
         let outcome = check_model_caches(home.path());
         assert_eq!(outcome.status, CheckStatus::Pass);
@@ -815,17 +786,7 @@ mod tests {
     #[test]
     fn cloud_stt_does_not_report_a_missing_local_whisper_model() {
         let home = tempfile::tempdir().unwrap();
-        materialize_files(
-            &home
-                .path()
-                .join("models")
-                .join("openai-clip-vit-base-patch32"),
-            &[
-                crate::providers::clip_engine::CONFIG_FILE,
-                crate::providers::clip_engine::SAFETENSORS_FILE,
-                crate::providers::clip_engine::TOKENIZER_FILE,
-            ],
-        );
+        materialize_clip_cache(home.path());
         let mut config = crate::config::FreedomConfig::default();
         config.media.stt.primary = crate::media::stt_dispatch::SttProvider::OpenAiWhisperApi;
         std::fs::write(
@@ -843,31 +804,40 @@ mod tests {
     #[test]
     fn model_cache_check_surfaces_structurally_corrupt_whisper_cache() {
         let home = tempfile::tempdir().unwrap();
-        materialize_files(
-            &home
-                .path()
-                .join("models")
-                .join("openai-clip-vit-base-patch32"),
-            &[
-                crate::providers::clip_engine::CONFIG_FILE,
-                crate::providers::clip_engine::SAFETENSORS_FILE,
-                crate::providers::clip_engine::TOKENIZER_FILE,
-            ],
-        );
-        let whisper = home.path().join("models").join("openai-whisper-base");
-        materialize_files(
-            &whisper,
-            &[
-                crate::providers::whisper::CONFIG_FILE,
-                crate::providers::whisper::SAFETENSORS_FILE,
-                crate::providers::whisper::TOKENIZER_FILE,
-            ],
-        );
+        materialize_clip_cache(home.path());
+        let whisper = crate::providers::whisper::materialize_structural_test_cache(
+            &home.path().join("models"),
+            "openai/whisper-base",
+        )
+        .unwrap();
         std::fs::write(whisper.join(crate::providers::whisper::CONFIG_FILE), b"bad").unwrap();
 
         let outcome = check_model_caches(home.path());
 
         assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("corrupt"));
+        assert!(outcome.detail.contains("config.json"));
+    }
+
+    #[test]
+    fn model_cache_check_surfaces_structurally_corrupt_clip_cache() {
+        let home = tempfile::tempdir().unwrap();
+        let clip = materialize_clip_cache(home.path());
+        crate::providers::whisper::materialize_structural_test_cache(
+            &home.path().join("models"),
+            "openai/whisper-base",
+        )
+        .unwrap();
+        std::fs::write(
+            clip.join(crate::providers::clip_engine::CONFIG_FILE),
+            b"bad",
+        )
+        .unwrap();
+
+        let outcome = check_model_caches(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("clip cache not ready"));
         assert!(outcome.detail.contains("corrupt"));
         assert!(outcome.detail.contains("config.json"));
     }

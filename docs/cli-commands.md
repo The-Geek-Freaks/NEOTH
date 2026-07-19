@@ -914,7 +914,7 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 - `--explain <NAME>` — V03-07: print operator-facing documentation for the named check (what it tests, common failures, fix steps) instead of running the full diagnostic suite. Combine with `--output json` for scripted runbook lookups. Pair with `--list-checks` to see what's available
 - `--list-checks` — V03-07: print the list of check names recognised by `--explain`. Useful for tab-completion + operator-side runbook generation
 - `--live` — GOLD-ADAPT-ODY-22: run live network probes against configured subsystems (ollama, SearXNG, IMAP) using `tokio::time::timeout`-bounded HTTP/TCP checks. Reports Up/Down/latency per subsystem. Runs in addition to the static check battery. Never touches real network during automated tests — safe to omit in CI
-- `--diagnose` — GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to the cheap `inference.utility_provider` for an LLM root-cause + first-fix. NEOTH's 31 structured checks are a richer signal than a raw log dump, so the LLM reasons over them. Best-effort; needs a configured provider
+- `--diagnose` — GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to the cheap `inference.utility_provider` for an LLM root-cause + first-fix. NEOTH's structured check battery is a richer signal than a raw log dump, so the LLM reasons over it. Best-effort; needs a configured provider
 
 ## `neoth dream`
 

@@ -922,17 +922,18 @@ mod tests {
     async fn run_reaches_target() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("v.db");
-        // Open via store so all tables exist + the stamp is current.
-        let _conn = store::open(&db).unwrap();
-        // Force the stamp back to v3 to simulate an upgrade scenario.
-        {
-            let c = Connection::open(&db).unwrap();
-            c.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')",
-                [],
-            )
-            .unwrap();
-        }
+        // Build an exact previous-version fixture from the canonical schema:
+        // v33 added only the mesh-sync request queue. Removing that table and
+        // restoring the v32 stamp avoids the invalid old pattern of stamping a
+        // latest-schema database as v3 and then replaying every ALTER over it.
+        assert_eq!(store::SCHEMA_VERSION, 33, "update the migration fixture");
+        let conn = store::open(&db).unwrap();
+        conn.execute_batch(
+            "DROP TABLE mesh_sync_requests;
+             UPDATE meta SET value = '32' WHERE key = 'schema_version';",
+        )
+        .unwrap();
+        drop(conn);
         let args = MigrateArgs {
             action: MigrateAction::Run {
                 to: None,

@@ -585,6 +585,71 @@ pub(crate) fn cache_dir_at(models_root: &Path, repo: &str) -> PathBuf {
     models_root.join(super::model_cache_component(repo))
 }
 
+/// Materialise a cheap structural cache fixture from the canonical CLIP
+/// manifest. The safetensors payload is sparse and intentionally does not
+/// match the pinned SHA-256, so production-ready verification still rejects
+/// it while cache-health tests exercise the real artifact contract.
+#[cfg(test)]
+pub(crate) fn materialize_structural_test_cache(models_root: &Path) -> Result<PathBuf> {
+    use crate::media::model_manager::ArtifactKind;
+    use std::io::Write as _;
+
+    let cache = cache_dir_at(models_root, DEFAULT_CLIP_REPO);
+    std::fs::create_dir_all(&cache)
+        .with_context(|| format!("create structural CLIP test cache {}", cache.display()))?;
+
+    for artifact in REQUIRED_ARTIFACTS {
+        let expected = artifact.expected.with_context(|| {
+            format!(
+                "CLIP test fixture artifact `{}` has no pinned length",
+                artifact.filename
+            )
+        })?;
+        let path = cache.join(artifact.filename);
+        match artifact.kind {
+            ArtifactKind::JsonObject => {
+                let len = usize::try_from(expected.len)
+                    .context("CLIP JSON fixture length does not fit usize")?;
+                anyhow::ensure!(len >= 2, "CLIP JSON fixture is shorter than `{{}}`");
+                let mut bytes = vec![b' '; len];
+                bytes[0] = b'{';
+                bytes[1] = b'}';
+                std::fs::write(&path, bytes)
+                    .with_context(|| format!("write structural JSON fixture {}", path.display()))?;
+            }
+            ArtifactKind::Safetensors => {
+                let mut data_len = expected.len;
+                let header = loop {
+                    let header = format!(
+                        r#"{{"weight":{{"dtype":"U8","shape":[{data_len}],"data_offsets":[0,{data_len}]}}}}"#
+                    );
+                    let next = expected
+                        .len
+                        .checked_sub(8 + header.len() as u64)
+                        .context("CLIP safetensors fixture is shorter than its header")?;
+                    if next == data_len {
+                        break header;
+                    }
+                    data_len = next;
+                };
+                let mut file = std::fs::File::create(&path).with_context(|| {
+                    format!("create structural safetensors fixture {}", path.display())
+                })?;
+                file.write_all(&(header.len() as u64).to_le_bytes())?;
+                file.write_all(header.as_bytes())?;
+                file.set_len(expected.len)?;
+            }
+            ArtifactKind::NonEmpty { minimum_bytes } => {
+                let file = std::fs::File::create(&path).with_context(|| {
+                    format!("create structural opaque fixture {}", path.display())
+                })?;
+                file.set_len(expected.len.max(minimum_bytes))?;
+            }
+        }
+    }
+    Ok(cache)
+}
+
 pub(crate) fn cache_health_at(
     models_root: &Path,
     repo: &str,

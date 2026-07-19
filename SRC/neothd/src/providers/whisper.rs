@@ -1060,6 +1060,74 @@ pub(crate) fn cache_dir_at(models_root: &Path, repo: &str) -> PathBuf {
     models_root.join(super::model_cache_component(repo))
 }
 
+/// Materialise a cheap structural cache fixture whose artifact lengths follow
+/// the reviewed manifest. The safetensors payload is sparse and the fixture is
+/// intentionally not SHA-256-valid; production-ready validation still rejects
+/// it. This keeps cache-status tests honest without checking multi-gigabyte
+/// model blobs into the repository.
+#[cfg(test)]
+pub(crate) fn materialize_structural_test_cache(models_root: &Path, repo: &str) -> Result<PathBuf> {
+    use crate::media::model_manager::ArtifactKind;
+    use std::io::Write as _;
+
+    let manifest = artifact_manifest(repo)
+        .with_context(|| format!("no reviewed Whisper artifact manifest for `{repo}`"))?;
+    let cache = cache_dir_at(models_root, repo);
+    std::fs::create_dir_all(&cache)
+        .with_context(|| format!("create structural test cache {}", cache.display()))?;
+
+    for artifact in manifest.artifacts {
+        let expected = artifact.expected.with_context(|| {
+            format!(
+                "Whisper test fixture artifact `{}` has no pinned length",
+                artifact.filename
+            )
+        })?;
+        let path = cache.join(artifact.filename);
+        match artifact.kind {
+            ArtifactKind::JsonObject => {
+                let len = usize::try_from(expected.len)
+                    .context("Whisper JSON fixture length does not fit usize")?;
+                anyhow::ensure!(len >= 2, "Whisper JSON fixture is shorter than `{{}}`");
+                let mut bytes = vec![b' '; len];
+                bytes[0] = b'{';
+                bytes[1] = b'}';
+                std::fs::write(&path, bytes)
+                    .with_context(|| format!("write structural JSON fixture {}", path.display()))?;
+            }
+            ArtifactKind::Safetensors => {
+                let mut data_len = expected.len;
+                let header = loop {
+                    let header = format!(
+                        r#"{{"weight":{{"dtype":"U8","shape":[{data_len}],"data_offsets":[0,{data_len}]}}}}"#
+                    );
+                    let next = expected
+                        .len
+                        .checked_sub(8 + header.len() as u64)
+                        .context("Whisper safetensors fixture is shorter than its header")?;
+                    if next == data_len {
+                        break header;
+                    }
+                    data_len = next;
+                };
+                let mut file = std::fs::File::create(&path).with_context(|| {
+                    format!("create structural safetensors fixture {}", path.display())
+                })?;
+                file.write_all(&(header.len() as u64).to_le_bytes())?;
+                file.write_all(header.as_bytes())?;
+                file.set_len(expected.len)?;
+            }
+            ArtifactKind::NonEmpty { .. } => {
+                anyhow::bail!(
+                    "unexpected opaque artifact `{}` in Whisper manifest",
+                    artifact.filename
+                );
+            }
+        }
+    }
+    Ok(cache)
+}
+
 pub(crate) fn cache_health_at(
     models_root: &Path,
     repo: &str,

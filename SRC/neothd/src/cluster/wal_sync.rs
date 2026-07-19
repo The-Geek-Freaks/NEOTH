@@ -2593,13 +2593,12 @@ mod tests {
         let payload = crate::wal::frame::encode_frame(&header, inner);
         let timestamp = gossip_payload_timestamp_unix(&payload).unwrap();
         let origin = PeerPubkey::new("aaaa1111");
-        let frame = test_gossip_frame(
-            VectorClock::new(),
-            origin.clone(),
-            1,
-            timestamp,
-            payload.clone(),
+        let mut vector_clock = VectorClock::new();
+        assert!(
+            vector_clock.tick(&origin),
+            "the submitted frame must carry its authenticated origin slot"
         );
+        let frame = test_gossip_frame(vector_clock, origin.clone(), 1, timestamp, payload.clone());
         let envelope = SyncEnvelope {
             version: SYNC_ENVELOPE_VERSION,
             content_id: format!("metadata:{}", restore_hex_digest(&Sha256::digest(&payload))),

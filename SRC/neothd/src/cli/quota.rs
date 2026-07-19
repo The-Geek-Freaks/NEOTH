@@ -188,7 +188,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("quota.json");
         let err = run_reset(&path, "openai_api", &OutputFormat::Json).unwrap_err();
-        assert!(err.to_string().contains("no quota state"));
+        assert!(format!("{err:#}").contains("no quota state"));
     }
 
     #[test]

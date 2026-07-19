@@ -104,18 +104,21 @@ mod tests {
     }
 
     #[test]
-    fn list_pending_skips_malformed_json() {
+    fn list_pending_rejects_malformed_json_and_preserves_evidence() {
         let dir = tempdir().unwrap();
+        let malformed = dir.path().join("credentials_import_1.json");
         write_file(dir.path(), "credentials_import_1.json", "{not json");
         // Plus one valid file.
         let valid = serde_json::to_string(&sample_payload()).unwrap();
+        let valid_path = dir.path().join("credentials_import_2.json");
         write_file(dir.path(), "credentials_import_2.json", &valid);
-        let listed = list_pending(dir.path()).unwrap();
-        assert_eq!(
-            listed.len(),
-            1,
-            "malformed json must be skipped, valid one kept"
+        let error = list_pending(dir.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("credentials_import_1.json"),
+            "the offending audit sidecar must be identified: {error:#}"
         );
+        assert!(malformed.exists());
+        assert!(valid_path.exists());
     }
 
     #[test]
