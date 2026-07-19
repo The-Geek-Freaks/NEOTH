@@ -621,9 +621,14 @@ fn prepare_portable_marker(
         profile: profile.as_str().to_string(),
         support_dir: PORTABLE_SUPPORT_DIR.to_string(),
     };
+    // Stage inside the resolved install root, not the global temp dir: macOS
+    // tempdirs sit under the `/var` -> `/private/var` symlink, which the
+    // install transaction's reparse-point guard rejects for member sources.
+    // The install root's ancestor chain is already link-free and validated,
+    // and staging on the same volume keeps the copy local to the installation.
     let stage = tempfile::Builder::new()
         .prefix(".neoth-portable-owner-")
-        .tempdir()
+        .tempdir_in(&resolved_root)
         .context("create private portable-marker stage")?;
     let source = stage.path().join(PORTABLE_OWNERSHIP_MARKER);
     let mut file = fs::OpenOptions::new()

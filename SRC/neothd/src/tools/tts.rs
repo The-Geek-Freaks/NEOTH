@@ -116,9 +116,14 @@ mod tests {
 
     #[test]
     fn facade_contains_no_provider_transport() {
+        // include_str! embeds this test module too, so the banned literals
+        // must be assembled at runtime (same idiom as the sibling guard in
+        // cli/tts.rs) — a contiguous literal here would match itself.
         let source = include_str!("tts.rs");
-        assert!(!source.contains("reqwest"));
-        assert!(!source.contains("api.elevenlabs.io"));
+        let forbidden_http_crate = ["req", "west"].concat();
+        let direct_http_host = ["api.", "elevenlabs", ".io"].concat();
+        assert!(!source.contains(&forbidden_http_crate));
+        assert!(!source.contains(&direct_http_host));
         assert!(source.contains("synthesize_to_file_at"));
         assert!(source.contains("confirm_mode: TtsConfirmMode::NonInteractive"));
     }

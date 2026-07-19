@@ -245,6 +245,20 @@ pub async fn run() -> Result<()> {
     init_tracing()?;
     install_panic_handler();
 
+    // A bare invocation is the installed product launcher: it owns the
+    // exactly-once GUI/CLI choice and honours it on later launches. Keep this
+    // before Clap's required-subcommand parser so `neoth` itself is useful.
+    // No banner here — the launcher renders its own UI.
+    if std::env::args_os().nth(1).is_none() {
+        cli::run_default_invocation().await?;
+        return Ok(());
+    }
+
+    // Parse CLI first: Clap handles `--version`/`--help` inside `parse()` and
+    // exits, so their stdout stays byte-clean for scripts and the binary
+    // contract tests. Only a real subcommand dispatch reaches the banner.
+    let cli = cli::Cli::parse();
+
     // Suppress the startup banner when the operator is running the
     // interactive wizard (`neoth init` on a TTY). The wizard prints
     // its own welcome banner inside step1_license; layering a
@@ -256,19 +270,10 @@ pub async fn run() -> Result<()> {
         info!(version = %env!("CARGO_PKG_VERSION"), "{BANNER}");
     }
 
-    // A bare invocation is the installed product launcher: it owns the
-    // exactly-once GUI/CLI choice and honours it on later launches. Keep this
-    // before Clap's required-subcommand parser so `neoth` itself is useful.
-    if std::env::args_os().nth(1).is_none() {
-        cli::run_default_invocation().await?;
-        return Ok(());
-    }
-
-    // Parse CLI and dispatch. Subcommands own their own shutdown handling —
+    // Dispatch. Subcommands own their own shutdown handling —
     // `cli::serve` listens for SIGTERM/Ctrl+C internally and drains the WAL
     // writer before returning. Short-lived subcommands (`init`, `chat`, etc.)
     // do not need a signal handler.
-    let cli = cli::Cli::parse();
     cli::run(cli).await?;
 
     Ok(())

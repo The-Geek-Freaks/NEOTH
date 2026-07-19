@@ -459,6 +459,16 @@ pub fn spawn_babel_cron_loop(
             crate::time::now_unix_i64(),
             mcp_tool_count,
         );
+        // Load the persisted normaliser at startup so a daemon restart
+        // inherits calibration immediately instead of paying the 5-minute
+        // norm-sweep cold-boot penalty when idx_babel_norm already has a
+        // valid row from a prior run. Same 900s window as the sweep reload.
+        if let Ok(Some(n)) = views
+            .with_writer(|conn| crate::analytics::babel::norm::load_normaliser(conn, 900))
+            .await
+        {
+            state.set_normaliser(n);
+        }
         // Fast-forward the cursors to the current segment ends: observe from
         // boot, never backfill (old events in a fresh window would be noise).
         let wd = wal_dir.clone();

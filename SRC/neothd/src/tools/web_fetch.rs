@@ -1065,11 +1065,16 @@ mod tests {
     #[tokio::test]
     async fn ssrf_rejects_malformed_url() {
         // Junk strings should never reach the HTTP client. `url::Url::parse`
-        // catches missing scheme; the wrapper context surfaces "invalid URL".
+        // catches missing scheme; the ExternalHttpAuthorizer gateway
+        // (external_http.rs::validate_request_url) surfaces "invalid HTTP URL".
+        // The legacy "invalid URL" clause is kept in case the routing ever
+        // falls back to web_fetch::validate_url.
         let err = fetch("not a url at all").await.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("invalid URL") || msg.contains("only http(s) URLs"),
+            msg.contains("invalid HTTP URL")
+                || msg.contains("invalid URL")
+                || msg.contains("only http(s) URLs"),
             "expected URL rejection, got: {msg}"
         );
     }

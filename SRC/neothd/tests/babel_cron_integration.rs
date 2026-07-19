@@ -152,6 +152,26 @@ async fn babel_threshold_breach_reaches_sse_feed() {
         epsilon_calibrated: Some(0.01),
         ..BabelConfig::default()
     };
+    // Pre-seed a calibrated normaliser row so the daemon starts with
+    // is_calibrated()=true and can emit b_mult on the first window close.
+    // Without this, cold_start() (sample_count=0) silences b_mult entirely
+    // because the score guard requires normaliser.is_calibrated(), and the
+    // norm sweep that would calibrate it only runs after 300s — 15x this
+    // test's budget. p1=0.0/p99=1.0/sample_count=50 mirrors the calibrated
+    // fixture used by the cron unit tests.
+    views
+        .with_writer(|conn| {
+            neothd::analytics::babel::store::ensure_schema(conn)?;
+            conn.execute(
+                "INSERT OR REPLACE INTO idx_babel_norm \
+                 (variable, window_secs, p1, p99, sample_count, updated_at) \
+                 VALUES ('b_raw', 900, 0.0, 1.0, 50, 0)",
+                [],
+            )?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .expect("seed calibrated normaliser");
     let handle = spawn_babel_cron_loop(
         cfg,
         AutonomyLevel::Standard,

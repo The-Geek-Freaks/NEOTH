@@ -35,7 +35,7 @@ impl CaldavEndpoint {
         if raw.is_empty() || raw.trim() != raw {
             anyhow::bail!("CalDAV URL must be non-empty and contain no outer whitespace");
         }
-        let collection = reqwest::Url::parse(raw).context("parse CalDAV collection URL")?;
+        let collection = url::Url::parse(raw).context("parse CalDAV collection URL")?;
         if !collection.username().is_empty() || collection.password().is_some() {
             anyhow::bail!("CalDAV URL must not contain credentials; use the credential fields");
         }

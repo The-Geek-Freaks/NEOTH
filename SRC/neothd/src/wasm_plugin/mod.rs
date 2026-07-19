@@ -188,6 +188,6 @@ mod tests {
         // hint silently drifts to a wrong band number.
         assert!(RESERVED_WAL_BAND_HINT.contains("0xC0"));
         assert!(RESERVED_WAL_BAND_HINT.contains("0xCF"));
-        assert!(RESERVED_WAL_BAND_HINT.contains("V10-04"));
+        assert!(RESERVED_WAL_BAND_HINT.contains("wal/events.rs"));
     }
 }

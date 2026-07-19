@@ -230,7 +230,7 @@ impl GChatChannel {
     pub async fn probe_subscription(&self) -> Result<String> {
         let bearer = self.bearer().await?;
         let mut endpoint =
-            reqwest::Url::parse("https://pubsub.googleapis.com").expect("static Pub/Sub URL");
+            url::Url::parse("https://pubsub.googleapis.com").expect("static Pub/Sub URL");
         endpoint.set_path(&format!("/v1/{}", self.subscription));
         let response = self
             .http

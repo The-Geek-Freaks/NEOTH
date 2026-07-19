@@ -4040,7 +4040,7 @@ mod mesh_sync_parse_tests {
     #[test]
     fn parses_full_and_sparse_rows() {
         let json = r#"[
-            {"peer_pk":"abcdef0123456789deadbeef","cursor_segment":"C:\\wal\\seg-0007.wal",
+            {"peer_pk":"abcdef0123456789deadbeef","cursor_segment":"/wal/seg-0007.wal",
              "cursor_offset":4096,"acked_origin_seq":120,"pending_origin_seq":121,
              "pending_attempts":3,"inbound_next_expected_seq":88,
              "request_state":"waiting_peer","request_requested_at":1700000000,

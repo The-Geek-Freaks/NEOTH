@@ -2587,7 +2587,7 @@ mod tests {
         #[cfg(windows)]
         let cmd = "echo %CARGO%";
         #[cfg(not(windows))]
-        let cmd = "echo ${CARGO:-__CARGO_ABSENT__}";
+        let cmd = "printenv CARGO || echo __CARGO_ABSENT__";
 
         // Use a 10-second timeout — the echo command exits immediately.
         let result = super::run_verification_in_sandbox(

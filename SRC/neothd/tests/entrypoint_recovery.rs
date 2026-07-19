@@ -35,7 +35,11 @@ fn interrupted_apply_child() {
 fn killed_transaction_is_recovered_by_real_neoth_and_neothd_entrypoints() {
     for entrypoint in [env!("CARGO_BIN_EXE_neoth"), env!("CARGO_BIN_EXE_neothd")] {
         let fixture = tempfile::tempdir().unwrap();
-        let root = fixture.path();
+        // macOS tempdirs live under the `/var` -> `/private/var` symlink; the
+        // install transaction's reparse-point guard walks every ancestor, so
+        // hand it the canonical spelling.
+        let root = fixture.path().canonicalize().unwrap();
+        let root = root.as_path();
         let install = root.join("install");
         let state = root.join("state");
         let support_snapshot = install.join(SUPPORT_DIR).join("self-knowledge");

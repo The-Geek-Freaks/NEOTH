@@ -15927,7 +15927,7 @@ mod chat_subprocess_tests {
         let rust_source = include_str!("main.rs");
         let shell_source = include_str!("../ui/main.slint");
         let chat_source = include_str!("../ui/chat.slint");
-        assert!(!rust_source.contains("on_chat_channel_switched"));
+        assert!(!rust_source.contains(concat!("on_chat_channel", "_switched")));
         assert!(!shell_source.contains("callback chat-channel-switched"));
         assert!(!chat_source.contains("callback channel-switched"));
 
@@ -19475,9 +19475,12 @@ mod tests {
     #[test]
     fn channel_credential_command_never_places_secrets_in_argv() {
         let secret = "PROCESS_LIST_SECRET_SENTINEL";
+        // Discord's contract requires token + a canonical numeric allowed-sender
+        // snowflake; the sentinel only needs to prove secrets travel via the
+        // stdin request body, never argv.
         let request = panel_logic::build_channel_credential_request(
             "discord",
-            [secret, "", "", "", "", ""],
+            [secret, "123456789012345678", "", "", "", ""],
             false,
         )
         .unwrap();

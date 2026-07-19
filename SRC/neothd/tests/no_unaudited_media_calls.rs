@@ -39,6 +39,12 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // Provider traits + their mock-based unit tests (no real cloud egress).
     "src/media/tts_provider.rs",
     "src/media/multimodal_synth.rs",
+    // Native OMI ingest calls `.transcribe(` only through its private
+    // `PcmTranscriber` trait (test-fake injection seam). The sole canonical
+    // impl delegates to `media::stt_provider::dispatch_pcm_f32`, which enters
+    // `dispatch_transcription` — provider selection, cloud consent and the
+    // required audit frames cannot be bypassed on that path.
+    "src/daemon/omi_native_ingest.rs",
 ];
 
 /// Method-call patterns (NOTE the leading dot — `fn transcribe(` definitions and

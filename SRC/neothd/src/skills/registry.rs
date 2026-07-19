@@ -474,24 +474,44 @@ mod watcher {
         if !kind_matches {
             return false;
         }
-        let freedom_path = skills_dir
-            .parent()
-            .map(|parent| parent.join("freedom.yaml"));
-        ev.paths.iter().any(|path| {
-            if freedom_path.as_ref() == Some(path) {
-                return true;
-            }
-            // Either side of this prefix relation can be relevant while a
-            // missing parent chain is being created or the skills tree is being
-            // removed. This does not rely on `is_dir()`, which is false after a
-            // remove/rename event on every platform.
-            if path == skills_dir || skills_dir.starts_with(path) {
-                return true;
-            }
-            path.starts_with(skills_dir)
-                && (path.file_name().and_then(|name| name.to_str()) == Some("skill.yaml")
-                    || path.parent() == Some(skills_dir))
-        })
+        let relevant_for = |skills_dir: &std::path::Path| {
+            let freedom_path = skills_dir
+                .parent()
+                .map(|parent| parent.join("freedom.yaml"));
+            ev.paths.iter().any(|path| {
+                if freedom_path.as_ref() == Some(path) {
+                    return true;
+                }
+                // Either side of this prefix relation can be relevant while a
+                // missing parent chain is being created or the skills tree is being
+                // removed. This does not rely on `is_dir()`, which is false after a
+                // remove/rename event on every platform.
+                if path == skills_dir || skills_dir.starts_with(path) {
+                    return true;
+                }
+                path.starts_with(skills_dir)
+                    && (path.file_name().and_then(|name| name.to_str()) == Some("skill.yaml")
+                        || path.parent() == Some(skills_dir))
+            })
+        };
+        if relevant_for(skills_dir) {
+            return true;
+        }
+        // macOS FSEvents reports canonical paths (`/private/var/...`) while the
+        // configured skills_dir may reach the same directory through a symlink
+        // (`/var/...` tempdirs, symlinked homes). Resolve a canonical alias via
+        // the parent — which exists even while skills_dir itself is still
+        // missing — and accept a match against that spelling too. On Windows
+        // `canonicalize` yields a `\\?\` path that never matches notify's
+        // plain paths, so this arm is a no-op there and the primary
+        // comparison above stays authoritative.
+        let canonical_alias = skills_dir.parent().and_then(|parent| {
+            let parent = std::fs::canonicalize(parent).ok()?;
+            Some(parent.join(skills_dir.file_name()?))
+        });
+        canonical_alias
+            .as_deref()
+            .is_some_and(|alias| alias != skills_dir && relevant_for(alias))
     }
 
     /// Helper: `tokio::time::sleep_until` but returns a future that

@@ -4660,6 +4660,7 @@ mod tests {
             "Permission set",
             "Permission clear",
             "Kanban move",
+            "Kanban bulk move",
             "Kanban assign",
         ] {
             assert!(
@@ -4667,7 +4668,7 @@ mod tests {
                 "missing typed Wave 8 action: {action}"
             );
         }
-        assert_eq!(wave8.matches("run_neothd_json_action::<").count(), 4);
+        assert_eq!(wave8.matches("run_neothd_json_action::<").count(), 5);
     }
 
     #[test]
@@ -4675,7 +4676,7 @@ mod tests {
         let source = include_str!("main.rs");
         assert_eq!(
             source.matches("window.on_kanban_").count(),
-            11,
+            14,
             "new Kanban callbacks must be classified as read-only or typed mutations"
         );
         for read_only in [
@@ -4683,6 +4684,8 @@ mod tests {
             "window.on_kanban_copy_task_id",
             "window.on_kanban_task_selected",
             "window.on_kanban_session_selected",
+            "window.on_kanban_select_toggled",
+            "window.on_kanban_selection_cleared",
         ] {
             assert!(
                 source.contains(read_only),

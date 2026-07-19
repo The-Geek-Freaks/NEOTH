@@ -7439,42 +7439,97 @@ mod tests {
 
     #[tokio::test]
     async fn stricter_omi_reload_scrubs_plaintext_and_never_restores_weaker_runtime() {
-        let home = tempfile::tempdir().unwrap();
-        let initial_reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let initial_addr = initial_reservation.local_addr().unwrap();
-        drop(initial_reservation);
-        let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let occupied_addr = occupied.local_addr().unwrap();
+        // The drop-then-rebind reservation races with sibling nextest
+        // processes using the same idiom: the OS hands a just-freed port to
+        // the next `bind(:0)`, and that sibling's long-lived `occupied`
+        // listener then holds our address (seen as EADDRINUSE on macOS CI).
+        // Boot with a fresh reservation until the runtime reports healthy
+        // instead of failing the whole test on the collision.
+        let mut boot = None;
+        for attempt in 0..3 {
+            let home = tempfile::tempdir().unwrap();
+            let initial_reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let initial_addr = initial_reservation.local_addr().unwrap();
+            drop(initial_reservation);
+            let occupied = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let occupied_addr = occupied.local_addr().unwrap();
 
-        let mut initial = FreedomConfig::default();
-        initial.omi.enabled = true;
-        initial.omi.mode = crate::config::OmiIngestMode::NativeIngest;
-        initial.omi.listen_addr = initial_addr.to_string();
-        initial.omi.retain_transcripts = true;
-        let config_path = home.path().join("freedom.yaml");
-        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
-        let credentials_path = home.path().join("credentials.yaml");
-        std::fs::write(
-            &credentials_path,
-            "omi_ingest_token: 0123456789abcdef0123456789abcdef\n",
-        )
-        .unwrap();
+            let mut initial = FreedomConfig::default();
+            initial.omi.enabled = true;
+            initial.omi.mode = crate::config::OmiIngestMode::NativeIngest;
+            initial.omi.listen_addr = initial_addr.to_string();
+            initial.omi.retain_transcripts = true;
+            let config_path = home.path().join("freedom.yaml");
+            std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+            let credentials_path = home.path().join("credentials.yaml");
+            std::fs::write(
+                &credentials_path,
+                "omi_ingest_token: 0123456789abcdef0123456789abcdef\n",
+            )
+            .unwrap();
 
-        let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
-        let (writer, writer_task) = crate::wal::spawn(home.path().join("omi-private.wal")).unwrap();
-        let supervisor = spawn_omi_ingest(
-            &controller,
-            credentials_path,
-            home.path().to_path_buf(),
-            writer.clone(),
-            crate::providers::meter::Meter::with_default_window(),
-        )
-        .unwrap();
-        let db_path = home.path().join("views.db");
-        wait_for_omi_status(&db_path, |status| {
-            status.runtime_state.as_deref() == Some("healthy")
-        })
-        .await;
+            let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
+            let (writer, writer_task) =
+                crate::wal::spawn(home.path().join("omi-private.wal")).unwrap();
+            let supervisor = spawn_omi_ingest(
+                &controller,
+                credentials_path,
+                home.path().to_path_buf(),
+                writer.clone(),
+                crate::providers::meter::Meter::with_default_window(),
+            )
+            .unwrap();
+            let db_path = home.path().join("views.db");
+            let status = wait_for_omi_status(&db_path, |status| {
+                matches!(
+                    status.runtime_state.as_deref(),
+                    Some("healthy") | Some("failed")
+                )
+            })
+            .await;
+            if status.runtime_state.as_deref() == Some("healthy") {
+                boot = Some((
+                    home,
+                    occupied,
+                    occupied_addr,
+                    initial_addr,
+                    initial,
+                    config_path,
+                    controller,
+                    writer,
+                    writer_task,
+                    supervisor,
+                    db_path,
+                ));
+                break;
+            }
+            let port_collision = status.runtime_detail.as_deref().is_some_and(|detail| {
+                detail.contains("in use") || detail.contains("Only one usage")
+            });
+            assert!(
+                port_collision,
+                "OMI runtime failed to boot for a non-port reason (attempt {attempt}): {status:?}"
+            );
+            supervisor.abort();
+            let _ = supervisor.await;
+            drop(writer);
+            writer_task.abort();
+            let _ = writer_task.await;
+            drop(occupied);
+        }
+        let (
+            _home,
+            occupied,
+            occupied_addr,
+            initial_addr,
+            initial,
+            config_path,
+            controller,
+            writer,
+            writer_task,
+            supervisor,
+            db_path,
+        ) = boot.expect("OMI listener could not bind a free port in 3 attempts");
 
         let mut connection = crate::memory::store::open(&db_path).unwrap();
         crate::memory::omi::commit_conversation(
