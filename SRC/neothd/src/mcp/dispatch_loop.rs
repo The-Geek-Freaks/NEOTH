@@ -2126,12 +2126,22 @@ fn tool_result_metadata(call: &ParsedToolCall, status: &str) -> String {
 }
 
 fn tool_result_source_label(call: &ParsedToolCall, kind: &str) -> String {
-    // JSON string encoding retains exact provenance while turning newlines,
-    // quotes, and other structural characters into inert label text. The
-    // surrounding untrusted wrapper additionally defangs guard sigils.
-    let server =
-        serde_json::to_string(&call.server).expect("String JSON serialization is infallible");
-    let tool = serde_json::to_string(&call.tool).expect("String JSON serialization is infallible");
+    // Keep normal MCP identifiers readable while JSON-encoding anything that
+    // could alter the source-label structure. The surrounding untrusted
+    // wrapper additionally defangs guard sigils.
+    let component = |value: &str| {
+        if !value.is_empty()
+            && value
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        {
+            value.to_string()
+        } else {
+            serde_json::to_string(value).expect("str JSON serialization is infallible")
+        }
+    };
+    let server = component(&call.server);
+    let tool = component(&call.tool);
     format!("mcp:{server}/{tool}/{kind}")
 }
 

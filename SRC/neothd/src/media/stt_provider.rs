@@ -682,6 +682,55 @@ fn faster_whisper_artifact_manifest(model_id: &str) -> Option<FasterWhisperArtif
     })
 }
 
+/// Build a cheap Hugging Face cache fixture that satisfies the pinned
+/// structural manifest without embedding model weights in the test suite.
+/// The opaque model file is sparse and intentionally not SHA-256-valid, so
+/// production-ready validation still rejects it.
+#[cfg(test)]
+pub(crate) fn materialize_structural_faster_whisper_test_cache(
+    cache_root: &Path,
+    model_id: &str,
+) -> anyhow::Result<PathBuf> {
+    let manifest = faster_whisper_artifact_manifest(model_id)
+        .ok_or_else(|| anyhow::anyhow!("no reviewed faster-whisper manifest for `{model_id}`"))?;
+    let repo_cache = huggingface_repo_cache_dir(cache_root, model_id);
+    let snapshot = repo_cache.join("snapshots").join(manifest.revision);
+    std::fs::create_dir_all(&snapshot)?;
+    std::fs::create_dir_all(repo_cache.join("refs"))?;
+    std::fs::write(repo_cache.join("refs").join("main"), manifest.revision)?;
+
+    for artifact in manifest.artifacts {
+        let expected = artifact.expected.ok_or_else(|| {
+            anyhow::anyhow!(
+                "faster-whisper test fixture artifact `{}` has no pinned length",
+                artifact.filename
+            )
+        })?;
+        let path = snapshot.join(artifact.filename);
+        match artifact.kind {
+            ArtifactKind::JsonObject => {
+                let len = usize::try_from(expected.len)
+                    .map_err(|_| anyhow::anyhow!("JSON fixture length does not fit usize"))?;
+                anyhow::ensure!(len >= 2, "JSON fixture is shorter than `{{}}`");
+                let mut bytes = vec![b' '; len];
+                bytes[0] = b'{';
+                bytes[1] = b'}';
+                std::fs::write(path, bytes)?;
+            }
+            ArtifactKind::NonEmpty { .. } => {
+                std::fs::File::create(path)?.set_len(expected.len)?;
+            }
+            ArtifactKind::Safetensors => {
+                anyhow::bail!(
+                    "unexpected safetensors artifact `{}` in faster-whisper manifest",
+                    artifact.filename
+                );
+            }
+        }
+    }
+    Ok(snapshot)
+}
+
 fn faster_whisper_snapshot(cache_root: &Path, model_id: &str) -> Result<PathBuf, CacheHealth> {
     let repo_cache = huggingface_repo_cache_dir(cache_root, model_id);
     let Some(manifest) = faster_whisper_artifact_manifest(model_id) else {
@@ -3186,15 +3235,6 @@ mod tests {
         );
     }
 
-    fn write_minimal_safetensors(path: &Path) {
-        let header = br#"{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
-        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(header);
-        bytes.extend_from_slice(&[0_u8; 4]);
-        std::fs::write(path, bytes).unwrap();
-    }
-
     fn read_model_download_events(path: &Path) -> Vec<(u8, serde_json::Value)> {
         let bytes = std::fs::read(path).unwrap();
         let segment_header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
@@ -3220,36 +3260,20 @@ mod tests {
     fn materialize_local_whisper_target(target: &LocalWhisperTarget) {
         match target.backend() {
             SttProviderKind::WhisperRsLocal => {
-                std::fs::create_dir_all(target.cache_path()).unwrap();
-                std::fs::write(
-                    target
-                        .cache_path()
-                        .join(crate::providers::whisper::TOKENIZER_FILE),
-                    b"{}",
+                let cache = crate::providers::whisper::materialize_structural_test_cache(
+                    &target.runtime.candle_cache_root,
+                    target.model_id(),
                 )
                 .unwrap();
-                std::fs::write(
-                    target
-                        .cache_path()
-                        .join(crate::providers::whisper::CONFIG_FILE),
-                    b"{}",
-                )
-                .unwrap();
-                write_minimal_safetensors(
-                    &target
-                        .cache_path()
-                        .join(crate::providers::whisper::SAFETENSORS_FILE),
-                );
+                assert_eq!(cache, target.cache_path());
             }
             SttProviderKind::FasterWhisperLocal => {
-                const REVISION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-                let snapshot = target.cache_path().join("snapshots").join(REVISION);
-                std::fs::create_dir_all(&snapshot).unwrap();
-                std::fs::create_dir_all(target.cache_path().join("refs")).unwrap();
-                std::fs::write(target.cache_path().join("refs").join("main"), REVISION).unwrap();
-                std::fs::write(snapshot.join("model.bin"), [0_u8; 16]).unwrap();
-                std::fs::write(snapshot.join("config.json"), b"{}").unwrap();
-                std::fs::write(snapshot.join("tokenizer.json"), b"{}").unwrap();
+                let snapshot = materialize_structural_faster_whisper_test_cache(
+                    &target.runtime.faster_whisper_cache_root,
+                    target.model_id(),
+                )
+                .unwrap();
+                assert!(snapshot.starts_with(target.cache_path()));
             }
             other => panic!("unexpected local Whisper target: {}", other.as_str()),
         }
@@ -3348,10 +3372,9 @@ mod tests {
 
         materialize_local_whisper_target(&faster);
         assert!(matches!(faster.cache_health(), CacheHealth::Ready));
-        let active_snapshot = faster
-            .cache_path()
-            .join("snapshots")
-            .join("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let active_snapshot =
+            faster_whisper_snapshot(&faster.runtime.faster_whisper_cache_root, faster.model_id())
+                .unwrap();
         std::fs::write(active_snapshot.join("config.json"), b"not-json").unwrap();
         assert!(matches!(faster.cache_health(), CacheHealth::Corrupt { .. }));
         assert!(!faster.cached());

@@ -173,7 +173,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let catalog_path = tmp.path().join("models_catalog.json");
         let catalog = serde_json::json!({
-            "version": 1,
+            "version": crate::models::catalog::CATALOG_VERSION,
             "providers": {
                 "anthropic_api": {
                     "fetched_at_unix": 9_999_999_999u64,

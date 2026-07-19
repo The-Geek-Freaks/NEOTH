@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// fallback fires ONLY on 429 (not breaker-open/timeout — mixing signals
 /// contaminates the breaker). Entries already in QuotaTracker backoff are
 /// skipped. Empty `chain` (default) = no fallback, no behaviour change.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct FallbackConfig {
     /// Ordered fallback providers, each a `HemisphereSlot`
     /// (provider/model/key/endpoint/region/api_version). Tried in order
@@ -25,6 +25,15 @@ pub struct FallbackConfig {
 
 fn default_fallback_max_hops() -> u8 {
     2
+}
+
+impl Default for FallbackConfig {
+    fn default() -> Self {
+        Self {
+            chain: Vec::new(),
+            max_hops: default_fallback_max_hops(),
+        }
+    }
 }
 
 /// A3-01 — `neoth transfer` size caps (default-applied; an absent block uses

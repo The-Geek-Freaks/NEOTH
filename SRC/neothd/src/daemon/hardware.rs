@@ -538,31 +538,16 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    fn write_minimal_safetensors(path: &Path) {
-        let header = br#"{"weight":{"dtype":"F32","shape":[1],"data_offsets":[0,4]}}"#;
-        let mut bytes = Vec::with_capacity(8 + header.len() + 4);
-        bytes.extend_from_slice(&(header.len() as u64).to_le_bytes());
-        bytes.extend_from_slice(header);
-        bytes.extend_from_slice(&[0_u8; 4]);
-        std::fs::write(path, bytes).unwrap();
+    fn materialize_candle_cache(models_root: &Path, repo: &str) -> PathBuf {
+        crate::providers::whisper::materialize_structural_test_cache(models_root, repo).unwrap()
     }
 
-    fn materialize_candle_cache(cache: &Path) {
-        std::fs::create_dir_all(cache).unwrap();
-        std::fs::write(cache.join("config.json"), b"{}").unwrap();
-        std::fs::write(cache.join("tokenizer.json"), b"{}").unwrap();
-        write_minimal_safetensors(&cache.join("model.safetensors"));
-    }
-
-    fn materialize_faster_cache(cache: &Path) {
-        const REVISION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let snapshot = cache.join("snapshots").join(REVISION);
-        std::fs::create_dir_all(&snapshot).unwrap();
-        std::fs::create_dir_all(cache.join("refs")).unwrap();
-        std::fs::write(cache.join("refs").join("main"), REVISION).unwrap();
-        std::fs::write(snapshot.join("model.bin"), [0_u8; 16]).unwrap();
-        std::fs::write(snapshot.join("config.json"), b"{}").unwrap();
-        std::fs::write(snapshot.join("tokenizer.json"), b"{}").unwrap();
+    fn materialize_faster_cache(cache_root: &Path, repo: &str) -> PathBuf {
+        crate::media::stt_provider::materialize_structural_faster_whisper_test_cache(
+            cache_root, repo,
+        )
+        .unwrap();
+        cache_root.join(format!("models--{}", repo.replace('/', "--")))
     }
 
     struct EnvGuard {
@@ -666,8 +651,8 @@ mod tests {
         // No freedom.yaml means the serde default (Base). The hardware surface
         // must check the same cache as the canonical STT factory and models CLI.
         let dir = tempdir().unwrap();
-        let configured = dir.path().join("models").join("openai-whisper-base");
-        materialize_candle_cache(&configured);
+        let configured =
+            materialize_candle_cache(&dir.path().join("models"), "openai/whisper-base");
         let report = probe(dir.path()).unwrap();
         assert!(report.cached_models.whisper_configured);
         assert_eq!(
@@ -699,13 +684,8 @@ mod tests {
             "media:\n  stt:\n    primary: faster_whisper_local\n    model_size: small\n",
         )
         .unwrap();
-        let cache = dir
-            .path()
-            .join("cache")
-            .join("huggingface")
-            .join("hub")
-            .join("models--Systran--faster-whisper-small");
-        materialize_faster_cache(&cache);
+        let cache_root = dir.path().join("cache").join("huggingface").join("hub");
+        let cache = materialize_faster_cache(&cache_root, "Systran/faster-whisper-small");
 
         let report = probe(dir.path()).unwrap();
 
@@ -804,8 +784,7 @@ mod tests {
     #[test]
     fn hardware_does_not_report_corrupt_whisper_cache_as_cached() {
         let dir = tempdir().unwrap();
-        let cache = dir.path().join("models").join("openai-whisper-base");
-        materialize_candle_cache(&cache);
+        let cache = materialize_candle_cache(&dir.path().join("models"), "openai/whisper-base");
         std::fs::write(cache.join("config.json"), b"not-json").unwrap();
 
         let report = probe(dir.path()).unwrap();

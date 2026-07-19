@@ -53,7 +53,6 @@ pub enum BundleTransactionAction {
         expected_version: String,
     },
     /// Complete a portable update after the invoking Windows process exits.
-    #[cfg(windows)]
     Handoff {
         /// Extracted target release root containing the running helper.
         #[arg(long, value_name = "PATH")]
@@ -69,7 +68,6 @@ pub enum BundleTransactionAction {
         wait_pid: u32,
     },
     /// Delete a completed Windows handoff after its helper exits.
-    #[cfg(windows)]
     #[command(name = "cleanup-handoff")]
     CleanupHandoff {
         #[arg(long)]
@@ -120,60 +118,76 @@ pub async fn run_internal(args: InternalArgs, output: OutputFormat) -> Result<()
                     })
                 );
             }
-            #[cfg(windows)]
             BundleTransactionAction::Handoff {
                 bundle_root,
                 request,
                 request_sha256,
                 wait_pid,
             } => {
-                let completed = crate::updater::self_update::run_windows_bundle_handoff(
-                    &bundle_root,
-                    &request,
-                    &request_sha256,
-                    wait_pid,
-                )?;
-                super::update::emit_self_update_applied(
-                    &completed.applied,
-                    &completed.source_repo,
-                    completed.channel,
-                    &completed.target_triple,
-                    "windows_detached_handoff",
-                )
-                .await;
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "status": "committed",
-                        "operation_id": &completed.operation_id,
-                        "version": &completed.applied.to_version,
-                        "transaction_id": &completed.applied.transaction_id,
-                    })
-                );
-                if let Err(error) =
-                    crate::updater::self_update::spawn_windows_handoff_cleanup(&completed)
+                #[cfg(not(windows))]
                 {
-                    tracing::warn!(%error, "Windows update committed but staging cleanup could not be scheduled");
+                    let _ = (bundle_root, request, request_sha256, wait_pid);
+                    anyhow::bail!("bundle-transaction handoff is supported only on Windows");
+                }
+                #[cfg(windows)]
+                {
+                    let completed = crate::updater::self_update::run_windows_bundle_handoff(
+                        &bundle_root,
+                        &request,
+                        &request_sha256,
+                        wait_pid,
+                    )?;
+                    super::update::emit_self_update_applied(
+                        &completed.applied,
+                        &completed.source_repo,
+                        completed.channel,
+                        &completed.target_triple,
+                        "windows_detached_handoff",
+                    )
+                    .await;
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "committed",
+                            "operation_id": &completed.operation_id,
+                            "version": &completed.applied.to_version,
+                            "transaction_id": &completed.applied.transaction_id,
+                        })
+                    );
+                    if let Err(error) =
+                        crate::updater::self_update::spawn_windows_handoff_cleanup(&completed)
+                    {
+                        tracing::warn!(%error, "Windows update committed but staging cleanup could not be scheduled");
+                    }
                 }
             }
-            #[cfg(windows)]
             BundleTransactionAction::CleanupHandoff {
                 operation_id,
                 request_sha256,
                 wait_pid,
             } => {
-                crate::updater::self_update::cleanup_windows_handoff(
-                    &operation_id,
-                    &request_sha256,
-                    wait_pid,
-                )?;
-                println!(
-                    "{}",
-                    serde_json::json!({
-                        "status": "cleaned",
-                        "operation_id": operation_id,
-                    })
-                );
+                #[cfg(not(windows))]
+                {
+                    let _ = (operation_id, request_sha256, wait_pid);
+                    anyhow::bail!(
+                        "bundle-transaction cleanup-handoff is supported only on Windows"
+                    );
+                }
+                #[cfg(windows)]
+                {
+                    crate::updater::self_update::cleanup_windows_handoff(
+                        &operation_id,
+                        &request_sha256,
+                        wait_pid,
+                    )?;
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "status": "cleaned",
+                            "operation_id": operation_id,
+                        })
+                    );
+                }
             }
         },
         InternalAction::BackgroundWorker { job } => {
@@ -271,7 +285,6 @@ mod tests {
         assert_eq!(job, PathBuf::from("instance/bgjobs/0123456789abcdef.job"));
     }
 
-    #[cfg(windows)]
     #[test]
     fn detached_windows_handoff_command_has_no_free_form_members() {
         let cli = crate::cli::Cli::try_parse_from([
@@ -312,7 +325,6 @@ mod tests {
         assert_eq!(wait_pid, 123);
     }
 
-    #[cfg(windows)]
     #[test]
     fn detached_windows_cleanup_has_no_caller_supplied_paths() {
         let cli = crate::cli::Cli::try_parse_from([

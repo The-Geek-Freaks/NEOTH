@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn lf_p1_03_sanitize_tool_output_decodes_json_escapes_before_matching() {
-        let input = concat!(r#"{"value":"sk-\u0046AKE_TEST_JSON_AAAAAAAAAAAAAAAAAAA"}"#,);
+        let input = r#"{"value":"sk-\u0046AKE_TEST_JSON_AAAAAAAAAAAAAAAAAAA"}"#;
         let out = sanitize_tool_output(input);
         assert!(
             !out.contains("FAKE_TEST_JSON"),
@@ -1134,8 +1134,7 @@ mod tests {
 
     #[test]
     fn lf_p1_03_sanitize_tool_output_strips_json_escaped_ansi_before_matching() {
-        let input =
-            concat!(r#"{"note":"\u001b[31msk-FAKE_TEST_JSON_ANSI_AAAAAAAAAAAAAAA\u001b[0m"}"#,);
+        let input = r#"{"note":"\u001b[31msk-FAKE_TEST_JSON_ANSI_AAAAAAAAAAAAAAA\u001b[0m"}"#;
         let out = sanitize_tool_output(input);
         assert!(
             !out.contains("FAKE_TEST_JSON_ANSI"),
@@ -1147,7 +1146,7 @@ mod tests {
 
     #[test]
     fn lf_p1_03_sanitize_tool_output_detects_json_escaped_zero_width_split() {
-        let input = concat!(r#"{"note":"sk-FAKE_TEST_JSON_ZERO_AAAAA\u200bAAAAAAAAAAAAAAA"}"#,);
+        let input = r#"{"note":"sk-FAKE_TEST_JSON_ZERO_AAAAA\u200bAAAAAAAAAAAAAAA"}"#;
         let out = sanitize_tool_output(input);
         assert!(
             !out.contains("FAKE_TEST_JSON_ZERO"),

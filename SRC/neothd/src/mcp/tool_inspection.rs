@@ -1100,10 +1100,10 @@ checksum = "fixture"
         let dir = tempfile::tempdir().unwrap();
         write_npm_locked_project(dir.path());
         for command in [
-            "npm.cmd ci",
-            "NPM.EXE ci",
-            r#"C:\tools\nodejs\npm.cmd ci"#,
-            r#"C:\tools\nodejs\NPM.BAT ci"#,
+            "npm.cmd ci --ignore-scripts",
+            "NPM.EXE ci --ignore-scripts",
+            r#"C:\tools\nodejs\npm.cmd ci --ignore-scripts"#,
+            r#"C:\tools\nodejs\NPM.BAT ci --ignore-scripts"#,
         ] {
             let mut insp = ManifestInstallInspector::new();
             let install = call(

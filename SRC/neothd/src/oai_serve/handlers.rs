@@ -131,7 +131,7 @@ mod tests {
         let catalog_path = tmp.path().join("models_catalog.json");
 
         let catalog_json = serde_json::json!({
-            "version": 1,
+            "version": crate::models::catalog::CATALOG_VERSION,
             "providers": {
                 "anthropic_api": {
                     "fetched_at_unix": 9_999_999_999u64,
@@ -209,7 +209,7 @@ mod tests {
         let catalog_path = tmp.path().join("models_catalog.json");
 
         let catalog_json = serde_json::json!({
-            "version": 1,
+            "version": crate::models::catalog::CATALOG_VERSION,
             "providers": {
                 "anthropic_api": {
                     "fetched_at_unix": 1u64,

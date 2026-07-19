@@ -3992,6 +3992,11 @@ mod tests {
         assert_eq!(cancelled.status(), StatusCode::OK);
 
         let connection = crate::memory::store::open(&temp.path().join("views.db")).unwrap();
+        // The production daemon creates the coding schema at startup; this
+        // focused ingest fixture otherwise creates it lazily only when an
+        // action is promoted. Materialise the empty schema before asserting
+        // that cancellation promoted no kanban task.
+        crate::coding::store::ensure_schema(&connection).unwrap();
         let (status, summary): (String, Option<String>) = connection
             .query_row(
                 "SELECT status, summary FROM idx_omi_conversations WHERE source_id = 'native:call-cancelled'",

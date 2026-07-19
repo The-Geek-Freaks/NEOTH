@@ -14,9 +14,9 @@
 //!
 //! Concurrency: sources are independent — one provider's failure
 //! does NOT halt the others. `futures::join_all` collects results
-//! in parallel; each source's error is recorded under its
-//! `ProviderCatalog::last_error` so the operator sees the cause
-//! in `neoth models show <provider>`.
+//! in parallel; each source records a sanitized failure status under
+//! `ProviderCatalog::last_error` so the operator sees which provider needs
+//! attention without persisting provider-controlled response text.
 
 use std::path::Path;
 
@@ -1043,7 +1043,7 @@ pub async fn discover_with_plan(catalog_path: &Path, plan: SourcePlan) -> Result
                     // bodies, endpoints, query tokens, or credential-chain
                     // details. Receipts already identify the provider; keep
                     // durable/public telemetry deliberately generic.
-                    error: "model discovery request failed; retry with debug logging enabled"
+                    error: "model discovery request failed; check provider configuration and connectivity, then retry"
                         .to_string(),
                 });
             }
@@ -1344,7 +1344,13 @@ mod tests {
         let reloaded = ModelsCatalog::load_from(&path);
         let failed = reloaded.provider("anthropic_api").unwrap();
         assert!(failed.models.is_empty());
-        assert_eq!(failed.last_error.as_deref(), Some("401 unauthorized"));
+        assert_eq!(
+            failed.last_error.as_deref(),
+            Some(
+                "model discovery request failed; check provider configuration and connectivity, then retry"
+            )
+        );
+        assert!(!format!("{failed:?}").contains("401 unauthorized"));
     }
 
     #[tokio::test]
@@ -1990,7 +1996,8 @@ mod tests {
             ANTHROPIC_CATALOG_PROVIDER.into(),
             crate::models::catalog::ProviderCatalog {
                 fetched_at_unix: 1_000_000,
-                binding_hash: Some(catalog_binding_hash(
+                binding_hash: Some(catalog_binding_hmac(
+                    b"neoth-injected-catalog-source-v1",
                     ANTHROPIC_CATALOG_PROVIDER,
                     &[("source", "injected")],
                 )),

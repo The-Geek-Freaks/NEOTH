@@ -235,6 +235,16 @@ mod tests {
     }
 
     #[test]
+    fn reference_keeps_private_release_helper_schema_cross_platform() {
+        // Hidden machine-only commands are still part of the generated
+        // drift contract. Their clap schema must therefore be identical on
+        // Windows, macOS, and Linux even though execution is Windows-only.
+        let md = reference();
+        assert!(md.contains("`neoth internal bundle-transaction handoff`"));
+        assert!(md.contains("`neoth internal bundle-transaction cleanup-handoff`"));
+    }
+
+    #[test]
     fn reference_is_deterministic() {
         // Two renders must be byte-identical (the drift test relies on
         // this). Catches any HashMap-iteration-order leak.

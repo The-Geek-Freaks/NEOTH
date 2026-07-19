@@ -337,7 +337,15 @@ mod tests {
             mime: "video/mp4".into(),
             data: b"fake".to_vec(),
         };
-        let r = block_on(extractor.extract(&asset));
+        let home = tempfile::tempdir().unwrap();
+        let config = crate::config::FreedomConfig::default();
+        let r = block_on(extractor.extract_with_context(
+            &asset,
+            &config.media,
+            &config.updater,
+            home.path(),
+            None,
+        ));
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("PATH", v),

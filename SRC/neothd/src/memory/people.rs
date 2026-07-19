@@ -186,10 +186,10 @@ fn validate_people(people: &People) -> Result<()> {
 fn migrate_legacy_people(mut people: People) -> People {
     for row in &mut people.rows {
         if row.interaction_count.is_finite() && row.interaction_count > MAX_INTERACTION_COUNT {
-            let factor = MAX_INTERACTION_COUNT / row.interaction_count;
+            let factor = f64::from(MAX_INTERACTION_COUNT) / f64::from(row.interaction_count);
             row.interaction_count = MAX_INTERACTION_COUNT;
-            row.reply_to_bot_count *= factor;
-            row.msg_len_total *= f64::from(factor);
+            row.reply_to_bot_count *= factor as f32;
+            row.msg_len_total *= factor;
         }
         if row.interaction_count.is_finite() && row.interaction_count >= 0.0 {
             row.reply_to_bot_count = row.reply_to_bot_count.min(row.interaction_count).max(0.0);
@@ -315,10 +315,13 @@ fn decay_row(row: &mut PersonStat, now_unix: u64) {
 
 fn clamp_accumulators(row: &mut PersonStat) {
     if row.interaction_count > MAX_INTERACTION_COUNT {
-        let factor = MAX_INTERACTION_COUNT / row.interaction_count;
+        // Derive the shared cap factor in f64: `msg_len_total` is f64 and
+        // repeatedly applying a rounded f32 ratio otherwise drifts its average
+        // away from the capped interaction denominator.
+        let factor = f64::from(MAX_INTERACTION_COUNT) / f64::from(row.interaction_count);
         row.interaction_count = MAX_INTERACTION_COUNT;
-        row.reply_to_bot_count *= factor;
-        row.msg_len_total *= f64::from(factor);
+        row.reply_to_bot_count *= factor as f32;
+        row.msg_len_total *= factor;
     }
     row.reply_to_bot_count = row.reply_to_bot_count.min(row.interaction_count);
     row.msg_len_total = row

@@ -581,7 +581,12 @@ mod tests {
         tempfile::TempDir,
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let (writer, join) = crate::wal::writer::spawn(dir.path().join("ld.wal")).unwrap();
+        // Keep HMAC/key-recovery state inside this test's temp home. Using
+        // `spawn()` would make independently executed nextest cases race on
+        // the runner's process-global ~/.neoth key state.
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(dir.path().join("ld.wal"), dir.path().to_path_buf())
+                .unwrap();
         (writer, join, dir)
     }
 

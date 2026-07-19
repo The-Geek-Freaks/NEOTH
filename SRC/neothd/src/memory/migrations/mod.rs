@@ -1853,7 +1853,7 @@ mod tests {
             .unwrap();
         }
         let error = migrate(&mut conn, 31, 32).unwrap_err();
-        assert!(error.to_string().contains("exceed the 256-peer"));
+        assert!(format!("{error:#}").contains("exceed the 256-peer"));
         let exists: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='mesh_sync_vector_frontier'",
