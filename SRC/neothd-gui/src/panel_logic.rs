@@ -2220,9 +2220,9 @@ pub fn parse_loop_budget(freedom_yaml: &str) -> (u32, u64) {
 }
 
 // ── GOLD-ADAPT-ODY-01 — chat-sidebar session history ────────────────────
-// GUI-decoupled mirror of `memory/hindsight.rs::HindsightCard` (the GUI
-// never links the daemon crate; it reads `~/.neoth/hindsight/*.json`).
-// Only the fields the sidebar renders are mirrored — serde ignores the rest.
+// GUI-local deserialize mirror of `memory/hindsight.rs::HindsightCard`.
+// The GUI links the core for canonical transcript/redaction helpers, but keeps
+// this persisted-card boundary deliberately narrow; serde ignores the rest.
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct HindsightCardMini {
@@ -2242,27 +2242,90 @@ pub struct SessionEntry {
     pub id: String,
     pub label: String,
     pub meta: String,
+    pub preview: String,
+    pub last_timestamp: String,
+}
+
+/// One canonical visible chat row used by the read-only history switcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionMessageEntry {
+    pub role: String,
+    pub text: String,
+    pub timestamp: String,
+}
+
+/// Sidebar previews are deliberately smaller than bubbles and are a broader
+/// shoulder-surfing surface. Re-sanitise every source (including operator
+/// text), collapse whitespace, then truncate by extended grapheme cluster so
+/// emoji/combining sequences are never split.
+pub const CHAT_SIDEBAR_PREVIEW_GRAPHEMES: usize = 64;
+
+pub fn chat_sidebar_preview(text: &str) -> String {
+    use unicode_segmentation::UnicodeSegmentation as _;
+
+    let sanitized = neothd::security::redact::sanitize_tool_output(text);
+    let normalized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    let graphemes = normalized.graphemes(true).collect::<Vec<_>>();
+    if graphemes.len() <= CHAT_SIDEBAR_PREVIEW_GRAPHEMES {
+        return normalized;
+    }
+    let mut prefix = graphemes[..CHAT_SIDEBAR_PREVIEW_GRAPHEMES - 1].concat();
+    while prefix.ends_with('…') {
+        let _ = prefix.pop();
+    }
+    prefix.push('…');
+    prefix
+}
+
+/// Derive a preview from newest-to-oldest visible rows. Streaming rows are
+/// transient regardless of their current text: callers that run this after
+/// Send or during an asynchronous sidebar probe therefore fall back to the
+/// newest settled row. The sidebar publishes assistant output only once the
+/// stream has completed.
+pub fn latest_chat_sidebar_preview<'a>(
+    newest_first: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+) -> (String, String) {
+    newest_first
+        .into_iter()
+        .find_map(|(text, timestamp, streaming)| {
+            let trimmed = text.trim();
+            if trimmed.is_empty() || streaming {
+                return None;
+            }
+            let preview = chat_sidebar_preview(trimmed);
+            (!preview.is_empty()).then(|| (preview, timestamp.to_string()))
+        })
+        .unwrap_or_default()
 }
 
 impl HindsightCardMini {
     fn label(&self) -> String {
-        match self.display_name.as_deref() {
-            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-            _ if !self.one_line_summary.trim().is_empty() => {
-                self.one_line_summary.trim().to_string()
+        for candidate in [
+            self.display_name.as_deref().unwrap_or_default(),
+            self.one_line_summary.as_str(),
+            self.session_id.as_str(),
+        ] {
+            let label = chat_sidebar_preview(candidate);
+            if !label.is_empty() {
+                return label;
             }
-            _ => self.session_id.clone(),
         }
+        "Retained session".to_string()
     }
 }
 
 /// Load the newest `limit` session cards from `<home>/hindsight/`,
 /// newest-first (same ordering contract as `hindsight::list_cards`).
 /// Malformed files skip — a torn write must not empty the sidebar.
-pub fn load_session_history(neoth_home: &std::path::Path, limit: usize) -> Vec<SessionEntry> {
+pub fn load_session_history(
+    neoth_home: &std::path::Path,
+    limit: usize,
+) -> Result<Vec<SessionEntry>, String> {
     let dir = neoth_home.join("hindsight");
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("cannot read {}: {error}", dir.display())),
     };
     let mut cards: Vec<HindsightCardMini> = entries
         .flatten()
@@ -2272,14 +2335,72 @@ pub fn load_session_history(neoth_home: &std::path::Path, limit: usize) -> Vec<S
         .collect();
     cards.sort_by_key(|c| std::cmp::Reverse(c.ended_at_unix));
     cards.truncate(limit);
-    cards
+    let ids = cards
+        .iter()
+        .map(|card| card.session_id.clone())
+        .collect::<Vec<_>>();
+    // A missing or legacy views.db yields empty previews. Real SQLite errors
+    // remain distinguishable so the UI can retain its last good snapshot.
+    // Never fall back to closing_utterance: it is not the latest visible turn.
+    let db_path = neoth_home.join("views.db");
+    let latest = match std::fs::metadata(&db_path) {
+        Ok(metadata) if metadata.is_file() => {
+            neothd::memory::transcript_store::read_latest_turns_at(&db_path, &ids)
+                .map_err(|error| format!("cannot read {}: {error}", db_path.display()))?
+        }
+        Ok(_) => return Err(format!("{} is not a regular file", db_path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(error) => return Err(format!("cannot inspect {}: {error}", db_path.display())),
+    };
+    Ok(cards
         .into_iter()
-        .map(|c| SessionEntry {
-            label: c.label(),
-            meta: format_epoch_utc(c.ended_at_unix),
-            id: c.session_id,
+        .map(|c| {
+            let latest_turn = latest.get(&c.session_id);
+            SessionEntry {
+                label: c.label(),
+                meta: format_epoch_utc(c.ended_at_unix),
+                preview: latest_turn
+                    .map(|turn| chat_sidebar_preview(&turn.text))
+                    .unwrap_or_default(),
+                last_timestamp: latest_turn
+                    .map(|turn| format_epoch_utc(turn.ts_unix))
+                    .unwrap_or_default(),
+                id: c.session_id,
+            }
         })
-        .collect()
+        .collect())
+}
+
+/// Load the selected historical session from the same canonical raw-turn
+/// store used for its preview. Read-only and side-effect-free; legacy cards
+/// without raw turns return an empty transcript.
+pub fn load_session_messages(
+    neoth_home: &std::path::Path,
+    session_id: &str,
+) -> Result<Vec<SessionMessageEntry>, String> {
+    let db_path = neoth_home.join("views.db");
+    if !db_path.is_file() {
+        return Ok(Vec::new());
+    }
+    neothd::memory::transcript_store::read_session_turns_at(&db_path, session_id)
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| SessionMessageEntry {
+                    role: if row.role == "agent" {
+                        "assistant".to_string()
+                    } else {
+                        row.role
+                    },
+                    // Historical transcript panes are an egress surface. Re-run
+                    // every role through the canonical sanitizer: operator rows
+                    // remain byte-exact in storage but secrets/controls must not
+                    // leak through a shoulder-surfable GUI history view.
+                    text: neothd::security::redact::sanitize_tool_output(&row.text),
+                    timestamp: format_epoch_utc(row.ts_unix),
+                })
+                .collect()
+        })
+        .map_err(|error| format!("session transcript unavailable: {error}"))
 }
 
 // ── GOLD-ADAPT-ODY-02/05 — per-message metrics chip formatting ──────────
@@ -7094,14 +7215,154 @@ mod tests {
         )
         .unwrap();
         std::fs::write(hs.join("torn.json"), "{oops").unwrap();
-        let rows = load_session_history(dir.path(), 20);
+        let conn = neothd::memory::store::open(&dir.path().join("views.db")).unwrap();
+        neothd::memory::transcript_store::insert_turn(
+            &conn,
+            "s-new",
+            "operator",
+            1751499999,
+            "operator draft",
+        )
+        .unwrap();
+        neothd::memory::transcript_store::insert_turn(
+            &conn,
+            "s-new",
+            "agent",
+            1751500000,
+            "final GUI reply",
+        )
+        .unwrap();
+        drop(conn);
+        let rows = load_session_history(dir.path(), 20).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "s-new");
         assert_eq!(rows[0].label, "GUI polish session");
+        assert_eq!(rows[0].preview, "final GUI reply");
+        assert!(!rows[0].last_timestamp.is_empty());
         assert_eq!(rows[1].label, "12 turns over 30 min on rust, wal");
+        assert!(
+            rows[1].preview.is_empty(),
+            "legacy card must not invent a preview"
+        );
         assert!(rows[0].meta.starts_with("2025-07-02"), "{}", rows[0].meta);
-        assert_eq!(load_session_history(dir.path(), 1).len(), 1);
-        assert!(load_session_history(&dir.path().join("none"), 5).is_empty());
+        assert_eq!(load_session_history(dir.path(), 1).unwrap().len(), 1);
+        assert!(
+            load_session_history(&dir.path().join("none"), 5)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn lf_p1_20_preview_redacts_normalizes_and_truncates_graphemes_once() {
+        let secret = concat!("sk-", "proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+        let redacted = chat_sidebar_preview(&format!("  token\n\t{secret}  done "));
+        assert!(redacted.contains("[REDACTED:openai_key]"), "{redacted}");
+        assert!(!redacted.contains(secret));
+        assert!(!redacted.contains('\n'));
+        assert!(!redacted.contains('\t'));
+
+        let family = "👨‍👩‍👧‍👦";
+        let long =
+            std::iter::repeat_n(family, CHAT_SIDEBAR_PREVIEW_GRAPHEMES + 4).collect::<String>();
+        let preview = chat_sidebar_preview(&long);
+        use unicode_segmentation::UnicodeSegmentation as _;
+        assert_eq!(
+            preview.graphemes(true).count(),
+            CHAT_SIDEBAR_PREVIEW_GRAPHEMES
+        );
+        assert_eq!(preview.matches('…').count(), 1);
+        assert!(preview.ends_with('…'));
+        assert!(!preview.contains('�'));
+    }
+
+    #[test]
+    fn lf_p1_20_send_completion_delete_recomputes_to_previous_visible_message() {
+        let mut messages = vec![("hello", "10:00", false)];
+        messages.push(("…", "10:00", true));
+        assert_eq!(
+            latest_chat_sidebar_preview(messages.iter().rev().copied()),
+            ("hello".to_string(), "10:00".to_string())
+        );
+        messages.pop();
+        messages.push(("partial assistant chunk", "10:01", true));
+        assert_eq!(
+            latest_chat_sidebar_preview(messages.iter().rev().copied()),
+            ("hello".to_string(), "10:00".to_string()),
+            "a late channel probe must not publish an in-flight chunk"
+        );
+        messages.pop();
+        messages.push(("assistant done", "10:01", false));
+        assert_eq!(
+            latest_chat_sidebar_preview(messages.iter().rev().copied()).0,
+            "assistant done"
+        );
+        messages.pop();
+        assert_eq!(
+            latest_chat_sidebar_preview(messages.iter().rev().copied()).0,
+            "hello"
+        );
+        messages.clear();
+        assert_eq!(
+            latest_chat_sidebar_preview(messages.iter().rev().copied()),
+            (String::new(), String::new())
+        );
+    }
+
+    #[test]
+    fn lf_p1_20_reload_and_session_switch_keep_a_b_isolated() {
+        let dir = tempfile::tempdir().unwrap();
+        let hs = dir.path().join("hindsight");
+        std::fs::create_dir_all(&hs).unwrap();
+        for (id, ts) in [("session-a", 100), ("session-b", 200), ("legacy", 300)] {
+            std::fs::write(
+                hs.join(format!("{id}.json")),
+                format!(
+                    r#"{{"session_id":"{id}","ended_at_unix":{ts},"one_line_summary":"{id}"}}"#
+                ),
+            )
+            .unwrap();
+        }
+        let conn = neothd::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let operator_secret = format!(
+            "\x1b[31mmy {}",
+            concat!("sk-", "proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+        );
+        neothd::memory::transcript_store::insert_turn(
+            &conn,
+            "session-a",
+            "operator",
+            100,
+            &operator_secret,
+        )
+        .unwrap();
+        neothd::memory::transcript_store::insert_turn(&conn, "session-a", "agent", 101, "A reply")
+            .unwrap();
+        neothd::memory::transcript_store::insert_turn(&conn, "session-b", "agent", 201, "B reply")
+            .unwrap();
+        drop(conn);
+
+        let rows = load_session_history(dir.path(), 10).unwrap();
+        let a = rows.iter().find(|row| row.id == "session-a").unwrap();
+        let b = rows.iter().find(|row| row.id == "session-b").unwrap();
+        let legacy = rows.iter().find(|row| row.id == "legacy").unwrap();
+        assert_eq!(a.preview, "A reply");
+        assert_eq!(b.preview, "B reply");
+        assert!(legacy.preview.is_empty());
+
+        let a_messages = load_session_messages(dir.path(), "session-a").unwrap();
+        let b_messages = load_session_messages(dir.path(), "session-b").unwrap();
+        assert!(a_messages[0].text.contains("[REDACTED:openai_key]"));
+        assert!(!a_messages[0].text.contains('\x1b'));
+        assert_eq!(a_messages[1].text, "A reply");
+        assert_eq!(b_messages[0].text, "B reply");
+
+        let clean_legacy = tempfile::tempdir().unwrap();
+        assert!(
+            load_session_messages(clean_legacy.path(), "legacy")
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -7115,6 +7376,39 @@ mod tests {
         assert_eq!(c(Some("Title"), "sum").label(), "Title");
         assert_eq!(c(Some("  "), "sum").label(), "sum");
         assert_eq!(c(None, "").label(), "sid");
+    }
+
+    #[test]
+    fn lf_p1_20_session_label_sanitizes_legacy_titles_and_controls() {
+        let secret = concat!("sk-", "proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456");
+        let card = HindsightCardMini {
+            session_id: "sid".into(),
+            ended_at_unix: 0,
+            one_line_summary: "safe fallback".into(),
+            display_name: Some(format!("\x1b[31m  leaked {secret}\n title  \x1b[0m")),
+        };
+        let label = card.label();
+        assert!(label.contains("[REDACTED:openai_key]"), "{label}");
+        assert!(!label.contains(secret));
+        assert!(!label.contains('\x1b'));
+        assert!(!label.contains('\n'));
+    }
+
+    #[test]
+    fn lf_p1_20_session_history_propagates_corrupt_database_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let hs = dir.path().join("hindsight");
+        std::fs::create_dir_all(&hs).unwrap();
+        std::fs::write(
+            hs.join("session.json"),
+            r#"{"session_id":"session","ended_at_unix":1,"one_line_summary":"session"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("views.db"), b"not a sqlite database").unwrap();
+
+        let error = load_session_history(dir.path(), 10).unwrap_err();
+        assert!(error.contains("views.db"), "{error}");
+        assert!(!error.trim().is_empty());
     }
 
     // ── GOLD-ADAPT-ODY-02/05 — metrics chip formatting ─────────────────

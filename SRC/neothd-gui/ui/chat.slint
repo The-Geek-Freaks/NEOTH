@@ -87,6 +87,8 @@ export struct ChatChannelRow {
     id: string,
     label: string,
     detail: string,
+    last-message: string,
+    last-timestamp: string,
     route-bound: bool,
     configurable: bool,
 }
@@ -97,6 +99,8 @@ export struct SessionRow {
     id: string,
     label: string,
     meta: string,
+    preview: string,
+    last-timestamp: string,
 }
 
 /// GOLD-ADAPT-ODY-12/14 — one clickable deep-link chip extracted from
@@ -127,6 +131,8 @@ export struct ConsentGrant {
 
 component ChatBubble inherits Rectangle {
     in property <ChatMessage> message;
+    /// Retry/Delete mutate the live feed and are absent in read-only history.
+    in property <bool> mutation-actions-enabled: true;
     in property <length> bubble-max-width: 600px;
     /// Index of this bubble in the messages model — passed from the
     /// for loop so action callbacks carry the right index.
@@ -436,7 +442,8 @@ component ChatBubble inherits Rectangle {
                 y: 8px;
                 // 2-chip width: (22+2+22) inner + 12px padding = 58px
                 // 3-chip width: (22+2+22+2+22) inner + 12px padding = 82px
-                width: root.message.role != "operator" ? 82px : 58px;
+                width: !root.mutation-actions-enabled ? 34px
+                    : (root.message.role != "operator" ? 82px : 58px);
                 height: 28px;
                 border-radius: Theme.radius-pill;
                 background: Theme.surface-glass;
@@ -478,7 +485,7 @@ component ChatBubble inherits Rectangle {
                     }
 
                     // ── Retry ↺ (assistant / error / system bubbles only) ──
-                    if root.message.role != "operator": Rectangle {
+                    if root.mutation-actions-enabled && root.message.role != "operator": Rectangle {
                         width: 22px;
                         height: 22px;
                         border-radius: Theme.radius-xs;
@@ -504,7 +511,7 @@ component ChatBubble inherits Rectangle {
                     }
 
                     // ── Delete ✕ (consent-pink danger hover) ─────────
-                    Rectangle {
+                    if root.mutation-actions-enabled: Rectangle {
                         width: 22px;
                         height: 22px;
                         border-radius: Theme.radius-xs;
@@ -541,27 +548,30 @@ component ChatBubble inherits Rectangle {
 component ConversationItem inherits Rectangle {
     in property <string> label: "";
     in property <string> last-message: "";
+    in property <string> last-timestamp: "";
     in property <int> unread-count: 0;
     in property <bool> active: false;
     in property <bool> route-bound: false;
     in property <bool> configurable: false;
-    // GOLD-ADAPT-GUI-06 — focus-dim (nullframe .focus .dimmable): when any
-    // channel is selected, the non-selected rows recede to 0.6 opacity so
-    // the active conversation visually owns the sidebar.
-    in property <bool> any-active: false;
     callback context-menu(string /*channel*/, length /*x*/, length /*y*/);
+    callback selected();
 
-    accessible-role: list-item;
+    accessible-role: button;
     accessible-enabled: root.route-bound;
-    accessible-label: root.unread-count > 0
-        ? "\{root.label}: \{root.last-message} (\{root.unread-count} unread)"
-        : "\{root.label}: \{root.last-message}";
+    accessible-label: root.label + ": " + root.last-message
+        + (root.last-timestamp != "" ? ", " + root.last-timestamp : "")
+        + (root.unread-count > 0 ? " (\{root.unread-count} unread)" : "")
+        + (root.active ? ". Current conversation." : "");
+    accessible-action-default => {
+        if (root.route-bound) { root.selected(); }
+    }
+    forward-focus: key-focus;
 
-    height: 64px;
+    height: max(64px, row-body.preferred-height + Theme.space-tight * 2);
     background: root.active ? Theme.bg-card : transparent;
     border-radius: Theme.radius-button;
-    opacity: root.any-active && !root.active ? 0.6 : 1.0;
-    animate opacity { duration: Theme.duration-base; easing: ease-out; }
+    border-width: 2px;
+    border-color: key-focus.has-focus ? Theme.focus-ring : transparent;
 
     animate background {
         duration: Theme.duration-micro;
@@ -580,7 +590,7 @@ component ConversationItem inherits Rectangle {
         animate height { duration: Theme.duration-base; easing: cubic-bezier(0.16, 1, 0.3, 1); }
     }
 
-    VerticalLayout {
+    row-body := VerticalLayout {
         x: Theme.space-base;
         y: Theme.space-tight;
         width: parent.width - Theme.space-base * 2;
@@ -596,6 +606,13 @@ component ConversationItem inherits Rectangle {
                 font-size: Theme.font-size-body;
                 font-weight: root.active ? Theme.weight-medium : Theme.weight-regular;
                 color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            if root.last-timestamp != "": Text {
+                text: root.last-timestamp;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-2xs;
+                color: Theme.text-tertiary;
                 vertical-alignment: center;
             }
             if root.unread-count > 0: Rectangle {
@@ -618,12 +635,29 @@ component ConversationItem inherits Rectangle {
             text: root.last-message;
             font-family: Theme.font-display;
             font-size: Theme.font-size-caption;
-            color: Theme.text-muted;
+            color: Theme.text-secondary;
             overflow: elide;
         }
     }
 
+    key-focus := FocusScope {
+        enabled: root.route-bound;
+        key-pressed(event) => {
+            if (event.text == "\n" || event.text == " ") {
+                root.selected();
+                return accept;
+            }
+            return reject;
+        }
+    }
+
     touch := TouchArea {
+        clicked => {
+            if (root.route-bound) {
+                key-focus.focus();
+                root.selected();
+            }
+        }
         pointer-event(ev) => {
             if (root.configurable && ev.button == PointerEventButton.right && ev.kind == PointerEventKind.up) {
                 root.context-menu(root.label,
@@ -848,7 +882,7 @@ component Composer inherits Rectangle {
                         }
                         // Plain Enter → send (when non-empty) + clear.
                         // GUI-07: swallowed while a reply is in flight.
-                        if (root.draft != "" && !root.send-in-flight) {
+                        if (root.send-enabled && root.draft != "" && !root.send-in-flight) {
                             root.send-clicked(root.draft);
                             root.draft = "";
                         }
@@ -929,6 +963,11 @@ export component ChatView inherits Rectangle {
     in property <[int]> unread-counts: [0, 0, 0];
     /// GOLD-ADAPT-ODY-01 — recent sessions (hindsight cards, newest first).
     in property <[SessionRow]> session-history: [];
+    /// Canonical hindsight/raw-turn id while `history-active` is true.
+    /// Live/history is deliberately a separate typed flag so a real session
+    /// id such as `live` cannot acquire mutation privileges.
+    in property <string> active-session-id: "";
+    in property <bool> history-active: false;
     /// GOLD-ADAPT-ODY-04 — stream stall watchdog banner (60s without a
     /// chunk while a reply is in flight).
     in property <bool> stall-active: false;
@@ -947,6 +986,8 @@ export component ChatView inherits Rectangle {
 
     callback send-clicked(string);
     callback channel-ctx(string /*channel*/, length /*x*/, length /*y*/);
+    callback live-session-selected();
+    callback session-selected(string);
     callback open-settings();
     callback attach-clicked();
     callback remove-attachment(int);
@@ -1046,14 +1087,13 @@ export component ChatView inherits Rectangle {
                 // `for ... in` iterates the model reactively.
                 for ch[idx] in root.channels: ConversationItem {
                     label: ch.label;
-                    last-message: ch.detail;
+                    last-message: ch.last-message != "" ? ch.last-message : ch.detail;
+                    last-timestamp: ch.last-timestamp;
                     unread-count: idx < root.unread-counts.length ? root.unread-counts[idx] : 0;
-                    active: ch.route-bound;
+                    active: ch.route-bound && !root.history-active;
                     route-bound: ch.route-bound;
                     configurable: ch.configurable;
-                    // The real local route owns the surface. Configured remote
-                    // channels remain visible but cannot acquire selection.
-                    any-active: true;
+                    selected => { root.live-session-selected(); }
                     context-menu(name, x, y) => { root.channel-ctx(name, x, y); }
                 }
 
@@ -1070,9 +1110,9 @@ export component ChatView inherits Rectangle {
                     color: Theme.text-dim;
                 }
                 if root.session-history.length > 0: Text {
-                    text: "Read-only history · transcript loading unavailable";
+                    text: "Read-only history · select a session to inspect";
                     font-family: Theme.font-display;
-                    font-size: 10px;
+                    font-size: Theme.font-size-2xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;
                 }
@@ -1081,15 +1121,26 @@ export component ChatView inherits Rectangle {
                     VerticalLayout {
                         spacing: 2px;
                         for s in root.session-history: Rectangle {
-                            height: 46px;
+                            height: max(62px, session-body.preferred-height + Theme.space-tight * 2);
                             border-radius: Theme.radius-button;
-                            accessible-role: list-item;
-                            accessible-enabled: false;
-                            accessible-label: "\{s.label}: \{s.meta}. Read-only history; transcript loading is not available in this build.";
-                            background: transparent;
-                            opacity: 0.72;
-                            VerticalLayout {
+                            accessible-role: button;
+                            accessible-enabled: true;
+                            accessible-label: "\{s.label}: "
+                                + (s.preview != "" ? s.preview : "No retained transcript preview")
+                                + ", " + (s.last-timestamp != "" ? s.last-timestamp : s.meta)
+                                + (root.history-active && root.active-session-id == s.id
+                                    ? ". Current read-only history session."
+                                    : ". Read-only history session.");
+                            accessible-action-default => { root.session-selected(s.id); }
+                            forward-focus: session-focus;
+                            background: root.history-active && root.active-session-id == s.id ? Theme.bg-card : transparent;
+                            border-width: 2px;
+                            border-color: session-focus.has-focus ? Theme.focus-ring
+                                : root.history-active && root.active-session-id == s.id ? Theme.border-accent
+                                : transparent;
+                            session-body := VerticalLayout {
                                 x: Theme.space-base;
+                                y: Theme.space-tight;
                                 width: parent.width - Theme.space-base * 2;
                                 alignment: center;
                                 spacing: 1px;
@@ -1101,11 +1152,33 @@ export component ChatView inherits Rectangle {
                                     overflow: elide;
                                 }
                                 Text {
-                                    text: s.meta;
-                                    font-family: Theme.font-mono;
-                                    font-size: 10px;
-                                    color: Theme.text-dim;
+                                    text: s.preview != "" ? s.preview : "No retained transcript preview";
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-secondary;
                                     overflow: elide;
+                                }
+                                Text {
+                                    text: s.last-timestamp != "" ? s.last-timestamp : s.meta;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-tertiary;
+                                    overflow: elide;
+                                }
+                            }
+                            session-focus := FocusScope {
+                                key-pressed(event) => {
+                                    if (event.text == "\n" || event.text == " ") {
+                                        root.session-selected(s.id);
+                                        return accept;
+                                    }
+                                    return reject;
+                                }
+                            }
+                            TouchArea {
+                                clicked => {
+                                    session-focus.focus();
+                                    root.session-selected(s.id);
                                 }
                             }
                         }
@@ -1142,7 +1215,7 @@ export component ChatView inherits Rectangle {
                         vertical-alignment: center;
                     }
                     Text {
-                        text: "Local CLI chat";
+                        text: !root.history-active ? "Local CLI chat" : "Read-only session history";
                         overflow: elide;
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-body;
@@ -1424,6 +1497,7 @@ export component ChatView inherits Rectangle {
 
                         for msg[idx] in root.messages: ChatBubble {
                             message: msg;
+                            mutation-actions-enabled: !root.history-active;
                             bubble-index: idx;
                             bubble-max-width: 560px;
                             copy-clicked => { root.message-copy(idx); }
@@ -1537,7 +1611,7 @@ export component ChatView inherits Rectangle {
             // GOLD-ADAPT-ODY-12/14 — deep-link chips from the last reply,
             // above the composer (survives scrollback without per-bubble
             // model plumbing). Same visual language as the metrics chip.
-            if root.link-chips.length > 0: HorizontalLayout {
+            if !root.history-active && root.link-chips.length > 0: HorizontalLayout {
                 padding-left: Theme.space-base;
                 padding-right: Theme.space-base;
                 spacing: Theme.space-base / 2;
@@ -1569,7 +1643,7 @@ export component ChatView inherits Rectangle {
                 }
             }
 
-            Composer {
+            if !root.history-active: Composer {
                 draft <=> root.composer-draft;
                 send-enabled: root.send-enabled;
                 send-in-flight: root.send-in-flight;
@@ -1580,6 +1654,26 @@ export component ChatView inherits Rectangle {
                 remove-attachment(i) => { root.remove-attachment(i); }
                 recall-requested => { root.recall-requested(); }
                 stop-stream-clicked => { root.stop-stream-clicked(); }
+            }
+            if root.history-active: Rectangle {
+                height: max(52px, history-readonly-label.preferred-height + Theme.space-base * 2);
+                background: Theme.bg-base;
+                border-width: 1px;
+                border-color: Theme.border-subtle;
+                accessible-role: text;
+                accessible-label: history-readonly-label.text;
+                history-readonly-label := Text {
+                    x: Theme.space-screen;
+                    y: Theme.space-base;
+                    width: parent.width - Theme.space-screen * 2;
+                    text: "This retained session is read-only. Return to Local CLI to compose, attach, retry or edit.";
+                    wrap: word-wrap;
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-secondary;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
     }

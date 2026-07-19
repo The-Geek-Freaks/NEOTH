@@ -49,6 +49,11 @@ static OMI_STATUS_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
 // may publish its list or clear the loading state.
 static BG_JOBS_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// Startup and rapid chat completions may overlap history reloads. Only the
+// newest canonical raw-turn snapshot may replace the sidebar model.
+static CHAT_HISTORY_REFRESH_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 #[cfg(windows)]
 mod win_private {
     use std::fs::File;
@@ -2166,22 +2171,27 @@ fn main() -> Result<()> {
         let weak_drop = window.as_weak();
         window.window().on_winit_window_event(move |_w, event| {
             if let slint::winit_030::winit::event::WindowEvent::DroppedFile(path) = event {
+                let Some(w) = weak_drop.upgrade() else {
+                    return EventResult::Propagate;
+                };
+                if w.get_chat_history_active() {
+                    w.set_status_line("Return to Local CLI before attaching a file.".into());
+                    return EventResult::PreventDefault;
+                }
                 if let Ok(mut v) = attachments.lock() {
                     v.push(path.clone());
-                    if let Some(w) = weak_drop.upgrade() {
-                        sync_attachment_strip(&w, &v);
-                        push_toast(
-                            &weak_drop,
-                            "success",
-                            "File attached",
-                            &format!(
-                                "{} → chat composer",
-                                path.file_name()
-                                    .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| path.display().to_string())
-                            ),
-                        );
-                    }
+                    sync_attachment_strip(&w, &v);
+                    push_toast(
+                        &weak_drop,
+                        "success",
+                        "File attached",
+                        &format!(
+                            "{} → chat composer",
+                            path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| path.display().to_string())
+                        ),
+                    );
                 }
                 return EventResult::PreventDefault;
             }
@@ -2251,6 +2261,10 @@ fn main() -> Result<()> {
             let Some(w) = weak_retry.upgrade() else {
                 return;
             };
+            if w.get_chat_history_active() {
+                w.set_status_line("Historical transcripts are read-only.".into());
+                return;
+            }
             let models = REGEN_MODELS
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -2278,6 +2292,11 @@ fn main() -> Result<()> {
             let Some(w) = weak_regen.upgrade() else {
                 return;
             };
+            if w.get_chat_history_active() {
+                w.set_regen_menu_open(false);
+                w.set_status_line("Historical transcripts are read-only.".into());
+                return;
+            }
             if pick > 0 {
                 let model = REGEN_MODELS
                     .lock()
@@ -2312,14 +2331,17 @@ fn main() -> Result<()> {
             let Some(w) = weak_delete.upgrade() else {
                 return;
             };
-            let msgs = w.get_chat_messages();
+            if w.get_chat_history_active() {
+                w.set_status_line("Historical transcripts are read-only.".into());
+                return;
+            }
+            let msgs = w.get_chat_live_messages();
             let kept: Vec<ChatMessage> = (0..msgs.row_count())
                 .filter(|i| *i != idx as usize)
                 .filter_map(|i| msgs.row_data(i))
                 .collect();
-            w.set_chat_messages(slint::ModelRc::new(std::rc::Rc::new(
-                slint::VecModel::from(kept),
-            )));
+            set_live_chat_messages(&w, kept);
+            recompute_live_chat_preview(&w);
         });
     }
 
@@ -2332,6 +2354,10 @@ fn main() -> Result<()> {
         let weak_chips = window.as_weak();
         window.on_chat_link_chip_clicked(move |kind, id| {
             if let Some(w) = weak_chips.upgrade() {
+                if w.get_chat_history_active() {
+                    w.set_status_line("Historical transcripts are read-only.".into());
+                    return;
+                }
                 match kind.as_str() {
                     "nav" if NAV_PANELS.contains(&id.as_str()) => w.set_nav_active(id),
                     "kanban" => {
@@ -2347,26 +2373,30 @@ fn main() -> Result<()> {
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
         let body = text.trim().to_string();
-        // ODY-10: capture before the empty-guard so the recall buffer is
-        // always up-to-date for the most recent non-empty send.
-        if !body.is_empty()
-            && let Ok(mut last) = last_operator_input_for_send.lock()
-        {
-            *last = body.clone();
-        }
         if body.is_empty() {
             return;
         }
-        info!(message_len = body.len(), "chat: send-clicked");
         let Some(w) = weak_chat_send.upgrade() else {
             return;
         };
+        if w.get_chat_history_active()
+            && !chat_auto_flag_for_send.load(std::sync::atomic::Ordering::Acquire)
+        {
+            w.set_status_line("Return to Local CLI before sending a new message.".into());
+            return;
+        }
+        // ODY-10: only accepted live sends enter the recall buffer. Historical
+        // callbacks must not mutate draft/recall state before this guard.
+        if let Ok(mut last) = last_operator_input_for_send.lock() {
+            *last = body.clone();
+        }
+        info!(message_len = body.len(), "chat: send-clicked");
 
         // Buddy reacts: the operator just asked → the orb starts thinking.
         buddy(&w, GuiActivity::ChatThinking);
 
-        use slint::{Model, ModelRc, VecModel};
-        let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
+        use slint::Model;
+        let mut rows: Vec<ChatMessage> = w.get_chat_live_messages().iter().collect();
         let placeholder_idx = rows.len() + 1;
         rows.push(ChatMessage {
             role: "operator".into(),
@@ -2382,7 +2412,8 @@ fn main() -> Result<()> {
             streaming: true,
             ..Default::default()
         });
-        w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+        set_live_chat_messages(&w, rows);
+        recompute_live_chat_preview(&w);
         w.set_chat_composer_draft("".into());
         // GOLD-ADAPT-GUI-07 — Send spins + re-sends are blocked until the
         // stream settles (flipped back in the completion closure below).
@@ -2491,15 +2522,17 @@ fn main() -> Result<()> {
                                 if let Some(w) = weak_live.upgrade() {
                                     // Reply deltas are arriving → the orb is on it.
                                     buddy(&w, GuiActivity::ChatStreaming);
-                                    use slint::{Model, ModelRc, VecModel};
+                                    use slint::Model;
                                     let mut rows: Vec<ChatMessage> =
-                                        w.get_chat_messages().iter().collect();
+                                        w.get_chat_live_messages().iter().collect();
                                     if placeholder_idx < rows.len()
                                         && rows[placeholder_idx].streaming
                                         && rows[placeholder_idx].role == "assistant"
                                     {
                                         rows[placeholder_idx].text = live.clone().into();
-                                        w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+                                        // Keep partial chunks in the live feed, but do not
+                                        // tick the sidebar preview until completion.
+                                        set_live_chat_messages(&w, rows);
                                     }
                                 }
                             });
@@ -2580,8 +2613,8 @@ fn main() -> Result<()> {
                         push_activity(&weak_for_loop, kind, chip.label.as_str(), chip.id.as_str());
                     }
                     w.set_chat_link_chips(slint::ModelRc::new(slint::VecModel::from(chips)));
-                    use slint::{Model, ModelRc, VecModel};
-                    let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
+                    use slint::Model;
+                    let mut rows: Vec<ChatMessage> = w.get_chat_live_messages().iter().collect();
                     let ts = format_now_hms();
                     let succeeded = outcome.is_ok();
                     // ODY-04 — capped auto-nudge: a truncated stream fires ONE
@@ -2669,7 +2702,11 @@ fn main() -> Result<()> {
                     } else {
                         rows.extend(replacements);
                     }
-                    w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+                    set_live_chat_messages(&w, rows);
+                    recompute_live_chat_preview(&w);
+                    // The child has exited and persisted its raw turns/card;
+                    // reload the canonical history rows off-thread.
+                    refresh_chat_session_history(w.as_weak());
                     // Buddy reflects the outcome: a win lights it green, a
                     // failure shows the error face. It holds that state until
                     // the next message resets it to "thinking".
@@ -2840,6 +2877,13 @@ fn main() -> Result<()> {
         let attachments = chat_attachments.clone();
         let weak_attach = window.as_weak();
         window.on_chat_attach_clicked(move || {
+            let Some(w) = weak_attach.upgrade() else {
+                return;
+            };
+            if w.get_chat_history_active() {
+                w.set_status_line("Return to Local CLI before attaching a file.".into());
+                return;
+            }
             let picked = rfd::FileDialog::new()
                 .set_title("Attach files to this message")
                 .pick_files();
@@ -2848,9 +2892,7 @@ fn main() -> Result<()> {
             };
             if let Ok(mut v) = attachments.lock() {
                 v.extend(files);
-                if let Some(w) = weak_attach.upgrade() {
-                    sync_attachment_strip(&w, &v);
-                }
+                sync_attachment_strip(&w, &v);
             }
         });
     }
@@ -2858,14 +2900,19 @@ fn main() -> Result<()> {
         let attachments = chat_attachments.clone();
         let weak_rm = window.as_weak();
         window.on_chat_remove_attachment(move |i| {
+            let Some(w) = weak_rm.upgrade() else {
+                return;
+            };
+            if w.get_chat_history_active() {
+                w.set_status_line("Historical transcripts are read-only.".into());
+                return;
+            }
             if let Ok(mut v) = attachments.lock() {
                 let i = i as usize;
                 if i < v.len() {
                     v.remove(i);
                 }
-                if let Some(w) = weak_rm.upgrade() {
-                    sync_attachment_strip(&w, &v);
-                }
+                sync_attachment_strip(&w, &v);
             }
         });
     }
@@ -2894,26 +2941,94 @@ fn main() -> Result<()> {
         timer
     };
 
-    // GOLD-ADAPT-ODY-01 — chat-sidebar session history (hindsight cards).
-    // These are deliberately read-only summaries until the session controller
-    // can load the selected transcript and bind subsequent sends to it.
+    // GOLD-LF-P1-20 — chat-sidebar history. Hindsight owns ordering/labels;
+    // canonical raw_turns owns previews and the read-only selected transcript.
+    refresh_chat_session_history(window.as_weak());
+
+    // Session selection is read-only. A monotonic generation prevents a slow
+    // A load from replacing B (or the restored live feed) after a quick switch.
+    let chat_session_revision = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     {
-        let weak_sessions = window.as_weak();
-        std::thread::spawn(move || {
-            let rows = panel_logic::load_session_history(&default_neoth_home(), 20);
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(w) = weak_sessions.upgrade() {
-                    use slint::{ModelRc, VecModel};
-                    let model: Vec<SessionRow> = rows
-                        .into_iter()
-                        .map(|s| SessionRow {
-                            id: s.id.into(),
-                            label: s.label.into(),
-                            meta: s.meta.into(),
-                        })
-                        .collect();
-                    w.set_chat_session_history(ModelRc::new(VecModel::from(model)));
-                }
+        let weak_live = window.as_weak();
+        let revision = chat_session_revision.clone();
+        window.on_chat_live_session_selected(move || {
+            revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+            if let Some(w) = weak_live.upgrade() {
+                w.set_chat_history_active(false);
+                w.set_chat_active_session_id("".into());
+                w.set_chat_messages(w.get_chat_live_messages());
+                w.set_status_line("Live Local CLI chat".into());
+            }
+        });
+    }
+    {
+        let weak_session = window.as_weak();
+        let revision = chat_session_revision.clone();
+        window.on_chat_session_selected(move |session_id| {
+            let session_id = session_id.to_string();
+            let generation = revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+            let Some(w) = weak_session.upgrade() else {
+                return;
+            };
+            w.set_chat_history_active(true);
+            w.set_chat_active_session_id(session_id.as_str().into());
+            w.set_chat_messages(slint::ModelRc::new(slint::VecModel::from(vec![
+                ChatMessage {
+                    role: "system".into(),
+                    text: "Loading retained session…".into(),
+                    timestamp: "".into(),
+                    streaming: false,
+                    ..Default::default()
+                },
+            ])));
+            let weak = weak_session.clone();
+            let revision = revision.clone();
+            std::thread::spawn(move || {
+                let loaded = panel_logic::load_session_messages(&default_neoth_home(), &session_id);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let current_revision = revision.load(std::sync::atomic::Ordering::Acquire);
+                    let Some(w) = weak.upgrade() else {
+                        return;
+                    };
+                    if !session_load_is_current(
+                        current_revision,
+                        generation,
+                        w.get_chat_history_active(),
+                        w.get_chat_active_session_id().as_str(),
+                        &session_id,
+                    ) {
+                        return;
+                    }
+                    let rows = match loaded {
+                        Ok(messages) if !messages.is_empty() => messages
+                            .into_iter()
+                            .map(|message| ChatMessage {
+                                role: message.role.into(),
+                                text: message.text.into(),
+                                timestamp: message.timestamp.into(),
+                                streaming: false,
+                                ..Default::default()
+                            })
+                            .collect(),
+                        Ok(_) => vec![ChatMessage {
+                            role: "system".into(),
+                            text:
+                                "No retained raw transcript is available for this legacy session."
+                                    .into(),
+                            timestamp: "".into(),
+                            streaming: false,
+                            ..Default::default()
+                        }],
+                        Err(error) => vec![ChatMessage {
+                            role: "error".into(),
+                            text: neothd::security::redact::sanitize_tool_output(&error).into(),
+                            timestamp: "".into(),
+                            streaming: false,
+                            ..Default::default()
+                        }],
+                    };
+                    w.set_chat_messages(slint::ModelRc::new(slint::VecModel::from(rows)));
+                });
             });
         });
     }
@@ -2926,6 +3041,13 @@ fn main() -> Result<()> {
         let weak_recall = window.as_weak();
         let last_input_for_recall = std::sync::Arc::clone(&last_operator_input);
         window.on_chat_composer_recall_requested(move || {
+            let Some(w) = weak_recall.upgrade() else {
+                return;
+            };
+            if w.get_chat_history_active() {
+                w.set_status_line("Historical transcripts are read-only.".into());
+                return;
+            }
             let last = last_input_for_recall
                 .lock()
                 .map(|g| g.clone())
@@ -2933,9 +3055,7 @@ fn main() -> Result<()> {
             if last.is_empty() {
                 return;
             }
-            if let Some(w) = weak_recall.upgrade() {
-                w.set_chat_composer_draft(last.into());
-            }
+            w.set_chat_composer_draft(last.into());
         });
     }
 
@@ -13602,6 +13722,8 @@ fn build_chat_sidebar_channels(channels: &[panel_logic::ChannelStatus]) -> Vec<C
         id: "cli".into(),
         label: "Local CLI".into(),
         detail: "Local chat · ready".into(),
+        last_message: "".into(),
+        last_timestamp: "".into(),
         route_bound: true,
         configurable: false,
     }];
@@ -13613,6 +13735,8 @@ fn build_chat_sidebar_channels(channels: &[panel_logic::ChannelStatus]) -> Vec<C
                 id: channel.name.as_str().into(),
                 label: channel.name.as_str().into(),
                 detail: "Configured · chat routing not available yet".into(),
+                last_message: "".into(),
+                last_timestamp: "".into(),
                 route_bound: false,
                 configurable: true,
             }),
@@ -13620,8 +13744,133 @@ fn build_chat_sidebar_channels(channels: &[panel_logic::ChannelStatus]) -> Vec<C
     rows
 }
 
-fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::ChannelStatus>, String>) {
+/// Replace the canonical live feed and mirror it into the visible pane only
+/// when the operator is not inspecting a historical session.
+fn set_live_chat_messages(window: &MainWindow, rows: Vec<ChatMessage>) {
     use slint::{ModelRc, VecModel};
+    window.set_chat_live_messages(ModelRc::new(VecModel::from(rows.clone())));
+    if !window.get_chat_history_active() {
+        window.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+    }
+}
+
+/// Recompute the Local CLI sidebar preview from the canonical live-message
+/// model. Called after Send, completion/error, and view-level delete.
+fn current_live_chat_preview(window: &MainWindow) -> (String, String) {
+    use slint::Model;
+    let messages = window.get_chat_live_messages();
+    let rows = messages.iter().collect::<Vec<_>>();
+    panel_logic::latest_chat_sidebar_preview(rows.iter().rev().map(|message| {
+        (
+            message.text.as_str(),
+            message.timestamp.as_str(),
+            message.streaming,
+        )
+    }))
+}
+
+fn recompute_live_chat_preview(window: &MainWindow) {
+    let (preview, timestamp) = current_live_chat_preview(window);
+    set_local_chat_sidebar_preview(window, &preview, &timestamp);
+}
+
+fn set_local_chat_sidebar_preview(window: &MainWindow, preview: &str, timestamp: &str) {
+    use slint::{Model, ModelRc, VecModel};
+    let mut channels = window.get_chat_channels().iter().collect::<Vec<_>>();
+    if let Some(local) = channels.iter_mut().find(|row| row.id == "cli") {
+        local.last_message = preview.into();
+        local.last_timestamp = timestamp.into();
+        window.set_chat_channels(ModelRc::new(VecModel::from(channels)));
+    }
+}
+
+/// Fill a newly materialised Local CLI row without overwriting a preview that
+/// survived a channel-probe reload. Live state wins; retained history is only
+/// a cold-start fallback.
+fn hydrate_local_chat_sidebar_preview(
+    channels: &mut [ChatChannelRow],
+    live: Option<(String, String)>,
+    history: Option<(String, String)>,
+) {
+    let Some(local) = channels.iter_mut().find(|row| row.id == "cli") else {
+        return;
+    };
+    if !local.last_message.is_empty() {
+        return;
+    }
+    let candidate = live
+        .filter(|(preview, _)| !preview.is_empty())
+        .or_else(|| history.filter(|(preview, _)| !preview.is_empty()));
+    if let Some((preview, timestamp)) = candidate {
+        local.last_message = preview.into();
+        local.last_timestamp = timestamp.into();
+    }
+}
+
+fn session_load_is_current(
+    current_revision: u64,
+    load_revision: u64,
+    history_active: bool,
+    active_session_id: &str,
+    loaded_session_id: &str,
+) -> bool {
+    history_active && current_revision == load_revision && active_session_id == loaded_session_id
+}
+
+fn refresh_chat_session_history(weak: slint::Weak<MainWindow>) {
+    let generation =
+        CHAT_HISTORY_REFRESH_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    std::thread::spawn(move || {
+        let loaded = panel_logic::load_session_history(&default_neoth_home(), 20);
+        let _ = slint::invoke_from_event_loop(move || {
+            if CHAT_HISTORY_REFRESH_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                != generation
+            {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            let rows = match loaded {
+                Ok(rows) => rows,
+                Err(error) => {
+                    tracing::warn!(error = %error, "session history refresh failed; retaining previous snapshot");
+                    let error = neothd::security::redact::sanitize_tool_output(&error);
+                    window.set_status_line(
+                        format!(
+                            "Session history unavailable: {error}. Keeping the previous session list."
+                        )
+                        .into(),
+                    );
+                    return;
+                }
+            };
+            use slint::{Model, ModelRc, VecModel};
+            let newest_preview = rows
+                .first()
+                .map(|row| (row.preview.clone(), row.last_timestamp.clone()));
+            let model = rows
+                .into_iter()
+                .map(|row| SessionRow {
+                    id: row.id.into(),
+                    label: row.label.into(),
+                    meta: row.meta.into(),
+                    preview: row.preview.into(),
+                    last_timestamp: row.last_timestamp.into(),
+                })
+                .collect::<Vec<_>>();
+            window.set_chat_session_history(ModelRc::new(VecModel::from(model)));
+            if let Some((preview, timestamp)) = newest_preview
+                && window.get_chat_live_messages().row_count() == 0
+            {
+                set_local_chat_sidebar_preview(&window, &preview, &timestamp);
+            }
+        });
+    });
+}
+
+fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::ChannelStatus>, String>) {
+    use slint::{Model, ModelRc, VecModel};
     let (channels, error) = match channels {
         Ok(channels) => (channels, String::new()),
         Err(error) => (Vec::new(), error),
@@ -13633,7 +13882,30 @@ fn apply_channels(window: &MainWindow, channels: Result<Vec<panel_logic::Channel
     // The chat composer has exactly one bound route today: local CLI. External
     // configured channels remain visible for truthful discovery and management,
     // but their typed rows cannot acquire selection or inherit local sends.
-    let chat_channels = build_chat_sidebar_channels(&channels);
+    let mut chat_channels = build_chat_sidebar_channels(&channels);
+    // Channel probe reloads must not erase per-session previews. Merge by the
+    // stable typed id rather than by row index (configured rows can reorder).
+    let existing_previews = window
+        .get_chat_channels()
+        .iter()
+        .map(|row| (row.id.to_string(), (row.last_message, row.last_timestamp)))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for row in &mut chat_channels {
+        if let Some((message, timestamp)) = existing_previews.get(row.id.as_str()) {
+            row.last_message = message.clone();
+            row.last_timestamp = timestamp.clone();
+        }
+    }
+    // Send can beat the asynchronous channel probe. Reconstruct from the live
+    // model first so that early operator input is not lost; retained history
+    // is only a fallback when no live rows exist.
+    let live_rows = window.get_chat_live_messages().row_count();
+    let live_preview = (live_rows > 0).then(|| current_live_chat_preview(window));
+    let history_preview = (live_rows == 0)
+        .then(|| window.get_chat_session_history().row_data(0))
+        .flatten()
+        .map(|row| (row.preview.to_string(), row.last_timestamp.to_string()));
+    hydrate_local_chat_sidebar_preview(&mut chat_channels, live_preview, history_preview);
     let rows = channels
         .into_iter()
         .map(|channel| ChannelRow {
@@ -15575,45 +15847,167 @@ mod chat_subprocess_tests {
     }
 
     #[test]
-    fn chat_sidebar_cannot_regress_to_cosmetic_route_or_session_selection() {
+    fn lf_p1_20_send_before_channel_probe_hydrates_live_preview() {
+        let mut rows = build_chat_sidebar_channels(&[]);
+        let live_preview = panel_logic::latest_chat_sidebar_preview([
+            ("partial assistant chunk", "10:01", true),
+            ("early operator send", "10:00", false),
+        ]);
+        hydrate_local_chat_sidebar_preview(
+            &mut rows,
+            Some(live_preview),
+            Some(("older retained reply".into(), "09:00".into())),
+        );
+        assert_eq!(rows[0].last_message.as_str(), "early operator send");
+        assert_eq!(rows[0].last_timestamp.as_str(), "10:00");
+
+        let mut cold_rows = build_chat_sidebar_channels(&[]);
+        hydrate_local_chat_sidebar_preview(
+            &mut cold_rows,
+            None,
+            Some(("retained fallback".into(), "09:00".into())),
+        );
+        assert_eq!(cold_rows[0].last_message.as_str(), "retained fallback");
+
+        rows[0].last_message = "newer completed reply".into();
+        hydrate_local_chat_sidebar_preview(
+            &mut rows,
+            Some(("stale recompute".into(), "10:01".into())),
+            None,
+        );
+        assert_eq!(rows[0].last_message.as_str(), "newer completed reply");
+    }
+
+    #[test]
+    fn lf_p1_20_session_load_generation_rejects_a_after_b_and_return_to_live() {
+        let a_revision = 1;
+        assert!(session_load_is_current(
+            1,
+            a_revision,
+            true,
+            "session-a",
+            "session-a"
+        ));
+
+        let b_revision = 2;
+        assert!(!session_load_is_current(
+            b_revision,
+            a_revision,
+            true,
+            "session-b",
+            "session-a"
+        ));
+        assert!(session_load_is_current(
+            b_revision,
+            b_revision,
+            true,
+            "session-b",
+            "session-b"
+        ));
+
+        let live_revision = 3;
+        for (revision, session) in [(a_revision, "session-a"), (b_revision, "session-b")] {
+            assert!(!session_load_is_current(
+                live_revision,
+                revision,
+                false,
+                "",
+                session
+            ));
+        }
+
+        // A real/imported session id named `live` remains historical because
+        // mode is typed separately; the identifier cannot grant mutations.
+        assert!(session_load_is_current(4, 4, true, "live", "live"));
+        assert!(!session_load_is_current(5, 4, false, "", "live"));
+    }
+
+    #[test]
+    fn lf_p1_20_chat_sidebar_session_selection_is_readonly_and_fully_wired() {
         let rust_source = include_str!("main.rs");
         let shell_source = include_str!("../ui/main.slint");
         let chat_source = include_str!("../ui/chat.slint");
-        let forbidden_rust_handlers = [
-            ["on_chat_", "channel_switched"].concat(),
-            ["on_chat_", "session_selected"].concat(),
-        ];
-        let forbidden_shell_callbacks = [
-            ["callback chat-", "channel-switched"].concat(),
-            ["callback chat-", "session-selected"].concat(),
-        ];
-        let forbidden_chat_callbacks = [
-            ["callback channel-", "switched"].concat(),
-            ["callback session-", "selected"].concat(),
-        ];
+        assert!(!rust_source.contains("on_chat_channel_switched"));
+        assert!(!shell_source.contains("callback chat-channel-switched"));
+        assert!(!chat_source.contains("callback channel-switched"));
 
-        for handler in forbidden_rust_handlers {
+        for contract in [
+            "in property <string> active-session-id: \"\";",
+            "in property <bool> history-active: false;",
+            "callback live-session-selected();",
+            "callback session-selected(string);",
+            "last-message: ch.last-message != \"\" ? ch.last-message : ch.detail;",
+            "last-timestamp: ch.last-timestamp;",
+            "root.session-selected(s.id)",
+            "root.live-session-selected()",
+            "mutation-actions-enabled: !root.history-active;",
+            "if !root.history-active && root.link-chips.length > 0",
+            "if !root.history-active: Composer {",
+            "if root.history-active: Rectangle {",
+            "root.send-enabled && root.draft != \"\" && !root.send-in-flight",
+            "Return to Local CLI to compose, attach, retry or edit.",
+        ] {
             assert!(
-                !rust_source.contains(&handler),
-                "cosmetic Rust handler returned without a route/session binding: {handler}"
+                chat_source.contains(contract),
+                "missing ChatView contract: {contract}"
             );
         }
-        for callback in forbidden_shell_callbacks {
+        for contract in [
+            "in property <string> chat-active-session-id: \"\";",
+            "in property <bool> chat-history-active: false;",
+            "callback chat-live-session-selected();",
+            "callback chat-session-selected(string);",
+            "active-session-id: root.chat-active-session-id;",
+            "history-active: root.chat-history-active;",
+        ] {
             assert!(
-                !shell_source.contains(&callback),
-                "shell exposes a cosmetic selection callback: {callback}"
+                shell_source.contains(contract),
+                "missing shell contract: {contract}"
             );
         }
-        for callback in forbidden_chat_callbacks {
+        for contract in [
+            "window.on_chat_live_session_selected",
+            "window.on_chat_session_selected",
+            "load_session_messages",
+            "chat_session_revision",
+            "CHAT_HISTORY_REFRESH_REVISION",
+            "Historical transcripts are read-only.",
+        ] {
             assert!(
-                !chat_source.contains(&callback),
-                "chat view exposes a cosmetic selection callback: {callback}"
+                rust_source.contains(contract),
+                "missing Rust wiring: {contract}"
             );
         }
 
-        assert!(chat_source.contains("active: ch.route-bound;"));
+        assert!(chat_source.contains("active: ch.route-bound && !root.history-active;"));
         assert!(chat_source.contains("accessible-enabled: root.route-bound;"));
-        assert!(chat_source.contains("transcript loading is not available"));
+        for accessibility_contract in [
+            "accessible-action-default => {",
+            "forward-focus: key-focus;",
+            "key-focus := FocusScope {",
+            "forward-focus: session-focus;",
+            "session-focus := FocusScope {",
+            "Current read-only history session.",
+            "event.text == \"\\n\" || event.text == \" \"",
+        ] {
+            assert!(
+                chat_source.contains(accessibility_contract),
+                "missing accessible session-row contract: {accessibility_contract}"
+            );
+        }
+        assert!(!chat_source.contains("opacity: root.active-session-id == s.id"));
+        assert!(!chat_source.contains("root.any-active && !root.active"));
+        assert!(!chat_source.contains("font-size: 10px;"));
+        assert!(
+            chat_source
+                .contains("height: max(64px, row-body.preferred-height + Theme.space-tight * 2);")
+        );
+        assert!(
+            chat_source.contains(
+                "height: max(62px, session-body.preferred-height + Theme.space-tight * 2);"
+            )
+        );
+        assert!(chat_source.contains("Read-only history · select a session to inspect"));
         assert!(chat_source.contains("chat routing not available"));
         assert!(
             rust_source.contains("cmd.arg(\"chat\").arg(\"--stream\")"),
@@ -18747,7 +19141,9 @@ fn default_neoth_home() -> PathBuf {
 }
 
 // B23 — THEME-TWEAKS-RUNTIME: mirrored contract types.
-// File-private — do NOT re-export and do NOT add a `neothd` dep to the GUI crate.
+// File-private — do NOT re-export. The GUI links `neothd` for canonical
+// safety/storage readers, while this startup-facing theme schema remains an
+// explicit GUI boundary instead of importing daemon runtime state.
 // Field names and types MUST match `neothd::tweaks::ThemeConfig` field-for-field;
 // parity is enforced by `gui_tweaks_contract_parses_all_16_theme_fields` below.
 #[derive(Clone, Debug, Default, serde::Deserialize)]

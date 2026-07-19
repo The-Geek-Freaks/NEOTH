@@ -21,7 +21,7 @@
 
 use std::borrow::Cow;
 
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OpenFlags, params};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -224,6 +224,78 @@ fn row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptRow> {
     })
 }
 
+/// Read one session's canonical visible transcript without creating or
+/// migrating the database. GUI/history consumers use this instead of parsing
+/// archive markdown or guessing from hindsight summaries. Agent text is
+/// re-sanitised by [`row_mapper`] so legacy rows cannot leak on egress.
+pub fn read_session_turns_at(
+    db_path: &std::path::Path,
+    session_id: &str,
+) -> rusqlite::Result<Vec<TranscriptRow>> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let has_raw_turns = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_turns')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_raw_turns {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, role, ts_unix, text \
+         FROM raw_turns WHERE session_id = ?1 ORDER BY id ASC",
+    )?;
+    stmt.query_map([session_id], row_mapper)?.collect()
+}
+
+/// Read the latest canonical visible turn for each requested session in one
+/// read-only database connection. Missing sessions are intentionally absent:
+/// legacy hindsight cards predate `raw_turns` and must render an empty preview,
+/// never a fabricated summary/closing utterance.
+pub fn read_latest_turns_at(
+    db_path: &std::path::Path,
+    session_ids: &[String],
+) -> rusqlite::Result<std::collections::BTreeMap<String, TranscriptRow>> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let has_raw_turns = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_turns')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_raw_turns {
+        return Ok(std::collections::BTreeMap::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT id, session_id, role, ts_unix, text \
+         FROM raw_turns WHERE session_id = ?1 ORDER BY id DESC",
+    )?;
+    let mut out = std::collections::BTreeMap::new();
+    for session_id in session_ids {
+        let mut rows = stmt.query([session_id])?;
+        while let Some(row) = rows.next()? {
+            let candidate = row_mapper(row)?;
+            // A persisted empty/ANSI-only final row is not visible UI content.
+            // Match the live-preview contract by walking backwards to the
+            // first row that remains non-empty after canonical sanitisation.
+            if crate::security::redact::sanitize_tool_output(&candidate.text)
+                .split_whitespace()
+                .next()
+                .is_some()
+            {
+                out.insert(session_id.clone(), candidate);
+                break;
+            }
+        }
+    }
+    Ok(out)
+}
+
 // ── Best-effort helper used by call sites ──────────────────────────────────
 
 /// Best-effort wrapper: inserts a turn and logs a warning on failure.
@@ -393,6 +465,74 @@ mod tests {
         let (_dir, conn) = open_test_db();
         let r = search_turns(&conn, "anything", 2, 10).unwrap();
         assert!(r.is_empty());
+    }
+
+    #[test]
+    fn lf_p1_20_readonly_session_egress_is_ordered_and_resanitizes_legacy_agent_rows() {
+        let (dir, conn) = open_test_db();
+        insert_turn(&conn, "sidebar-a", "operator", 10, "first").unwrap();
+        let legacy_secret = format!(
+            "legacy {}",
+            concat!("sk-", "proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456")
+        );
+        conn.execute(
+            "INSERT INTO raw_turns (session_id, role, ts_unix, text) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["sidebar-a", "agent", 11, legacy_secret],
+        )
+        .unwrap();
+        drop(conn);
+
+        let rows = read_session_turns_at(&dir.path().join("views.db"), "sidebar-a").unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].text, "first");
+        assert!(rows[1].text.contains("[REDACTED:openai_key]"));
+        assert!(!rows[1].text.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ123456"));
+    }
+
+    #[test]
+    fn lf_p1_20_latest_turns_keep_sessions_isolated_and_omit_legacy_missing_cards() {
+        let (dir, conn) = open_test_db();
+        insert_turn(&conn, "sidebar-a", "operator", 10, "A old").unwrap();
+        insert_turn(&conn, "sidebar-b", "operator", 20, "B only").unwrap();
+        insert_turn(&conn, "sidebar-a", "agent", 30, "A latest").unwrap();
+        drop(conn);
+
+        let ids = vec![
+            "sidebar-a".to_string(),
+            "sidebar-b".to_string(),
+            "legacy-without-turns".to_string(),
+        ];
+        let latest = read_latest_turns_at(&dir.path().join("views.db"), &ids).unwrap();
+        assert_eq!(latest["sidebar-a"].text, "A latest");
+        assert_eq!(latest["sidebar-b"].text, "B only");
+        assert!(!latest.contains_key("legacy-without-turns"));
+    }
+
+    #[test]
+    fn lf_p1_20_latest_turns_skip_empty_and_control_only_tail_rows() {
+        let (dir, conn) = open_test_db();
+        insert_turn(&conn, "sidebar-a", "operator", 10, "visible operator turn").unwrap();
+        insert_turn(&conn, "sidebar-a", "agent", 20, "   \n\t").unwrap();
+        insert_turn(&conn, "sidebar-a", "agent", 30, "\u{1b}[31m\u{1b}[0m").unwrap();
+        drop(conn);
+
+        let latest =
+            read_latest_turns_at(&dir.path().join("views.db"), &["sidebar-a".to_string()]).unwrap();
+        assert_eq!(latest["sidebar-a"].text, "visible operator turn");
+        assert_eq!(latest["sidebar-a"].ts_unix, 10);
+    }
+
+    #[test]
+    fn lf_p1_20_readonly_legacy_database_without_raw_turns_is_empty() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.db");
+        Connection::open(&path).unwrap();
+        assert!(read_session_turns_at(&path, "legacy").unwrap().is_empty());
+        assert!(
+            read_latest_turns_at(&path, &["legacy".to_string()])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

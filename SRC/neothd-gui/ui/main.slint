@@ -984,14 +984,20 @@ export component MainWindow inherits Window {
     /// last entry while chunks arrive, then `false` when the
     /// completion settles.
     in property <[ChatMessage]> chat-messages: [];
+    /// Preserved live feed while a read-only historical session is selected.
+    in property <[ChatMessage]> chat-live-messages: [];
     in-out property <string> chat-composer-draft: "";
     in property <bool> chat-send-enabled: true;
     /// GOLD-ADAPT-GUI-07 — a reply subprocess is streaming; the Send
     /// button spins and re-sends are blocked until it settles.
     in property <bool> chat-send-in-flight: false;
-    /// GOLD-ADAPT-ODY-01 — read-only recent-session summaries. Transcript
-    /// loading is intentionally absent until the session controller lands.
+    /// GOLD-LF-P1-20 — read-only recent sessions backed by canonical raw_turns;
+    /// selection swaps the visible pane while preserving the live feed.
     in property <[SessionRow]> chat-session-history: [];
+    in property <string> chat-active-session-id: "";
+    in property <bool> chat-history-active: false;
+    callback chat-live-session-selected();
+    callback chat-session-selected(string);
     /// GOLD-ADAPT-ODY-04 — stall watchdog banner state + actions.
     in property <bool> chat-stall-active: false;
     callback chat-stall-continue();
@@ -3614,11 +3620,15 @@ export component MainWindow inherits Window {
                     channels: root.chat-channels;
                     unread-counts: root.chat-unread-counts;
                     session-history: root.chat-session-history;
+                    active-session-id: root.chat-active-session-id;
+                    history-active: root.chat-history-active;
                     stall-active: root.chat-stall-active;
                     pending-attachments: root.chat-pending-attachments;
                     link-chips: root.chat-link-chips;
                     link-chip-clicked(k, id) => { root.chat-link-chip-clicked(k, id); }
                     send-clicked(text) => { root.chat-send-clicked(text); }
+                    live-session-selected => { root.chat-live-session-selected(); }
+                    session-selected(id) => { root.chat-session-selected(id); }
                     attach-clicked => { root.chat-attach-clicked(); }
                     remove-attachment(i) => { root.chat-remove-attachment(i); }
                     recall-requested => { root.chat-composer-recall-requested(); }

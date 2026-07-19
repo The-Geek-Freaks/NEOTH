@@ -7333,6 +7333,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tray-icon",
+ "unicode-segmentation",
  "windows-sys 0.59.0",
  "zeroize",
 ]
