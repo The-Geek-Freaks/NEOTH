@@ -3869,6 +3869,7 @@ mod tests {
             .await
             .unwrap();
 
+        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
         let failure = FailingProvider {
             name: "openai_api",
             calls: AtomicUsize::new(0),
@@ -4796,7 +4797,6 @@ mod tests {
             [
                 "providers/cost_authorization.rs",
                 "providers/cost_authorization.rs",
-                "providers/cost_authorization.rs",
             ],
             "Babel K_d samples must come from the canonical successful provider lifecycle, not selected callers"
         );
@@ -4914,8 +4914,8 @@ mod tests {
             ),
             (
                 "cli/bg_session.rs",
-                2,
-                "526f9015048cfa2222f5f23d2dd385a2f71b6a57fc8056a09b926b391db8f335",
+                1,
+                "a71bfceab3efcd54245a9e7b6b77e241e0485c12bf28718bc9f1599069fbd4e1",
             ),
             (
                 "cli/chat.rs",
@@ -4950,7 +4950,7 @@ mod tests {
             (
                 "cli/serve_tasks.rs",
                 1,
-                "2dfb67bb47bb79084d95f5d88a045907cb6c4d6f0382f4005e9d34f633ed26b3",
+                "3600f6a1d5f7e4dd6ebffb90bac5a6c201100f8abdd47399ea37c7a15fba5c13",
             ),
             (
                 "cluster/executor.rs",
@@ -4975,7 +4975,7 @@ mod tests {
             (
                 "coding/provider_worker.rs",
                 2,
-                "a6e2b42fe92282611899e6463990058fe92f3f969f6062a2b4be1b1bc294f861",
+                "8be82f253fa1e35f8f32af1a73d52c7702bf9a7904cce962df01e8613b8e37e6",
             ),
             (
                 "coding/second_opinion.rs",
@@ -5018,9 +5018,14 @@ mod tests {
                 "b9ae3baedab03664ec7fe49af17f5e17d3d5f2e64786b26068bf668701653c6b",
             ),
             (
+                "loop_engine/engine.rs",
+                1,
+                "4e4426672a54c2860bf7a97e43d79e68112604f6e96b2c187295caa81a9c8de8",
+            ),
+            (
                 "mcp/dispatch_loop.rs",
                 3,
-                "818ce1b6eadd9de70ab57e1cf05fcea586caac9aeb67e15902ef2fc0e77c2f38",
+                "29d3fe7971a80d21b711167665d8498d9a08c9a875e62012a0928d10934394dd",
             ),
             (
                 "mcp/goal_judge.rs",
@@ -5064,8 +5069,8 @@ mod tests {
             ),
             (
                 "security/refusal_abliterated.rs",
-                2,
-                "df6b6d753e9016a94e2182a2039a91316d2168ccfd44baccf45b155eeb000c7b",
+                1,
+                "4c637a465163b61b71e10ecb0bb21a4bbafbbddbd4610db8e5653b1bd7066829",
             ),
             (
                 "security/refusal_recovery.rs",

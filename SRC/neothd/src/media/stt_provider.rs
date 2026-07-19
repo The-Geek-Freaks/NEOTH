@@ -3471,7 +3471,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cached_local_whisper_prefetch_skips_gate_but_verifies_with_executor() {
+    async fn structural_whisper_cache_cannot_bypass_download_policy() {
         let dir = tempfile::tempdir().unwrap();
         let target = resolve_local_whisper_target_with_runtime(
             SttProviderKind::WhisperRsLocal,
@@ -3480,25 +3480,34 @@ mod tests {
         )
         .unwrap();
         materialize_local_whisper_target(&target);
+        assert!(
+            target.cache_health().is_ready(),
+            "fixture must be structurally complete"
+        );
+        assert!(
+            !target.verified_cache_health(false).is_ready(),
+            "a sparse fixture without the pinned SHA-256 must not be trusted"
+        );
         let mut blocked = crate::config::ops::UpdaterConfig::default();
         blocked.allow_huggingface_downloads = false;
         let executor = InjectedLocalWhisperPrefetchExecutor {
             materialize: false,
             calls: std::sync::atomic::AtomicUsize::new(0),
-            allow_network: std::sync::atomic::AtomicBool::new(true),
+            allow_network: std::sync::atomic::AtomicBool::new(false),
         };
 
         let error = prefetch_local_whisper_with(&target, &blocked, None, &executor)
             .await
             .unwrap_err();
 
-        assert!(error.to_string().contains("confirmed durable D7"));
+        assert_eq!(error.class(), SttFailureClass::Permanent);
+        assert!(error.to_string().contains("allow_huggingface_downloads"));
         assert_eq!(executor.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(
             !executor
                 .allow_network
                 .load(std::sync::atomic::Ordering::SeqCst),
-            "a complete cache must be verified strictly offline"
+            "the blocked path must not authorize a network-capable executor"
         );
     }
 

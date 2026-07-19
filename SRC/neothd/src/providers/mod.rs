@@ -2138,6 +2138,7 @@ mod tests {
         cat.providers.insert(
             "anthropic_api".to_string(),
             crate::models::catalog::ProviderCatalog {
+                fetched_at_unix: 1,
                 models: vec![crate::models::catalog::ModelEntry::new(
                     "claude-opus-4-9-NEW",
                 )],
@@ -2174,6 +2175,7 @@ mod tests {
             catalog.providers.insert(
                 "openai_api".to_owned(),
                 crate::models::catalog::ProviderCatalog {
+                    fetched_at_unix: 1,
                     models: vec![crate::models::catalog::ModelEntry::new(model)],
                     ..Default::default()
                 },

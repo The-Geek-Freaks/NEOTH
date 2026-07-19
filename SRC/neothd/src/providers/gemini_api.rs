@@ -296,8 +296,8 @@ mod tests {
             stop_sequences: Some(vec!["END".into()]),
         };
         let json = serde_json::to_value(config).unwrap();
-        assert_eq!(json["temperature"], 0.6);
-        assert_eq!(json["topP"], 0.75);
+        assert_eq!(json["temperature"].as_f64(), Some(f64::from(0.6_f32)));
+        assert_eq!(json["topP"].as_f64(), Some(f64::from(0.75_f32)));
         assert_eq!(json["seed"], 17);
         assert_eq!(json["stopSequences"], serde_json::json!(["END"]));
     }

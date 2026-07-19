@@ -435,7 +435,13 @@ fn changed_provider_runtime_fields(old: &FreedomConfig, new: &FreedomConfig) -> 
     if serialized_fragment_changed(&old.claude_cli, &new.claude_cli) {
         changed.push("claude_cli");
     }
-    if old.tokens.max_per_request != new.tokens.max_per_request
+    // The leaf authorizer reads this cap from the current reload generation,
+    // but an enabled history compactor captures it when the provider graph is
+    // built. Keep those two boundaries generation-consistent.
+    let compactor_bound_input_cap_changed = old.tokens.max_per_request
+        != new.tokens.max_per_request
+        && (old.tokens.history_compaction_enabled || new.tokens.history_compaction_enabled);
+    if compactor_bound_input_cap_changed
         || old.tokens.history_compaction_enabled != new.tokens.history_compaction_enabled
         || old.tokens.history_compaction_threshold != new.tokens.history_compaction_threshold
         || old.tokens.history_keep_recent_chars != new.tokens.history_keep_recent_chars
@@ -585,6 +591,18 @@ mod tests {
         assert!(rejection.restart_required());
         assert!(rejection.to_string().contains("provider_endpoint"));
         assert!(rejection.to_string().contains("restart NEOTH"));
+    }
+
+    #[test]
+    fn input_cap_is_hot_reloadable_when_history_compactor_is_disabled() {
+        let old = fresh_config();
+        let mut new = old.clone();
+        new.tokens.max_per_request += 1;
+
+        assert!(
+            validate_reload(&old, &new).is_none(),
+            "the leaf authorizer reads the current cap on every call"
+        );
     }
 
     #[test]
@@ -815,6 +833,31 @@ mod tests {
             other => panic!("expected Rejected, got {other:?}"),
         }
         assert!(ctrl.latest().provider_endpoint.is_none());
+        assert_eq!(*generation.borrow(), 0);
+    }
+
+    #[test]
+    fn input_cap_reload_is_restart_bound_while_history_compactor_is_active() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.tokens.history_compaction_enabled = true;
+        let initial_cap = initial.tokens.max_per_request;
+        let mut changed = initial.clone();
+        changed.tokens.max_per_request = initial_cap.saturating_sub(1);
+        write_yaml(&yaml_path, &serde_yaml::to_string(&changed).unwrap());
+
+        let ctrl = ReloadController::new(initial, yaml_path);
+        let generation = ctrl.subscribe_generation();
+        match ctrl.try_reload().expect("reload validation succeeds") {
+            ReloadResult::Rejected { rejection } => {
+                assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
+                assert!(rejection.restart_required());
+                assert!(rejection.to_string().contains("tokens.provider_runtime"));
+            }
+            other => panic!("expected Rejected, got {other:?}"),
+        }
+        assert_eq!(ctrl.latest().tokens.max_per_request, initial_cap);
         assert_eq!(*generation.borrow(), 0);
     }
 

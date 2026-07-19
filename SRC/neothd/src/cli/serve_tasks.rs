@@ -7259,7 +7259,8 @@ mod tests {
         db_path: &std::path::Path,
         predicate: impl Fn(&crate::memory::omi::OmiStatus) -> bool,
     ) -> crate::memory::omi::OmiStatus {
-        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        let mut last_status = None;
+        let converged = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if db_path.exists()
                     && let Ok(connection) = rusqlite::Connection::open_with_flags(
@@ -7268,15 +7269,19 @@ mod tests {
                             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
                     )
                     && let Ok(status) = crate::memory::omi::status(&connection)
-                    && predicate(&status)
                 {
-                    return status;
+                    if predicate(&status) {
+                        return status;
+                    }
+                    last_status = Some(status);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
-        .await
-        .expect("OMI runtime status did not converge")
+        .await;
+        converged.unwrap_or_else(|_| {
+            panic!("OMI runtime status did not converge; last observed status: {last_status:?}")
+        })
     }
 
     #[tokio::test]

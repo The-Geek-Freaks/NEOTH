@@ -335,8 +335,8 @@ mod tests {
             ..base()
         })
         .unwrap();
-        assert_eq!(controlled["temperature"], 0.5);
-        assert_eq!(controlled["p"], 0.85);
+        assert_eq!(controlled["temperature"].as_f64(), Some(f64::from(0.5_f32)));
+        assert_eq!(controlled["p"].as_f64(), Some(f64::from(0.85_f32)));
         assert_eq!(controlled["seed"], 11);
         assert_eq!(controlled["stop_sequences"], serde_json::json!(["END"]));
     }

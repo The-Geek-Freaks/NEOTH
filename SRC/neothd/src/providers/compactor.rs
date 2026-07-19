@@ -748,6 +748,9 @@ mod tests {
         fn name(&self) -> &'static str {
             "stub"
         }
+        fn default_model(&self) -> Option<&str> {
+            Some("stub")
+        }
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.lock().unwrap().push(req.prompt.clone());
             Ok(Completion {
@@ -1072,6 +1075,9 @@ mod tests {
     impl Provider for SystemCapture {
         fn name(&self) -> &'static str {
             "capture"
+        }
+        fn default_model(&self) -> Option<&str> {
+            Some("capture")
         }
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.0.lock().unwrap() = req.system.clone();
@@ -1457,6 +1463,9 @@ mod tests {
         impl Provider for PromptCapture {
             fn name(&self) -> &'static str {
                 "capture"
+            }
+            fn default_model(&self) -> Option<&str> {
+                Some("capture")
             }
             async fn complete(&self, req: Request) -> Result<Completion> {
                 self.0.lock().unwrap().push(req.prompt.clone());

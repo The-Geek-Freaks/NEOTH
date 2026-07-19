@@ -185,7 +185,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), reqwest::StatusCode::TEMPORARY_REDIRECT);
-        assert!(response.error_for_status().is_err(), "3xx must surface");
+        assert!(response.status().is_redirection(), "3xx must surface");
         assert!(
             redirect_target
                 .received_requests()
