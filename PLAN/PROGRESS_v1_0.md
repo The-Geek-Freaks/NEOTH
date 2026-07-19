@@ -3,6 +3,17 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-18
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Current WS-LF inventory integrity (2026-07-18):** the original 79
+> archaeological candidate occurrences are now durably accounted for as
+> 52 CONFIRMED_LOST, 8 ALREADY_BUILT, 11 ALREADY_TRACKED,
+> 3 REJECTED_STANDS and 5 scope-preserving semantic merges. The 52 canonical
+> recovery rows are exactly 23 P1 + 29 P2 and are bound one-to-one across the
+> source, machine-readable ledger and ROAD. A dependency-free mutation-tested
+> checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01` is therefore the
+> only WS-LF task closed by this correction: **1 done / 117 implementation and
+> parity tasks still open**. No recovered feature or Plan-001/002/003 leaf was
+> closed by the inventory repair.
+>
 > **Current CI correctness and runtime correction (2026-07-18; no broad
 > R3/R4 box closed):** the multi-hour CI stall was not useful coverage. One
 > streaming cost-authorization test retained two cloned WAL senders while

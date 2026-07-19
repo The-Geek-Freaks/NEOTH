@@ -1,0 +1,653 @@
+{
+  "schema_version": 1,
+  "inventory_id": "lost-features-1.0-recovery",
+  "provenance": {
+    "kind": "claude_workflow_journal",
+    "workflow_id": "wf_bfbcf7a3-158",
+    "journal": "subagents/workflows/wf_bfbcf7a3-158/journal.jsonl",
+    "source_commit": "69234ed3",
+    "candidate_order": "journal result encounter order"
+  },
+  "expected_counts": {
+    "total": 79,
+    "by_disposition": {
+      "CONFIRMED_LOST": 52,
+      "ALREADY_BUILT": 8,
+      "ALREADY_TRACKED": 11,
+      "REJECTED_STANDS": 3,
+      "DUPLICATE": 5
+    },
+    "confirmed_lost_by_priority": {
+      "P1": 23,
+      "P2": 29
+    }
+  },
+  "candidates": [
+    {
+      "id": "LF-CAND-001",
+      "name": "ARS-3 Citation Live Lookup (Crossref / OpenAlex / SemanticScholar)",
+      "source": "PLAN/QUELLEN_ADOPT_academic_2026-05-21.md#3.2",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-12"
+    },
+    {
+      "id": "LF-CAND-002",
+      "name": "Dreaming 3-Phase Light / REM / Repair Protocol",
+      "source": "PLAN/CHERRY_PICK_RANKING.md — openclaw #1 must-adopt",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-01"
+    },
+    {
+      "id": "LF-CAND-003",
+      "name": "Hippocampus 0.75 Importance-Threshold Cron (Jarvis #1 cherry-pick)",
+      "source": "PLAN/CHERRY_PICK_RANKING.md — Jarvis #1 must-adopt",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-02"
+    },
+    {
+      "id": "LF-CAND-004",
+      "name": "Vault-Git-Commit Nightly as WAL_MIRROR Backup",
+      "source": "PLAN/CHERRY_PICK_RANKING.md — Jarvis #3 must-adopt",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-03"
+    },
+    {
+      "id": "LF-CAND-005",
+      "name": "C-13 Capability Decay Tracking",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #13",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-06"
+    },
+    {
+      "id": "LF-CAND-006",
+      "name": "C-17 Sub-200ms Voice (Streaming VAD + Streaming Whisper)",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #17",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-13"
+    },
+    {
+      "id": "LF-CAND-007",
+      "name": "C-18 Quality Signal (Non-Star Per-Response Feedback)",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #18",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-28"
+    },
+    {
+      "id": "LF-CAND-008",
+      "name": "C-2 Agent with Own Goals (Autonomous Research Loop)",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #2",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-09"
+    },
+    {
+      "id": "LF-CAND-009",
+      "name": "C-6 Death of the Prompt (Proactive Context Preparation)",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #6",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-11"
+    },
+    {
+      "id": "LF-CAND-010",
+      "name": "SP-H1 Session-Start Skill-Registry Injection",
+      "source": "PLAN/QUELLEN_ADOPT_superpowers_2026-05-22.md#SP-H1",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-10"
+    },
+    {
+      "id": "LF-CAND-011",
+      "name": "ARS-5 Research / Paper / Review Bundled Skill YAMLs",
+      "source": "PLAN/QUELLEN_ADOPT_academic_2026-05-21.md#5",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/assets/skills/academic_research/skill.yaml (15 modes)"
+    },
+    {
+      "id": "LF-CAND-012",
+      "name": "CG-1..CG-5 CodeGraph Edges (Call-Graph, Import-Graph, Type-Hierarchy, BFS)",
+      "source": "PLAN/QUELLEN_ADOPT_codegraph_2026-05-21.md#CG-1..CG-5",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-11"
+    },
+    {
+      "id": "LF-CAND-013",
+      "name": "WhatsApp Outbound Reply Send Path",
+      "source": "PLAN/REEVALUATION_GESAMT_2026-05-22_R7.md#P0 + R5#P0",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-HON-24; live /messages Graph API send path"
+    },
+    {
+      "id": "LF-CAND-014",
+      "name": "Channel-Flapping Doctor Check (Uses Provider Rate, Not Channel Rate)",
+      "source": "PLAN/REEVALUATION_GESAMT_2026-05-22_R7.md#P1",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-17"
+    },
+    {
+      "id": "LF-CAND-015",
+      "name": "Trust Ledger as Per-Decision Append-Only Timeline",
+      "source": "PLAN/GREMIUM_EXECUTION_BACKLOG_2026-05-20.md#P3",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-05"
+    },
+    {
+      "id": "LF-CAND-016",
+      "name": "C-16 Inner-Monologue Audit (Streaming Chain-of-Thought Surface)",
+      "source": "PLAN/FEATURE_EVAL.md — Block C item #16",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-10"
+    },
+    {
+      "id": "LF-CAND-017",
+      "name": "Autonomy Gradients Per-Skill (Independent Trust Dial per Skill)",
+      "source": "PLAN/GREMIUM_EXECUTION_BACKLOG_2026-05-20.md#P3",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-12"
+    },
+    {
+      "id": "LF-CAND-018",
+      "name": "AgreementDimension enum for Council scoring",
+      "source": "PLAN/BLUEPRINT_v06_synthesis.md#Architecture-Delta-§8",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-06"
+    },
+    {
+      "id": "LF-CAND-019",
+      "name": "EXP-FD-1..5: Fractal dimension experiments beyond D_mem",
+      "source": "PLAN/FRACTAL_DIMENSION.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-07"
+    },
+    {
+      "id": "LF-CAND-020",
+      "name": "Conductor pattern: 3-layer context skill (oh-my-claudecode port)",
+      "source": "PLAN/NEW_SOURCES_INTEGRATION.md (oh-my-claudecode section)",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/src/skills/loader.rs; SRC/neothd/src/pipeline/enriched_request.rs; SRC/neothd/src/tokens/budget.rs"
+    },
+    {
+      "id": "LF-CAND-021",
+      "name": "CloakBrowser stealth web-fetch plugin",
+      "source": "PLAN/NEW_SOURCES_INTEGRATION.md (CloakBrowser section)",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-13"
+    },
+    {
+      "id": "LF-CAND-022",
+      "name": "Ralph-retry: error-aware LLM retry tool (oh-my-claudecode port)",
+      "source": "PLAN/NEW_SOURCES_INTEGRATION.md (oh-my-claudecode section)",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-14"
+    },
+    {
+      "id": "LF-CAND-023",
+      "name": "Role enforcement pipeline (oh-my-claudecode port)",
+      "source": "PLAN/NEW_SOURCES_INTEGRATION.md (oh-my-claudecode section)",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-15"
+    },
+    {
+      "id": "LF-CAND-024",
+      "name": "Per-node skill assignment and channel binding (Veronica multi-node)",
+      "source": "PLAN/BLUEPRINT_v06_synthesis.md#Veronica-Delta-§6",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-18"
+    },
+    {
+      "id": "LF-CAND-025",
+      "name": "Per-context-block token budget caps (A–E hemispheres, max_prompt_tokens per call)",
+      "source": "PLAN/CLAUDE_v07_review.md §7 (Token-Budget score 4/10)",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/src/tokens/budget.rs Block enum and tests"
+    },
+    {
+      "id": "LF-CAND-026",
+      "name": "Mandatory external-family 4th grader for recall parity gate (H7 fix)",
+      "source": "PLAN/00_DESIGN_v1.1_FINAL.md (H-class fix H7)",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-07"
+    },
+    {
+      "id": "LF-CAND-027",
+      "name": "WAL replay-window HLC ordering for multi-node (±300s window naive)",
+      "source": "PLAN/CLAUDE_v07_review.md §11",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-04"
+    },
+    {
+      "id": "LF-CAND-028",
+      "name": "Phase-3 cutover runbook at day-level granularity",
+      "source": "PLAN/CLAUDE_v07_review.md §9 (Phase-3-Migration score 3/10)",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "PLAN/RUNBOOK_phase3_cutover.md"
+    },
+    {
+      "id": "LF-CAND-029",
+      "name": "Tool-output redaction uniformly applied in WAL coding frames",
+      "source": "PLAN/SMALLCODE_AUDIT_2026-05-21.md §5 #4",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-03"
+    },
+    {
+      "id": "LF-CAND-030",
+      "name": "Mirror Refusal Pipeline Stages 2-6",
+      "source": "PLAN/SPEC_mirror_refusal.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-02"
+    },
+    {
+      "id": "LF-CAND-031",
+      "name": "n8n localhost API v2 endpoints",
+      "source": "PLAN/SPEC_n8n_localhost_api_2026-05-23.md#40",
+      "disposition": "REJECTED_STANDS",
+      "resolution_ref": "PLAN/SPEC_n8n_localhost_api_2026-05-23.md#40 requires operator-usage evidence; no v1.0 consumer or public claim justifies a primitive-ahead API"
+    },
+    {
+      "id": "LF-CAND-032",
+      "name": "Hysteria Relay neothd client-side transport (Phase 5 send path)",
+      "source": "PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/ROAD_TO_1_0_GOLD.md#GR-009 (historical deferral evidence)",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-13"
+    },
+    {
+      "id": "LF-CAND-033",
+      "name": "WAL S3-backed cold archive tier (Phase 4 / v1.2)",
+      "source": "PLAN/SPEC_wal_lifecycle.md#1",
+      "disposition": "REJECTED_STANDS",
+      "resolution_ref": "PLAN/SPEC_wal_lifecycle.md Phase 4 has no v1.0 consumer or public claim; local archive and backup paths are the current product contract"
+    },
+    {
+      "id": "LF-CAND-034",
+      "name": "Per-hemisphere provider interactive wizard step (onboarding step 5d)",
+      "source": "PLAN/SPEC_hemisphere_provider_selection.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-22"
+    },
+    {
+      "id": "LF-CAND-035",
+      "name": "Recall Parity Evaluation Harness (goldset mining + 4-grader protocol)",
+      "source": "PLAN/SPEC_recall_parity_methodology.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-08"
+    },
+    {
+      "id": "LF-CAND-036",
+      "name": "R-2 Keet native DHT+NOISE-IK+Hypercore protocol (Phases 3-5)",
+      "source": "PLAN/SPEC_R2_phase3_dht_noise_replication_2026-05-22.md",
+      "disposition": "REJECTED_STANDS",
+      "resolution_ref": "Companion-bridge architecture in SRC/neothd/src/channels/keet.rs replaces this path"
+    },
+    {
+      "id": "LF-CAND-037",
+      "name": "Cluster BudgetToken Raft consensus for cross-node budget coordination (Phase 6)",
+      "source": "PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-19"
+    },
+    {
+      "id": "LF-CAND-038",
+      "name": "Reflection retention/pruning hygiene",
+      "source": "PLAN/REFLECT_AND_SELFIMPROVE_BACKLOG.md#§A-items-1-3",
+      "disposition": "DUPLICATE",
+      "duplicate_of": "LF-CAND-061",
+      "duplicate_kind": "semantic_merge",
+      "preserved_scope": "Retention, near-duplicate pruning, and vault cleanup remain in GOLD-LF-P2-04"
+    },
+    {
+      "id": "LF-CAND-039",
+      "name": "Yearly reflection synthesis from archived PeriodReflections",
+      "source": "PLAN/REFLECT_AND_SELFIMPROVE_BACKLOG.md#§A-items-4-5",
+      "disposition": "DUPLICATE",
+      "duplicate_of": "LF-CAND-061",
+      "duplicate_kind": "semantic_merge",
+      "preserved_scope": "Yearly PeriodReflection synthesis and topic merging remain in GOLD-LF-P2-04"
+    },
+    {
+      "id": "LF-CAND-040",
+      "name": "Self-improve quality provenance schema",
+      "source": "PLAN/REFLECT_AND_SELFIMPROVE_BACKLOG.md#§B",
+      "disposition": "DUPLICATE",
+      "duplicate_of": "LF-CAND-062",
+      "duplicate_kind": "semantic_merge",
+      "preserved_scope": "Schema version, evaluation source, corpus hash, confidence, and regressions remain in GOLD-LF-P2-05"
+    },
+    {
+      "id": "LF-CAND-041",
+      "name": "Local LLM resource tab",
+      "source": "PLAN/v1_0_OPERATOR_WISHLIST_2026-05-24.md#§X; PLAN/ROAD_TO_1_0.md#SL-03",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-19"
+    },
+    {
+      "id": "LF-CAND-042",
+      "name": "Conversation sidebar last-message preview (unwired)",
+      "source": "PLAN/GUI_BEAT_OPENHUMAN.md#adopt-last-message-preview",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-20"
+    },
+    {
+      "id": "LF-CAND-043",
+      "name": "Per-turn silence watchdog (120s rearm-on-signal)",
+      "source": "PLAN/GUI_BEAT_OPENHUMAN.md#adopt-silence-timer",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-21"
+    },
+    {
+      "id": "LF-CAND-044",
+      "name": "Three-phase streaming indicator",
+      "source": "PLAN/GUI_BEAT_OPENHUMAN.md#adopt-three-phase-streaming",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-26"
+    },
+    {
+      "id": "LF-CAND-045",
+      "name": "Citation chips for memory recall hits",
+      "source": "PLAN/GUI_BEAT_OPENHUMAN.md#adopt-citation-chips",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-27"
+    },
+    {
+      "id": "LF-CAND-046",
+      "name": "Proactive delivery beyond Telegram (multi-channel follow-on)",
+      "source": "SRC/neothd/src/daemon/proactive_dispatcher.rs#lines-201-209; PLAN/ROAD_TO_1_0_GOLD.md#GR-013",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-14"
+    },
+    {
+      "id": "LF-CAND-047",
+      "name": "Live TPS / token-rate metering in chat header",
+      "source": "PLAN/ROAD_TO_1_0.md#R-03",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-29"
+    },
+    {
+      "id": "LF-CAND-048",
+      "name": "Cluster topology graph with RTT latency",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md#H22",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H22",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-049",
+      "name": "Command palette real action dispatcher",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md#D1-residual",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#D1-residual",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-050",
+      "name": "Voice Call first-class surface",
+      "source": "plans/001-openclaw-channel-migration-parity.md#channel-ledger-row-22",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-25"
+    },
+    {
+      "id": "LF-CAND-051",
+      "name": "WebChat first-class surface",
+      "source": "plans/001-openclaw-channel-migration-parity.md#channel-ledger-row-23",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-15"
+    },
+    {
+      "id": "LF-CAND-052",
+      "name": "Full account-scoped channel identity (ChannelAccountId end-to-end)",
+      "source": "plans/001-openclaw-channel-migration-parity.md#gap-F-01",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-16"
+    },
+    {
+      "id": "LF-CAND-053",
+      "name": "E-21: WASM plugin default decision + first-launch wizard bulk-enable step",
+      "source": "PLAN/OPEN_QUESTION_E21_wasm_plugin_default.md",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/src/cli/init/steps_autonomy.rs bulk-enable step"
+    },
+    {
+      "id": "LF-CAND-054",
+      "name": "E-22: Skill hot-reload Arc<SkillBody> per-invocation pinning (option 3)",
+      "source": "PLAN/OPEN_QUESTION_E22_skill_hot_reload.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-16"
+    },
+    {
+      "id": "LF-CAND-055",
+      "name": "BGE-M3 fallback embed model opt-in and GUI settings parity",
+      "source": "PLAN/ADR/004-r02-phase3-embedding-model.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-24"
+    },
+    {
+      "id": "LF-CAND-056",
+      "name": "ADR-003 dream.cron_enabled config field + wizard UX nudge",
+      "source": "PLAN/ADR/003-r02-phase3-dream-cadence.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-23"
+    },
+    {
+      "id": "LF-CAND-057",
+      "name": "neoth-archive-bridge Obsidian plugin",
+      "source": "plans/002-zero-friction-adoption-coupling.md#gap-DX-01",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-21"
+    },
+    {
+      "id": "LF-CAND-058",
+      "name": "n8n and Paperless fully operational installs (pinned, verified)",
+      "source": "plans/002-zero-friction-adoption-coupling.md#gap-DX-02",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-20"
+    },
+    {
+      "id": "LF-CAND-059",
+      "name": "Wizard IPC: actual MPSC wire-up between GUI and daemon wizard surfaces",
+      "source": "plans/003-gui-cli-buddy-capability-parity.md#gap-SURF-01; SRC/neothd/src/wizard/ipc.rs",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-18"
+    },
+    {
+      "id": "LF-CAND-060",
+      "name": "Per-counterparty consent gate for channel-ingress LLM clustering",
+      "source": "PLAN/ADR/005-r02-phase3-privacy-boundary.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-22"
+    },
+    {
+      "id": "LF-CAND-061",
+      "name": "Reflection hygiene backlog: retention, dedup, yearly synthesis, topic-merge",
+      "source": "PLAN/REFLECT_AND_SELFIMPROVE_BACKLOG.md#section-A",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-04"
+    },
+    {
+      "id": "LF-CAND-062",
+      "name": "Self-improve Proposal quality schema (schema_version, eval_source, corpus_hash, confidence, regressions)",
+      "source": "PLAN/REFLECT_AND_SELFIMPROVE_BACKLOG.md#section-B",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-05"
+    },
+    {
+      "id": "LF-CAND-063",
+      "name": "neoth export command (memory/groundtruth export to portable format)",
+      "source": "docs/import-format.md; PLAN/ROAD_TO_1_0_GOLD.md#DD-01",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/src/cli/export.rs run_export"
+    },
+    {
+      "id": "LF-CAND-064",
+      "name": "omniparser as NEOTH MCP server (expiry of SKIP-verdict condition)",
+      "source": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-ADAPT-JV-MISC-01..15 SKIP-verdict",
+      "disposition": "DUPLICATE",
+      "duplicate_of": "LF-CAND-074",
+      "duplicate_kind": "semantic_merge",
+      "preserved_scope": "The expired reopen condition and MCP-server adoption decision remain in GOLD-LF-P2-17"
+    },
+    {
+      "id": "LF-CAND-065",
+      "name": "ADR-009 INTENT/RESULT WAL pairs — 5 effect classes never implemented",
+      "source": "PLAN/ADR/009-intent-result-wal-audit-pairing.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-01"
+    },
+    {
+      "id": "LF-CAND-066",
+      "name": "WAL header EventHeaderV2.session_id universally zeroed",
+      "source": "PLAN/ROAD_TO_1_0_GOLD.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-08"
+    },
+    {
+      "id": "LF-CAND-067",
+      "name": "SPEC_mirror_refusal Stages 2-4: Right-hemisphere structural analysis, Callosum synthesis, Left relay",
+      "source": "PLAN/SPEC_mirror_refusal.md",
+      "disposition": "DUPLICATE",
+      "duplicate_of": "LF-CAND-030",
+      "duplicate_kind": "semantic_merge",
+      "preserved_scope": "Stages 2-4 remain inside the full Stages 2-6 contract in GOLD-LF-P1-02"
+    },
+    {
+      "id": "LF-CAND-068",
+      "name": "plans/001/002/003 orphaned Done Criteria — 65 open work items never entered GOLD",
+      "source": "plans/001-openclaw-channel-migration-parity.md, plans/002-zero-friction-adoption-coupling.md, plans/003-gui-cli-buddy-capability-parity.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-23"
+    },
+    {
+      "id": "LF-CAND-069",
+      "name": "GUI_TOP_TIER_PLAN H17 Edit-and-Branch with Variant-Navigator",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H17",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-070",
+      "name": "GUI_TOP_TIER_PLAN H20 Prompt-Library + Multi-Model-Split-View + Fulltext-Search",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H20",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-071",
+      "name": "GUI_TOP_TIER_PLAN H22 Health-Heatmap + Topology-Graph with RTT + Composite-Cluster-Bar",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H22",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-072",
+      "name": "GUI_TOP_TIER_PLAN I15 Channel-Pairing-Wizard",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#I15",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-073",
+      "name": "channel_statuses and plan_channel_test cover only 5 of 15 shipped channels",
+      "source": "SRC/neothd/src/cli/channel.rs",
+      "disposition": "ALREADY_BUILT",
+      "resolution_ref": "SRC/neothd/src/cli/channel.rs channel_statuses and test plans cover all 15 channels"
+    },
+    {
+      "id": "LF-CAND-074",
+      "name": "DO_NOT_ADOPT omniparser: reopen condition (PC-01/PC-02) now met but never revisited",
+      "source": "QUELLEN/DO_NOT_ADOPT.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P2",
+      "road_id": "GOLD-LF-P2-17"
+    },
+    {
+      "id": "LF-CAND-075",
+      "name": "GUI_TOP_TIER_PLAN H15 Inline-Diffs in chat cards",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H15",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-076",
+      "name": "Ouro provider Phase O-5c — QuantizedOuroLayer + QuantizedOuroModel forward pass (Q8 inference path incomplete)",
+      "source": "PLAN/SPEC_ouro_thinking_provider_2026-05-23.md",
+      "disposition": "CONFIRMED_LOST",
+      "priority": "P1",
+      "road_id": "GOLD-LF-P1-09"
+    },
+    {
+      "id": "LF-CAND-077",
+      "name": "GUI_TOP_TIER_PLAN H6 Live theme editor (tweaks.toml GUI panel)",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H6",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-078",
+      "name": "GUI_TOP_TIER_PLAN H11 click-through default + hover-activate + quiet hours for Buddy overlay",
+      "source": "PLAN/GUI_TOP_TIER_PLAN.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/GUI_TOP_TIER_PLAN.md#H11",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-R4-05"
+    },
+    {
+      "id": "LF-CAND-079",
+      "name": "DO_NOT_ADOPT HR-06 (headroom smart tabular compression): passive reopen condition with no monitoring",
+      "source": "QUELLEN/DO_NOT_ADOPT.md",
+      "disposition": "ALREADY_TRACKED",
+      "resolution_ref": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-ADAPT-HR-06 (SKIP-with-metering)",
+      "release_gate": "PLAN/ROAD_TO_1_0_GOLD.md#GOLD-ADAPT-HR-06"
+    }
+  ]
+}

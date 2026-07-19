@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 
 
 SCRIPT = Path(__file__).parents[1] / "release_gate_contract.py"
+CI_WORKFLOW = Path(__file__).parents[2] / ".github" / "workflows" / "ci.yml"
+CI_TEXT = CI_WORKFLOW.read_text(encoding="utf-8")
 SPEC = importlib.util.spec_from_file_location("release_gate_contract", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 gate = importlib.util.module_from_spec(SPEC)
@@ -50,6 +53,30 @@ def select(payload: object) -> dict[str, object]:
 
 
 class ReleaseGateContractTests(unittest.TestCase):
+    def test_gold_ci_keeps_lost_feature_integrity_gate_wired(self) -> None:
+        jobs_text = CI_TEXT.split("\njobs:\n", maxsplit=1)
+        self.assertEqual(len(jobs_text), 2, "ci.yml must contain one jobs mapping")
+        jobs = dict(
+            re.findall(
+                r"(?ms)^  ([A-Za-z0-9_-]+):\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+                jobs_text[1],
+            )
+        )
+        self.assertIn("license-notices", jobs)
+        self.assertIn("gold-ci", jobs)
+        self.assertEqual(
+            jobs["license-notices"].count(
+                "python3 scripts/test_lost_feature_integrity.py"
+            ),
+            1,
+            "required license-notices job must run the lost-feature integrity contract exactly once",
+        )
+        self.assertRegex(
+            jobs["gold-ci"],
+            r"(?m)^\s{6}- license-notices\s*$",
+            "Gold CI must depend on the job that runs lost-feature integrity",
+        )
+
     def test_newest_run_is_selected_across_events_and_pages(self) -> None:
         payload = [
             {
