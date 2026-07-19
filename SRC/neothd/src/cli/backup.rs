@@ -68,6 +68,7 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
             println!(
                 "{}",
                 serde_json::json!({
+                    "operation": "backup.create",
                     "wrote": out.display().to_string(),
                     "entries": outcome.included,
                     "include_wal": include_wal,

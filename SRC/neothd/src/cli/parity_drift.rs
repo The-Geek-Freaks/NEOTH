@@ -118,15 +118,13 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         gui_surface: "Config > Maintenance > Backup now",
         ui_callback: Some("backup-now-clicked"),
         rust_handler: Some("window.on_settings_backup_now_clicked"),
-        dispatch_token: Some(".arg(\"backup\")"),
-        receipt: Evidence::Untyped(
+        dispatch_token: Some("&[\"backup\"]"),
+        receipt: Evidence::Typed("window.on_settings_backup_now_clicked", "BackupAck"),
+        readback: Evidence::Typed(
             "window.on_settings_backup_now_clicked",
-            "String::from_utf8_lossy",
+            "verify_and_read_back",
         ),
-        readback: Evidence::Missing,
-        state: OperationState::Partial(
-            "GUI exposes only the default backup and trusts status text; custom output, WAL, credential flags, and archive readback remain CLI-only",
-        ),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "omi.status",
@@ -966,7 +964,6 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         .collect();
 
     for expected in [
-        "backup.create-default",
         "omi.set-credentials",
         "interface.show",
         "interface.set-cli-day-two",

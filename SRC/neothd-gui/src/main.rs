@@ -10369,7 +10369,10 @@ fn main() -> Result<()> {
         });
     });
 
-    // GAP-07 — Backup now: `neoth backup` → status-line.
+    // GAP-07 / R4-05 — Backup now: `neoth backup --output json` bound through the
+    // typed automation boundary. The GUI decodes a self-identifying `BackupAck`
+    // and reads the acknowledged archive back off disk before claiming success;
+    // a success-looking exit with no real tarball is reported as a failure.
     let weak_backup = window.as_weak();
     window.on_settings_backup_now_clicked(move || {
         let Some(w0) = weak_backup.upgrade() else {
@@ -10378,24 +10381,22 @@ fn main() -> Result<()> {
         w0.set_status_line("Running neoth backup…".into());
         let weak = weak_backup.clone();
         std::thread::spawn(move || {
-            let result = match which_neothd()
-                .and_then(|bin| spawn_neothd_plain(&bin).arg("backup").output().ok())
-            {
-                Some(o) => {
-                    let out = String::from_utf8_lossy(&o.stdout).trim().to_string();
-                    let err = String::from_utf8_lossy(&o.stderr).trim().to_string();
-                    if o.status.success() {
-                        if out.is_empty() {
-                            "Backup complete.".to_string()
-                        } else {
-                            out
-                        }
-                    } else {
-                        format!("Backup failed: {}", if err.is_empty() { out } else { err })
-                    }
-                }
-                None => "neothd binary not on PATH — cannot run backup.".to_string(),
-            };
+            let result =
+                match run_neothd_json_action::<gui_action::BackupAck>(&["backup"], "Backup") {
+                    Ok(ack) => match ack.verify_and_read_back() {
+                        Ok(path) => format!(
+                            "Backup complete: {path} ({} entries, {}).",
+                            ack.entries,
+                            if ack.include_wal {
+                                "WAL bundled"
+                            } else {
+                                "no WAL"
+                            },
+                        ),
+                        Err(error) => format!("Backup failed: {error}"),
+                    },
+                    Err(error) => format!("Backup failed: {error}"),
+                };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     w.set_status_line(result.into());

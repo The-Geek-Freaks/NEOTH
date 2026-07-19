@@ -682,6 +682,57 @@ impl QuotaSetCapAck {
     }
 }
 
+/// Exact `neoth backup --output json` acknowledgement.
+///
+/// The receipt is self-identifying (`operation`) and the GUI reads the named
+/// archive back off disk before reporting success, so a success-looking exit
+/// with no real tarball cannot be mistaken for a completed backup.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupAck {
+    pub operation: String,
+    pub wrote: String,
+    pub entries: u64,
+    pub include_wal: bool,
+    pub includes_plaintext_credentials: bool,
+}
+
+impl BackupAck {
+    /// Verify the typed receipt, then confirm the acknowledged archive is a
+    /// non-empty file on disk. Returns the confirmed archive path on success.
+    pub fn verify_and_read_back(&self) -> Result<&str, String> {
+        require_action(&self.operation, "backup.create")?;
+        let path = self.wrote.trim();
+        if path.is_empty() {
+            return Err("backup acknowledgement is missing its archive path".to_string());
+        }
+        if self.entries == 0 {
+            return Err("backup acknowledgement reports zero archived entries".to_string());
+        }
+        // The GUI "Backup now" action never passes `--include-credentials`, so a
+        // receipt claiming the tarball bundled plaintext secrets is a contract
+        // violation (wrong binary, tampered CLI, arg injection) — refuse it
+        // rather than silently produce an unencrypted credential archive.
+        if self.includes_plaintext_credentials {
+            return Err(
+                "backup acknowledgement reports bundled plaintext credentials, which the GUI \
+                 backup never requests"
+                    .to_string(),
+            );
+        }
+        let metadata = std::fs::metadata(Path::new(path)).map_err(|error| {
+            format!("backup acknowledged `{path}` but it is not on disk: {error}")
+        })?;
+        if !metadata.is_file() {
+            return Err(format!("backup acknowledged `{path}`, but it is not a file"));
+        }
+        if metadata.len() == 0 {
+            return Err(format!("backup acknowledged `{path}`, but the archive is empty"));
+        }
+        Ok(path)
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3074,6 +3125,99 @@ mod tests {
             stdout: stdout.as_bytes().to_vec(),
             stderr: stderr.as_bytes().to_vec(),
         }
+    }
+
+    fn backup_ack_json(wrote: &str) -> String {
+        serde_json::json!({
+            "operation": "backup.create",
+            "wrote": wrote,
+            "entries": 7,
+            "include_wal": true,
+            "includes_plaintext_credentials": false,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn backup_ack_matches_the_exact_cli_receipt_shape() {
+        // Guards CLI (cli/backup.rs) ↔ struct drift: deny_unknown_fields makes
+        // any added/renamed CLI field fail this decode.
+        let ack: BackupAck =
+            serde_json::from_str(&backup_ack_json("/tmp/x.tar.gz")).expect("decode backup receipt");
+        assert_eq!(ack.operation, "backup.create");
+        assert_eq!(ack.entries, 7);
+        assert!(ack.include_wal);
+    }
+
+    #[test]
+    fn backup_ack_confirms_a_real_non_empty_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("neoth-backup.tar.gz");
+        std::fs::write(&archive, b"tarball-bytes").unwrap();
+        let ack: BackupAck =
+            serde_json::from_str(&backup_ack_json(archive.to_str().unwrap())).unwrap();
+        assert_eq!(ack.verify_and_read_back().unwrap(), archive.to_str().unwrap());
+    }
+
+    #[test]
+    fn backup_ack_rejects_an_archive_that_is_not_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("missing.tar.gz");
+        let ack: BackupAck =
+            serde_json::from_str(&backup_ack_json(archive.to_str().unwrap())).unwrap();
+        assert!(ack.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn backup_ack_rejects_an_empty_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("empty.tar.gz");
+        std::fs::write(&archive, b"").unwrap();
+        let ack: BackupAck =
+            serde_json::from_str(&backup_ack_json(archive.to_str().unwrap())).unwrap();
+        assert!(ack.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn backup_ack_rejects_a_foreign_operation() {
+        let ack = BackupAck {
+            operation: "catalog.refresh".to_string(),
+            wrote: "/tmp/x.tar.gz".to_string(),
+            entries: 7,
+            include_wal: true,
+            includes_plaintext_credentials: false,
+        };
+        assert!(ack.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn backup_ack_rejects_unexpected_plaintext_credentials() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("creds.tar.gz");
+        std::fs::write(&archive, b"tarball-bytes").unwrap();
+        let ack = BackupAck {
+            operation: "backup.create".to_string(),
+            wrote: archive.to_str().unwrap().to_string(),
+            entries: 7,
+            include_wal: true,
+            includes_plaintext_credentials: true,
+        };
+        assert!(ack.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn backup_ack_rejects_zero_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("real.tar.gz");
+        std::fs::write(&archive, b"tarball-bytes").unwrap();
+        let ack = BackupAck {
+            operation: "backup.create".to_string(),
+            wrote: archive.to_str().unwrap().to_string(),
+            entries: 0,
+            include_wal: true,
+            includes_plaintext_credentials: false,
+        };
+        assert!(ack.verify_and_read_back().is_err());
     }
 
     fn valid_catalog_refresh_json(path: &Path) -> serde_json::Value {
