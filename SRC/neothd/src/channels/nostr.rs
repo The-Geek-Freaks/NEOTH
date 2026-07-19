@@ -65,7 +65,7 @@ fn normalize_relay_urls(relays_csv: &str) -> Result<Vec<String>> {
         .map(str::trim)
         .filter(|relay| !relay.is_empty())
     {
-        let parsed = reqwest::Url::parse(relay)
+        let parsed = url::Url::parse(relay)
             .map_err(|_| anyhow::anyhow!("invalid Nostr relay URL `{relay}`"))?;
         if parsed.scheme() != "wss" || parsed.host_str().is_none() {
             anyhow::bail!("Nostr relay `{relay}` must be an absolute wss:// URL");

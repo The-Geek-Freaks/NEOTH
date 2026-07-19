@@ -193,6 +193,14 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // permits plaintext HTTP only on loopback, and requires HTTPS remotely.
     // It never falls back to Meta Cloud credentials or an implicit endpoint.
     "src/channels/whatsapp_baileys.rs",
+    // Operator-owned Keet companion egress. The bridge client is pinned to a
+    // validated loopback/private origin, disables all proxies so the bearer
+    // never leaves the host, refuses redirects, and bounds every body.
+    "src/channels/keet_bridge.rs",
+    // Readiness probe helpers: production probes reuse the adapters' own
+    // clients; the only reqwest construction here is the in-file unit test
+    // dialing its in-process wiremock server, never the network.
+    "src/channels/readiness.rs",
     "src/telemetry/",
     "src/cluster/",
     "src/transport/",

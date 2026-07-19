@@ -39,7 +39,7 @@ impl GraphEndpoint {
         if raw.is_empty() || raw.trim() != raw {
             anyhow::bail!("WhatsApp Graph base URL must be non-empty and unpadded");
         }
-        let base = reqwest::Url::parse(raw).context("parse WhatsApp Graph base URL")?;
+        let base = url::Url::parse(raw).context("parse WhatsApp Graph base URL")?;
         if !base.username().is_empty() || base.password().is_some() {
             anyhow::bail!("WhatsApp Graph base URL must not contain credentials");
         }

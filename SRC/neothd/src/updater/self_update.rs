@@ -1125,7 +1125,21 @@ fn prepare_downloaded_bundle(
 
     let expected_root = expected_archive_root(expected_release_version, target_triple)?;
     let stage = create_release_staging_directory()?;
-    let bundle_root = extract_release_bundle(asset_bytes, format, stage.path(), &expected_root)
+    // macOS global tempdirs sit under the `/var` -> `/private/var` symlink;
+    // the install transaction's reparse-point guard walks every member-source
+    // ancestor, so derive all bundle paths from the canonical spelling. The
+    // TempDir handle keeps owning (and cleaning) the original path. Windows
+    // stays on the plain path — `canonicalize` there yields a `\\?\` form the
+    // rest of the pipeline never uses, and its private staging namespace has
+    // no symlinked ancestors to begin with.
+    #[cfg(not(windows))]
+    let stage_root = stage
+        .path()
+        .canonicalize()
+        .context("canonicalize release extraction directory")?;
+    #[cfg(windows)]
+    let stage_root = stage.path().to_path_buf();
+    let bundle_root = extract_release_bundle(asset_bytes, format, &stage_root, &expected_root)
         .context("safely extract authenticated release bundle")?;
 
     let installed_executable = install_dir.join(binary_filename_for_host("neoth"));

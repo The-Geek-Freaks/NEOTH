@@ -4599,8 +4599,9 @@ mod tests {
         let callbacks = &source[start..end];
 
         // Raw probes in this region are read-only views: Dream day,
-        // Permissions matrix, Memory graph, and two WAL inspectors.
-        assert_eq!(callbacks.matches("run_neothd_probe(").count(), 5);
+        // Permissions matrix, and two WAL inspectors. (The Memory graph
+        // moved off the probe boundary to a verified structured readback.)
+        assert_eq!(callbacks.matches("run_neothd_probe(").count(), 4);
         assert!(callbacks.contains("run_neothd_probe(&[\"dream\", \"show\""));
         // Baseline: Cron 4, Babel 2, Calendar 1, Self-Improve 5,
         // Self-Dev 4, Obsidian 2, Dream 1, Reflect 1, Buddy policy 4,

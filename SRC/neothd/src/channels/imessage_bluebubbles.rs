@@ -292,7 +292,7 @@ impl BlueBubblesChannel {
     }
 
     fn api_url(&self, path: &str) -> reqwest::Url {
-        let base = reqwest::Url::parse(&self.server_url)
+        let base = url::Url::parse(&self.server_url)
             .expect("BlueBubbles URL validated during construction");
         let mut url = super::readiness::append_path(base, &format!("api/v1/{path}"));
         url.query_pairs_mut()

@@ -1239,7 +1239,7 @@ fn stage_channel_add_for_id(
             let url = require_http_url(&fields.url, "Baileys bridge URL")?;
             // The live adapter applies the strict remote-HTTPS/loopback-HTTP
             // policy too; validate here so bad config is never persisted.
-            let parsed = reqwest::Url::parse(&url).context("parse Baileys bridge URL")?;
+            let parsed = url::Url::parse(&url).context("parse Baileys bridge URL")?;
             if !matches!(parsed.scheme(), "http" | "https") {
                 anyhow::bail!("Baileys bridge URL must use HTTP or HTTPS");
             }

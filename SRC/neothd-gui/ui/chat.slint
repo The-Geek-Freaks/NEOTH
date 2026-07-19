@@ -1097,6 +1097,16 @@ export component ChatView inherits Rectangle {
                     context-menu(name, x, y) => { root.channel-ctx(name, x, y); }
                 }
 
+                // Truthful affordance: rows surface channel status only —
+                // chat routing not available from the sidebar.
+                Text {
+                    text: "Channel status only · chat routing not available";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-2xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+
                 // ── ODY-01: recent sessions (hindsight cards) ─────────
                 if root.session-history.length > 0: Rectangle {
                     height: 1px; background: Theme.border-subtle;

@@ -12473,9 +12473,12 @@ mod preload01_tests {
         // WS-BUG P0 regression: byte-index slices panicked on non-ASCII.
         assert_eq!(truncate_chars("hello", 80), "hello");
         assert_eq!(truncate_chars("hello", 3), "hel");
-        // 77 ASCII + a 4-byte emoji: byte 80 lands mid-codepoint.
+        // 77 ASCII + a 4-byte emoji: the limit counts CHARS (78 total),
+        // so 80 keeps everything, 77 drops the emoji, and no byte-index
+        // slice can ever land mid-codepoint.
         let s = format!("{}🌍", "x".repeat(77));
-        assert_eq!(truncate_chars(&s, 80), &"x".repeat(77)); // emoji dropped, no panic
+        assert_eq!(truncate_chars(&s, 80), s.as_str()); // 78 chars fit
+        assert_eq!(truncate_chars(&s, 77), &"x".repeat(77)); // emoji dropped, no panic
         assert_eq!(truncate_chars(&s, 78).chars().count(), 78); // includes the emoji
         assert_eq!(truncate_chars("日本語テスト", 3), "日本語");
         assert_eq!(truncate_chars("", 5), "");
