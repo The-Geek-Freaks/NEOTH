@@ -336,15 +336,23 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   receipt plus an on-disk archive readback (non-empty regular file at the
   acknowledged path) and refuses any receipt claiming bundled plaintext
   credentials the GUI never requested — promoting that operation row from Partial
-  to Verified. Configured external chat channels remain visible but explicitly
-  disabled because no chat route exists, and historical chat sessions are
-  explicitly read-only because transcript/session control is not implemented.
+  to Verified. `interface.set-cli-day-two` (2026-07-19, `f52c0a5d`) now reads the
+  saved interface preference back after the terminal Ready handshake and confirms
+  `interface.json` committed `cli`; a success-looking launch that never persisted
+  the switch surfaces as a failure toast instead of a false success — promoting
+  that row to Verified as well. Configured external chat channels remain visible
+  but explicitly disabled because no chat route exists, and historical chat
+  sessions are explicitly read-only because transcript/session control is not
+  implemented.
 
   This is not complete R4-05 parity. The remaining `OPERATION_INVENTORY` gaps are
-  `omi.set-credentials` (first-run compatibility leaf, checks only process exit),
-  `interface.show` (no day-two show/refresh action) and day-two CLI switching
-  (no readback of the saved interface preference before handoff) — all partial —
-  and `restore.archive`, which remains unwired. The nested
+  `omi.set-credentials` (first-run compatibility leaf, checks only process exit —
+  day-two OMI credential edits already use the stronger typed configure
+  transaction) and `interface.show` (no explicit day-two show/refresh action;
+  the boot readback is already typed) — both partial by design — and
+  `restore.archive`, which remains unwired: archive restore overwrites the live
+  `~/.neoth` and is deliberately CLI-only pending an operator decision on a
+  confirm-gated GUI action. The nested
   manifest does not yet decompose every public CLI capability; external-channel
   chat routing and a real chat-session controller remain absent, and the broader
   onboarding/Buddy/accessibility work is unchanged.
