@@ -18430,11 +18430,29 @@ fn launch_cli_terminal(bin: &Path, home: &Path, launch: TerminalLaunch) -> Resul
     anyhow::bail!("opening a CLI terminal is unsupported on this platform")
 }
 
+/// Read the persisted interface preference back after a day-two CLI switch and
+/// confirm it committed `cli`. `switch_to_cli` returns only after the terminal
+/// wrote its Ready token, which the CLI emits strictly after `interface.json`
+/// is durably committed — so this readback is race-free. A mismatch means the
+/// switch reported success without persisting, which the GUI must surface
+/// rather than claim the default launch changed.
+fn verify_saved_interface_is_cli(home: &Path) -> Result<()> {
+    match load_gui_interface_preference(home)? {
+        Some(GuiInterfacePreference::Cli) => Ok(()),
+        other => anyhow::bail!(
+            "CLI switch reported success but the saved interface preference is {other:?}, not CLI"
+        ),
+    }
+}
+
 fn switch_to_cli(bin: &Path, home: &Path) -> Result<()> {
     // The terminal itself performs the one canonical transaction. The CLI
     // writes Ready only after interface.json is durably committed and restores
-    // the exact previous bytes if that Ready write fails.
-    launch_cli_terminal(bin, home, TerminalLaunch::SwitchToCli)
+    // the exact previous bytes if that Ready write fails. After the handshake
+    // returns, read the committed preference back so a success-looking launch
+    // that never persisted `cli` is surfaced instead of trusted.
+    launch_cli_terminal(bin, home, TerminalLaunch::SwitchToCli)?;
+    verify_saved_interface_is_cli(home)
 }
 
 fn launch_sovereign_ceremony(bin: &Path, home: &Path) -> Result<()> {
@@ -18480,6 +18498,27 @@ mod interface_preference_tests {
         )
         .unwrap();
         assert!(load_gui_interface_preference(dir.path()).is_err());
+    }
+
+    #[test]
+    fn cli_switch_readback_requires_a_persisted_cli_preference() {
+        let dir = tempfile::tempdir().unwrap();
+        // No preference file yet — the readback must fail closed.
+        assert!(verify_saved_interface_is_cli(dir.path()).is_err());
+        // Still GUI — the switch did not take effect.
+        std::fs::write(
+            dir.path().join("interface.json"),
+            br#"{"schema_version":1,"preferred":"gui"}"#,
+        )
+        .unwrap();
+        assert!(verify_saved_interface_is_cli(dir.path()).is_err());
+        // Persisted CLI — the readback confirms the switch.
+        std::fs::write(
+            dir.path().join("interface.json"),
+            br#"{"schema_version":1,"preferred":"cli"}"#,
+        )
+        .unwrap();
+        assert!(verify_saved_interface_is_cli(dir.path()).is_ok());
     }
 
     #[test]

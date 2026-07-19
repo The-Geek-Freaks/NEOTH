@@ -286,10 +286,8 @@ const OPERATION_INVENTORY: &[OperationParity] = &[
         rust_handler: Some("window.on_settings_open_cli_clicked"),
         dispatch_token: Some("switch_to_cli(&bin, &home)"),
         receipt: Evidence::Typed("fn launch_cli_terminal", "TerminalHandshake"),
-        readback: Evidence::Missing,
-        state: OperationState::Partial(
-            "authenticated terminal readiness proves commit ordering, but the GUI does not read back the saved CLI preference before handoff",
-        ),
+        readback: Evidence::Typed("fn switch_to_cli", "verify_saved_interface_is_cli"),
+        state: OperationState::Verified,
     },
     OperationParity {
         id: "restore.archive",
@@ -963,11 +961,7 @@ fn operation_inventory_keeps_r4_05_gaps_explicit() {
         .map(|operation| operation.id)
         .collect();
 
-    for expected in [
-        "omi.set-credentials",
-        "interface.show",
-        "interface.set-cli-day-two",
-    ] {
+    for expected in ["omi.set-credentials", "interface.show"] {
         assert!(
             partial.contains(expected),
             "`{expected}` must remain explicitly partial until its typed receipt/readback gap is fixed"
