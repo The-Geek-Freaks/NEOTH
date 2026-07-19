@@ -14124,35 +14124,30 @@ fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
 /// --role <r> --provider <p>`). The daemon owns the WAL `0x1F HEMISPHERE_REBOUND`
 /// audit + its own validation. Returns an operator-readable status line.
 fn set_hemisphere_via_subprocess(role: &str, provider: &str, model: &str) -> String {
-    let Some(bin) = which_neothd() else {
-        return "hemispheres set: neothd binary not found".to_string();
-    };
     // GOLD-GUI-OVERHAUL — forward the picked model id (HemisphereSlot.model is a
     // free-form Option<String>; the CLI already accepts --model). Empty = leave
-    // the role on its provider default.
-    let mut cmd = spawn_neothd_plain(&bin);
-    cmd.arg("hemispheres")
-        .arg("set")
-        .arg("--role")
-        .arg(role)
-        .arg("--provider")
-        .arg(provider);
+    // the role on its provider default. Bound through the typed automation
+    // boundary: decode a `HemisphereSetAck`, confirm the acknowledged
+    // role/provider(/model) match the request, and read the WAL audit segment
+    // back off disk before reporting success.
+    let mut args: Vec<&str> = vec!["hemispheres", "set", "--role", role, "--provider", provider];
     if !model.is_empty() {
-        cmd.arg("--model").arg(model);
+        args.push("--model");
+        args.push(model);
     }
-    match cmd.output() {
-        Ok(o) if o.status.success() => {
-            if model.is_empty() {
-                format!("{role} → {provider}")
-            } else {
-                format!("{role} → {provider} · {model}")
+    let expected_model = (!model.is_empty()).then_some(model);
+    match run_neothd_json_action::<gui_action::HemisphereSetAck>(&args, "Hemisphere rebind") {
+        Ok(ack) => match ack.verify_and_read_back(role, provider, expected_model) {
+            Ok(()) => {
+                if model.is_empty() {
+                    format!("{role} → {provider}")
+                } else {
+                    format!("{role} → {provider} · {model}")
+                }
             }
-        }
-        Ok(o) => format!(
-            "hemispheres set failed: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => format!("hemispheres set could not start: {e}"),
+            Err(error) => format!("hemispheres set failed: {error}"),
+        },
+        Err(error) => format!("hemispheres set failed: {error}"),
     }
 }
 

@@ -724,12 +724,85 @@ impl BackupAck {
             format!("backup acknowledged `{path}` but it is not on disk: {error}")
         })?;
         if !metadata.is_file() {
-            return Err(format!("backup acknowledged `{path}`, but it is not a file"));
+            return Err(format!(
+                "backup acknowledged `{path}`, but it is not a file"
+            ));
         }
         if metadata.len() == 0 {
-            return Err(format!("backup acknowledged `{path}`, but the archive is empty"));
+            return Err(format!(
+                "backup acknowledged `{path}`, but the archive is empty"
+            ));
         }
         Ok(path)
+    }
+}
+
+/// Exact `neoth hemispheres set --output json` acknowledgement — only the
+/// fields the GUI verifies. `prior_provider`/`mode` are intentionally ignored
+/// (no invariant), so this deliberately omits `deny_unknown_fields`. A shape
+/// test pins the full CLI receipt; renaming a required consumed field
+/// (`role`/`new_provider`/`audit_segment`) fails decode outright, while the
+/// optional `model` is cross-checked at rebind time whenever the GUI requested
+/// a specific model.
+#[derive(Debug, Deserialize)]
+pub struct HemisphereSetAck {
+    pub role: String,
+    pub new_provider: String,
+    pub model: Option<String>,
+    pub audit_segment: String,
+}
+
+impl HemisphereSetAck {
+    /// Confirm the acknowledged role/provider (and model, when a specific one
+    /// was requested) match the rebind, then read the WAL `0x1F
+    /// HEMISPHERE_REBOUND` audit segment back off disk. A success-looking exit
+    /// that never durably rebound is refused.
+    pub fn verify_and_read_back(
+        &self,
+        expected_role: &str,
+        expected_provider: &str,
+        expected_model: Option<&str>,
+    ) -> Result<(), String> {
+        if self.role != expected_role {
+            return Err(format!(
+                "hemisphere rebind acknowledged role `{}`, expected `{expected_role}`",
+                self.role
+            ));
+        }
+        if self.new_provider != expected_provider {
+            return Err(format!(
+                "hemisphere rebind acknowledged provider `{}`, expected `{expected_provider}`",
+                self.new_provider
+            ));
+        }
+        if let Some(model) = expected_model {
+            match self.model.as_deref() {
+                Some(actual) if actual == model => {}
+                other => {
+                    return Err(format!(
+                        "hemisphere rebind acknowledged model `{}`, expected `{model}`",
+                        other.unwrap_or("(default)")
+                    ));
+                }
+            }
+        }
+        let segment = self.audit_segment.trim();
+        if segment.is_empty() {
+            return Err(
+                "hemisphere rebind acknowledgement is missing its audit segment".to_string(),
+            );
+        }
+        let metadata = std::fs::metadata(Path::new(segment)).map_err(|error| {
+            format!(
+                "hemisphere rebind acknowledged audit segment `{segment}` but it is not on disk: {error}"
+            )
+        })?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "hemisphere rebind acknowledged audit segment `{segment}`, but it is not a file"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -3156,7 +3229,10 @@ mod tests {
         std::fs::write(&archive, b"tarball-bytes").unwrap();
         let ack: BackupAck =
             serde_json::from_str(&backup_ack_json(archive.to_str().unwrap())).unwrap();
-        assert_eq!(ack.verify_and_read_back().unwrap(), archive.to_str().unwrap());
+        assert_eq!(
+            ack.verify_and_read_back().unwrap(),
+            archive.to_str().unwrap()
+        );
     }
 
     #[test]
@@ -3218,6 +3294,100 @@ mod tests {
             includes_plaintext_credentials: false,
         };
         assert!(ack.verify_and_read_back().is_err());
+    }
+
+    fn hemisphere_set_ack_json(segment: &str) -> String {
+        // The exact shape `cli/hemispheres.rs::run_set` emits (all six fields);
+        // pins CLI<->struct drift for the four the GUI consumes.
+        serde_json::json!({
+            "role": "logic",
+            "prior_provider": "anthropic",
+            "new_provider": "local_qwen",
+            "model": "qwen2.5",
+            "mode": "multi",
+            "audit_segment": segment,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn hemisphere_ack_confirms_matching_rebind_and_audit_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("seg-0001.wal");
+        std::fs::write(&segment, b"wal-bytes").unwrap();
+        let ack: HemisphereSetAck =
+            serde_json::from_str(&hemisphere_set_ack_json(segment.to_str().unwrap())).unwrap();
+        assert_eq!(ack.role, "logic");
+        assert_eq!(ack.new_provider, "local_qwen");
+        assert!(
+            ack.verify_and_read_back("logic", "local_qwen", Some("qwen2.5"))
+                .is_ok()
+        );
+        // A specific model was not requested — the ack's model is not checked.
+        assert!(
+            ack.verify_and_read_back("logic", "local_qwen", None)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn hemisphere_ack_rejects_role_provider_model_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("seg-0002.wal");
+        std::fs::write(&segment, b"wal-bytes").unwrap();
+        let ack: HemisphereSetAck =
+            serde_json::from_str(&hemisphere_set_ack_json(segment.to_str().unwrap())).unwrap();
+        assert!(
+            ack.verify_and_read_back("memory", "local_qwen", None)
+                .is_err()
+        );
+        assert!(
+            ack.verify_and_read_back("logic", "anthropic", None)
+                .is_err()
+        );
+        assert!(
+            ack.verify_and_read_back("logic", "local_qwen", Some("gpt-4o"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn hemisphere_ack_rejects_absent_audit_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("never-written.wal");
+        let ack: HemisphereSetAck =
+            serde_json::from_str(&hemisphere_set_ack_json(segment.to_str().unwrap())).unwrap();
+        assert!(
+            ack.verify_and_read_back("logic", "local_qwen", None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn hemisphere_rebind_stays_on_the_typed_receipt_boundary() {
+        // Guards against regressing set_hemisphere_via_subprocess back to the
+        // unchecked spawn_neothd_plain(...).output() + status.success() probe.
+        let source = include_str!("main.rs");
+        let start = source
+            .find("fn set_hemisphere_via_subprocess(")
+            .expect("hemisphere rebind function");
+        let end = source[start..]
+            .find("\nfn fetch_hemisphere_model_ids(")
+            .map(|offset| start + offset)
+            .expect("function following hemisphere rebind");
+        let body = &source[start..end];
+        assert!(
+            body.contains("run_neothd_json_action::<gui_action::HemisphereSetAck>"),
+            "hemisphere rebind must dispatch through the typed receipt boundary"
+        );
+        assert!(
+            body.contains("verify_and_read_back"),
+            "hemisphere rebind must verify the receipt and read the audit segment back"
+        );
+        assert!(
+            !body.contains("spawn_neothd_plain"),
+            "hemisphere rebind must not fall back to the unchecked subprocess probe"
+        );
     }
 
     fn valid_catalog_refresh_json(path: &Path) -> serde_json::Value {
