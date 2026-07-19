@@ -17,6 +17,23 @@
 > patches before persistence or apply. No other recovered feature or
 > Plan-001/002/003 leaf was closed by the inventory repair.
 >
+> `GOLD-LF-P1-20` is implemented but deliberately remains one of those 116
+> open tasks until exact-head CI proves the cross-platform/release boundary.
+> The desktop derives sidebar previews and selected-session history from the
+> canonical read-only `raw_turns` store, re-sanitizes every displayed role,
+> truncates previews by extended grapheme cluster and updates the live preview
+> only at meaningful send/terminal/reload transitions. Historical sessions are
+> canonical, read-only views: the Composer is absent, and Rust rejects Send,
+> Retry, Delete, Link, Recall, picker, remove and drag/drop mutations before
+> state changes. A separate typed history flag prevents even a real session id
+> `live` from acquiring live-chat rights. Generation/session binding rejects
+> stale async loads and preserves the live model. Missing/legacy stores are
+> empty, corrupt stores are visible errors, scalable rows use preferred height,
+> and keyboard/focus/screen-reader contracts are wired for conversation and
+> session selection. Local rustfmt, diff hygiene, metadata, inventory integrity
+> and direct Slint generation are green; native Rust tests remain environment-
+> limited here by missing MSVC compiler tools. The adversarial re-review is PASS.
+>
 > **Current CI correctness and runtime correction (2026-07-18; no broad
 > R3/R4 box closed):** the multi-hour CI stall was not useful coverage. One
 > streaming cost-authorization test retained two cloned WAL senders while
@@ -76,8 +93,10 @@
 > instead of publishing defaults after a failed read. Invalid structured reads
 > and Kanban bulk failures remain visible and actionable. Only Local CLI is
 > presented as an active chat route; configured external channels are disabled
-> discovery rows and historical sessions are explicitly read-only until real
-> routing and transcript/session control exist. A scoped nested parity manifest
+> discovery rows remain explicitly read-only until real channel routing exists.
+> Historical local sessions now load canonical `raw_turns` with sidebar preview
+> and live/historical switching; the live feed is preserved and all mutations
+> remain live-session-only. A scoped nested parity manifest
 > keeps backup, the legacy OMI credential leaf and interface gaps partial and
 > archive restore unwired instead of hiding them behind top-level GUI labels.
 >
