@@ -861,6 +861,16 @@ mod tests {
     async fn refresh_without_configured_sources_returns_nonzero_after_receipt_creation() {
         let home = tempdir().unwrap();
         let path = home.path().join("models_catalog.json");
+        let mut config = FreedomConfig::default();
+        // The privacy-safe compiled default pins profile learning to local
+        // Qwen. That is a configured but non-discoverable source, so construct
+        // an explicit source-free operator config for the NoSources branch.
+        config.profile.learn_provider = None;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            config.public_yaml().unwrap(),
+        )
+        .unwrap();
         let error = run_refresh(home.path(), &path, false, OutputFormat::Json)
             .await
             .unwrap_err();
@@ -909,7 +919,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        catalog.save().unwrap();
+        // Bypass the hardened writer deliberately: this test injects invalid
+        // external bytes and verifies that the read path rejects them.
+        std::fs::write(&path, serde_json::to_vec(&catalog).unwrap()).unwrap();
         assert!(run_list(&path, false, None, OutputFormat::Json).is_err());
 
         catalog.providers.clear();
@@ -922,7 +934,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        catalog.save().unwrap();
+        std::fs::write(&path, serde_json::to_vec(&catalog).unwrap()).unwrap();
         assert!(run_list(&path, false, None, OutputFormat::Json).is_err());
     }
 

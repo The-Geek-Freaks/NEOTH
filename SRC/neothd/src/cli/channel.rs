@@ -2751,7 +2751,10 @@ mod tests {
         let slack = rows.iter().find(|row| row.name == "slack").unwrap();
         assert_eq!(slack.status, ProbeStatus::Error);
         assert!(slack.configured, "partial non-blank config remains visible");
-        assert!(slack.detail.contains("BOTH"));
+        assert!(slack.detail.contains("slack_bot_token"));
+        assert!(slack.detail.contains("slack_app_token"));
+        assert!(slack.detail.contains("slack_allowed_user_id"));
+        assert!(!slack.detail.contains("xapp-live"));
     }
 
     #[test]
@@ -3761,7 +3764,8 @@ mod tests {
             "channel": "slack",
             "fields": {
                 "bot_token": "xoxb-private-stdin",
-                "app_token": "xapp-private-stdin"
+                "app_token": "xapp-private-stdin",
+                "allowed_sender": "U123PRIVATE"
             }
         }))
         .unwrap();
@@ -3776,6 +3780,10 @@ mod tests {
         assert_eq!(
             persisted.slack_app_token.as_ref().unwrap().expose(),
             "xapp-private-stdin"
+        );
+        assert_eq!(
+            persisted.slack_allowed_user_id.as_deref(),
+            Some("U123PRIVATE")
         );
     }
 
@@ -3792,6 +3800,7 @@ mod tests {
             ChannelAddFields {
                 bot_token: Some("xoxb-candidate".into()),
                 app_token: Some("xapp-candidate".into()),
+                allowed_sender: Some("U123CANDIDATE".into()),
                 ..Default::default()
             },
         )
@@ -3905,7 +3914,7 @@ mod tests {
         );
     }
 
-    /// Non-interactive add for slack: --bot-token + --app-token → credentials stored.
+    /// Non-interactive add for Slack stores both tokens and its sender policy.
     #[test]
     fn noninteractive_add_slack_writes_both_tokens() {
         let dir = tempfile::tempdir().unwrap();
@@ -3913,6 +3922,7 @@ mod tests {
         let flags = ChannelAddFlags {
             bot_token: Some("xoxb-1".into()),
             app_token: Some("xapp-1".into()),
+            allowed_sender: Some("U123456".into()),
             ..Default::default()
         };
         let fields = flags.into_fields();
@@ -3920,6 +3930,7 @@ mod tests {
         updated.write(&path).unwrap();
         let reloaded = Credentials::load_or_default(&path).unwrap();
         assert!(reloaded.slack_bot_token.is_some() && reloaded.slack_app_token.is_some());
+        assert_eq!(reloaded.slack_allowed_user_id.as_deref(), Some("U123456"));
     }
 
     /// Missing required field (no --token for telegram) → stage_channel_add errors.
@@ -4186,7 +4197,11 @@ mod tests {
 
         let error = test_channel_at(dir.path(), "telegram").await.unwrap_err();
 
-        assert!(error.to_string().contains("load config"));
+        assert!(
+            error
+                .to_string()
+                .contains("load coherent config and effective credentials")
+        );
         assert_eq!(std::fs::read(path).unwrap(), malformed);
     }
 

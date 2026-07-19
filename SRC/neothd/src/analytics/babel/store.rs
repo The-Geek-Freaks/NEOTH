@@ -550,8 +550,20 @@ mod tests {
         let conn = Connection::open_in_memory().expect("mem db");
         conn.execute_batch(
             "CREATE TABLE idx_babel_windows (
-                id TEXT PRIMARY KEY,
-                negative_ctrl INTEGER NOT NULL DEFAULT 0
+                id            TEXT PRIMARY KEY,
+                session_id    TEXT NOT NULL,
+                window_secs   INTEGER NOT NULL,
+                ts_start      INTEGER NOT NULL,
+                ts_end        INTEGER NOT NULL,
+                b_log         REAL,
+                b_mult        REAL,
+                b_bottleneck  REAL NOT NULL,
+                variables     TEXT NOT NULL,
+                collapse_5m   INTEGER,
+                collapse_30m  INTEGER,
+                collapse_kind TEXT,
+                negative_ctrl INTEGER NOT NULL DEFAULT 0,
+                submitted     INTEGER NOT NULL DEFAULT 0
              );",
         )
         .expect("legacy table");

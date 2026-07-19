@@ -712,6 +712,11 @@ mod tests {
             ..BabelConfig::default()
         };
         let mut st = state(&cfg);
+        st.set_normaliser(Normaliser {
+            p1: 0.0,
+            p99: 1.0,
+            sample_count: super::super::norm::MIN_SAMPLES,
+        });
         let out = st
             .tick(BASE + 901, active_burst(BASE), 4, &conn)
             .expect("tick");

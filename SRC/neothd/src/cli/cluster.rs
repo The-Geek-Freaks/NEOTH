@@ -4179,7 +4179,11 @@ mod tests {
         let error = configure_cluster_at_with_reload(home, desired, None, |_| Ok(()))
             .expect_err("enabled identity without a passphrase must fail closed");
 
-        assert!(error.to_string().contains("identity is incomplete"));
+        let error_chain = format!("{error:#}");
+        assert!(
+            error_chain.contains("identity is incomplete"),
+            "unexpected failure chain: {error_chain}"
+        );
         assert_eq!(
             std::fs::read(&freedom_path).expect("read freedom after"),
             before

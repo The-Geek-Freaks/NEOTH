@@ -31,8 +31,6 @@
 //! (when CI runs `--all-features`) no forward bypass where a gated verb ships
 //! un-triaged. Add future gated verbs the same way.
 
-#![cfg(test)]
-
 use clap::CommandFactory;
 use std::collections::{BTreeSet, HashSet};
 

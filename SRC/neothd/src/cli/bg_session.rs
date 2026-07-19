@@ -2137,7 +2137,7 @@ mod tests {
             crate::time::now_unix_i64(),
         )
         .unwrap_err();
-        assert!(error.to_string().contains("MAC mismatch"));
+        assert!(error.to_string().contains("specification binding mismatch"));
     }
 
     #[test]
@@ -2149,9 +2149,14 @@ mod tests {
         let approval = mint_test_approval(&id, &request, &config);
         let now = crate::time::now_unix_i64();
 
-        for (candidate, candidate_id, candidate_label) in [
-            (approval.clone(), &other_id, "background"),
-            (approval.clone(), &id, "btw"),
+        for (candidate, candidate_id, candidate_label, expected_error) in [
+            (approval.clone(), &other_id, "background", "MAC mismatch"),
+            (
+                approval.clone(),
+                &id,
+                "btw",
+                "specification binding mismatch",
+            ),
             (
                 BgApprovalCapability {
                     expires_unix: approval.expires_unix.saturating_add(1),
@@ -2159,6 +2164,7 @@ mod tests {
                 },
                 &id,
                 "background",
+                "MAC mismatch",
             ),
             (
                 BgApprovalCapability {
@@ -2175,6 +2181,7 @@ mod tests {
                 },
                 &id,
                 "background",
+                "MAC mismatch",
             ),
         ] {
             let error = verify_test_approval(
@@ -2188,7 +2195,10 @@ mod tests {
                 now,
             )
             .unwrap_err();
-            assert!(error.to_string().contains("MAC mismatch"));
+            assert!(
+                error.to_string().contains(expected_error),
+                "expected {expected_error:?}, got {error:#}"
+            );
         }
     }
 

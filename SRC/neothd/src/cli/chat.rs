@@ -5906,7 +5906,11 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         if req.model.is_none() {
             req.model = self.provider.default_model().map(str::to_owned);
         }
-        let model = req.model.clone().expect("model checked above");
+        let Some(model) = req.model.clone().filter(|model| !model.trim().is_empty()) else {
+            return Err(format!(
+                "provider `{provider_name}` has no explicit request model or declared default"
+            ));
+        };
         let cap = crate::tokens::budget::effective_cap(
             provider_name,
             &model,
@@ -5944,11 +5948,6 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 dropped_voice,
                 "council leaf exceeded routed model cap; optional leaf context degraded"
             );
-        }
-        if req.model.is_none() {
-            return Err(format!(
-                "provider `{provider_name}` has no explicit request model or declared default"
-            ));
         }
         // QM-9 Phase 1.5 follow-on: council debate path now also
         // persists usage events. Each hemisphere call counts —
@@ -8906,6 +8905,12 @@ mod tests {
         }
     }
 
+    // Synthetic providers intentionally have no reviewed price row. Full is an
+    // explicit test-operator policy that permits those unbounded leaves without
+    // depending on a CI TTY; the real request-bound auth + WAL path still runs.
+    const UNPRICED_TEST_PROVIDER_AUTONOMY: crate::permissions::AutonomyLevel =
+        crate::permissions::AutonomyLevel::Full;
+
     #[tokio::test]
     async fn final_budget_boundary_applies_single_d_degradation_to_request_bytes() {
         use crate::tokens::budget::{Block, BlockItem};
@@ -9066,10 +9071,12 @@ mod tests {
         )
         .unwrap();
 
-        // Cap small enough that C/D must be dropped once the wrapped E is counted,
-        // but large enough that the protected A/B/E blocks always fit.
+        // The conservative leaf estimator includes request-envelope overhead in
+        // addition to the rendered bytes. Keep the cap above protected A/B/E
+        // (~2.5K tokens after wrapping), but below A/B/C/D/E so both optional
+        // blocks must be dropped.
         let mut config = FreedomConfig::default();
-        config.tokens.max_per_request = 2_000;
+        config.tokens.max_per_request = 2_600;
 
         let items = vec![
             BlockItem::new(Block::A, "protected-a"),
@@ -9944,7 +9951,7 @@ mod tests {
             telegram_token: None,
             telegram_user_id: None,
             whatsapp_webhook_port: None,
-            autonomy: crate::permissions::AutonomyLevel::Standard,
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
             observability_listen: None,
             inference: crate::config::inference::InferenceTopology::default(),
             review_gate_enabled: false,
@@ -10121,7 +10128,7 @@ mod tests {
             telegram_token: None,
             telegram_user_id: None,
             whatsapp_webhook_port: None,
-            autonomy: crate::permissions::AutonomyLevel::Standard,
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
             observability_listen: None,
             inference: crate::config::inference::InferenceTopology::default(),
             review_gate_enabled: false,
@@ -10211,6 +10218,9 @@ mod tests {
         impl Provider for LocalQwenMock {
             fn name(&self) -> &'static str {
                 "local_qwen"
+            }
+            fn default_model(&self) -> Option<&str> {
+                Some("Qwen/Qwen2.5-3B-Instruct")
             }
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 Ok(Completion {
@@ -10338,10 +10348,20 @@ mod tests {
             fn name(&self) -> &'static str {
                 "mock_stream"
             }
+            fn default_model(&self) -> Option<&str> {
+                Some("mock-stream-1")
+            }
+            fn streams_on_wire(&self) -> bool {
+                true
+            }
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 anyhow::bail!("not used in streaming test")
             }
-            async fn stream(&self, _req: Request) -> Result<ChunkStream> {
+            async fn stream_raw(
+                &self,
+                _req: Request,
+                _permit: &crate::providers::ProviderDispatchPermit,
+            ) -> Result<ChunkStream> {
                 let chunks: Vec<Result<CompletionChunk>> = vec![
                     Ok(CompletionChunk {
                         delta: "hello ".into(),
@@ -10395,7 +10415,7 @@ mod tests {
             telegram_token: None,
             telegram_user_id: None,
             whatsapp_webhook_port: None,
-            autonomy: crate::permissions::AutonomyLevel::Standard,
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
             observability_listen: None,
             inference: crate::config::inference::InferenceTopology::default(),
             review_gate_enabled: false,
@@ -10532,6 +10552,9 @@ mod tests {
             fn name(&self) -> &'static str {
                 "fail"
             }
+            fn default_model(&self) -> Option<&str> {
+                Some("fail-1")
+            }
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 anyhow::bail!("simulated upstream failure")
             }
@@ -10557,7 +10580,7 @@ mod tests {
             telegram_token: None,
             telegram_user_id: None,
             whatsapp_webhook_port: None,
-            autonomy: crate::permissions::AutonomyLevel::Standard,
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
             observability_listen: None,
             inference: crate::config::inference::InferenceTopology::default(),
             review_gate_enabled: false,
@@ -10605,8 +10628,13 @@ mod tests {
             until: vec![],
         };
 
-        let result = run_chat_with(args, config, &FailingProvider).await;
-        assert!(result.is_err());
+        let error = run_chat_with(args, config, &FailingProvider)
+            .await
+            .expect_err("the synthetic transport must fail after authorization");
+        assert!(
+            error.to_string().contains("simulated upstream failure"),
+            "test must reach the provider transport, got: {error:#}"
+        );
 
         // B22 — a failed wire call must still have its final request estimate
         // and permission decision immediately before dispatch.
@@ -10710,7 +10738,7 @@ mod tests {
             telegram_token: None,
             telegram_user_id: None,
             whatsapp_webhook_port: None,
-            autonomy: crate::permissions::AutonomyLevel::Standard,
+            autonomy: UNPRICED_TEST_PROVIDER_AUTONOMY,
             observability_listen: None,
             inference: crate::config::inference::InferenceTopology::default(),
             review_gate_enabled: false,
@@ -11706,6 +11734,9 @@ mod tests {
         fn name(&self) -> &'static str {
             "system-capture"
         }
+        fn default_model(&self) -> Option<&str> {
+            Some("cap-1")
+        }
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_system.lock().unwrap() = req.system.clone();
             Ok(Completion {
@@ -11943,12 +11974,20 @@ mod tests {
         use crate::code_map::walker::{RepoMap, ScanReport};
 
         let dir = tempdir().unwrap();
+        let repo_root = dir.path().join("repo");
+        let unrelated_root = dir.path().join("unrelated");
+        std::fs::create_dir_all(&repo_root).unwrap();
+        std::fs::create_dir_all(&unrelated_root).unwrap();
+        let persisted_root = std::fs::canonicalize(&repo_root)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
         let db = dir.path().join("code_map.db");
         let mut conn = open(&db).unwrap();
         persist_map(
             &mut conn,
             &RepoMap {
-                root: "/repo/test".into(),
+                root: persisted_root.clone(),
                 files: vec![],
                 report: ScanReport::default(),
             },
@@ -11956,7 +11995,7 @@ mod tests {
         .unwrap();
         persist_edges(
             &mut conn,
-            "/repo/test",
+            &persisted_root,
             &[
                 CodeEdge {
                     from_file: "src/a.rs".into(),
@@ -11986,7 +12025,7 @@ mod tests {
         let findings = maybe_architecture_findings_for_skill_at(
             Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
             &db,
-            std::path::Path::new("/repo/test"),
+            &repo_root,
         )
         .expect("active architecture workflow must consume persisted cycles");
         let combined = append_architecture_findings(None, &findings).unwrap();
@@ -11997,7 +12036,7 @@ mod tests {
             maybe_architecture_findings_for_skill_at(
                 Some(crate::code_map::recall::ARCHITECTURE_SKILL_ID),
                 &db,
-                std::path::Path::new("/repo/other"),
+                &unrelated_root,
             )
             .is_none(),
             "an unrelated cwd must not receive cycles from the only persisted repo"
