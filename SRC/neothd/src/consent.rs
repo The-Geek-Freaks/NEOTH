@@ -141,7 +141,7 @@ pub fn route_requires_consent(kind: ProviderKind, endpoint: Option<&str>) -> boo
         return false;
     }
     let endpoint = endpoint.unwrap_or(crate::providers::ollama_api::DEFAULT_BASE_URL);
-    let Ok(url) = reqwest::Url::parse(endpoint) else {
+    let Ok(url) = url::Url::parse(endpoint) else {
         return true;
     };
     !crate::providers::http_client::url_has_loopback_host(&url)

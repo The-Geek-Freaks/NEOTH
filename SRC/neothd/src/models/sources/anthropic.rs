@@ -123,7 +123,7 @@ fn bundled_anthropic_entries() -> Vec<ModelEntry> {
 
 async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<ModelEntry>> {
     let client = crate::providers::http_client::build_client()?;
-    let base_url = reqwest::Url::parse(endpoint).context("parse anthropic_api models endpoint")?;
+    let base_url = url::Url::parse(endpoint).context("parse anthropic_api models endpoint")?;
     let mut after_id: Option<String> = None;
     let mut seen_cursors = HashSet::new();
     let mut total_bytes = 0usize;

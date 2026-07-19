@@ -201,6 +201,16 @@ const ALLOWED_PREFIXES: &[&str] = &[
     // clients; the only reqwest construction here is the in-file unit test
     // dialing its in-process wiremock server, never the network.
     "src/channels/readiness.rs",
+    // OMI probe readiness: `neoth omi probe` opens a bounded 2 s TCP connect
+    // to the operator's OWN configured native OMI listener (loopback by
+    // default) to report whether the local ingest socket is up — a
+    // self-connect diagnostic, not outbound egress.
+    "src/cli/omi.rs",
+    // Local n8n control-plane listener. The only TcpStream::connect is the
+    // in-file `#[tokio::test]` dialing its own in-process server on
+    // `Ipv4Addr::LOCALHOST` to exercise idle-connection shutdown — it
+    // connects to itself, never the network.
+    "src/n8n_api/server.rs",
     "src/telemetry/",
     "src/cluster/",
     "src/transport/",

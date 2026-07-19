@@ -313,7 +313,7 @@ impl AzureSpeechClient {
         } else {
             language
         };
-        let mut endpoint = reqwest::Url::parse(&format!(
+        let mut endpoint = url::Url::parse(&format!(
             "{}/speech/recognition/conversation/cognitiveservices/v1",
             self.base_url.trim_end_matches('/')
         ))
