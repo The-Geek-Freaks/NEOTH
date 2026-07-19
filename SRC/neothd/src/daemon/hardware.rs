@@ -536,6 +536,7 @@ impl HardwareReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use tempfile::tempdir;
 
     fn materialize_candle_cache(models_root: &Path, repo: &str) -> PathBuf {
