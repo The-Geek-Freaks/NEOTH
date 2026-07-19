@@ -26,8 +26,10 @@
 //!    `initialize` handshake. Returns once the server responds with its
 //!    capabilities.
 //! 2. `client.list_tools()` returns the typed tool list.
-//! 3. `client.call_tool(name, args)` invokes a tool, returns the
-//!    structured result.
+//! 3. `gate::invoke_with_audit(...)` authorizes `tools/call`, records raw
+//!    response-size metadata, and returns the structured result only after the
+//!    canonical external-output sanitizer. The lower-level client call is
+//!    crate-private and has no production caller outside the gate.
 //! 4. Drop → child process is killed via the kill-on-drop handle.
 
 pub mod catalogue;

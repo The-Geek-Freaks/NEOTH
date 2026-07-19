@@ -1,6 +1,7 @@
-//! GOLD-ADAPT-ODY-26 — Raw-transcript FTS with before/after context rows.
+//! GOLD-ADAPT-ODY-26 — Transcript FTS with before/after context rows.
 //!
-//! Persists every raw operator/agent turn into `views.db:raw_turns` and
+//! Persists every operator turn and sanitised agent turn into
+//! `views.db:raw_turns` and
 //! exposes FTS5 search with before/after context rows via
 //! `neoth recall --transcript <query>`.
 //!
@@ -18,13 +19,17 @@
 //! Schema is v21 — `SCHEMA_VERSION` was bumped from 20 in `memory/store.rs`
 //! and the migration is registered in `memory/migrations/mod.rs`.
 
+use std::borrow::Cow;
+
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 // ── Structs ────────────────────────────────────────────────────────────────
 
-/// A single raw turn row stored in `raw_turns`.
+/// A single turn row stored in the legacy-named `raw_turns` table. Operator
+/// rows are source-exact; agent rows are sanitized before new persistence and
+/// again on egress for legacy databases.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TranscriptRow {
     pub id: i64,
@@ -71,9 +76,17 @@ pub fn insert_turn(
     ts_unix: i64,
     text: &str,
 ) -> rusqlite::Result<i64> {
+    // Operator text is the user's source record and remains byte-identical.
+    // Agent text is generated/external output: strip terminal controls and
+    // credentials before the FTS trigger makes it durable and searchable.
+    let persisted_text = if role == "agent" {
+        Cow::Owned(crate::security::redact::sanitize_tool_output(text))
+    } else {
+        Cow::Borrowed(text)
+    };
     conn.execute(
         "INSERT INTO raw_turns (session_id, role, ts_unix, text) VALUES (?1, ?2, ?3, ?4)",
-        params![session_id, role, ts_unix, text],
+        params![session_id, role, ts_unix, persisted_text.as_ref()],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -135,16 +148,7 @@ pub fn search_turns(
     )?;
     let hits: Vec<(TranscriptRow, f64)> = stmt
         .query_map(params![clean, effective_limit as i64], |row| {
-            Ok((
-                TranscriptRow {
-                    id: row.get(0)?,
-                    session_id: row.get(1)?,
-                    role: row.get(2)?,
-                    ts_unix: row.get(3)?,
-                    text: row.get(4)?,
-                },
-                row.get::<_, f64>(5)?,
-            ))
+            Ok((row_mapper(row)?, row.get::<_, f64>(5)?))
         })?
         .collect::<rusqlite::Result<_>>()?;
 
@@ -202,12 +206,21 @@ pub fn search_turns(
 }
 
 fn row_mapper(row: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptRow> {
+    let role: String = row.get(2)?;
+    let text: String = row.get(4)?;
     Ok(TranscriptRow {
         id: row.get(0)?,
         session_id: row.get(1)?,
-        role: row.get(2)?,
+        role: role.clone(),
         ts_unix: row.get(3)?,
-        text: row.get(4)?,
+        // Defence-in-depth for databases created before agent-turn write
+        // sanitisation. The source row remains untouched; only egress is
+        // filtered. Operator source text deliberately stays raw.
+        text: if role == "agent" {
+            crate::security::redact::sanitize_tool_output(&text)
+        } else {
+            text
+        },
     })
 }
 
@@ -432,6 +445,74 @@ mod tests {
         .unwrap();
         let r = search_turns(&conn, "trigger fires", 0, 5).unwrap();
         assert_eq!(r.len(), 1, "FTS index must be available right after insert");
+    }
+
+    #[test]
+    fn agent_turn_is_sanitized_before_persistence_and_remains_searchable() {
+        let (_dir, conn) = open_test_db();
+        let secret = concat!("sk-", "FAKE_TEST_TRANSCRIPT_AAAAAAAAAAAAAA");
+        let colored = format!("useful diagnosis sk-\x1b[31m{}\x1b[0m", &secret[3..]);
+
+        let id = insert_turn(&conn, "safe-agent", "agent", 501, &colored).unwrap();
+        let stored: String = conn
+            .query_row("SELECT text FROM raw_turns WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert!(stored.contains("useful diagnosis"), "{stored}");
+        assert!(stored.contains("[REDACTED:openai_key]"), "{stored}");
+        assert!(!stored.contains(secret), "{stored}");
+        assert!(!stored.contains('\x1b'), "{stored:?}");
+
+        let hits = search_turns(&conn, "useful diagnosis", 0, 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched.text, stored);
+    }
+
+    #[test]
+    fn operator_turn_remains_byte_identical_in_source_store() {
+        let (_dir, conn) = open_test_db();
+        let operator_text = concat!(
+            "operator supplied sk-",
+            "FAKE_TEST_OPERATOR_AAAAAAAAAAAAAA\x1b[31m verbatim"
+        );
+        let id = insert_turn(&conn, "raw-operator", "operator", 502, operator_text).unwrap();
+        let stored: String = conn
+            .query_row("SELECT text FROM raw_turns WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(stored, operator_text);
+        let hits = search_turns(&conn, "operator supplied", 0, 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched.text, operator_text);
+    }
+
+    #[test]
+    fn legacy_agent_row_is_sanitized_on_egress_without_rewriting_source() {
+        let (_dir, conn) = open_test_db();
+        let secret = concat!("sk-", "FAKE_TEST_LEGACY_AAAAAAAAAAAAAAAAA");
+        let legacy = format!("legacy searchable sk-\x1b[36m{}\x1b[0m", &secret[3..]);
+        conn.execute(
+            "INSERT INTO raw_turns (session_id, role, ts_unix, text) VALUES (?1, 'agent', 503, ?2)",
+            params!["legacy-agent", legacy],
+        )
+        .unwrap();
+
+        let hits = search_turns(&conn, "legacy searchable", 0, 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].matched.text.contains("[REDACTED:openai_key]"));
+        assert!(!hits[0].matched.text.contains(secret));
+        assert!(!hits[0].matched.text.contains('\x1b'));
+
+        let stored: String = conn
+            .query_row(
+                "SELECT text FROM raw_turns WHERE session_id = 'legacy-agent'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, legacy, "legacy source row must not be rewritten");
     }
 
     #[test]

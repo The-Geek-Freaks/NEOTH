@@ -1055,11 +1055,13 @@ fn emit_patch_apply_failed_wal(
     let Some(writer) = writer else {
         return;
     };
-    let redacted = crate::security::redact::redact_text(reason);
+    let redacted = crate::security::redact::sanitize_tool_output(reason);
+    let worktree_path =
+        crate::security::redact::sanitize_tool_output(&worktree_path.display().to_string());
     let payload = serde_json::json!({
         "task_id": task.task_id.raw(),
         "session_id": task.session_id.raw(),
-        "worktree_path": worktree_path.display().to_string(),
+        "worktree_path": worktree_path,
         "stage": stage,
         "reason": redacted,
         "ts_unix": now_unix_secs(),
@@ -2736,6 +2738,44 @@ mod tests {
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_patch_apply_failed_wal_sanitizes_ansi_split_secret() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_path = dir.path().join("failed.wal");
+        let (writer, writer_join) =
+            crate::wal::writer::spawn(wal_path.clone()).expect("spawn WAL writer");
+        let task = notes_task(Some("WAL redaction fixture"));
+        let secret = concat!("sk-", "FAKE_TEST_PATCH_FAILURE_AAAAAAAAAAAAA");
+        let reason = format!("rustc: \x1b[31m{secret}\x1b[0m at ../src/lib.rs");
+        let worktree =
+            std::path::PathBuf::from(format!("workspace/\x1b[35m{secret}\x1b[0m/task-worktree"));
+
+        emit_patch_apply_failed_wal(Some(&writer), &task, &worktree, "tests", &reason);
+        drop(writer);
+        writer_join.await.expect("WAL writer join");
+
+        let bytes = std::fs::read(&wal_path).unwrap();
+        let segment = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let frame = crate::wal::frame::decode_frame(&bytes[segment.header_len()..]).unwrap();
+        assert_eq!(
+            frame.header.event_type,
+            crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED
+        );
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        let persisted_reason = payload["reason"].as_str().unwrap();
+        assert!(!persisted_reason.contains(secret));
+        assert!(!persisted_reason.contains('\x1b'));
+        assert!(persisted_reason.contains("REDACTED"));
+        assert!(persisted_reason.contains("../src/lib.rs"));
+        let persisted_path = payload["worktree_path"].as_str().unwrap();
+        assert!(!persisted_path.contains(secret));
+        assert!(!persisted_path.contains('\x1b'));
+        assert!(persisted_path.contains("REDACTED"));
+        assert!(persisted_path.contains("task-worktree"));
+        assert_eq!(payload["stage"], "tests");
+        assert_eq!(payload["task_id"], task.task_id.raw());
     }
 
     #[tokio::test]

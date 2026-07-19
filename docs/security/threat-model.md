@@ -620,6 +620,47 @@ interpreter or build tool can still open a socket through its own libraries.
 untrusted proposals on a network-connected host. Persisted verified evidence
 and the separate operator accept step remain mandatory even when it is enabled.
 
+### 4.10 External tool output, recall, and CCR
+
+External text is untrusted in two independent ways: it can contain prompt
+instructions and it can contain credentials. MCP authorization and result-size
+accounting happen on the raw response, while the success WAL frame remains
+metadata-only. Immediately afterwards, the typed result crosses a canonical
+sanitizing boundary. ANSI terminal-control sequences, known secret shapes, and
+credential-named JSON scalars are removed before elicitation, domain
+compression, untrusted-data fencing, provider prompts, channel use, or
+persistent CCR. Compression must preserve the untrusted-data envelope; a
+content-reduction transform never upgrades tool data into instructions. Nested
+Markdown fences in peer-controlled MCP text are defanged before the trusted
+outer result envelope is built, so the prompt contains exactly one trusted MCP
+result boundary.
+
+| Producer | Raw boundary | Derived/persistent contract |
+| :-- | :-- | :-- |
+| MCP text or JSON-RPC error | Raw only inside the bounded transport and response-size accounting | Canonical sanitizer before elicitation/TokenJuice/prompt/channel/CCR; success WAL is metadata-only |
+| MCP image | Strict standard-base64 validation; opaque bytes stay byte-stable | Model sees controlled MIME/size metadata; explicit structured CLI output is the raw operator surface |
+| Coding provider completion | Raw completion is held in memory long enough to parse/scan | Summary is sanitized; a diff that would change under control/secret scanning is withheld before both owner-private audit persistence and apply |
+| Coding command diagnostics | Child stdout/stderr is captured as untrusted text | Canonical sanitizer before retry SQLite, test log, tracing and `PATCH_APPLY_FAILED` WAL |
+| Agent transcript / session title / dreaming / recall / code map | Legacy databases can contain pre-boundary content | New agent turns, provider titles and dream summaries sanitize before persistence; every recall/code-map/title egress sanitizes again before terminal/provider/channel/CCR |
+| Operator transcript, source WAL, selected export | Intentionally source-exact local evidence | Explicit local inspection/export only; any later provider/channel/CCR consumer must sanitize |
+| Detached background-job log | Intentionally raw command evidence in a current-user-only file | Never an automatic model/channel input; later ingestion must cross the sanitizer |
+
+File CCR is a short-lived cross-process cache, not a source-of-truth archive.
+Its directory and entries are current-user-only and entries are committed
+atomically. A separate process retrieving a CCR key receives the same sanitized
+payload that was eligible for the model-facing prompt. Recall and code-map
+renderers sanitize at egress as a second boundary so legacy database rows cannot
+bypass the current contract.
+
+Opaque MCP image base64 is validated as standard base64, kept byte-stable, and
+represented to the model only by controlled MIME/size metadata. Explicit
+structured CLI output may expose those bytes to the operator. Operator-source
+WAL/transcript rows, selected exports, and detached command logs are likewise
+classified raw local evidence; they are owner-private where stored and require
+sanitization before any later provider/channel/CCR consumer. Coding patches are
+not redacted in place: a patch whose bytes would change under the canonical
+scan is rejected before audit persistence or apply.
+
 ## 5. Reporting a vulnerability
 
 See [`SECURITY.md`](../../SECURITY.md) in the repository root for

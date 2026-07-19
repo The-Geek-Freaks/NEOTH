@@ -40,6 +40,18 @@ fn is_valid_key(key: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+fn ensure_private_ccr_dir(dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_directory_dacl(dir)?;
+    Ok(())
+}
+
 /// Directory-backed, persistent [`CcrStore`].
 pub struct FileCcrStore {
     dir: PathBuf,
@@ -96,14 +108,16 @@ impl CcrStore for FileCcrStore {
         let Some(path) = self.path_for(hash) else {
             return; // invalid key — never write outside the store dir
         };
-        if fs::create_dir_all(&self.dir).is_err() {
+        if ensure_private_ccr_dir(&self.dir).is_err() {
             return;
         }
-        // Atomic write: tmp + rename so a concurrent reader never sees a torn
-        // file. The tmp name is keyed so two puts of distinct keys never clash.
-        let tmp = self.dir.join(format!(".{hash}.tmp"));
-        if fs::write(&tmp, payload.as_bytes()).is_ok() && fs::rename(&tmp, &path).is_err() {
-            let _ = fs::remove_file(&tmp);
+        // CCR payloads can contain provider/tool context. Use the canonical
+        // owner-only atomic writer so neither a permissive umask nor inherited
+        // Windows directory ACLs expose the bytes, and readers never see a
+        // torn file. The store trait is deliberately best-effort; a failed
+        // private write leaves no public fallback artifact.
+        if crate::util::atomic_write::atomic_write_private(&path, payload.as_bytes()).is_err() {
+            return;
         }
         self.evict_if_over_capacity();
     }
@@ -158,7 +172,7 @@ impl Savings {
 /// Append one `before after` record for a compressed block. Best-effort +
 /// race-free (single O_APPEND write of a short line).
 pub fn record_savings(dir: &Path, before: usize, after: usize) {
-    if fs::create_dir_all(dir).is_err() {
+    if ensure_private_ccr_dir(dir).is_err() {
         return;
     }
     let line = format!("{before} {after}\n");
@@ -221,6 +235,37 @@ mod tests {
         let store2 = FileCcrStore::new(dir.clone());
         assert_eq!(store2.get(&key).as_deref(), Some("the original payload"));
         assert_eq!(store2.get("000000000000000000000000"), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lf_p1_03_ccr_payload_is_owner_private() {
+        let dir = temp_dir("private");
+        let store = FileCcrStore::new(dir.clone());
+        let key = compute_key(b"private payload");
+        store.put(&key, "private payload");
+        let path = dir.join(format!("{key}.ccr"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        #[cfg(windows)]
+        {
+            crate::wal::win_native::verify_private_directory_dacl(&dir)
+                .expect("CCR directory must have a current-user-only DACL");
+            crate::wal::win_native::verify_private_dacl(&path)
+                .expect("CCR file must have a current-user-only DACL");
+        }
+
         let _ = fs::remove_dir_all(&dir);
     }
 

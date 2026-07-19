@@ -1,8 +1,9 @@
 //! Secrets scanner — regex over text for common leaked-credential formats.
 //!
 //! Powers `neoth credential scan <path>`: walk a file/dir and flag lines that
-//! look like a committed secret (AWS / GitHub / OpenAI / Slack / Google keys,
-//! PEM private-key headers, and `api_key = "…"`-style assignments). Findings
+//! look like a committed secret (AWS, GitHub/GitLab/npm, model-provider,
+//! chat-platform, HTTP-auth and Google keys, PEM private-key headers, and
+//! `api_key = "…"`-style assignments). Findings
 //! **redact** the matched value (first/last 4 chars only) so the scan report
 //! never re-leaks the secret it found.
 //!
@@ -21,14 +22,24 @@ pub struct SecretPattern {
 }
 
 /// Curated signatures compiled exactly once for the process. Secret scanning
-/// also runs on hot MCP inspection paths, so rebuilding the same seven regex
+/// also runs on hot MCP inspection paths, so rebuilding the same regex
 /// automata per call is both unnecessary and avoidable.
 static SECRET_PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
     let raw: &[(&'static str, &str)] = &[
-        ("aws_access_key_id", r"AKIA[0-9A-Z]{16}"),
+        ("aws_access_key_id", r"(?:AKIA|ASIA)[0-9A-Z]{16}"),
+        ("github_fine_grained_pat", r"github_pat_[A-Za-z0-9_]{20,}"),
         ("github_token", r"gh[posru]_[A-Za-z0-9]{36,}"),
-        ("openai_key", r"sk-(?:proj-)?[A-Za-z0-9_-]{20,}"),
+        ("gitlab_pat", r"glpat-[A-Za-z0-9_-]{20,}"),
+        ("npm_token", r"npm_[A-Za-z0-9]{30,}"),
+        ("anthropic_key", r"sk-ant-[A-Za-z0-9_-]{20,}"),
+        ("openai_key", r"sk-(?:proj-|or-)?[A-Za-z0-9_-]{20,}"),
+        ("bearer", r"(?i)bearer [A-Za-z0-9_\-.=:+/]{16,}"),
         ("slack_token", r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+        (
+            "discord_token",
+            r"(?:mfa\.[A-Za-z0-9_-]{40,}|[A-Za-z0-9_-]{20,32}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,})",
+        ),
+        ("telegram_bot_token", r"[0-9]{8,12}:[A-Za-z0-9_-]{30,}"),
         ("google_api_key", r"AIza[0-9A-Za-z_-]{35}"),
         (
             "pem_private_key",
@@ -45,6 +56,11 @@ static SECRET_PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
             re: Regex::new(pat).expect("secret-scan pattern is a valid literal regex"),
         })
         .collect()
+});
+
+static BASIC_AUTH_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\bbasic[ \t]+(?P<token>[A-Za-z0-9+/]{4,}={0,2})")
+        .expect("Basic-auth candidate regex is valid")
 });
 
 /// Return the curated pattern set. The owned-vector API is retained for
@@ -90,6 +106,19 @@ pub fn scan_text(content: &str) -> Vec<Finding> {
                     redacted: redact_match(m.as_str()),
                 });
             }
+        }
+        for captures in BASIC_AUTH_RE.captures_iter(line) {
+            if !crate::security::redact::is_basic_auth_credential(&captures["token"]) {
+                continue;
+            }
+            let Some(matched) = captures.get(0) else {
+                continue;
+            };
+            out.push(Finding {
+                line: idx + 1,
+                pattern: "basic_auth",
+                redacted: redact_match(matched.as_str()),
+            });
         }
     }
     out
@@ -170,8 +199,11 @@ mod tests {
 
     #[test]
     fn patterns_all_compile() {
-        // `patterns()` `.expect`s on each — this just proves the set builds.
-        assert!(patterns().len() >= 7);
+        // `patterns()` `.expect`s on every unconditional expression. Basic is
+        // intentionally separate because a regex-only match would flag normal
+        // prose; its candidate expression is compiled by the same LazyLock.
+        assert!(patterns().len() >= 14);
+        assert!(BASIC_AUTH_RE.is_match("Basic YTpi"));
     }
 
     #[test]
@@ -199,6 +231,38 @@ api_key = \"s3cr3t_value_here_long\"
         assert!(names.contains(&"generic_secret_assignment"));
         // Line 1 (clean) produced no finding.
         assert!(f.iter().all(|x| x.line != 1));
+    }
+
+    #[test]
+    fn lf_p1_03_scanner_covers_modern_redactor_families() {
+        let fixtures = [
+            concat!("github_", "pat_FAKE_TEST_AAAAAAAAAAAAAAAAAAAAAAAA"),
+            concat!("glpat", "-FAKE_TEST_AAAAAAAAAAAAAAAAAAAAA"),
+            concat!("npm", "_FAKETOKENFORTESTONLYAAAAAAAAAAAAAAA"),
+            concat!("mfa.", "FAKE_TEST_DISCORD_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            concat!("123456789:", "FAKE_TEST_TELEGRAM_AAAAAAAAAAAAAAAAAAAAA"),
+            concat!("Bearer ", "FAKE_TEST_BEARER_AAAAAAAAAAAAAAAAA"),
+            concat!("Basic ", "ZmFrZS11c2Vy", "OmZha2UtcGFzcw=="),
+            concat!("BEARER ", "FAKE_TEST_UPPER_AAAAAAAAAAAAAAAAAA"),
+            "BASIC YTpi",
+        ];
+        let text = fixtures.join("\n");
+        let names: std::collections::HashSet<_> = scan_text(&text)
+            .into_iter()
+            .map(|finding| finding.pattern)
+            .collect();
+        for expected in [
+            "github_fine_grained_pat",
+            "gitlab_pat",
+            "npm_token",
+            "discord_token",
+            "telegram_bot_token",
+            "bearer",
+            "basic_auth",
+        ] {
+            assert!(names.contains(expected), "missing {expected}: {names:?}");
+        }
+        assert!(scan_text("basic auth\nbasic test").is_empty());
     }
 
     #[test]

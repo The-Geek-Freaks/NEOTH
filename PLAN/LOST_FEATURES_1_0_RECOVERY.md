@@ -41,11 +41,24 @@
   Schicht-0-Output als Stage-2-Input; neue `security/right_hemisphere.rs` +
   `callosum.rs`, Wiring in refusal_recovery.rs (dort steht wörtlich "no
   hemisphere switching here (that's R-04)").
-- **Tool-Output-Redaction uniform in WAL-Coding-Frames** `[CODEX]` `GOLD-LF-P1-03` *(underresearched)*
-  Quelle: PLAN/SMALLCODE_AUDIT_2026-05-21.md §5#4. dispatcher.rs:1252 wendet
-  sanitize_tool_output an, aber recall/store.rs hat 0 Redact-Pässe und
-  mcp/dispatch_loop.rs redigiert Tool-RESULTS nicht. Research: exakte
-  Opcode-Pfade der CODING_TOOL_RESULT-Frames klären (payloads_w08.rs teilt nur 2 Treffer).
+- **Tool-/Provider-Output-Redaction vor abgeleiteten dauerhaften Senken** `[CODEX]` `GOLD-LF-P1-03`
+  Quelle: PLAN/SMALLCODE_AUDIT_2026-05-21.md §5#4, gegen aktuellen Source
+  nachgeprüft 2026-07-18. Der ursprüngliche Wortlaut war falsch: weder eine
+  `recall/store.rs` noch ein `CODING_TOOL_RESULT`-Opcode existiert. Der reale
+  MCP-WAL-Frame ist bereits metadata-only; die offene Kette war rohe MCP-Text-
+  Ausgabe -> Model-Block -> persistentes File-CCR sowie Provider-/Coding-
+  Diagnosen und Recall-/Code-Map-Egress. Integration: eine kanonische
+  Raw->Sanitized-Grenze nach MCP-Wire-Accounting und vor Elicitation,
+  TokenJuice, Prompt und CCR; strukturierte JSON-Feldredaktion; Coding-
+  Testlog/Failure-WAL/Provider-Artefakte; Recall- und Code-Map-Egress; echte
+  dekodierte-WAL-, SQLite-/Datei-CCR- und Legacy-Recall-Sentineltests. Bewusst
+  rohe Operator-Quellen und semantiktragende Patch-/Job-Artefakte brauchen
+  einen expliziten owner-only/scan/fail-closed-Ausnahmevertrag statt heimlichem
+  Byte-Rewriting. **SHIPPED 2026-07-18:** vollständig über MCP, Coding,
+  Transcript-/Session-/Dream-Persistenz, Recall, Code-Map und File-CCR verdrahtet;
+  unsichere ausführbare Patches werden vor Persistenz und Apply verweigert.
+  Regressionsevidenz: 34/34 `lf_p1_03_`, 142/142 Sanitizer-Familie sowie je 1/1
+  Operator-Source-, Dream-Cloud- und CLI-Doc-Contract.
 - **WAL-Replay-Fenster: HLC-Ordering statt naivem ±300s-Wall-Clock** `[CODEX]` `GOLD-LF-P1-04`
   Quelle: PLAN/CLAUDE_v07_review.md §11. cluster/wal_sync.rs:800
   `FOREIGN_EVENT_MAX_CLOCK_SKEW_SECS=300` ist Wall-Clock; wal::hlc::Hlc existiert,

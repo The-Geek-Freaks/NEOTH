@@ -9,8 +9,9 @@
 //!
 //! This module:
 //!   - Defines a closed set of secret-shape regexes (OpenAI /
-//!     Anthropic / GitHub / Google / AWS / JWT / Slack / Discord /
-//!     Telegram bot tokens / generic .env KEY=VALUE / PEM blocks)
+//!     Anthropic / GitHub / GitLab / npm / Google / AWS / JWT /
+//!     Slack / Discord / Telegram / HTTP auth / generic credential
+//!     assignments / PEM blocks)
 //!   - `redact_text(input)` returns a new String with every match
 //!     replaced by `[REDACTED:<kind>]`
 //!   - Pure function — no IO, no allocation beyond the output
@@ -18,16 +19,15 @@
 //!   - Conservative: prefers false positives (a non-secret string
 //!     that happens to look like one) over leaking a real secret
 //!
-//! Call sites (wired in follow-up commits):
-//!   - `coding::dispatcher::handle_retryable_failure` — diagnosis
-//!     strings hit the WAL via tracing::warn
-//!   - `wasm_plugin::dispatch::invoke_plugin` — InvocationOutcome.error
-//!   - `cli::serve` PROVIDER_RESPONSE frame body
-//!   - Anywhere we emit a frame that's `text-typed` from external IO
+//! `sanitize_tool_output` is the canonical external-text boundary used by MCP,
+//! coding diagnostics, provider-derived summaries, recall/code-map egress, and
+//! persistent CCR. `redact_text` remains the narrower shape-only primitive for
+//! callers that have already handled terminal controls and structured data.
 
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
+use base64::Engine as _;
 use regex::Regex;
 
 /// One secret-shape pattern. The name is stable wire form for the
@@ -54,16 +54,28 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
         // Bearer tokens in headers / log lines.
         Pattern {
             name: "bearer",
-            re: Regex::new(r"\b[Bb]earer [A-Za-z0-9_\-.=:+/]{16,}").unwrap(),
+            re: Regex::new(r"(?i)\bbearer [A-Za-z0-9_\-.=:+/]{16,}").unwrap(),
         },
         // GitHub personal access + OAuth tokens.
+        Pattern {
+            name: "github_fine_grained_pat",
+            re: Regex::new(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b").unwrap(),
+        },
         Pattern {
             name: "github_pat",
             re: Regex::new(r"\bghp_[A-Za-z0-9]{30,}\b").unwrap(),
         },
         Pattern {
-            name: "github_oauth",
-            re: Regex::new(r"\bgho_[A-Za-z0-9]{30,}\b").unwrap(),
+            name: "github_token",
+            re: Regex::new(r"\bgh[opsru]_[A-Za-z0-9]{30,}\b").unwrap(),
+        },
+        Pattern {
+            name: "gitlab_pat",
+            re: Regex::new(r"\bglpat-[A-Za-z0-9_-]{20,}\b").unwrap(),
+        },
+        Pattern {
+            name: "npm_token",
+            re: Regex::new(r"\bnpm_[A-Za-z0-9]{30,}\b").unwrap(),
         },
         // Google API keys.
         Pattern {
@@ -73,7 +85,7 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
         // AWS access keys.
         Pattern {
             name: "aws_key",
-            re: Regex::new(r"\bAKIA[0-9A-Z]{16}\b").unwrap(),
+            re: Regex::new(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b").unwrap(),
         },
         // Generic JWTs (three base64 segments).
         Pattern {
@@ -81,18 +93,32 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
             re: Regex::new(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b")
                 .unwrap(),
         },
-        // Slack / Discord / Telegram-style bot tokens.
+        // Chat-platform bot/session tokens. Keep these shapes separate: their
+        // alphabets and lengths are different enough that one broad pattern
+        // would either miss real values or redact ordinary dotted text.
         Pattern {
             name: "slack",
             re: Regex::new(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b").unwrap(),
         },
-        // .env-style assignments. Conservative: only fires when the
-        // key name contains KEY/TOKEN/SECRET/PASSWORD/etc + the
-        // value is at least 8 chars + no whitespace.
+        Pattern {
+            name: "discord_token",
+            re: Regex::new(
+                r"\b(?:mfa\.[A-Za-z0-9_-]{40,}|[A-Za-z0-9_-]{20,32}\.[A-Za-z0-9_-]{6}\.[A-Za-z0-9_-]{20,})\b",
+            )
+            .unwrap(),
+        },
+        Pattern {
+            name: "telegram_bot_token",
+            re: Regex::new(r"\b[0-9]{8,12}:[A-Za-z0-9_-]{30,}\b").unwrap(),
+        },
+        // .env-style assignments. Anchor to a complete assignment line and
+        // require a delimited credential component. This catches API_KEY,
+        // aws_secret_access_key and DB_PASSWORD without treating ordinary
+        // identifiers such as api_version or monkey as credentials.
         Pattern {
             name: "env_assignment",
             re: Regex::new(
-                r#"\b([A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PWD|API)[A-Z0-9_]*)\s*=\s*["']?([^\s"'\n]{8,})["']?"#,
+                r#"(?im)^[ \t]*(?:export[ \t]+)?(?:[a-z0-9]+[_-])*(?:api[_-]?key|access[_-]?key|private[_-]?key|secret|token|password|passwd|pwd)(?:[_-][a-z0-9]+)*[ \t]*=[ \t]*["']?([^\s"'\[\r\n][^\s"'\r\n]{7,})["']?"#,
             )
             .unwrap(),
         },
@@ -105,6 +131,41 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
         },
     ]
 });
+
+/// Candidate HTTP Basic credentials. Regex shape alone is not sufficient:
+/// normal prose such as `basic auth` is also syntactically valid base64 text.
+/// Every candidate therefore has to decode to a printable `user:password`
+/// payload before it is treated as a credential.
+static BASIC_AUTH_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\bbasic[ \t]+(?P<token>[A-Za-z0-9+/]{4,}={0,2})").unwrap());
+
+pub(crate) fn is_basic_auth_credential(token: &str) -> bool {
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(token)
+        .or_else(|_| base64::engine::general_purpose::STANDARD_NO_PAD.decode(token));
+    let Ok(decoded) = decoded else {
+        return false;
+    };
+    let Some(separator) = decoded.iter().position(|byte| *byte == b':') else {
+        return false;
+    };
+    separator > 0
+        && decoded
+            .iter()
+            .all(|byte| matches!(*byte, b' '..=b'~' | 0x80..=0xff))
+}
+
+fn redact_basic_auth(input: &str) -> String {
+    BASIC_AUTH_RE
+        .replace_all(input, |captures: &regex::Captures<'_>| {
+            if is_basic_auth_credential(&captures["token"]) {
+                "[REDACTED:basic_auth]".to_string()
+            } else {
+                captures[0].to_string()
+            }
+        })
+        .into_owned()
+}
 
 /// ANSI escape sequences (QU-04). Tool output — `cargo`, `git`, test
 /// runners — colourises by default, so a coding worker's captured
@@ -149,7 +210,10 @@ pub fn strip_ansi(input: &str) -> Cow<'_, str> {
 /// surface for any text-typed external IO — captured tool stdout,
 /// provider error strings, plugin trap messages — on its way to a
 /// durable WAL frame or the activity feed. Composes [`strip_ansi`]
-/// (terminal-control noise) THEN [`redact_text`] (secret shapes).
+/// (terminal-control noise), removal of unsafe C0/C1 controls, a detection-only
+/// deobfuscation pass for zero-width token splitters, single-value JSON decoding
+/// for structured tool output, sensitive-field redaction, and [`redact_text`]
+/// (secret shapes).
 ///
 /// Why ANSI first: a colourised secret (`\x1b[31msk-…\x1b[0m`) would
 /// otherwise have escape bytes wedged inside the token, breaking the
@@ -164,7 +228,197 @@ pub fn strip_ansi(input: &str) -> Cow<'_, str> {
 /// [`neutralize_path_traversal`] explicitly at that boundary.
 pub fn sanitize_tool_output(input: &str) -> String {
     let no_ansi = strip_ansi(input);
-    redact_text(&no_ansi)
+    let no_controls = strip_unsafe_controls(&no_ansi);
+    let deobfuscated = strip_secret_obfuscators(&no_controls);
+    if matches!(&deobfuscated, Cow::Owned(_)) {
+        let sanitized = sanitize_structured_and_flat(&deobfuscated);
+        if sanitized != deobfuscated {
+            // A known secret became visible only after removing zero-width
+            // splitters. Return the safe canonical view, but never reconstitute
+            // an untrusted-data guard sigil that was deliberately defanged with
+            // the same zero-width character. Clean Unicode keeps the original
+            // byte sequence through the fallback below.
+            return defang_guard_sigils(&sanitized);
+        }
+    }
+    sanitize_structured_and_flat(&no_controls)
+}
+
+fn sanitize_structured_and_flat(input: &str) -> String {
+    // Tool APIs frequently return JSON as a text content block. Decode one
+    // complete JSON value so short credentials hidden behind a sensitive key
+    // (`{"token":"short"}`) and JSON escapes cannot bypass the flat regex
+    // pass. Clean JSON keeps its original whitespace; only a real redaction
+    // reserializes it. serde_json's built-in recursion limit bounds depth.
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(input) {
+        let sanitized = redact_tool_output_value(&value, "");
+        if sanitized != value {
+            return serde_json::to_string(&sanitized)
+                .expect("serde_json::Value serialization is infallible");
+        }
+    }
+    // Logs often surround a JSON object with prose, so the whole string is not
+    // valid JSON. Still redact scalar credential fields in those fragments;
+    // secret-shape matching alone cannot catch a deliberately short value.
+    let contextual = TOOL_OUTPUT_JSON_FIELD_RE.replace_all(input, |caps: &regex::Captures<'_>| {
+        format!("{}\"[REDACTED:field]\"", &caps["prefix"])
+    });
+    redact_text(&contextual)
+}
+
+fn strip_unsafe_controls(input: &str) -> Cow<'_, str> {
+    if !input
+        .chars()
+        .any(|ch| ch == '\r' || (ch.is_control() && !matches!(ch, '\n' | '\t')))
+    {
+        return Cow::Borrowed(input);
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\r' if chars.peek() == Some(&'\n') => {
+                chars.next();
+                out.push('\n');
+            }
+            '\r' => {}
+            '\n' | '\t' => out.push(ch),
+            control if control.is_control() => {}
+            other => out.push(other),
+        }
+    }
+    Cow::Owned(out)
+}
+
+fn strip_secret_obfuscators(input: &str) -> Cow<'_, str> {
+    if !input.chars().any(|ch| {
+        matches!(
+            ch,
+            '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+        )
+    }) {
+        return Cow::Borrowed(input);
+    }
+    Cow::Owned(
+        input
+            .chars()
+            .filter(|ch| {
+                !matches!(
+                    ch,
+                    '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+                )
+            })
+            .collect(),
+    )
+}
+
+fn sanitize_scalar_text(input: &str) -> String {
+    let no_ansi = strip_ansi(input);
+    let no_controls = strip_unsafe_controls(&no_ansi);
+    let deobfuscated = strip_secret_obfuscators(&no_controls);
+    if matches!(&deobfuscated, Cow::Owned(_)) {
+        let sanitized = sanitize_flat_text(&deobfuscated);
+        if sanitized != deobfuscated {
+            return defang_guard_sigils(&sanitized);
+        }
+    }
+    sanitize_flat_text(&no_controls)
+}
+
+fn sanitize_flat_text(input: &str) -> String {
+    let contextual = TOOL_OUTPUT_JSON_FIELD_RE.replace_all(input, |caps: &regex::Captures<'_>| {
+        format!("{}\"[REDACTED:field]\"", &caps["prefix"])
+    });
+    redact_text(&contextual)
+}
+
+fn defang_guard_sigils(input: &str) -> String {
+    input
+        .replace("<<<", "<\u{200b}<\u{200b}<")
+        .replace(">>>", ">\u{200b}>\u{200b}>")
+}
+
+/// Credential-bearing JSON keys for external tool output. Session identifiers
+/// are deliberately absent: MCP/browser/database tools commonly return a
+/// `session_id` handle that must survive into a follow-up call. The broader
+/// [`ALWAYS_REDACT_KEYS`] policy remains available for diagnostic logging where
+/// hiding identifiers is appropriate.
+const TOOL_OUTPUT_REDACT_KEYS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "token",
+    "access_token",
+    "refresh_token",
+    "bearer",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "authorization",
+    "auth",
+    "cookie",
+    "x-api-key",
+    "x_api_key",
+    "client_secret",
+    "private_key",
+];
+
+static TOOL_OUTPUT_JSON_FIELD_RE: LazyLock<Regex> = LazyLock::new(|| {
+    let keys = TOOL_OUTPUT_REDACT_KEYS
+        .iter()
+        .map(|key| {
+            key.split(['_', '-'])
+                .map(regex::escape)
+                .collect::<Vec<_>>()
+                .join("[_-]?")
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    Regex::new(&format!(
+        r#"(?i)(?P<prefix>"(?:{keys})"\s*:\s*)(?:"(?:\\.|[^"\\])*"|-?(?:[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)|true|false|null)"#
+    ))
+    .expect("static tool-output credential-field regex is valid")
+});
+
+fn redact_tool_output_value(value: &serde_json::Value, field_hint: &str) -> serde_json::Value {
+    if is_tool_output_credential_key(field_hint) {
+        return serde_json::Value::String("[REDACTED:field]".into());
+    }
+    match value {
+        serde_json::Value::String(text) => {
+            // JSON escapes are decoded only after the outer pass. Canonicalize
+            // again at the actual string leaf so escaped ANSI, controls, or
+            // zero-width splitters cannot hide a credential.
+            serde_json::Value::String(sanitize_scalar_text(text))
+        }
+        serde_json::Value::Array(values) => serde_json::Value::Array(
+            values
+                .iter()
+                .map(|value| redact_tool_output_value(value, ""))
+                .collect(),
+        ),
+        serde_json::Value::Object(object) => {
+            let mut out = serde_json::Map::with_capacity(object.len());
+            for (key, value) in object {
+                out.insert(key.clone(), redact_tool_output_value(value, key));
+            }
+            serde_json::Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+fn is_tool_output_credential_key(field: &str) -> bool {
+    TOOL_OUTPUT_REDACT_KEYS.iter().any(|candidate| {
+        field
+            .bytes()
+            .filter(|byte| !matches!(*byte, b'_' | b'-'))
+            .map(|byte| byte.to_ascii_lowercase())
+            .eq(candidate
+                .bytes()
+                .filter(|byte| !matches!(*byte, b'_' | b'-'))
+                .map(|byte| byte.to_ascii_lowercase()))
+    })
 }
 
 /// Returns true when `input` contains at least one `../` or `..\`
@@ -193,7 +447,7 @@ pub fn neutralize_path_traversal(input: &str) -> Cow<'_, str> {
 /// the same span — order in PATTERNS controls which wins (most-
 /// specific first).
 pub fn redact_text(input: &str) -> String {
-    let mut out = input.to_string();
+    let mut out = redact_basic_auth(input);
     for p in PATTERNS.iter() {
         let replacement = format!("[REDACTED:{}]", p.name);
         // `replace_all` returns a Cow; convert to owned when it
@@ -260,6 +514,25 @@ pub fn find_secret_kinds(input: &str) -> Vec<SecretMatch> {
                 start: m.start(),
                 end: m.end(),
                 text: m.as_str().to_string(),
+            });
+        }
+    }
+    for captures in BASIC_AUTH_RE.captures_iter(input) {
+        if !is_basic_auth_credential(&captures["token"]) {
+            continue;
+        }
+        let Some(matched) = captures.get(0) else {
+            continue;
+        };
+        let overlaps = hits
+            .iter()
+            .any(|hit| !(matched.end() <= hit.start || matched.start() >= hit.end));
+        if !overlaps {
+            hits.push(SecretMatch {
+                kind: "basic_auth",
+                start: matched.start(),
+                end: matched.end(),
+                text: matched.as_str().to_string(),
             });
         }
     }
@@ -420,6 +693,37 @@ mod tests {
     }
 
     #[test]
+    fn lf_p1_03_redacts_modern_repository_and_registry_tokens() {
+        let fixtures = [
+            concat!("github_", "pat_FAKE_TEST_AAAAAAAAAAAAAAAAAAAAAAAA"),
+            concat!("ghs", "_FAKETOKENFORTESTONLYAAAAAAAAAAAAA"),
+            concat!("glpat", "-FAKE_TEST_AAAAAAAAAAAAAAAAAAAAA"),
+            concat!("npm", "_FAKETOKENFORTESTONLYAAAAAAAAAAAAAAA"),
+        ];
+        for fixture in fixtures {
+            let out = redact_text(&format!("credential={fixture}"));
+            assert!(!out.contains(fixture), "token survived: {out}");
+            assert!(out.contains("REDACTED"), "marker missing: {out}");
+        }
+    }
+
+    #[test]
+    fn lf_p1_03_redacts_chat_platform_and_basic_auth_tokens() {
+        let fixtures = [
+            concat!("mfa.", "FAKE_TEST_DISCORD_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            concat!("123456789:", "FAKE_TEST_TELEGRAM_AAAAAAAAAAAAAAAAAAAAA"),
+            concat!("Basic ", "ZmFrZS11c2Vy", "OmZha2UtcGFzcw=="),
+            "BASIC YTpi",
+            concat!("BEARER ", "FAKE_TEST_BEARER_AAAAAAAAAAAAAAAAA"),
+        ];
+        for fixture in fixtures {
+            let out = redact_text(&format!("Authorization: {fixture}"));
+            assert!(!out.contains(fixture), "token survived: {out}");
+            assert!(out.contains("REDACTED"), "marker missing: {out}");
+        }
+    }
+
+    #[test]
     fn redacts_aws_access_key() {
         let s = "[default]\naws_access_key_id = AKIAIOSFODNN7EXAMPLE";
         let out = redact_text(s);
@@ -462,11 +766,20 @@ mod tests {
 
     #[test]
     fn redacts_env_assignment_when_key_name_hints_secret() {
-        let s = "API_KEY=mysupersecretvalue123\nOTHER_VAR=public";
+        let s = "API_KEY=mysupersecretvalue123\naws_secret_access_key=lowercase_secret_value\nOTHER_VAR=public";
         let out = redact_text(s);
         assert!(out.contains("[REDACTED:env_assignment]"));
+        assert!(!out.contains("lowercase_secret_value"));
         // Public var stays unchanged.
         assert!(out.contains("OTHER_VAR=public"));
+    }
+
+    #[test]
+    fn lf_p1_03_basic_prose_and_noncredential_identifiers_are_not_redacted() {
+        let input = "basic auth\nbasic test\napi_version = \"2024-01-01\"\nmonkey = \"abcdefgh\"";
+        assert_eq!(redact_text(input), input);
+        assert_eq!(sanitize_tool_output(input), input);
+        assert!(find_secret_kinds(input).is_empty());
     }
 
     #[test]
@@ -721,12 +1034,133 @@ mod tests {
     }
 
     #[test]
+    fn lf_p1_03_sanitize_tool_output_preserves_clean_unicode_and_emoji_joiners() {
+        let s = "Grüße 世界 — Familienstatus: 👨‍👩‍👧‍👦";
+        assert_eq!(sanitize_tool_output(s), s);
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_detects_c0_and_zero_width_split_secrets() {
+        let c0 = concat!("sk-FAKE_TEST_C0_AAAAA", "\0", "AAAAAAAAAAAAAAA");
+        let zero_width = concat!("sk-FAKE_TEST_ZERO_AAAAA", "\u{200b}", "AAAAAAAAAAAAAAA");
+        let carriage_return = concat!("sk-FAKE_TEST_CR_AAAAA", "\r", "AAAAAAAAAAAAAAA");
+        for input in [c0, zero_width, carriage_return] {
+            let out = sanitize_tool_output(input);
+            assert!(!out.contains("FAKE_TEST"), "split secret survived: {out:?}");
+            assert!(out.contains("REDACTED"));
+            assert!(!out.contains('\0'));
+            assert!(!out.contains('\r'));
+        }
+    }
+
+    #[test]
+    fn lf_p1_03_zero_width_secret_detection_never_reactivates_guard_sigils() {
+        let input = concat!(
+            "<\u{200b}<\u{200b}<END_UNTRUSTED_SOURCE_DATA>\u{200b}>\u{200b}> ",
+            "sk-FAKE_TEST_GUARD_AAAAA\u{200b}AAAAAAAAAAAAAAA"
+        );
+        let out = sanitize_tool_output(input);
+        assert!(!out.contains("FAKE_TEST_GUARD"), "{out}");
+        assert!(out.contains("REDACTED"), "{out}");
+        assert!(!out.contains("<<<END_UNTRUSTED_SOURCE_DATA>>>"), "{out}");
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_normalizes_crlf_but_drops_standalone_cr() {
+        assert_eq!(
+            sanitize_tool_output("first\r\nsecond\rthird"),
+            "first\nsecondthird"
+        );
+    }
+
+    #[test]
     fn qu_04_sanitize_tool_output_preserves_relative_compiler_paths() {
         // Drift guard for the design choice: path-traversal
         // neutralisation is NOT in the sanitize path, so a legit
         // `--> ../src/foo.rs` diagnostic survives intact.
         let s = "error[E0425]\n  --> ../src/foo.rs:12:5";
         assert_eq!(sanitize_tool_output(s), s);
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_redacts_short_nested_json_credentials() {
+        let input = r#"{
+          "result": {
+            "token": "short",
+            "API_KEY": 12345,
+            "accessToken": "tiny",
+            "client-secret": "small",
+            "privateKey": "brief"
+          },
+          "session_id": "follow-up-handle",
+          "message": "useful result"
+        }"#;
+        let out = sanitize_tool_output(input);
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["result"]["token"], "[REDACTED:field]");
+        assert_eq!(value["result"]["API_KEY"], "[REDACTED:field]");
+        assert_eq!(value["result"]["accessToken"], "[REDACTED:field]");
+        assert_eq!(value["result"]["client-secret"], "[REDACTED:field]");
+        assert_eq!(value["result"]["privateKey"], "[REDACTED:field]");
+        assert_eq!(
+            value["session_id"], "follow-up-handle",
+            "non-credential workflow handles must remain usable"
+        );
+        assert_eq!(value["message"], "useful result");
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_redacts_embedded_json_credentials() {
+        let input =
+            r#"tool said: {"accessToken":"tiny","client-secret":"small","ok":true} and continued"#;
+        let out = sanitize_tool_output(input);
+        assert!(!out.contains("tiny"), "embedded field survived: {out}");
+        assert!(!out.contains("small"), "embedded field survived: {out}");
+        assert!(out.contains(r#""accessToken":"[REDACTED:field]""#));
+        assert!(out.contains(r#""client-secret":"[REDACTED:field]""#));
+        assert!(out.contains("and continued"));
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_decodes_json_escapes_before_matching() {
+        let input = concat!(r#"{"value":"sk-\u0046AKE_TEST_JSON_AAAAAAAAAAAAAAAAAAA"}"#,);
+        let out = sanitize_tool_output(input);
+        assert!(
+            !out.contains("FAKE_TEST_JSON"),
+            "escaped secret survived: {out}"
+        );
+        assert!(out.contains("REDACTED"));
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_strips_json_escaped_ansi_before_matching() {
+        let input =
+            concat!(r#"{"note":"\u001b[31msk-FAKE_TEST_JSON_ANSI_AAAAAAAAAAAAAAA\u001b[0m"}"#,);
+        let out = sanitize_tool_output(input);
+        assert!(
+            !out.contains("FAKE_TEST_JSON_ANSI"),
+            "escaped ANSI bypassed redaction: {out}"
+        );
+        assert!(!out.contains("\\u001b"), "escaped ANSI survived: {out}");
+        assert!(out.contains("REDACTED"));
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_detects_json_escaped_zero_width_split() {
+        let input = concat!(r#"{"note":"sk-FAKE_TEST_JSON_ZERO_AAAAA\u200bAAAAAAAAAAAAAAA"}"#,);
+        let out = sanitize_tool_output(input);
+        assert!(
+            !out.contains("FAKE_TEST_JSON_ZERO"),
+            "escaped split survived: {out}"
+        );
+        assert!(out.contains("REDACTED"));
+    }
+
+    #[test]
+    fn lf_p1_03_sanitize_tool_output_is_idempotent_after_structured_redaction() {
+        let once = sanitize_tool_output(r#"{"token":"tiny","ok":true}"#);
+        let twice = sanitize_tool_output(&once);
+        assert_eq!(twice, once);
     }
 
     // ── QU-04 path-traversal helpers ──────────────────────────────────

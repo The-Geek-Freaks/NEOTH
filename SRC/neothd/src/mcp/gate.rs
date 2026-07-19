@@ -1,6 +1,6 @@
 //! Secure MCP tool invocation gate (CDX-03).
 //!
-//! Wraps the raw [`McpClient::call_tool`] transport with three security
+//! Wraps the raw [`McpClient::call_tool`] transport with four security
 //! layers, in order:
 //!
 //!  1. **Allowlist** — when `cfg.allow_tools` is `Some([...])`, only the
@@ -17,6 +17,9 @@
 //!     a [`EVENT_TYPE_MCP_TOOL_REJECTED`] (0xC1) frame is appended.
 //!     `arguments_hash` is `xxh3-64` of the canonical JSON so secrets
 //!     never land in the WAL while leaving a deduplicatable audit trail.
+//!  4. **External-output boundary** — the raw response size is accounted for,
+//!     the WAL receives metadata only, then every peer-controlled text field is
+//!     canonically sanitized before CLI, elicitation, prompt, recall, or CCR.
 //!
 //! `list_tools_sanitized` is the safe wrapper around
 //! [`McpClient::list_tools`] — it applies [`sanitize_description`] to
@@ -603,7 +606,7 @@ async fn call_tool_with_success_audit(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<ToolCallResult, GateError> {
-    let result = client.call_tool(tool, arguments).await?;
+    let mut result = client.call_tool(tool, arguments).await?;
     if let Some(writer) = writer {
         let content_bytes: usize = result
             .content
@@ -626,6 +629,11 @@ async fn call_tool_with_success_audit(
         .await
         .map_err(GateError::Wal)?;
     }
+    // GOLD-LF-P1-03 — the C0 audit above deliberately measures the raw wire
+    // response while persisting metadata only. Sanitize immediately after that
+    // accounting boundary and before the typed result can reach CLI rendering,
+    // elicitation, TokenJuice, untrusted wrapping, prompt assembly, or CCR.
+    result.sanitize_external_output();
     Ok(result)
 }
 

@@ -165,8 +165,9 @@ pub struct RecallArgs {
     #[arg(long, conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs"])]
     pub communities: bool,
 
-    /// GOLD-ADAPT-ODY-26 — FTS search over raw transcript turns (persisted by
-    /// `neoth chat` and `neoth serve`) with N before/after context rows. Returns
+    /// GOLD-ADAPT-ODY-26 — FTS search over transcript turns (operator turns are
+    /// source-exact; agent turns are secret/control-sanitized) with N
+    /// before/after context rows. Persisted by `neoth chat` and `neoth serve`. Returns
     /// matching turns ranked by BM25, each with up to `--context-rows` turns of
     /// conversation context from the same session. Bypasses episode recall entirely.
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract", "assoc", "bootstrap_assoc", "scorecard", "hubs", "communities"])]
@@ -281,7 +282,7 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         return Ok(());
     }
 
-    // GOLD-ADAPT-ODY-26 raw-transcript FTS short-circuit. Opens views.db and
+    // GOLD-ADAPT-ODY-26 transcript FTS short-circuit. Opens views.db and
     // searches raw_turns_fts for the query, returning BM25-ranked results with
     // before/after context rows. No WAL scan, no episode recall.
     if let Some(q) = args.transcript.clone() {
@@ -1195,11 +1196,12 @@ pub(crate) async fn answer_conversational_recall(prompt: &str, db_path: &Path) -
             Vec::new()
         }
     };
-    Some(crate::recall::conversational::format_recall_reply(
-        &hits,
-        query.language,
-        &query.topic,
-    ))
+    let reply =
+        crate::recall::conversational::format_recall_reply(&hits, query.language, &query.topic);
+    // This reply can bypass the provider and go straight to an external
+    // channel. Treat every recalled byte as untrusted legacy data even when
+    // the current write path is already sanitised.
+    Some(crate::security::redact::sanitize_tool_output(&reply))
 }
 
 /// GOLD-WIRE-02b — channel-path recall authorization. Conversational recall
@@ -1564,6 +1566,22 @@ impl RecallOutput {
     pub(crate) fn is_empty(&self) -> bool {
         self.canonical.is_empty() && self.episodes.is_empty() && self.contradictions.is_empty()
     }
+
+    /// Sanitise every memory-derived string before it can enter a provider
+    /// prompt, CCR payload, or channel response. The underlying SQLite rows
+    /// remain untouched so operator-owned source memory is not rewritten.
+    fn sanitize_for_egress(mut self) -> Self {
+        for hit in self.canonical.iter_mut().chain(self.episodes.iter_mut()) {
+            hit.text = crate::security::redact::sanitize_tool_output(&hit.text);
+        }
+        for contradiction in &mut self.contradictions {
+            contradiction.statement_a =
+                crate::security::redact::sanitize_tool_output(&contradiction.statement_a);
+            contradiction.statement_b =
+                crate::security::redact::sanitize_tool_output(&contradiction.statement_b);
+        }
+        self
+    }
 }
 
 /// Max pending contradictions surfaced into one prompt — operator-attention
@@ -1600,6 +1618,7 @@ pub(crate) fn query_three_lanes(
         episodes,
         contradictions,
     }
+    .sanitize_for_egress()
 }
 
 /// Error-preserving variant for telemetry-sensitive callers. A "true miss"
@@ -1623,7 +1642,8 @@ pub(crate) fn query_three_lanes_checked(
         canonical,
         episodes,
         contradictions,
-    })
+    }
+    .sanitize_for_egress())
 }
 
 /// Prompt-relevant PENDING contradictions, joined to both facts' statement text.
@@ -1680,7 +1700,7 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
 // Required for the conn alias used above.
 use rusqlite::Connection;
 
-/// GOLD-ADAPT-ODY-26 — render raw-transcript FTS results.
+/// GOLD-ADAPT-ODY-26 — render transcript FTS results.
 ///
 /// Opens `views.db`, calls `memory::transcript_store::search_turns`, and
 /// renders the results. Table format: for each hit, a header line is printed,
@@ -1764,13 +1784,13 @@ fn run_session_search(query: &str, limit: usize, output: crate::cli::OutputForma
                 .iter()
                 .map(|h| {
                     serde_json::json!({
-                        "session_id": h.card.session_id,
-                        "display_name": h.card.display_name,
+                        "session_id": crate::security::redact::sanitize_tool_output(&h.card.session_id),
+                        "display_name": h.card.display_name.as_deref().map(crate::security::redact::sanitize_tool_output),
                         "started_at_unix": h.card.started_at_unix,
-                        "topics": h.card.top_topics,
-                        "summary": h.card.one_line_summary,
+                        "topics": h.card.top_topics.iter().map(|topic| crate::security::redact::sanitize_tool_output(topic)).collect::<Vec<_>>(),
+                        "summary": crate::security::redact::sanitize_tool_output(&h.card.one_line_summary),
                         "score": h.score,
-                        "matched_fields": h.matched_fields,
+                        "matched_fields": h.matched_fields.iter().map(|field| crate::security::redact::sanitize_tool_output(field)).collect::<Vec<_>>(),
                     })
                 })
                 .collect();
@@ -1787,15 +1807,27 @@ fn run_session_search(query: &str, limit: usize, output: crate::cli::OutputForma
                     .display_name
                     .as_deref()
                     .unwrap_or(&h.card.one_line_summary);
+                let session_id = crate::security::redact::sanitize_tool_output(&h.card.session_id);
+                let title = crate::security::redact::sanitize_tool_output(title);
+                let matched_fields = h
+                    .matched_fields
+                    .iter()
+                    .map(|field| crate::security::redact::sanitize_tool_output(field))
+                    .collect::<Vec<_>>()
+                    .join("+");
                 println!(
                     "[{}] {} (score {}, matched {})",
-                    h.card.session_id,
-                    title,
-                    h.score,
-                    h.matched_fields.join("+")
+                    session_id, title, h.score, matched_fields
                 );
                 if !h.card.top_topics.is_empty() {
-                    println!("    topics: {}", h.card.top_topics.join(", "));
+                    let topics = h
+                        .card
+                        .top_topics
+                        .iter()
+                        .map(|topic| crate::security::redact::sanitize_tool_output(topic))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    println!("    topics: {topics}");
                 }
             }
         }
@@ -2747,6 +2779,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn conversational_channel_recall_sanitizes_legacy_episode_text() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        let secret = concat!("sk-", "FAKE_TEST_CHANNEL_RECALL_AAAAAAAAAA");
+        let legacy = format!(
+            "rust memory sk-\x1b[31m{}\x1b[0m remains useful",
+            &secret[3..]
+        );
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (11, 1, 1700000000000000001, ?1, 'safe-recall', 0.5, 0)",
+                params![legacy],
+            )
+            .unwrap();
+        }
+
+        let reply = answer_conversational_recall("Do you remember when we talked about rust?", &db)
+            .await
+            .expect("recall intent must produce a channel-ready reply");
+        assert!(reply.contains("rust memory"), "{reply}");
+        assert!(reply.contains("[REDACTED:openai_key]"), "{reply}");
+        assert!(!reply.contains(secret), "{reply}");
+        assert!(!reply.contains('\x1b'), "{reply:?}");
+    }
+
+    #[tokio::test]
     async fn answer_conversational_recall_empty_db_returns_nothing_found_not_error() {
         // GOLD-WIRE-02 best-effort: a missing/empty views.db must not error —
         // the recall short-circuit still fires and renders "nothing found".
@@ -2977,6 +3037,62 @@ mod tests {
         );
         assert!((c.confidence - 0.9).abs() < 1e-4);
         assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn query_three_lanes_sanitizes_every_provider_bound_lane() {
+        use crate::memory::region_router::route_query;
+        use crate::memory::store;
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let secret = concat!("sk-", "FAKE_TEST_LANES_AAAAAAAAAAAAAAAAA");
+        let colored = format!("sk-\x1b[35m{}\x1b[0m", &secret[3..]);
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (30, 1, 1000, ?1, 'lane-episode', 0.7, 0)",
+            params![format!("payment episode {colored}")],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (id, statement, source, scope, asserted_at, fact_state) \
+             VALUES (31, ?1, 'op', 'global', 1000, 'verified'), \
+                    (32, ?2, 'op', 'global', 1001, 'verified'), \
+                    (33, ?3, 'op', 'global', 1002, 'verified')",
+            params![
+                format!("payment canonical {colored}"),
+                format!("payment contradiction a {colored}"),
+                format!("payment contradiction b {colored}"),
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_contradictions (fact_a_id, fact_b_id, confidence, detected_at, decision) \
+             VALUES (32, 33, 0.9, 1003, 'pending')",
+            [],
+        )
+        .unwrap();
+
+        for output in [
+            query_three_lanes(&conn, &route_query("payment"), "payment", 5),
+            query_three_lanes_checked(&conn, &route_query("payment"), "payment", 5).unwrap(),
+        ] {
+            let mut rendered = output
+                .canonical
+                .iter()
+                .chain(&output.episodes)
+                .map(|hit| hit.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            for contradiction in &output.contradictions {
+                rendered.push_str(&contradiction.statement_a);
+                rendered.push_str(&contradiction.statement_b);
+            }
+            assert!(rendered.contains("payment"), "{rendered}");
+            assert!(rendered.contains("[REDACTED:openai_key]"), "{rendered}");
+            assert!(!rendered.contains(secret), "{rendered}");
+            assert!(!rendered.contains('\x1b'), "{rendered:?}");
+        }
     }
 
     #[test]

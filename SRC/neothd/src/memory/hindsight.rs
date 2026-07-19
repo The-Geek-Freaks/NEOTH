@@ -33,8 +33,7 @@
 
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -232,6 +231,21 @@ pub fn card_path(home: &Path, session_id: &str) -> PathBuf {
     hindsight_dir(home).join(format!("{session_id}.json"))
 }
 
+fn ensure_private_hindsight_dir(dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(windows)]
+    {
+        crate::wal::win_native::set_private_current_user_directory_dacl(dir)?;
+        crate::wal::win_native::verify_private_directory_dacl(dir)?;
+    }
+    Ok(())
+}
+
 /// Save the card atomically — `.tmp` + rename, Windows-safe.
 /// Overwrites existing (operator may re-compress a session
 /// post-hoc with corrected turn data).
@@ -242,23 +256,10 @@ pub fn save_card(home: &Path, card: &HindsightCard) -> std::io::Result<PathBuf> 
             format!("unsafe session_id {:?}", card.session_id),
         ));
     }
-    fs::create_dir_all(hindsight_dir(home))?;
+    ensure_private_hindsight_dir(&hindsight_dir(home))?;
     let final_path = card_path(home, &card.session_id);
-    let tmp_path = final_path.with_extension("json.tmp");
     let body = serde_json::to_vec_pretty(card).map_err(std::io::Error::other)?;
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(&body)?;
-        f.flush()?;
-    }
-    if final_path.exists() {
-        fs::remove_file(&final_path)?;
-    }
-    fs::rename(&tmp_path, &final_path)?;
+    crate::util::atomic_write::atomic_write_private(&final_path, &body)?;
     Ok(final_path)
 }
 
@@ -267,7 +268,11 @@ pub fn save_card(home: &Path, card: &HindsightCard) -> std::io::Result<PathBuf> 
 /// Best-effort: a missing card or empty name is a no-op `Ok(false)` (the
 /// deterministic `one_line_summary` stands); `Ok(true)` when the name landed.
 pub fn update_display_name(home: &Path, session_id: &str, name: &str) -> std::io::Result<bool> {
-    let trimmed = name.trim();
+    // `display_name` normally comes from the utility provider, but keep the
+    // persistence boundary safe for every caller. Sanitize before trimming so
+    // terminal-control or credential bytes never enter a new card revision.
+    let sanitized = crate::security::redact::sanitize_tool_output(name);
+    let trimmed = sanitized.trim();
     if trimmed.is_empty() {
         return Ok(false);
     }
@@ -398,6 +403,9 @@ pub fn next_session_seed_banner(home: &Path, current_session_id: &str) -> String
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .unwrap_or(&card.one_line_summary);
+    // Legacy cards may predate the provider-output boundary. Preserve the raw
+    // source file and sanitize only this prompt/terminal egress.
+    let label = crate::security::redact::sanitize_tool_output(label);
     format!("[neoth] last session: {label}")
 }
 
@@ -597,8 +605,50 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let card = compress_session("s1", &[op(0, "x")]);
         save_card(home.path(), &card).unwrap();
-        let tmp = hindsight_dir(home.path()).join("s1.json.tmp");
-        assert!(!tmp.exists());
+        let leftovers: Vec<_> = std::fs::read_dir(hindsight_dir(home.path()))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary card survived commit");
+    }
+
+    #[test]
+    fn lf_p1_03_hindsight_raw_operator_card_is_owner_private() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = hindsight_dir(home.path());
+        std::fs::create_dir_all(&dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o777)).unwrap();
+        }
+
+        let card = compress_session(
+            "raw-operator",
+            &[op(100, "source exact secret-shaped text")],
+        );
+        let path = save_card(home.path(), &card).unwrap();
+        assert_eq!(load_card(home.path(), "raw-operator"), Some(card));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        #[cfg(windows)]
+        {
+            crate::wal::win_native::verify_private_directory_dacl(&dir).unwrap();
+            let file = std::fs::File::open(&path).unwrap();
+            crate::wal::win_native::verify_private_file_handle(&file).unwrap();
+        }
     }
 
     #[test]
@@ -809,6 +859,38 @@ mod tests {
             load_card(home.path(), &id).unwrap().display_name.as_deref(),
             Some("Parser Build"),
             "an empty update must not clobber an existing display_name"
+        );
+    }
+
+    #[test]
+    fn lf_p1_03_display_name_is_sanitized_on_persistence_and_legacy_egress() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 150, "provider title", "reply").unwrap();
+        let id = session_id_for(150, "provider title");
+        let secret = concat!("sk-", "FAKE_TEST_HINDSIGHT_AAAAAAAAAAAAAAA");
+        let raw = format!("Useful title sk-\x1b[31m{}\x1b[0m", &secret[3..]);
+
+        assert!(update_display_name(home.path(), &id, &raw).unwrap());
+        let stored = load_card(home.path(), &id).unwrap();
+        let stored_title = stored.display_name.as_deref().unwrap();
+        assert!(stored_title.contains("Useful title"), "{stored_title}");
+        assert!(stored_title.contains("REDACTED"), "{stored_title}");
+        assert!(!stored_title.contains(secret), "{stored_title}");
+        assert!(!stored_title.contains('\x1b'), "{stored_title:?}");
+
+        // Simulate a pre-boundary card without going through the safe updater.
+        let mut legacy = stored;
+        legacy.display_name = Some(raw.clone());
+        save_card(home.path(), &legacy).unwrap();
+        let banner = next_session_seed_banner(home.path(), "different-current-session");
+        assert!(banner.contains("Useful title"), "{banner}");
+        assert!(banner.contains("REDACTED"), "{banner}");
+        assert!(!banner.contains(secret), "{banner}");
+        assert!(!banner.contains('\x1b'), "{banner:?}");
+        assert_eq!(
+            load_card(home.path(), &id).unwrap().display_name.as_deref(),
+            Some(raw.as_str()),
+            "legacy source card must not be rewritten by egress sanitization"
         );
     }
 

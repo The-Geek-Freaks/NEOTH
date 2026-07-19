@@ -71,9 +71,9 @@ pub enum PatchApplyOutcome {
     /// caller spawns the test command there.
     Applied { worktree_path: PathBuf },
     /// `git apply --check` (or the apply itself) rejected the
-    /// patch. `stderr` carries git's diagnostic so the operator
-    /// (or the retry-policy's hint generator) sees the conflict
-    /// reason verbatim. The worktree was created but is left in
+    /// patch. `stderr` carries git's canonically sanitized diagnostic so the
+    /// operator (or the retry-policy's hint generator) sees the conflict
+    /// reason without terminal controls or credentials. The worktree is left in
     /// whatever state `git apply` produced; cleanup is the
     /// caller's responsibility.
     Rejected { stderr: String },
@@ -83,6 +83,13 @@ impl PatchApplyOutcome {
     pub fn is_applied(&self) -> bool {
         matches!(self, PatchApplyOutcome::Applied { .. })
     }
+}
+
+/// Canonical boundary for stderr emitted by external processes in this module.
+/// Keeping the sanitizer at the producer protects every caller, including
+/// self-source and cleanup paths that do not pass through the dispatcher WAL.
+fn sanitize_process_stderr(stderr: &[u8]) -> String {
+    crate::security::redact::sanitize_tool_output(String::from_utf8_lossy(stderr).trim())
 }
 
 /// Derive the task-scoped worktree path from the operator's
@@ -118,7 +125,7 @@ pub fn is_worktree_dirty(path: &Path) -> Result<bool> {
         anyhow::bail!(
             "git status --porcelain failed (exit {}): {}",
             out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
+            sanitize_process_stderr(&out.stderr)
         );
     }
     Ok(!out.stdout.is_empty())
@@ -148,7 +155,7 @@ pub fn create_task_worktree(repo_root: &Path, task_id: KanbanTaskId) -> Result<P
         anyhow::bail!(
             "git worktree add failed (exit {}): {}",
             out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
+            sanitize_process_stderr(&out.stderr)
         );
     }
     Ok(path)
@@ -171,7 +178,7 @@ pub fn apply_patch_in_worktree(worktree: &Path, patch: &Path) -> Result<PatchApp
         .context("spawn git apply --check")?;
     if !check.status.success() {
         return Ok(PatchApplyOutcome::Rejected {
-            stderr: String::from_utf8_lossy(&check.stderr).trim().to_string(),
+            stderr: sanitize_process_stderr(&check.stderr),
         });
     }
 
@@ -184,7 +191,7 @@ pub fn apply_patch_in_worktree(worktree: &Path, patch: &Path) -> Result<PatchApp
         .context("spawn git apply (real)")?;
     if !apply.status.success() {
         return Ok(PatchApplyOutcome::Rejected {
-            stderr: String::from_utf8_lossy(&apply.stderr).trim().to_string(),
+            stderr: sanitize_process_stderr(&apply.stderr),
         });
     }
 
@@ -208,7 +215,7 @@ pub fn cleanup_worktree(repo_root: &Path, worktree: &Path, force: bool) -> Resul
         anyhow::bail!(
             "git worktree remove failed (exit {}): {}",
             out.status.code().unwrap_or(-1),
-            String::from_utf8_lossy(&out.stderr).trim()
+            sanitize_process_stderr(&out.stderr)
         );
     }
     Ok(())
@@ -343,48 +350,49 @@ pub fn run_test_cmd(
 
     let Some(status) = run.exit else {
         return Ok(TestOutcome::Failed {
-            reason: format!(
+            reason: crate::security::redact::sanitize_tool_output(&format!(
                 "timed out after {}s — full log: {}",
                 timeout.as_secs(),
                 log_path.display()
-            ),
+            )),
         });
     };
 
     if status.success() {
         Ok(TestOutcome::Passed)
     } else {
-        // Tail of stderr is the most operator-useful summary;
-        // full streams sit in the log file for inspection.
-        let tail = String::from_utf8_lossy(&run.stderr);
-        let trimmed = tail.trim();
-        let head = if trimmed.is_empty() {
-            format!("exit code {}", status.code().unwrap_or(-1))
-        } else {
-            // Cap inline reason at ~400 chars — the WAL frame's
-            // `reason` field passes through the dispatcher's
-            // redact_text + we don't want a 64 KiB compiler dump
-            // inline. Walk back to a UTF-8 char boundary so a
-            // multibyte rustc arrow (`-->`) at the cut can't panic.
-            let max = 400;
-            if trimmed.len() > max {
-                let mut end = max;
-                while end > 0 && !trimmed.is_char_boundary(end) {
-                    end -= 1;
-                }
-                let mut s = trimmed[..end].to_string();
-                s.push_str(&format!(
-                    "... ({} more bytes — see {})",
-                    trimmed.len() - end,
-                    log_path.display()
-                ));
-                s
-            } else {
-                trimmed.to_string()
-            }
-        };
-        Ok(TestOutcome::Failed { reason: head })
+        Ok(TestOutcome::Failed {
+            reason: build_test_failure_reason(&run.stderr, status.code().unwrap_or(-1), &log_path),
+        })
     }
+}
+
+/// Build the bounded retry/WAL diagnosis from test stderr. Redaction is
+/// intentionally performed before the 400-byte cap: truncating first can cut a
+/// credential below its pattern's minimum length and leak that prefix.
+fn build_test_failure_reason(stderr: &[u8], exit_code: i32, log_path: &Path) -> String {
+    let tail = String::from_utf8_lossy(stderr);
+    let sanitized = crate::security::redact::sanitize_tool_output(tail.trim());
+    if sanitized.is_empty() {
+        return format!("exit code {exit_code}");
+    }
+
+    const MAX_INLINE_BYTES: usize = 400;
+    if sanitized.len() <= MAX_INLINE_BYTES {
+        return sanitized;
+    }
+
+    let mut end = MAX_INLINE_BYTES;
+    while end > 0 && !sanitized.is_char_boundary(end) {
+        end -= 1;
+    }
+    let mut reason = sanitized[..end].to_string();
+    reason.push_str(&crate::security::redact::sanitize_tool_output(&format!(
+        "... ({} more bytes — see {})",
+        sanitized.len() - end,
+        log_path.display()
+    )));
+    reason
 }
 
 /// QU-05 — run `cargo check --message-format=json` inside a task
@@ -422,8 +430,9 @@ pub fn run_cargo_check_json(
     let log_path = write_test_log(worktree, cmd, &run.stdout, &run.stderr, &run.exit);
     // rustc emits the JSON diagnostic objects on stdout; the final
     // "could not compile" line goes to stderr.
-    let diagnostics =
+    let mut diagnostics =
         crate::coding::cargo_check::parse_cargo_check_json(&String::from_utf8_lossy(&run.stdout));
+    sanitize_cargo_diagnostics(&mut diagnostics);
     let timed_out = run.exit.is_none();
     // passed = clean exit AND no hard errors in the JSON. A timeout
     // (exit None) is never a pass.
@@ -435,6 +444,25 @@ pub fn run_cargo_check_json(
         diagnostics,
         log_path,
     })
+}
+
+/// Cargo JSON is external stdout. Sanitize every textual leaf before the typed
+/// diagnostics leave this module; callers in the dispatcher and self-source
+/// gate can then safely log, persist, or re-inject them.
+fn sanitize_cargo_diagnostics(diagnostics: &mut [crate::coding::cargo_check::CargoDiagnostic]) {
+    for diagnostic in diagnostics {
+        diagnostic.level = crate::security::redact::sanitize_tool_output(&diagnostic.level);
+        diagnostic.code = diagnostic
+            .code
+            .take()
+            .map(|code| crate::security::redact::sanitize_tool_output(&code));
+        diagnostic.message = crate::security::redact::sanitize_tool_output(&diagnostic.message);
+        diagnostic.file = diagnostic
+            .file
+            .take()
+            .map(|file| crate::security::redact::sanitize_tool_output(&file));
+        diagnostic.rendered = crate::security::redact::sanitize_tool_output(&diagnostic.rendered);
+    }
 }
 
 /// Outcome of one [`run_cargo_check_json`] invocation.
@@ -475,12 +503,15 @@ fn write_test_log(
     // redact stdout+stderr before persisting them to disk.
     let stdout_lossy = String::from_utf8_lossy(stdout);
     let stderr_lossy = String::from_utf8_lossy(stderr);
-    let stdout_red = crate::security::redact::redact_text(&stdout_lossy);
-    let stderr_red = crate::security::redact::redact_text(&stderr_lossy);
+    let stdout_red = crate::security::redact::sanitize_tool_output(&stdout_lossy);
+    let stderr_red = crate::security::redact::sanitize_tool_output(&stderr_lossy);
+    let cmd_red = crate::security::redact::sanitize_tool_output(cmd);
+    let worktree_red =
+        crate::security::redact::sanitize_tool_output(&worktree.display().to_string());
     let body = format!(
         "# NEOTH Phase 4 test-output log\n\
-         # cmd: {cmd}\n\
-         # worktree: {}\n\
+         # cmd: {cmd_red}\n\
+         # worktree: {worktree_red}\n\
          # {exit_line}\n\
          # written_unix_ms: {}\n\
          \n\
@@ -488,7 +519,6 @@ fn write_test_log(
          {stdout_red}\n\
          ## stderr ({} bytes)\n\n\
          {stderr_red}\n",
-        worktree.display(),
         crate::time::now_unix_ms_u128(),
         stdout.len(),
         stderr.len(),
@@ -771,6 +801,76 @@ mod tests {
         assert!(body.contains("## stdout"));
         assert!(body.contains("## stderr"));
         assert!(body.contains("exit_status: 0"));
+    }
+
+    #[test]
+    fn lf_p1_03_test_log_sanitizes_ansi_split_secrets_before_disk() {
+        let dir = tempdir().unwrap();
+        let secret = concat!("sk-", "FAKE_TEST_WORKTREE_AAAAAAAAAAAAAAAAA");
+        let stdout = format!("useful stdout \x1b[31m{secret}\x1b[0m");
+        let stderr = format!("useful stderr \x1b[33m{secret}\x1b[0m");
+        let path = write_test_log(
+            dir.path(),
+            &format!("test --token \x1b[34m{secret}\x1b[0m"),
+            stdout.as_bytes(),
+            stderr.as_bytes(),
+            &None,
+        );
+        let body = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !body.contains(secret),
+            "secret reached durable test log: {body}"
+        );
+        assert!(
+            !body.contains('\x1b'),
+            "ANSI reached durable test log: {body:?}"
+        );
+        assert!(body.matches("REDACTED").count() >= 3);
+        assert!(body.contains("useful stdout"));
+        assert!(body.contains("useful stderr"));
+    }
+
+    #[test]
+    fn lf_p1_03_failure_reason_redacts_before_truncating_boundary_secret() {
+        let dir = tempdir().unwrap();
+        let secret = concat!("sk-", "FAKE_TEST_TRUNCATION_AAAAAAAAAAAAAAAAA");
+        let stderr = format!("{}\x1b[31m{secret}\x1b[0m", "x".repeat(390));
+
+        let reason = build_test_failure_reason(stderr.as_bytes(), 1, &dir.path().join("log"));
+        assert!(!reason.contains(secret), "secret survived cap: {reason}");
+        assert!(
+            !reason.contains("sk-FAKE_TEST"),
+            "partial secret survived: {reason}"
+        );
+        assert!(!reason.contains('\x1b'));
+        assert!(reason.starts_with(&"x".repeat(100)));
+    }
+
+    #[test]
+    fn lf_p1_03_external_process_outputs_are_sanitized_at_producer_boundary() {
+        let secret = concat!("sk-", "FAKE_TEST_GIT_CARGO_AAAAAAAAAAAAAAAAA");
+        let stderr = format!("git: \x1b[31m{secret}\x1b[0m conflict");
+        let git_diagnostic = sanitize_process_stderr(stderr.as_bytes());
+        assert!(!git_diagnostic.contains(secret));
+        assert!(!git_diagnostic.contains('\x1b'));
+        assert!(git_diagnostic.contains("REDACTED"));
+        assert!(git_diagnostic.contains("conflict"));
+
+        let mut diagnostics = vec![crate::coding::cargo_check::CargoDiagnostic {
+            level: "error".into(),
+            code: Some(format!("E-\x1b[31m{secret}\x1b[0m")),
+            message: format!("cannot use \x1b[31m{secret}\x1b[0m"),
+            file: Some(format!("src/\x1b[31m{secret}\x1b[0m.rs")),
+            line: Some(7),
+            rendered: format!("error: \x1b[31m{secret}\x1b[0m"),
+        }];
+        sanitize_cargo_diagnostics(&mut diagnostics);
+        let serialized = format!("{:?}", diagnostics[0]);
+        assert!(!serialized.contains(secret));
+        assert!(!serialized.contains("\\u{1b}"));
+        assert!(serialized.matches("REDACTED").count() >= 4);
+        assert!(serialized.contains("cannot use"));
+        assert_eq!(diagnostics[0].line, Some(7));
     }
 
     #[test]

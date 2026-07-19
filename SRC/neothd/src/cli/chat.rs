@@ -5277,7 +5277,8 @@ async fn name_session_best_effort(
     let provider = match crate::providers::from_config_for_utility_at(config, home).await {
         Ok(p) => p,
         Err(e) => {
-            tracing::debug!(error = %e, "session-naming: utility provider build failed");
+            let error = crate::security::redact::sanitize_tool_output(&e.to_string());
+            tracing::debug!(error = %error, "session-naming: utility provider build failed");
             return;
         }
     };
@@ -5325,7 +5326,8 @@ async fn name_session_best_effort(
             return;
         }
         Ok(Err(e)) => {
-            tracing::debug!(error = %e, "session-naming: completion failed");
+            let error = crate::security::redact::sanitize_tool_output(&e.to_string());
+            tracing::debug!(error = %error, "session-naming: completion failed");
             return;
         }
         Err(_) => {
@@ -5344,7 +5346,11 @@ async fn name_session_best_effort(
 /// Reduce a raw model reply to a clean one-line title: first non-empty line,
 /// stripped of surrounding quotes + trailing punctuation, capped at 80 chars.
 fn sanitize_session_title(raw: &str) -> String {
-    let line = raw
+    // Provider output crosses the canonical external-text boundary before
+    // line selection or truncation. Truncating first could shorten a token
+    // below its detectable shape and persist the remaining prefix forever.
+    let sanitized = crate::security::redact::sanitize_tool_output(raw);
+    let line = sanitized
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
@@ -6710,7 +6716,12 @@ fn maybe_repo_context_block_at_paths(
         Ok(h) if !h.is_empty() => h,
         _ => return None,
     };
-    let block = crate::code_map::recall::render_context_block(&hits);
+    // The code-map DB may predate current write validation or have been
+    // imported from another installation. Sanitise before compression so the
+    // persistent CCR store can never receive the unsafe original bytes.
+    let block = crate::security::redact::sanitize_tool_output(
+        &crate::code_map::recall::render_context_block(&hits),
+    );
     if block.is_empty() {
         return None;
     }
@@ -6723,7 +6734,8 @@ fn maybe_repo_context_block_at_paths(
         config.compression.thresholds(),
         ccr_dir.to_path_buf(),
     ) {
-        return Some(rt.compress_for_llm(&block).0);
+        let compressed = rt.compress_for_llm(&block).0;
+        return Some(crate::security::redact::sanitize_tool_output(&compressed));
     }
     Some(block)
 }
@@ -6824,7 +6836,7 @@ pub(crate) fn append_architecture_findings(
     repo_context: Option<String>,
     findings: &crate::code_map::recall::ArchitectureFindings,
 ) -> Option<String> {
-    Some(match repo_context {
+    let combined = match repo_context {
         Some(mut context) => {
             if !context.ends_with('\n') {
                 context.push('\n');
@@ -6834,7 +6846,8 @@ pub(crate) fn append_architecture_findings(
             context
         }
         None => findings.block.clone(),
-    })
+    };
+    Some(crate::security::redact::sanitize_tool_output(&combined))
 }
 
 /// Durable metadata-only proof that the automatic cycle evidence reached a
@@ -7148,7 +7161,10 @@ fn recall_dedup_key(text: &str) -> u64 {
 /// line and the whole Block::D stays prompt-budget-friendly.
 fn recall_snippet(text: &str) -> String {
     const MAX_SNIPPET_CHARS: usize = 240;
-    let text = text.trim();
+    // Sanitise before truncation: cutting first could remove the tail that
+    // makes a credential pattern detectable and leak a useful prefix.
+    let sanitized = crate::security::redact::sanitize_tool_output(text);
+    let text = sanitized.trim();
     let s = if text.chars().count() > MAX_SNIPPET_CHARS {
         let mut s: String = text.chars().take(MAX_SNIPPET_CHARS).collect();
         s.push('…');
@@ -9375,6 +9391,17 @@ mod tests {
         assert_eq!(sanitize_session_title("   \n  "), "");
         // Over-long titles are capped at 80 chars.
         assert!(sanitize_session_title(&"word ".repeat(40)).chars().count() <= 80);
+
+        let secret = concat!("sk-", "FAKE_TEST_SESSION_TITLE_AAAAAAAAAAAAA");
+        let title = sanitize_session_title(&format!(
+            "Useful session sk-\x1b[31m{}\x1b[0m\rforged",
+            &secret[3..]
+        ));
+        assert!(title.contains("Useful session"), "{title}");
+        assert!(title.contains("REDACTED"), "{title}");
+        assert!(!title.contains(secret), "{title}");
+        assert!(!title.contains('\x1b'), "{title:?}");
+        assert!(!title.contains('\r'), "{title:?}");
     }
     use tempfile::tempdir;
     use tokio::fs::read;
@@ -11968,6 +11995,73 @@ mod tests {
     }
 
     #[test]
+    fn repo_context_is_sanitized_before_prompt_and_persistent_ccr() {
+        use crate::code_map::persist::{open, persist_map};
+        use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let ccr = dir.path().join("ccr-test");
+        let secret = concat!("sk-", "FAKE_TEST_REPO_CCR_AAAAAAAAAAAAAA");
+        let colored = format!("sk-\x1b[31m{}\x1b[0m", &secret[3..]);
+        let mut imported_path = String::from("src/auth.rs\n");
+        for i in 0..300 {
+            imported_path.push_str(&format!("INFO auth worker-{i} heartbeat\n"));
+        }
+        imported_path.push_str(&format!("ERROR auth imported credential {colored}\n"));
+
+        let mut conn = open(&db).unwrap();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/repo/imported".into(),
+                files: vec![RepoFile {
+                    path: imported_path,
+                    language: Language::Rust,
+                    bytes: 10_000,
+                    loc: 302,
+                    sha256: String::new(),
+                    mtime_ns: 0,
+                    symbols: Vec::new(),
+                }],
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+        drop(conn);
+
+        let mut cfg = FreedomConfig::default();
+        cfg.code_map.auto_context_max_files = 5;
+        cfg.compression.enabled = true;
+        cfg.compression.min_block_bytes = 64;
+        cfg.compression.bloat_threshold = 0.0;
+        let prompt_block = maybe_repo_context_block_at_paths(&cfg, "auth", &db, &ccr)
+            .expect("imported matching context must reach the prompt boundary");
+        assert!(!prompt_block.contains(secret), "{prompt_block}");
+        assert!(!prompt_block.contains('\x1b'), "{prompt_block:?}");
+
+        let payloads: Vec<String> = std::fs::read_dir(&ccr)
+            .expect("compression must create its persistent CCR directory")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "ccr"))
+            .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
+            .collect();
+        assert!(
+            !payloads.is_empty(),
+            "structured repo context must be CCR-backed"
+        );
+        for payload in payloads {
+            assert!(payload.contains("[REDACTED:openai_key]"), "{payload}");
+            assert!(!payload.contains(secret), "{payload}");
+            assert!(!payload.contains('\x1b'), "{payload:?}");
+            assert!(
+                payload.contains("auth"),
+                "useful context must survive: {payload}"
+            );
+        }
+    }
+
+    #[test]
     fn architecture_skill_appends_automatic_cycle_findings_without_repo_context_gate() {
         use crate::code_map::graph::{CodeEdge, EdgeKind};
         use crate::code_map::persist::{open, persist_edges, persist_map};
@@ -12149,6 +12243,31 @@ mod tests {
             !out.contains("Flagged contradictions"),
             "empty contradiction lane → no heading: {out}"
         );
+    }
+
+    #[test]
+    fn recall_prompt_block_sanitizes_before_snippet_truncation() {
+        let secret = concat!("sk-", "FAKE_TEST_RECALL_BLOCK_AAAAAAAAAAA");
+        let colored = format!(
+            "useful memory sk-\x1b[32m{}\x1b[0m {}",
+            &secret[3..],
+            "tail ".repeat(100)
+        );
+        let output = crate::cli::recall::RecallOutput {
+            canonical: vec![ep(&colored)],
+            episodes: vec![ep(&colored)],
+            contradictions: vec![crate::cli::recall::ContradictionLine {
+                statement_a: colored,
+                statement_b: "useful alternative".into(),
+                confidence: 0.8,
+            }],
+        };
+
+        let block = render_recall_block_layered(&output);
+        assert!(block.contains("useful memory"), "{block}");
+        assert!(block.contains("[REDACTED:openai_key]"), "{block}");
+        assert!(!block.contains(secret), "{block}");
+        assert!(!block.contains('\x1b'), "{block:?}");
     }
 
     /// One EpisodeHit carrying just `text` — the other fields are inert for the

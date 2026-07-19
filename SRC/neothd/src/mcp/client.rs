@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::Result;
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -118,6 +119,58 @@ pub struct ToolCallResult {
     pub content: Vec<McpContent>,
     #[serde(default, rename = "isError")]
     pub is_error: bool,
+}
+
+impl ToolCallResult {
+    fn validate_external_output(&self, server_id: &str) -> Result<(), McpError> {
+        for content in &self.content {
+            let McpContent::Image { data, mime_type } = content else {
+                continue;
+            };
+            if mime_type.is_empty()
+                || !mime_type.contains('/')
+                || mime_type.chars().any(|ch| ch.is_control() || ch == '`')
+            {
+                return Err(McpError::Protocol(
+                    server_id.to_string(),
+                    "tools/call returned an invalid image MIME type".to_string(),
+                ));
+            }
+            base64::engine::general_purpose::STANDARD
+                .decode(data)
+                .map_err(|_| {
+                    McpError::Protocol(
+                        server_id.to_string(),
+                        "tools/call returned image data that is not standard base64".to_string(),
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    /// Scrub every string supplied by an MCP peer before the result can reach
+    /// a CLI renderer, the agent loop, recall, or another durable surface.
+    /// The authorization gate invokes this immediately after metadata-only raw
+    /// byte accounting, before the typed result can reach any consumer.
+    pub(crate) fn sanitize_external_output(&mut self) {
+        for content in &mut self.content {
+            match content {
+                McpContent::Text { text } => {
+                    *text = crate::security::redact::sanitize_tool_output(text);
+                }
+                McpContent::Image { mime_type, .. } => {
+                    // `data` is opaque base64 and may be as large as the MCP
+                    // frame cap. It is never rendered into the agent context;
+                    // scanning/copying it once per text regex would be a memory
+                    // amplifier and could corrupt valid image bytes. Only its
+                    // length is surfaced there. The peer-controlled textual
+                    // media type still receives the canonical pass.
+                    *mime_type = crate::security::redact::sanitize_tool_output(mime_type);
+                }
+                McpContent::Other => {}
+            }
+        }
+    }
 }
 
 /// Errors the client can surface.
@@ -409,7 +462,9 @@ impl McpClient {
                             return Err(McpError::RpcError {
                                 server: self.server_id.clone(),
                                 code: err.code,
-                                message: err.message,
+                                message: crate::security::redact::sanitize_tool_output(
+                                    &err.message,
+                                ),
                             });
                         }
                         return Ok(resp.result.unwrap_or(serde_json::Value::Null));
@@ -456,7 +511,7 @@ impl McpClient {
 
     /// Invoke a tool by name. `arguments` is the JSON object passed
     /// straight through to the server.
-    pub async fn call_tool(
+    pub(super) async fn call_tool(
         &mut self,
         name: &str,
         arguments: serde_json::Value,
@@ -472,6 +527,7 @@ impl McpClient {
             .await?;
         let parsed: ToolCallResult = serde_json::from_value(result)
             .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
+        parsed.validate_external_output(&self.server_id)?;
         Ok(parsed)
     }
 
@@ -708,6 +764,82 @@ mod tests {
         let body = r#"{"content":[{"type":"text","text":"failed"}],"isError":true}"#;
         let r: ToolCallResult = serde_json::from_str(body).unwrap();
         assert!(r.is_error);
+    }
+
+    #[test]
+    fn tool_call_result_sanitizes_every_peer_controlled_string() {
+        let secret = concat!("sk-", "FAKE_TEST_MCP_AAAAAAAAAAAAAAAAAAAAAA");
+        let mut result = ToolCallResult {
+            content: vec![
+                McpContent::Text {
+                    text: format!("log: \x1b[31m{secret}\x1b[0m"),
+                },
+                McpContent::Image {
+                    data: "b3BhcXVlLWltYWdlLWJ5dGVz".to_string(),
+                    mime_type: format!("image/png; note=\x1b[32m{secret}\x1b[0m"),
+                },
+                McpContent::Other,
+            ],
+            is_error: true,
+        };
+
+        result.sanitize_external_output();
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(
+            !serialized.contains(secret),
+            "peer text secret survived: {serialized}"
+        );
+        assert!(
+            serialized.contains("b3BhcXVlLWltYWdlLWJ5dGVz"),
+            "opaque image payload must remain byte-for-byte stable"
+        );
+        assert!(
+            !serialized.contains("\\u001b"),
+            "ANSI survived: {serialized}"
+        );
+        assert!(serialized.contains("REDACTED"));
+        assert!(
+            result.is_error,
+            "sanitizing must preserve MCP failure accounting"
+        );
+        assert_eq!(
+            result.content.len(),
+            3,
+            "content ordering/shape must survive"
+        );
+    }
+
+    #[test]
+    fn tool_call_result_rejects_text_smuggled_as_image_data() {
+        let secret = concat!("sk-", "FAKE_TEST_IMAGE_SMUGGLE_AAAAAAAAAAAAA");
+        let result = ToolCallResult {
+            content: vec![McpContent::Image {
+                data: secret.to_string(),
+                mime_type: "image/png".to_string(),
+            }],
+            is_error: false,
+        };
+        let error = result.validate_external_output("malicious").unwrap_err();
+        assert!(matches!(error, McpError::Protocol(ref id, _) if id == "malicious"));
+        assert!(
+            !format!("{error}").contains(secret),
+            "validation error must not echo invalid peer data"
+        );
+    }
+
+    #[test]
+    fn tool_call_result_rejects_mime_control_injection() {
+        let result = ToolCallResult {
+            content: vec![McpContent::Image {
+                data: "b2s=".to_string(),
+                mime_type: "image/png\n```forged".to_string(),
+            }],
+            is_error: false,
+        };
+        assert!(matches!(
+            result.validate_external_output("malicious"),
+            Err(McpError::Protocol(_, _))
+        ));
     }
 
     #[test]

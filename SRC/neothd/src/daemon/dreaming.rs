@@ -192,19 +192,27 @@ pub fn compose_dream(day: &str, theme_label: &str, events: &[EventRef]) -> Dream
         // Surface the first 2 + last event previews to give the
         // operator a quick "what was this about" anchor. Truncate
         // each preview at 120 chars char-boundary-safe. GOLD-SEC-14 /
-        // A-33: redact PII/secrets BEFORE the preview is persisted into
-        // the on-disk summary (JSONL + Obsidian) — SPEC-12 redaction was
-        // previously applied only to the cloud-LLM prompt, not here.
+        // A-33: sanitize credential-shaped secrets and terminal controls BEFORE
+        // the preview is persisted into the on-disk summary (JSONL + Obsidian)
+        // — SPEC-12 previously covered only the cloud-LLM prompt.
         let mut anchors: Vec<String> = events
             .iter()
             .take(2)
-            .map(|e| truncate_safe(&crate::security::redact::redact_text(&e.preview), 120))
+            .map(|e| {
+                truncate_safe(
+                    &crate::security::redact::sanitize_tool_output(&e.preview),
+                    120,
+                )
+            })
             .collect();
         if events.len() > 2 {
             let last = events.last().unwrap();
             anchors.push(format!(
                 "… {}",
-                truncate_safe(&crate::security::redact::redact_text(&last.preview), 120)
+                truncate_safe(
+                    &crate::security::redact::sanitize_tool_output(&last.preview),
+                    120,
+                )
             ));
         }
         format!(
@@ -464,14 +472,15 @@ const THEME_LABEL_MAX_CHARS: usize = 60;
 ///
 /// **Privacy gate (SPEC-12):** the chat provider that labels the cluster may be
 /// a metered cloud model (the operator opted into `summarize_themes`), so every
-/// preview is run through [`crate::security::redact::redact_text`] FIRST —
-/// secrets/keys/tokens/PII never leave the device inside a summarisation
-/// prompt, even though the operator opted into LLM labels. Redact-then-truncate
+/// preview is run through [`crate::security::redact::sanitize_tool_output`]
+/// FIRST — terminal controls and known secrets/keys/tokens do not leave the
+/// device inside a summarisation prompt, even though the operator opted into
+/// LLM labels. This is deliberately not a broad PII detector. Sanitize-then-truncate
 /// so a clipped preview can't leak a partial secret.
 pub fn build_theme_summary_prompt(previews: &[String]) -> String {
     let mut body = String::new();
     for p in previews.iter().take(THEME_SUMMARY_MAX_PREVIEWS) {
-        let redacted = crate::security::redact::redact_text(p.trim());
+        let redacted = crate::security::redact::sanitize_tool_output(p.trim());
         let trimmed = truncate_safe(redacted.trim(), THEME_SUMMARY_PREVIEW_CHARS);
         if trimmed.is_empty() {
             continue;
@@ -1285,8 +1294,10 @@ mod tests {
     fn build_theme_summary_prompt_redacts_secrets_before_the_cloud_call() {
         // SPEC-12 privacy gate: a preview carrying a secret must NOT reach the
         // (possibly cloud) summary prompt verbatim.
+        let split_secret = concat!("sk-", "FAKE_TEST_DREAM_AAAAAAAAAAAAAAAAA");
         let previews = vec![
             "deployed with key AKIAIOSFODNN7EXAMPLE to prod".to_string(),
+            format!("provider returned sk-\x1b[31m{}\x1b[0m", &split_secret[3..]),
             "talked about the weekend trip".to_string(),
         ];
         let prompt = build_theme_summary_prompt(&previews);
@@ -1294,9 +1305,22 @@ mod tests {
             !prompt.contains("AKIAIOSFODNN7EXAMPLE"),
             "raw secret leaked into the summary prompt: {prompt}"
         );
+        assert!(!prompt.contains(split_secret), "split key leaked: {prompt}");
+        assert!(!prompt.contains('\x1b'), "ANSI leaked: {prompt:?}");
         assert!(prompt.contains("[REDACTED:"), "expected a redaction marker");
         // Non-secret content still flows through.
         assert!(prompt.contains("weekend trip"));
+    }
+
+    #[test]
+    fn lf_p1_03_dream_summary_sanitizes_before_persistence() {
+        let secret = concat!("sk-", "FAKE_TEST_DREAM_STORE_AAAAAAAAAAAA");
+        let preview = format!("useful sk-\x1b[35m{}\x1b[0m", &secret[3..]);
+        let dream = compose_dream("2026-07-18", "safe", &[ev(1, 100, &preview)]);
+        assert!(dream.summary.contains("useful"), "{}", dream.summary);
+        assert!(dream.summary.contains("REDACTED"), "{}", dream.summary);
+        assert!(!dream.summary.contains(secret), "{}", dream.summary);
+        assert!(!dream.summary.contains('\x1b'), "{:?}", dream.summary);
     }
 
     #[test]

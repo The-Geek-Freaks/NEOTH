@@ -302,7 +302,10 @@ pub fn render_context_block(files: &[RelevantFile]) -> String {
             f.root, f.path, symbols_note, keyword_note,
         ));
     }
-    out
+    // Persisted/imported code maps are untrusted prompt input. Filter the
+    // complete rendered block so roots, paths, and symbol names cannot smuggle
+    // terminal controls or credentials into a provider prompt / CCR payload.
+    crate::security::redact::sanitize_tool_output(&out)
 }
 
 /// Bundled architecture-improvement skill which consumes GRAPH-02 findings.
@@ -406,19 +409,19 @@ fn render_architecture_findings(
     );
     if cycles.is_empty() {
         out.push_str("  - no call cycles detected in the persisted code map\n");
-        return out;
-    }
-    for finding in cycles {
-        let mut closed = finding.symbols.clone();
-        if let Some(first) = finding.symbols.first() {
-            closed.push(first.clone());
+    } else {
+        for finding in cycles {
+            let mut closed = finding.symbols.clone();
+            if let Some(first) = finding.symbols.first() {
+                closed.push(first.clone());
+            }
+            out.push_str(&format!("  - {}: {}\n", finding.root, closed.join(" -> ")));
         }
-        out.push_str(&format!("  - {}: {}\n", finding.root, closed.join(" -> ")));
+        if truncated {
+            out.push_str("  - additional cycles omitted by the context limit\n");
+        }
     }
-    if truncated {
-        out.push_str("  - additional cycles omitted by the context limit\n");
-    }
-    out
+    crate::security::redact::sanitize_tool_output(&out)
 }
 
 #[cfg(test)]
@@ -612,6 +615,46 @@ mod tests {
         assert!(s.contains("/repo/a/src/auth/middleware.rs"));
         assert!(s.contains("auth_middleware"));
         assert!(s.contains("path-keyword:+1"));
+    }
+
+    #[test]
+    fn rendered_code_map_context_sanitizes_persisted_roots_paths_and_symbols() {
+        let secret = concat!("sk-", "FAKE_TEST_CODE_MAP_AAAAAAAAAAAAAA");
+        let colored = format!("sk-\x1b[31m{}\x1b[0m", &secret[3..]);
+        let block = render_context_block(&[RelevantFile {
+            root: format!("/repo/{colored}"),
+            path: format!("src/useful-{colored}.rs"),
+            identifier_hits: 1,
+            matched_symbols: vec![format!("handler/{colored}")],
+            path_keyword_overlap: 1,
+        }]);
+
+        assert!(block.contains("src/useful-"), "{block}");
+        assert!(block.contains("[REDACTED:openai_key]"), "{block}");
+        assert_eq!(block.matches("[REDACTED:openai_key]").count(), 3, "{block}");
+        assert!(!block.contains(secret), "{block}");
+        assert!(!block.contains('\x1b'), "{block:?}");
+    }
+
+    #[test]
+    fn rendered_architecture_findings_sanitize_legacy_cycle_evidence() {
+        let secret = concat!("sk-", "FAKE_TEST_ARCH_MAP_AAAAAAAAAAAAAA");
+        let colored = format!("sk-\x1b[36m{}\x1b[0m", &secret[3..]);
+        let block = render_architecture_findings(
+            &[ArchitectureCycleFinding {
+                root: format!("/repo/{colored}"),
+                symbols: vec!["useful_a".into(), format!("useful_b/{colored}")],
+            }],
+            1,
+            2,
+            false,
+        );
+
+        assert!(block.contains("useful_a"), "{block}");
+        assert!(block.contains("[REDACTED:openai_key]"), "{block}");
+        assert_eq!(block.matches("[REDACTED:openai_key]").count(), 2, "{block}");
+        assert!(!block.contains(secret), "{block}");
+        assert!(!block.contains('\x1b'), "{block:?}");
     }
 
     #[test]

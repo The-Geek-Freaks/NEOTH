@@ -31,7 +31,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::coding::tool_router::{self, RoutingMode, ToolCategory};
@@ -93,9 +93,10 @@ impl ProviderWorker {
         match self.provider.complete(selector).await {
             Ok(c) => parse_category_reply(&c.text),
             Err(e) => {
+                let error = crate::security::redact::sanitize_tool_output(&e.to_string());
                 tracing::warn!(
                     worker = self.name,
-                    error = %e,
+                    error = %error,
                     "tool-router Stage-1 selector failed; falling back to Direct"
                 );
                 None
@@ -139,27 +140,32 @@ impl Worker for ProviderWorker {
             prompt,
             ..Default::default()
         };
-        let completion = self
-            .provider
-            .complete(req)
-            .await
-            .with_context(|| format!("worker {} provider.complete", self.name))?;
-        let parsed = parse_completion_text(&completion.text);
+        let completion = self.provider.complete(req).await.map_err(|error| {
+            let error = crate::security::redact::sanitize_tool_output(&error.to_string());
+            anyhow::anyhow!("worker {} provider.complete: {error}", self.name)
+        })?;
+        let parsed = parse_completion_text(&completion.text)?;
         let patch_path = patch_path_for(&self.patch_root, task);
         if !parsed.patch.is_empty() {
-            // Ensure the parent dir exists. Best-effort — we still
-            // record the patch_path in the outcome even if disk
-            // write fails so the operator sees what we tried.
+            // The durable patch and the apply candidate are one contract: do
+            // not return an applicable outcome when its owner-only audit copy
+            // could not be committed atomically.
             if let Some(parent) = patch_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    let error = crate::security::redact::sanitize_tool_output(&error.to_string());
+                    anyhow::anyhow!(
+                        "ProviderWorker: cannot prepare private patch directory; refusing apply candidate: {error}"
+                    )
+                })?;
             }
-            if let Err(e) = std::fs::write(&patch_path, parsed.patch.as_bytes()) {
-                tracing::warn!(
-                    path = %patch_path.display(),
-                    error = %e,
-                    "ProviderWorker: failed to persist patch — audit copy missing"
-                );
-            }
+            crate::config::credentials::write_mode_0600(&patch_path, parsed.patch.as_bytes())
+                .map_err(|error| {
+                    let error =
+                        crate::security::redact::sanitize_tool_output(&error.to_string());
+                    anyhow::anyhow!(
+                        "ProviderWorker: cannot commit private patch audit copy; refusing apply candidate: {error}"
+                    )
+                })?;
         }
         Ok(WorkerOutcome {
             patch_text: parsed.patch,
@@ -289,12 +295,98 @@ fn build_task_prompt(task: &KanbanTask, tool_hint: Option<ToolCategory>) -> Stri
 ///     `added=N total=N passing=N failing=N skipped=N` (any order,
 ///     missing keys default to 0). Phase-3-late: workers that don't
 ///     report tests yet leave this block out and tests = ZERO.
-pub fn parse_completion_text(text: &str) -> ParsedCompletion {
-    ParsedCompletion {
-        patch: extract_diff_block(text),
-        summary: extract_summary_line(text),
-        tests: extract_tests_line(text),
+/// Fail-closed parser for provider completions. Provider-generated
+/// diffs are executable data: silently replacing a credential with a marker
+/// would change program semantics and could apply a patch the provider never
+/// authored. Therefore a patch is accepted only when harmless CRLF transport
+/// normalization, control stripping and canonical redaction leave every
+/// executable diff byte unchanged. Summaries remain non-executable and may
+/// safely be returned in redacted form. The `Result`
+/// return type makes this invariant apply to every caller, not just
+/// [`ProviderWorker::execute`].
+pub fn parse_completion_text(text: &str) -> Result<ParsedCompletion> {
+    // Provider transports commonly return CRLF on Windows. Canonicalize that
+    // harmless line-ending representation before the byte-equality security
+    // check. Standalone CR remains untouched and is still rejected when the
+    // canonical sanitizer removes it below.
+    let canonical_text = text.replace("\r\n", "\n");
+    let no_ansi = crate::security::redact::strip_ansi(&canonical_text);
+    let raw_patch = extract_diff_block(&canonical_text);
+    let control_stripped_patch = extract_diff_block(&no_ansi);
+    let sanitized_patch = sanitize_diff_text(&control_stripped_patch);
+
+    if raw_patch != control_stripped_patch
+        || sanitized_patch != control_stripped_patch
+        || reconstructed_diff_side_requires_redaction(&control_stripped_patch, true)
+        || reconstructed_diff_side_requires_redaction(&control_stripped_patch, false)
+    {
+        anyhow::bail!(
+            "ProviderWorker: provider patch contained terminal controls or credential-like output; patch withheld before persistence and apply"
+        );
     }
+
+    Ok(ParsedCompletion {
+        patch: control_stripped_patch,
+        summary: crate::security::redact::sanitize_tool_output(&extract_summary_line(&no_ansi)),
+        tests: extract_tests_line(&no_ansi),
+    })
+}
+
+/// Canonically sanitize a diff without losing its control prefix. The whole
+/// patch pass catches ordinary token shapes; the per-line pass additionally
+/// exposes JSON such as `+{"token":"short"}` to the structured field-name
+/// redactor. Execution compares this output byte-for-byte and rejects on any
+/// change; the transformed form is never returned as an apply candidate.
+fn sanitize_diff_text(patch: &str) -> String {
+    let whole = crate::security::redact::sanitize_tool_output(patch);
+    if whole != patch {
+        return whole;
+    }
+
+    let mut out = String::with_capacity(patch.len());
+    for line in patch.split_inclusive('\n') {
+        let (body, newline) = line
+            .strip_suffix('\n')
+            .map_or((line, ""), |body| (body, "\n"));
+        let (prefix, payload) = match body.as_bytes().first() {
+            Some(b'+' | b'-' | b' ') => body.split_at(1),
+            _ => ("", body),
+        };
+        out.push_str(prefix);
+        out.push_str(&crate::security::redact::sanitize_tool_output(payload));
+        out.push_str(newline);
+    }
+    out
+}
+
+/// Reconstruct one side of a unified diff when possible. A newly added or
+/// removed JSON document can split a short credential across several `+`/`-`
+/// lines, so no individual line is valid JSON. Rebuilding the side lets the
+/// canonical structured redactor detect that case without ever persisting it.
+fn reconstructed_diff_side_requires_redaction(patch: &str, new_side: bool) -> bool {
+    let mut body = String::new();
+    for line in patch.lines() {
+        if line.starts_with("+++")
+            || line.starts_with("---")
+            || line.starts_with("@@")
+            || line.starts_with("diff ")
+            || line.starts_with("index ")
+        {
+            continue;
+        }
+        let Some(prefix) = line.as_bytes().first().copied() else {
+            body.push('\n');
+            continue;
+        };
+        let belongs =
+            prefix == b' ' || (new_side && prefix == b'+') || (!new_side && prefix == b'-');
+        if belongs {
+            body.push_str(&line[1..]);
+            body.push('\n');
+        }
+    }
+    let body = body.trim_end_matches('\n');
+    !body.is_empty() && crate::security::redact::sanitize_tool_output(body) != body
 }
 
 /// What `parse_completion_text` returns. Public so the dispatcher
@@ -330,7 +422,9 @@ fn extract_summary_line(text: &str) -> String {
             .or_else(|| trimmed.strip_prefix("Summary:"))
             .or_else(|| trimmed.strip_prefix("summary:"))
         {
-            let summary = rest.trim();
+            // Redact before truncation. Truncating first could retain a short
+            // credential prefix that no longer meets a shape's minimum length.
+            let summary = crate::security::redact::sanitize_tool_output(rest.trim());
             return summary.chars().take(120).collect();
         }
     }
@@ -455,7 +549,7 @@ mod tests {
             +new line\n\
             ```\n\
             SUMMARY: replaced one line\n";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert!(parsed.patch.contains("--- a/x"));
         assert!(parsed.patch.contains("+new line"));
         assert!(!parsed.patch.contains("```"), "fences must be stripped");
@@ -466,7 +560,7 @@ mod tests {
     fn parse_empty_patch_when_no_diff_block() {
         let raw = "I didn't need to change anything.\n\
                    SUMMARY: no change required — already correct\n";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert!(parsed.patch.is_empty());
         assert!(parsed.summary.contains("no change required"));
     }
@@ -474,8 +568,26 @@ mod tests {
     #[test]
     fn parse_diff_block_case_insensitive_open_fence() {
         let raw = "```DIFF\n--- a/y\n+++ b/y\n+ok\n```\n";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert!(parsed.patch.contains("--- a/y"));
+    }
+
+    #[test]
+    fn lf_p1_03_clean_crlf_patch_is_canonicalized_and_accepted() {
+        let raw = "```diff\r\n--- a/x\r\n+++ b/x\r\n@@ -0,0 +1 @@\r\n+safe=true\r\n```\r\nSUMMARY: clean\r\n";
+        let parsed = parse_completion_text(raw).unwrap();
+        assert!(parsed.patch.contains("+safe=true"));
+        assert!(!parsed.patch.contains('\r'));
+        assert_eq!(parsed.summary, "clean");
+    }
+
+    #[test]
+    fn lf_p1_03_patch_gate_allows_noncredential_basic_and_identifiers() {
+        let raw = "```diff\n--- a/example.rs\n+++ b/example.rs\n@@ -0,0 +1,4 @@\n+// basic auth remains supported\n+let api_version = \"2024-01-01\";\n+let monkey = \"abcdefgh\";\n+let mode = \"basic test\";\n```\nSUMMARY: clean code\n";
+        let parsed = parse_completion_text(raw).unwrap();
+        assert!(parsed.patch.contains("basic auth"));
+        assert!(parsed.patch.contains("api_version"));
+        assert!(parsed.patch.contains("monkey"));
     }
 
     #[test]
@@ -483,7 +595,7 @@ mod tests {
         // Pin the 120-char cap from WorkerOutcome.summary contract.
         let long = "x".repeat(300);
         let raw = format!("SUMMARY: {long}\n");
-        let parsed = parse_completion_text(&raw);
+        let parsed = parse_completion_text(&raw).unwrap();
         assert_eq!(parsed.summary.len(), 120);
         assert!(parsed.summary.chars().all(|c| c == 'x'));
     }
@@ -493,7 +605,7 @@ mod tests {
         let raw = "```diff\n+x\n```\n\
                    TESTS: added=3 total=5 passing=4 failing=1 skipped=0\n\
                    SUMMARY: changed one file";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert_eq!(parsed.tests.added, 3);
         assert_eq!(parsed.tests.total, 5);
         assert_eq!(parsed.tests.passing, 4);
@@ -508,7 +620,7 @@ mod tests {
         // `all_green()` check honest — no tests in summary == not
         // auto-promotable.
         let raw = "TESTS: added=2\n";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert_eq!(parsed.tests.added, 2);
         assert_eq!(parsed.tests.total, 0);
         assert_eq!(parsed.tests.passing, 0);
@@ -517,7 +629,7 @@ mod tests {
     #[test]
     fn parse_tests_line_absent_returns_zero_summary() {
         let raw = "```diff\n+x\n```\nSUMMARY: no tests\n";
-        let parsed = parse_completion_text(raw);
+        let parsed = parse_completion_text(raw).unwrap();
         assert_eq!(parsed.tests, TestSummary::ZERO);
     }
 
@@ -538,10 +650,10 @@ mod tests {
         // Today's lazy `.find("```diff")` accepts both — the closing
         // fence stops the body. Pin behaviour.
         let raw = "```diff\n+ok\n```\n";
-        assert!(!parse_completion_text(raw).patch.is_empty());
+        assert!(!parse_completion_text(raw).unwrap().patch.is_empty());
 
         let raw2 = "```rust\nfn x() {}\n```\n";
-        assert!(parse_completion_text(raw2).patch.is_empty());
+        assert!(parse_completion_text(raw2).unwrap().patch.is_empty());
     }
 
     // ── GOLD-WIRE-01: two-stage tool routing ────────────────────────────
@@ -596,6 +708,21 @@ mod tests {
         }
     }
 
+    struct FailingProvider {
+        message: String,
+    }
+
+    #[async_trait]
+    impl Provider for FailingProvider {
+        fn name(&self) -> &'static str {
+            "failing"
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            Err(anyhow::anyhow!("{}", self.message))
+        }
+    }
+
     fn worker_with_level(
         model: &str,
         provider: Arc<CountingProvider>,
@@ -634,6 +761,28 @@ mod tests {
         )
     }
 
+    fn direct_worker_at(
+        reply: &str,
+        patch_root: &std::path::Path,
+    ) -> (ProviderWorker, Arc<CountingProvider>) {
+        let provider = Arc::new(CountingProvider::new(&[reply]));
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let authorized = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                provider.clone(),
+                authorizer,
+                Some("test".to_string()),
+                "coding.worker.redaction.test",
+            ),
+        );
+        (
+            ProviderWorker::new("test/redaction", authorized, "", patch_root.to_path_buf()),
+            provider,
+        )
+    }
+
     #[tokio::test]
     async fn two_stage_model_fires_selector_then_task() {
         // deepseek-coder = 16 384 ctx → TwoStage. Stage-1 selector reply
@@ -655,6 +804,157 @@ mod tests {
         let worker = worker_with("", provider.clone());
         let _ = worker.execute(&sample_task()).await.unwrap();
         assert_eq!(provider.count(), 1, "Direct must skip the selector call");
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_redacts_summary_but_persists_clean_patch_exactly() {
+        let secret = concat!("sk-", "FAKE_TEST_CODING_AAAAAAAAAAAAAAAAAAA");
+        let reply = format!(
+            "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+safe=true\n```\nSUMMARY: removed \x1b[33m{secret}\x1b[0m"
+        );
+        let patch_root = tempfile::tempdir().unwrap();
+        let (worker, _) = direct_worker_at(&reply, patch_root.path());
+
+        let out = worker.execute(&sample_task()).await.unwrap();
+        let persisted = std::fs::read_to_string(&out.patch_path).unwrap();
+        assert_eq!(
+            persisted, out.patch_text,
+            "audit copy must match apply bytes"
+        );
+        assert!(out.patch_text.contains("+safe=true"));
+        assert!(!out.patch_text.contains("REDACTED"));
+        assert!(!out.summary.contains(secret));
+        assert!(!out.summary.contains('\x1b'));
+        assert!(out.summary.contains("REDACTED"));
+        assert!(out.patch_text.contains("example.txt"));
+        assert!(out.summary.contains("removed"));
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&out.patch_path)
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600,
+                "persisted provider patch must be owner-only"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_rejects_secret_patch_without_writing_a_redacted_diff() {
+        let secret = concat!("sk-", "FAKE_TEST_PATCH_AAAAAAAAAAAAAAAAAAAAA");
+        let reply = format!(
+            "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+token={secret}\n```\nSUMMARY: unsafe"
+        );
+        let patch_root = tempfile::tempdir().unwrap();
+        let expected_path = patch_path_for(patch_root.path(), &sample_task());
+        let (worker, provider) = direct_worker_at(&reply, patch_root.path());
+
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(provider.count(), 1);
+        assert!(!expected_path.exists(), "unsafe patch must not reach disk");
+        assert!(
+            !error.contains(secret),
+            "error must not echo the credential"
+        );
+        assert!(error.contains("patch withheld"), "diagnostic: {error}");
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_rejects_terminal_controls_inside_patch() {
+        let reply = "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+\x1b[31msafe=true\x1b[0m\n```\nSUMMARY: colored";
+        let patch_root = tempfile::tempdir().unwrap();
+        let expected_path = patch_path_for(patch_root.path(), &sample_task());
+        let (worker, _) = direct_worker_at(reply, patch_root.path());
+
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !expected_path.exists(),
+            "control-bearing patch must not reach disk"
+        );
+        assert!(!error.contains('\x1b'));
+        assert!(error.contains("patch withheld"));
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_rejects_multiline_json_short_credential() {
+        let reply = "```diff\n--- /dev/null\n+++ b/config.json\n@@ -0,0 +1,3 @@\n+{\n+  \"token\": \"tiny\"\n+}\n```\nSUMMARY: config";
+        let patch_root = tempfile::tempdir().unwrap();
+        let expected_path = patch_path_for(patch_root.path(), &sample_task());
+        let (worker, _) = direct_worker_at(reply, patch_root.path());
+
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            !expected_path.exists(),
+            "structured credential patch reached disk"
+        );
+        assert!(error.contains("credential-like output"));
+        assert!(!error.contains("tiny"));
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_refuses_outcome_when_private_patch_commit_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let blocked_root = dir.path().join("not-a-directory");
+        std::fs::write(&blocked_root, b"file").unwrap();
+        let reply = "```diff\n--- a/example.txt\n+++ b/example.txt\n@@ -0,0 +1 @@\n+safe=true\n```\nSUMMARY: clean";
+        let (worker, _) = direct_worker_at(reply, &blocked_root);
+
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("refusing apply candidate"),
+            "diagnostic: {error}"
+        );
+    }
+
+    #[tokio::test]
+    async fn lf_p1_03_worker_sanitizes_provider_error_before_retry_surface() {
+        let secret = concat!("sk-", "FAKE_TEST_PROVIDER_ERROR_AAAAAAAAAAAAAAA");
+        let provider = Arc::new(FailingProvider {
+            message: format!("upstream rejected \x1b[31m{secret}\x1b[0m"),
+        });
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let authorized = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                provider,
+                authorizer,
+                Some("test".to_string()),
+                "coding.worker.error-redaction.test",
+            ),
+        );
+        let patch_root = tempfile::tempdir().unwrap();
+        let worker = ProviderWorker::new("test/error", authorized, "", patch_root.path());
+
+        let error = worker
+            .execute(&sample_task())
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains(secret));
+        assert!(!error.contains('\x1b'));
+        assert!(error.contains("REDACTED"), "diagnostic: {error}");
     }
 
     #[tokio::test]

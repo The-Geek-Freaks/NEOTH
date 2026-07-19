@@ -9,10 +9,13 @@
 > 3 REJECTED_STANDS and 5 scope-preserving semantic merges. The 52 canonical
 > recovery rows are exactly 23 P1 + 29 P2 and are bound one-to-one across the
 > source, machine-readable ledger and ROAD. A dependency-free mutation-tested
-> checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01` is therefore the
-> only WS-LF task closed by this correction: **1 done / 117 implementation and
-> parity tasks still open**. No recovered feature or Plan-001/002/003 leaf was
-> closed by the inventory repair.
+> checker runs in required Gold CI. `GOLD-LF-INTEGRITY-01` and the fully wired
+> external-output boundary `GOLD-LF-P1-03` are closed: **2 done / 116
+> implementation and parity tasks still open**. P1-03 sanitizes derived MCP,
+> Coding, Recall, session-title, dreaming, code-map and CCR paths while keeping
+> explicit operator source evidence byte-exact and rejecting unsafe executable
+> patches before persistence or apply. No other recovered feature or
+> Plan-001/002/003 leaf was closed by the inventory repair.
 >
 > **Current CI correctness and runtime correction (2026-07-18; no broad
 > R3/R4 box closed):** the multi-hour CI stall was not useful coverage. One

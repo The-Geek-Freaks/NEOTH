@@ -80,6 +80,45 @@ command.
 | Skills and plugins | `~/.neoth/skills/`, plugin registry, capability ledger |
 | Backups | `~/.neoth/backups/` unless configured otherwise; `credentials.yaml` is excluded by default |
 
+## Tool-output boundary and explicit raw local artifacts
+
+Text returned by an MCP peer is measured at the wire boundary, then passed
+through one canonical sanitizer before elicitation, TokenJuice, model prompts,
+channel rendering, or context-compression recall (CCR). The sanitizer removes
+terminal control sequences, known credential shapes, and credential-bearing
+JSON fields even when their values are short. `MCP_TOOL_CALLED` stores only
+server/tool metadata, an argument hash, byte count, error state, and time; it
+does not store the result body. Opaque image base64 is strictly validated and
+omitted from model-facing blocks rather than regex-rewritten.
+
+Persistent CCR entries contain the already-sanitized block, live under an
+owner-only directory, and are written through an owner-only atomic file. MCP
+text also has nested Markdown fences defanged, so a peer cannot forge a second
+trusted result envelope inside the real outer envelope. Agent transcript rows,
+provider-generated session titles and dream summaries sanitize before
+persistence. Recalled/code-map context is sanitized again on egress so legacy
+rows cannot reintroduce a credential into a provider, CCR, terminal or channel.
+Code-worker summaries, test logs, retry hints, and patch-failure WAL reasons use
+the same boundary. A provider-generated patch is executable data: if control
+stripping or secret redaction would change it, NEOTH withholds it before both
+persistence and apply instead of silently applying a semantically different
+patch. CRLF transport line endings are canonicalized to LF before that
+comparison; standalone carriage returns and other controls still fail closed.
+
+Some local surfaces are deliberately raw because their purpose is exact
+operator recovery or inspection:
+
+- operator-authored transcript/source rows and the tamper-evident source WAL;
+- explicit archive/export material selected by the operator;
+- detached background-job logs, stored in a current-user-only file;
+- validated opaque image data in explicit structured MCP CLI output.
+
+Those are not general model-context inputs. A consumer that moves their content
+into provider, channel, recall, or CCR context must cross the sanitizer first.
+This distinction is intentional: rewriting source evidence or executable patch
+bytes would make recovery dishonest, while letting derived prompt/cache/log
+copies inherit raw credentials would be an avoidable leak.
+
 ## What may leave the machine
 
 Configured destinations include the following. Optional integrations add their
