@@ -1942,7 +1942,8 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             let home = crate::config::FreedomConfig::default_neoth_home();
             meter::run(&home, args)?;
         }
-        Commands::Preset(args) => {
+        Commands::Preset(mut args) => {
+            args.output = global_output;
             let home = crate::config::FreedomConfig::default_neoth_home();
             preset::run(&home, args).await?;
         }

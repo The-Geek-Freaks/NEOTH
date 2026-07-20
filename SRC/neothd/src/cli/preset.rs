@@ -6,12 +6,17 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
+use crate::cli::OutputFormat;
 use crate::config::presets;
 
 #[derive(Args, Debug, Clone)]
 pub struct PresetArgs {
     #[command(subcommand)]
     pub action: PresetAction,
+
+    /// Output format (inherited from global --output flag).
+    #[clap(skip)]
+    pub output: OutputFormat,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -61,8 +66,8 @@ pub async fn run(home: &Path, args: PresetArgs) -> Result<()> {
     match args.action {
         PresetAction::List { json } => run_list(home, json),
         PresetAction::Show { name } => run_show(home, &name),
-        PresetAction::Delete { name } => run_delete(home, &name),
-        PresetAction::Activate { name } => run_activate(home, &name),
+        PresetAction::Delete { name } => run_delete(home, &name, args.output),
+        PresetAction::Activate { name } => run_activate(home, &name, args.output),
         PresetAction::Deactivate => run_deactivate(home),
         PresetAction::Apply {
             name,
@@ -327,18 +332,32 @@ fn run_show(home: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_delete(home: &Path, name: &str) -> Result<()> {
-    if presets::remove(home, name)? {
-        println!("removed preset `{name}`");
-    } else {
-        println!("preset `{name}` was not present (no-op)");
+fn run_delete(home: &Path, name: &str, output: OutputFormat) -> Result<()> {
+    let removed = presets::remove(home, name)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({ "name": name, "removed": removed })
+        ),
+        OutputFormat::Table => {
+            if removed {
+                println!("removed preset `{name}`");
+            } else {
+                println!("preset `{name}` was not present (no-op)");
+            }
+        }
     }
     Ok(())
 }
 
-fn run_activate(home: &Path, name: &str) -> Result<()> {
+fn run_activate(home: &Path, name: &str, output: OutputFormat) -> Result<()> {
     presets::set_active(home, name)?;
-    println!("active preset → `{name}`");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({ "name": name, "active": true }))
+        }
+        OutputFormat::Table => println!("active preset → `{name}`"),
+    }
     Ok(())
 }
 
@@ -487,14 +506,14 @@ mod tests {
     #[test]
     fn run_delete_unknown_is_noop() {
         let dir = tempdir().unwrap();
-        run_delete(dir.path(), "ghost").unwrap();
+        run_delete(dir.path(), "ghost", OutputFormat::Table).unwrap();
     }
 
     #[test]
     fn run_activate_then_deactivate_roundtrip() {
         let dir = tempdir().unwrap();
         upsert(dir.path(), "p", Preset::default()).unwrap();
-        run_activate(dir.path(), "p").unwrap();
+        run_activate(dir.path(), "p", OutputFormat::Table).unwrap();
         let f = presets::load(dir.path()).unwrap();
         assert_eq!(f.active.as_deref(), Some("p"));
         run_deactivate(dir.path()).unwrap();

@@ -14166,21 +14166,17 @@ fn fetch_hemisphere_model_ids(provider: &str) -> Vec<String> {
 /// the active marker (does NOT merge into freedom.yaml — that's "Apply active").
 /// Returns an operator-readable status line.
 fn activate_preset_via_subprocess(name: &str) -> String {
-    let Some(bin) = which_neothd() else {
-        return "preset activate: neothd binary not found".to_string();
-    };
-    match spawn_neothd_plain(&bin)
-        .arg("preset")
-        .arg("activate")
-        .arg(name)
-        .output()
-    {
-        Ok(o) if o.status.success() => format!("active preset → {name}"),
-        Ok(o) => format!(
-            "preset activate failed: {}",
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => format!("preset activate could not start: {e}"),
+    // Typed receipt + presets.yaml readback — a bare exit code no longer
+    // gates which bundle future config loads apply.
+    let outcome = run_neothd_json_action::<gui_action::PresetActivateAck>(
+        &["preset", "activate", name],
+        "Preset activate",
+    )
+    .and_then(|ack| ack.verify(name))
+    .and_then(|()| read_back_active_preset(name));
+    match outcome {
+        Ok(()) => format!("active preset → {name}"),
+        Err(error) => format!("preset activate failed: {error}"),
     }
 }
 
@@ -14205,6 +14201,75 @@ fn dry_run_preset_via_subprocess(name: &str) -> Option<panel_logic::ApplyPlan> {
 /// SPEC-05 builtin-presets — mint a full-auto token then apply <name> with
 /// `--yes --gui-confirmed --gui-token <token>`.
 /// Returns a human-readable status string.
+/// Tolerant `preset list --json` snapshot for post-mutation readback
+/// (additive query surface → no `deny_unknown_fields`).
+#[derive(Debug, serde::Deserialize)]
+struct PresetListSnapshot {
+    active: Option<String>,
+    #[serde(default)]
+    presets: Vec<PresetListRow>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct PresetListRow {
+    name: String,
+    /// Absent on older CLIs → defaults to false (operator-owned).
+    /// Conservative for the delete readback: a missing field causes a
+    /// false failure, never a false success.
+    #[serde(default)]
+    builtin: bool,
+}
+
+/// Post-activate readback: presets.yaml must now carry the active marker.
+fn read_back_active_preset(name: &str) -> std::result::Result<(), String> {
+    let snap = run_neothd_json_action::<PresetListSnapshot>(
+        &["preset", "list", "--json"],
+        "Preset list readback",
+    )?;
+    if snap.active.as_deref() != Some(name) {
+        return Err(format!(
+            "preset readback reports active `{}`, expected `{name}` — presets.yaml did not settle",
+            snap.active.as_deref().unwrap_or("<none>")
+        ));
+    }
+    Ok(())
+}
+
+/// Post-delete readback. Built-ins legitimately keep the name listed after
+/// an operator preset shadowing them is deleted — only a remaining
+/// operator-owned row is a failure.
+fn read_back_preset_deleted(name: &str) -> std::result::Result<(), String> {
+    let snap = run_neothd_json_action::<PresetListSnapshot>(
+        &["preset", "list", "--json"],
+        "Preset list readback",
+    )?;
+    let still_there = snap
+        .presets
+        .iter()
+        .any(|row| row.name == name && !row.builtin);
+    if still_there {
+        return Err(format!(
+            "preset readback still lists `{name}` as an operator preset — the delete did not settle"
+        ));
+    }
+    Ok(())
+}
+
+/// Post-apply readback shared by every preset-apply surface: a fresh
+/// `preset apply <name> --dry-run` (always emitted as JSON, runs before any
+/// consent/token gate) must report zero remaining field changes — proof the
+/// config now matches the preset. Takes the pinned binary so the GR-05
+/// staged-fake test seam keeps working.
+fn preset_settled_readback_with(
+    bin: &std::path::Path,
+    name: &str,
+) -> std::result::Result<(), String> {
+    let mut command = spawn_neothd_plain(bin);
+    command.args(["preset", "apply", name, "--dry-run"]);
+    gui_action::run_json::<gui_action::PresetPlanAck>(&mut command, "Preset apply readback")
+        .and_then(|plan| plan.verify_settled(name))
+}
+
 fn apply_preset_with_fullauto_token(name: &str) -> String {
     let Some(bin) = which_neothd() else {
         return "preset apply: neothd binary not found".to_string();
@@ -14229,7 +14294,12 @@ fn apply_preset_with_fullauto_token(name: &str) -> String {
         .arg(&tok)
         .output()
     {
-        Ok(o) if o.status.success() => format!("Applied preset `{name}` (full-auto)."),
+        // Typed readback — the same settled-plan proof as the direct path;
+        // the dry-run needs no token (it runs before the ceremony gate).
+        Ok(o) if o.status.success() => match preset_settled_readback_with(&bin, name) {
+            Ok(()) => format!("Applied preset `{name}` (full-auto)."),
+            Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
+        },
         Ok(o) => format!(
             "preset apply `{name}` failed (exit {}): {}",
             o.status,
@@ -14266,14 +14336,8 @@ fn apply_preset_direct(name: &str) -> String {
     // 2. Typed readback: a post-apply dry-run must report zero remaining field
     //    changes — proof the config now matches the preset. A bare exit code is
     //    not trusted for this freedom.yaml mutation.
-    match run_neothd_json_action::<gui_action::PresetPlanAck>(
-        &["preset", "apply", name, "--dry-run"],
-        "Preset apply readback",
-    ) {
-        Ok(plan) => match plan.verify_settled(name) {
-            Ok(()) => format!("Applied preset `{name}`."),
-            Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
-        },
+    match preset_settled_readback_with(&bin, name) {
+        Ok(()) => format!("Applied preset `{name}`."),
         Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
     }
 }
@@ -14281,22 +14345,18 @@ fn apply_preset_direct(name: &str) -> String {
 /// SPEC-05 builtin-presets — delete an operator preset via
 /// `neoth preset delete <name>`.
 fn delete_preset_via_subprocess(name: &str) -> String {
-    let Some(bin) = which_neothd() else {
-        return "preset delete: neothd binary not found".to_string();
-    };
-    match spawn_neothd_plain(&bin)
-        .arg("preset")
-        .arg("delete")
-        .arg(name)
-        .output()
-    {
-        Ok(o) if o.status.success() => format!("Deleted preset `{name}`."),
-        Ok(o) => format!(
-            "preset delete `{name}` failed (exit {}): {}",
-            o.status,
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => format!("preset delete could not start: {e}"),
+    // Typed receipt + list readback (an operator-owned row must be gone;
+    // a shadowed built-in staying listed is legitimate).
+    let outcome = run_neothd_json_action::<gui_action::PresetDeleteAck>(
+        &["preset", "delete", name],
+        "Preset delete",
+    )
+    .and_then(|ack| ack.verify(name).map(|()| ack.removed))
+    .and_then(|removed| read_back_preset_deleted(name).map(|()| removed));
+    match outcome {
+        Ok(true) => format!("Deleted preset `{name}`."),
+        Ok(false) => format!("Preset `{name}` was not present (already removed)."),
+        Err(error) => format!("preset delete `{name}` failed: {error}"),
     }
 }
 
@@ -16228,10 +16288,11 @@ mod chat_subprocess_tests {
     }
 
     /// GR-05: stage a fake `neothd` that answers `preset list` (with or
-    /// without an active `*` marker) and `preset apply <name>` (exit 0),
-    /// so the full list → parse-active → apply seam can be driven end-to-end
-    /// against a staged binary. Windows → `.cmd`; unix → an executable
-    /// `#!/bin/sh` script.
+    /// without an active `*` marker), `preset apply <name>` (exit 0), and
+    /// the post-apply `preset apply <name> --dry-run` readback (a settled
+    /// plan JSON), so the full list → parse-active → apply → readback seam
+    /// can be driven end-to-end against a staged binary. Windows → `.cmd`;
+    /// unix → an executable `#!/bin/sh` script.
     fn stage_fake_preset_neothd(
         dir: &std::path::Path,
         list_has_active: bool,
@@ -16244,10 +16305,11 @@ mod chat_subprocess_tests {
             } else {
                 "echo   lowkey"
             };
-            // `preset list` echoes the bundle list; everything else (incl.
+            // `preset list` echoes the bundle list; the dry-run readback
+            // echoes a settled plan; everything else (incl. the real
             // `preset apply`) just exits 0.
             let body = format!(
-                "@echo off\r\nif \"%1\"==\"preset\" if \"%2\"==\"list\" {list_line}\r\nexit /b 0\r\n"
+                "@echo off\r\nif \"%1\"==\"preset\" if \"%2\"==\"list\" {list_line}\r\nif \"%1\"==\"preset\" if \"%2\"==\"apply\" if \"%4\"==\"--dry-run\" echo {{\"name\":\"lowkey\",\"fields_changed\":[]}}\r\nexit /b 0\r\n"
             );
             std::fs::write(&p, body).unwrap();
             p
@@ -16262,7 +16324,7 @@ mod chat_subprocess_tests {
                 "echo '  lowkey'"
             };
             let body = format!(
-                "#!/bin/sh\nif [ \"$1\" = preset ] && [ \"$2\" = list ]; then {list_line}; fi\nexit 0\n"
+                "#!/bin/sh\nif [ \"$1\" = preset ] && [ \"$2\" = list ]; then {list_line}; fi\nif [ \"$1\" = preset ] && [ \"$2\" = apply ] && [ \"$4\" = --dry-run ]; then echo '{{\"name\":\"lowkey\",\"fields_changed\":[]}}'; fi\nexit 0\n"
             );
             std::fs::write(&p, body).unwrap();
             std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -17321,7 +17383,12 @@ pub fn apply_active_preset_via_subprocess_with(bin: &std::path::Path) -> String 
         .arg(&name)
         .output();
     match apply_output {
-        Ok(out) if out.status.success() => format!("Applied preset `{name}`."),
+        // Typed readback against the same pinned binary — the settled-plan
+        // proof every preset-apply surface shares (GAP-22).
+        Ok(out) if out.status.success() => match preset_settled_readback_with(bin, &name) {
+            Ok(()) => format!("Applied preset `{name}`."),
+            Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
+        },
         Ok(out) => format!(
             "preset apply `{name}` failed (exit {}): {}",
             out.status,

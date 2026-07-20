@@ -1163,6 +1163,53 @@ impl ConsentRevokeAck {
     }
 }
 
+/// Exact `neoth preset delete <name> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresetDeleteAck {
+    pub name: String,
+    pub removed: bool,
+}
+
+impl PresetDeleteAck {
+    /// `removed: false` is a benign idempotent success ("was not present"),
+    /// not an error — mirrors the CLI's no-op wording.
+    pub fn verify(&self, expected_name: &str) -> Result<(), String> {
+        if self.name != expected_name {
+            return Err(format!(
+                "preset delete acknowledged `{}`, expected `{expected_name}`",
+                self.name
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth preset activate <name> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresetActivateAck {
+    pub name: String,
+    pub active: bool,
+}
+
+impl PresetActivateAck {
+    pub fn verify(&self, expected_name: &str) -> Result<(), String> {
+        if self.name != expected_name {
+            return Err(format!(
+                "preset activate acknowledged `{}`, expected `{expected_name}`",
+                self.name
+            ));
+        }
+        if !self.active {
+            return Err(format!(
+                "preset activate acknowledged `{expected_name}` without the active flag"
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -5949,5 +5996,38 @@ mod tests {
         let odd: ConsentRevokeAck =
             serde_json::from_str(r#"{"provider":"anthropic_api","action":"granted"}"#).unwrap();
         assert!(odd.verify("anthropic_api").is_err());
+    }
+
+    #[test]
+    fn preset_delete_ack_accepts_idempotent_and_pins_the_shape() {
+        // Shape pinned against cli/preset.rs run_delete; deny_unknown_fields
+        // makes any added/renamed CLI field fail this decode.
+        let removed: PresetDeleteAck =
+            serde_json::from_str(r#"{"name":"lowkey","removed":true}"#).unwrap();
+        assert!(removed.verify("lowkey").is_ok());
+        // Idempotent delete ("was not present") is a benign success.
+        let noop: PresetDeleteAck =
+            serde_json::from_str(r#"{"name":"lowkey","removed":false}"#).unwrap();
+        assert!(noop.verify("lowkey").is_ok());
+        assert!(removed.verify("other").is_err());
+        assert!(
+            serde_json::from_str::<PresetDeleteAck>(
+                r#"{"name":"lowkey","removed":true,"extra":1}"#
+            )
+            .is_err(),
+            "an unexpected CLI field must fail the exact decode"
+        );
+    }
+
+    #[test]
+    fn preset_activate_ack_requires_name_echo_and_active_flag() {
+        let ack: PresetActivateAck =
+            serde_json::from_str(r#"{"name":"lowkey","active":true}"#).unwrap();
+        assert!(ack.verify("lowkey").is_ok());
+        assert!(ack.verify("other").is_err());
+        // An activate receipt without the active flag can never bind.
+        let inactive: PresetActivateAck =
+            serde_json::from_str(r#"{"name":"lowkey","active":false}"#).unwrap();
+        assert!(inactive.verify("lowkey").is_err());
     }
 }
