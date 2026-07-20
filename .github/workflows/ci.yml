@@ -222,6 +222,13 @@ jobs:
       - name: cargo nextest workspace (Linux)
         timeout-minutes: 50
         working-directory: SRC
+        env:
+          # On a cold/evicted cache this step compiles the whole workspace
+          # test profile; at 2 build jobs the parallel neothd + GUI frontend
+          # compiles exceed the hosted runner's memory budget (3x exit 143 at
+          # the same compile point, 2026-07-20). One job keeps the peak
+          # bounded; the warm-cache case loses nothing.
+          CARGO_BUILD_JOBS: 1
         run: |
           rm -f target/nextest/ci/junit.xml
           cargo nextest run --workspace --locked --profile ci
