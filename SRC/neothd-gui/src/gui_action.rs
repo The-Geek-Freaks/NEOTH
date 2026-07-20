@@ -1095,14 +1095,16 @@ impl OperatingModeAck {
     ) -> Result<(), String> {
         if self.mode != expected_mode {
             return Err(format!(
-                "operating-mode switch acknowledged mode `{}`, expected `{expected_mode}`",
-                self.mode
+                "operating-mode switch acknowledged mode `{}`, expected `{expected_mode}` \
+                 (previous level `{}`)",
+                self.mode, self.previous
             ));
         }
         if self.autonomy != expected_level {
             return Err(format!(
-                "operating-mode switch acknowledged autonomy `{}`, expected `{expected_level}`",
-                self.autonomy
+                "operating-mode switch acknowledged autonomy `{}`, expected `{expected_level}` \
+                 (previous level `{}`)",
+                self.autonomy, self.previous
             ));
         }
         if self.skills_enable_all_bundled != expected_bundled {

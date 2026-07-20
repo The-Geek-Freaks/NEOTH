@@ -8490,15 +8490,23 @@ fn main() -> Result<()> {
                 &["autonomy", "set", &level],
                 "Autonomy set",
             )
-            .and_then(|ack| ack.verify(&level))
-            .and_then(|()| read_back_autonomy(None, &level));
+            .and_then(|ack| {
+                ack.verify(&level)?;
+                read_back_autonomy(None, &level)?;
+                Ok(ack)
+            });
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     match outcome {
-                        Ok(()) => {
+                        Ok(ack) => {
                             buddy(&w, GuiActivity::Secured);
                             w.set_autonomy_choice(level.clone().into());
-                            w.set_status_line(format!("Autonomy set to {level}.").into());
+                            let line = if ack.changed {
+                                format!("Autonomy: {} -> {level}.", ack.previous)
+                            } else {
+                                format!("Autonomy unchanged: {level} (already set).")
+                            };
+                            w.set_status_line(line.into());
                         }
                         Err(msg) => {
                             w.set_status_line(
@@ -12937,13 +12945,13 @@ fn read_back_autonomy(
 ) -> std::result::Result<(), String> {
     let snap =
         run_neothd_json_action::<AutonomyShowSnapshot>(&["autonomy", "show"], "Autonomy readback")?;
-    if let Some(mode) = expected_mode {
-        if snap.mode != mode {
-            return Err(format!(
-                "autonomy readback reports mode `{}`, expected `{mode}` — freedom.yaml did not settle",
-                snap.mode
-            ));
-        }
+    if let Some(mode) = expected_mode
+        && snap.mode != mode
+    {
+        return Err(format!(
+            "autonomy readback reports mode `{}`, expected `{mode}` — freedom.yaml did not settle",
+            snap.mode
+        ));
     }
     if snap.autonomy != expected_level {
         return Err(format!(
@@ -19979,8 +19987,8 @@ mod tests {
         // never a bare exit-code spawn. Patterns are concat-split so this
         // test's own source never matches itself.
         let source = include_str!("main.rs");
-        // No handler may hand-roll `.arg("autonomy")` / `.arg("consent")`
-        // subprocess mutations again.
+        // No handler may hand-roll bare autonomy/consent subprocess
+        // mutations again (the forbidden `.arg(...)` spellings below).
         let bare_autonomy = concat!(".arg(\"auto", "nomy\")");
         let bare_consent = concat!(".arg(\"con", "sent\")");
         assert!(
