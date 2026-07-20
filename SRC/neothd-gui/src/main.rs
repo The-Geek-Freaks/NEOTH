@@ -8451,54 +8451,10 @@ fn main() -> Result<()> {
         let weak = weak_autonomy_set.clone();
         let level = level.to_string();
         std::thread::spawn(move || {
-            // GAP-09: intercept "full" → token-mint path.
+            // GAP-09: intercept "full" → the shared token-mint ceremony
+            // (typed receipt + readback inside enable_full_auto_verified).
             if level == "full" {
-                let result: Result<(), String> = (|| {
-                    let bin =
-                        which_neothd().ok_or_else(|| "neothd binary not on PATH".to_string())?;
-                    let tok_out = spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("mint-fullauto-token")
-                        .arg("--output")
-                        .arg("json")
-                        .output()
-                        .map_err(|e| format!("mint-fullauto-token spawn failed: {e}"))?;
-                    if !tok_out.status.success() {
-                        let err = String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
-                        return Err(format!("mint-fullauto-token failed: {err}"));
-                    }
-                    let raw = String::from_utf8_lossy(&tok_out.stdout).trim().to_string();
-                    // Output may be `{"token":"…"}` or a bare token string.
-                    let token = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                        // JSON but token missing/not-a-string → empty, so the
-                        // is_empty guard below rejects it (never pass the raw
-                        // JSON blob as a token).
-                        v.get("token")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        raw
-                    };
-                    if token.is_empty() {
-                        return Err("mint-fullauto-token returned an empty token".to_string());
-                    }
-                    let apply_out = spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("full-auto")
-                        .arg("--gui-confirmed")
-                        .arg("--gui-token")
-                        .arg(&token)
-                        .output()
-                        .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
-                    if !apply_out.status.success() {
-                        let err = String::from_utf8_lossy(&apply_out.stderr)
-                            .trim()
-                            .to_string();
-                        return Err(format!("autonomy full-auto failed: {err}"));
-                    }
-                    Ok(())
-                })();
+                let result = enable_full_auto_verified();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         match result {
@@ -8527,28 +8483,28 @@ fn main() -> Result<()> {
                 return;
             }
 
-            // Normal path for strict / standard / elevated / custom.
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("set")
-                        .arg(&level)
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            // Normal path for strict / standard / elevated / custom — typed
+            // receipt + freedom.yaml readback; a bare exit code no longer
+            // gates this security-posture mutation.
+            let outcome = run_neothd_json_action::<gui_action::AutonomyLevelAck>(
+                &["autonomy", "set", &level],
+                "Autonomy set",
+            )
+            .and_then(|ack| ack.verify(&level))
+            .and_then(|()| read_back_autonomy(None, &level));
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    if ok {
-                        buddy(&w, GuiActivity::Secured);
-                        w.set_autonomy_choice(level.clone().into());
-                        w.set_status_line(format!("Autonomy set to {level}.").into());
-                    } else {
-                        w.set_status_line(
-                            format!("Autonomy set to {level} failed (is neothd on PATH?).").into(),
-                        );
+                    match outcome {
+                        Ok(()) => {
+                            buddy(&w, GuiActivity::Secured);
+                            w.set_autonomy_choice(level.clone().into());
+                            w.set_status_line(format!("Autonomy set to {level}.").into());
+                        }
+                        Err(msg) => {
+                            w.set_status_line(
+                                format!("Autonomy set to {level} failed: {msg}").into(),
+                            );
+                        }
                     }
                 }
             });
@@ -8585,49 +8541,8 @@ fn main() -> Result<()> {
         std::thread::spawn(move || {
             if mode == "full" {
                 // GAP-09 / GR-RESID-D34: Full-auto requires the token-mint
-                // ceremony — same path as on_autonomy_set("full").
-                let result: Result<(), String> = (|| {
-                    let bin =
-                        which_neothd().ok_or_else(|| "neothd binary not on PATH".to_string())?;
-                    let tok_out = spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("mint-fullauto-token")
-                        .arg("--output")
-                        .arg("json")
-                        .output()
-                        .map_err(|e| format!("mint-fullauto-token spawn failed: {e}"))?;
-                    if !tok_out.status.success() {
-                        let err = String::from_utf8_lossy(&tok_out.stderr).trim().to_string();
-                        return Err(format!("mint-fullauto-token failed: {err}"));
-                    }
-                    let raw = String::from_utf8_lossy(&tok_out.stdout).trim().to_string();
-                    let token = if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                        v.get("token")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        raw
-                    };
-                    if token.is_empty() {
-                        return Err("mint-fullauto-token returned an empty token".to_string());
-                    }
-                    let apply_out = spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("full-auto")
-                        .arg("--gui-confirmed")
-                        .arg("--gui-token")
-                        .arg(&token)
-                        .output()
-                        .map_err(|e| format!("autonomy full-auto spawn failed: {e}"))?;
-                    if !apply_out.status.success() {
-                        let err = String::from_utf8_lossy(&apply_out.stderr)
-                            .trim()
-                            .to_string();
-                        return Err(format!("autonomy full-auto failed: {err}"));
-                    }
-                    Ok(())
-                })();
+                // ceremony — the same verified path as on_autonomy_set("full").
+                let result = enable_full_auto_verified();
                 let result_ok = result.is_ok();
                 let result_msg = result.err().unwrap_or_default();
                 let weak2 = weak.clone();
@@ -8655,24 +8570,18 @@ fn main() -> Result<()> {
                     refresh_chat_consent(weak);
                 }
             } else {
-                // Gated (and any other mode): plain autonomy set.
-                let ok = which_neothd()
-                    .and_then(|bin| {
-                        spawn_neothd_plain(&bin)
-                            .arg("autonomy")
-                            .arg("gated")
-                            .output()
-                            .ok()
-                    })
-                    .map(|o| o.status.success())
-                    .unwrap_or(false);
+                // Gated (and any other mode): the verified safe-direction
+                // switch — typed receipt + readback, never a bare exit code.
+                let outcome = switch_to_gated_verified();
+                let ok = outcome.is_ok();
+                let msg = outcome.err().unwrap_or_default();
                 let weak2 = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak2.upgrade() {
                         if ok {
                             push_toast(&w.as_weak(), "success", "Consent", "Mode set to Gated.");
                         } else {
-                            w.set_status_line("autonomy gated failed — is neothd on PATH?".into());
+                            w.set_status_line(format!("Switch to gated failed: {msg}").into());
                         }
                     }
                 });
@@ -8689,17 +8598,17 @@ fn main() -> Result<()> {
         let weak = weak_cc_revoke.clone();
         let provider = provider.to_string();
         std::thread::spawn(move || {
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("consent")
-                        .arg("revoke")
-                        .arg(&provider)
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            // Revoking a cloud-egress grant is a security-posture mutation:
+            // typed receipt (provider echo + revoked|noop) + a `consent list`
+            // readback proving the marker really is gone.
+            let outcome = run_neothd_json_action::<gui_action::ConsentRevokeAck>(
+                &["consent", "revoke", &provider],
+                "Consent revoke",
+            )
+            .and_then(|ack| ack.verify(&provider))
+            .and_then(|()| read_back_consent_absent(&provider));
+            let ok = outcome.is_ok();
+            let msg = outcome.err().unwrap_or_default();
             let provider2 = provider.clone();
             let weak2 = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
@@ -8712,7 +8621,9 @@ fn main() -> Result<()> {
                             &format!("Revoked consent for {provider2}."),
                         );
                     } else {
-                        w.set_status_line(format!("consent revoke {provider2} failed.").into());
+                        w.set_status_line(
+                            format!("consent revoke {provider2} failed: {msg}").into(),
+                        );
                     }
                 }
             });
@@ -9205,49 +9116,32 @@ fn main() -> Result<()> {
         let weak = weak_fa_on.clone();
         std::thread::spawn(move || {
             // GR-RESID-D34 — a bare `--gui-confirmed` no longer bypasses the TTY
-            // gate. Mint a single-use, short-TTL token from the running daemon
-            // (this in-GUI confirm dialog IS the consent), then pass it to
-            // full-auto. A static flag baked into a script can no longer flip
-            // FULL-AUTO; this live mint→use sequence requires the GUI + daemon.
-            let ok = match which_neothd() {
-                Some(bin) => {
-                    let token = spawn_neothd_plain(&bin)
-                        .arg("autonomy")
-                        .arg("mint-fullauto-token")
-                        .output()
-                        .ok()
-                        .filter(|o| o.status.success())
-                        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                        .filter(|t| !t.is_empty());
-                    match token {
-                        Some(tok) => spawn_neothd_plain(&bin)
-                            .arg("autonomy")
-                            .arg("full-auto")
-                            .arg("--gui-confirmed")
-                            .arg("--gui-token")
-                            .arg(&tok)
-                            .output()
-                            .map(|o| o.status.success())
-                            .unwrap_or(false),
-                        None => false, // daemon unreachable / mint failed
-                    }
-                }
-                None => false,
-            };
+            // gate. The shared ceremony mints a single-use, short-TTL token from
+            // the running daemon (this in-GUI confirm dialog IS the consent),
+            // passes it to full-auto, verifies the typed receipt and reads the
+            // persisted state back. A static flag baked into a script can no
+            // longer flip FULL-AUTO; the live mint→use sequence requires the
+            // GUI + daemon.
+            let outcome = enable_full_auto_verified();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    if ok {
-                        w.set_full_auto_active(true);
-                        w.set_status_line(
-                            "FULL-AUTO enabled — NEOTH now acts without asking. Switch back any time."
+                    match outcome {
+                        Ok(()) => {
+                            w.set_full_auto_active(true);
+                            w.set_status_line(
+                                "FULL-AUTO enabled — NEOTH now acts without asking. Switch back any time."
+                                    .into(),
+                            );
+                        }
+                        Err(msg) => {
+                            w.set_status_line(
+                                format!(
+                                    "Enabling full-auto failed: {msg} The daemon must be RUNNING \
+                                     (it mints the confirm token) and `neoth` on PATH. Still gated."
+                                )
                                 .into(),
-                        );
-                    } else {
-                        w.set_status_line(
-                            "Enabling full-auto failed — the daemon must be RUNNING (it mints the \
-                             confirm token) and `neoth` on PATH. Still gated."
-                                .into(),
-                        );
+                            );
+                        }
                     }
                 }
             });
@@ -9259,26 +9153,19 @@ fn main() -> Result<()> {
     window.on_full_auto_gated(move || {
         let weak = weak_fa_off.clone();
         std::thread::spawn(move || {
-            let ok = match which_neothd() {
-                Some(bin) => spawn_neothd_plain(&bin)
-                    .arg("autonomy")
-                    .arg("gated")
-                    .output()
-                    .map(|o| o.status.success())
-                    .unwrap_or(false),
-                None => false,
-            };
+            let outcome = switch_to_gated_verified();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    if ok {
-                        w.set_full_auto_active(false);
-                        w.set_status_line(
-                            "Switched to GATED — NEOTH asks before sensitive actions.".into(),
-                        );
-                    } else {
-                        w.set_status_line(
-                            "Switching to gated failed (is the daemon installed?).".into(),
-                        );
+                    match outcome {
+                        Ok(()) => {
+                            w.set_full_auto_active(false);
+                            w.set_status_line(
+                                "Switched to GATED — NEOTH asks before sensitive actions.".into(),
+                            );
+                        }
+                        Err(msg) => {
+                            w.set_status_line(format!("Switching to gated failed: {msg}").into());
+                        }
                     }
                 }
             });
@@ -13032,6 +12919,100 @@ where
     gui_action::run_json_receipt(&mut command, action)
 }
 
+/// Tolerant `autonomy show --output json` snapshot for post-mutation readback.
+/// A query surface may grow fields, so this deliberately skips
+/// `deny_unknown_fields`; the mutation acks stay exact.
+#[derive(Debug, serde::Deserialize)]
+struct AutonomyShowSnapshot {
+    mode: String,
+    autonomy: String,
+}
+
+/// Re-load freedom.yaml through the CLI and confirm the persisted state
+/// matches what the mutation acknowledged. `expected_mode: None` for raw
+/// level sets — their mode label also depends on the skill-breadth flag.
+fn read_back_autonomy(
+    expected_mode: Option<&str>,
+    expected_level: &str,
+) -> std::result::Result<(), String> {
+    let snap =
+        run_neothd_json_action::<AutonomyShowSnapshot>(&["autonomy", "show"], "Autonomy readback")?;
+    if let Some(mode) = expected_mode {
+        if snap.mode != mode {
+            return Err(format!(
+                "autonomy readback reports mode `{}`, expected `{mode}` — freedom.yaml did not settle",
+                snap.mode
+            ));
+        }
+    }
+    if snap.autonomy != expected_level {
+        return Err(format!(
+            "autonomy readback reports level `{}`, expected `{expected_level}` — freedom.yaml did not settle",
+            snap.autonomy
+        ));
+    }
+    Ok(())
+}
+
+/// Post-revoke readback: the provider must no longer hold a recorded grant.
+/// `consent list` only emits granted providers, so presence = failure.
+fn read_back_consent_absent(provider: &str) -> std::result::Result<(), String> {
+    let grants =
+        run_neothd_json_action::<Vec<serde_json::Value>>(&["consent", "list"], "Consent readback")?;
+    let still_granted = grants
+        .iter()
+        .any(|grant| grant.get("provider").and_then(|p| p.as_str()) == Some(provider));
+    if still_granted {
+        return Err(format!(
+            "consent readback still lists `{provider}` as granted — the marker was not removed"
+        ));
+    }
+    Ok(())
+}
+
+/// GR-RESID-D34 — mint the single-use, short-TTL FULL-AUTO token from the
+/// live daemon through the typed boundary. The in-GUI confirm dialog IS the
+/// consent; the token exists only to be passed straight back to the CLI.
+fn mint_fullauto_token_verified() -> std::result::Result<String, String> {
+    let ack = run_neothd_json_action::<gui_action::FullautoTokenAck>(
+        &["autonomy", "mint-fullauto-token"],
+        "Full-auto token mint",
+    )?;
+    ack.verify()?;
+    Ok(ack.token)
+}
+
+/// GAP-09 / GR-RESID-D34 — the one FULL-AUTO ceremony: mint → `autonomy
+/// full-auto` → verify the typed receipt → read the persisted state back.
+/// Shared by the settings radio, the chat consent strip, and the FULL-AUTO
+/// switch so no surface can drift to a weaker gate than the others.
+fn enable_full_auto_verified() -> std::result::Result<(), String> {
+    let token = mint_fullauto_token_verified()?;
+    let ack = run_neothd_json_action::<gui_action::OperatingModeAck>(
+        &[
+            "autonomy",
+            "full-auto",
+            "--gui-confirmed",
+            "--gui-token",
+            &token,
+        ],
+        "Full-auto switch",
+    )?;
+    ack.verify_full_auto()?;
+    read_back_autonomy(Some("full-auto"), "full")
+}
+
+/// Safe-direction switch to GATED, receipt-verified + read back. No
+/// confirmation ceremony by design — lowering autonomy never needs one.
+fn switch_to_gated_verified() -> std::result::Result<(), String> {
+    let ack = run_neothd_json_action::<gui_action::OperatingModeAck>(
+        &["autonomy", "gated"],
+        "Gated switch",
+    )?;
+    ack.verify_gated()?;
+    read_back_autonomy(Some("gated"), "standard")
+}
+
 /// Load one complete memory-graph snapshot through the typed GUI/CLI boundary.
 /// Both refresh and export share this function so neither surface can accept a
 /// success-looking partial graph that the other rejects.
@@ -14220,34 +14201,15 @@ fn apply_preset_with_fullauto_token(name: &str) -> String {
     let Some(bin) = which_neothd() else {
         return "preset apply: neothd binary not found".to_string();
     };
-    // Mint the single-use token (same pattern as on_full_auto_confirmed).
-    let token = spawn_neothd_plain(&bin)
-        .arg("autonomy")
-        .arg("mint-fullauto-token")
-        .arg("--output")
-        .arg("json")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| {
-            // Output may be `{"token":"…"}` or bare token — extract either way.
-            let raw = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) {
-                // JSON but token missing/not-a-string → empty (caught by the
-                // is_empty filter) — never pass a raw JSON blob as a token.
-                v.get("token")
-                    .and_then(|t| t.as_str())
-                    .unwrap_or("")
-                    .to_string()
-            } else {
-                raw
-            }
-        })
-        .filter(|t| !t.is_empty());
-    let Some(tok) = token else {
-        return format!(
-            "Full-auto token mint failed for preset `{name}` — daemon must be running."
-        );
+    // Mint the single-use token through the shared verified ceremony step
+    // (same typed boundary as on_full_auto_confirmed).
+    let tok = match mint_fullauto_token_verified() {
+        Ok(token) => token,
+        Err(error) => {
+            return format!(
+                "Full-auto token mint failed for preset `{name}`: {error} — daemon must be running."
+            );
+        }
     };
     match spawn_neothd_plain(&bin)
         .arg("preset")
@@ -20008,6 +19970,50 @@ mod tests {
     fn validate_autonomy_rejects_unknown() {
         assert!(validate_autonomy("ultra").is_err());
         assert!(validate_autonomy("").is_err());
+    }
+
+    #[test]
+    fn autonomy_and_consent_mutations_route_through_typed_receipts() {
+        // Tier-1 receipt promotion (2026-07-20): every autonomy/consent
+        // mutation must go through the typed helpers (ack verify + readback),
+        // never a bare exit-code spawn. Patterns are concat-split so this
+        // test's own source never matches itself.
+        let source = include_str!("main.rs");
+        // No handler may hand-roll `.arg("autonomy")` / `.arg("consent")`
+        // subprocess mutations again.
+        let bare_autonomy = concat!(".arg(\"auto", "nomy\")");
+        let bare_consent = concat!(".arg(\"con", "sent\")");
+        assert!(
+            !source.contains(bare_autonomy),
+            "autonomy mutation regressed to a bare subprocess spawn"
+        );
+        assert!(
+            !source.contains(bare_consent),
+            "consent mutation regressed to a bare subprocess spawn"
+        );
+        // The one FULL-AUTO ceremony: definition + settings radio + chat
+        // consent strip + FULL-AUTO switch. A dropped call site means a
+        // surface regressed to a weaker gate; a new one must share the helper.
+        let ceremony = concat!("enable_full_auto_", "verified()");
+        assert_eq!(
+            source.matches(ceremony).count(),
+            4,
+            "expected the shared FULL-AUTO ceremony at exactly its 3 call sites + definition"
+        );
+        // Verified GATED switch: definition + chat strip + FULL-AUTO switch-back.
+        let gated = concat!("switch_to_gated_", "verified()");
+        assert_eq!(
+            source.matches(gated).count(),
+            3,
+            "expected the verified GATED switch at exactly its 2 call sites + definition"
+        );
+        // Single mint boundary: definition + ceremony + full-auto preset apply.
+        let mint = concat!("mint_fullauto_token_", "verified()");
+        assert_eq!(
+            source.matches(mint).count(),
+            3,
+            "expected the typed token mint at exactly its 2 call sites + definition"
+        );
     }
 
     #[test]

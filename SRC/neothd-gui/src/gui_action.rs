@@ -1040,6 +1040,127 @@ impl PresetPlanAck {
     }
 }
 
+/// Exact `neoth autonomy set <level> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AutonomyLevelAck {
+    pub autonomy: String,
+    pub previous: String,
+    pub changed: bool,
+}
+
+impl AutonomyLevelAck {
+    /// Confirm the daemon persisted exactly the requested level. `changed:
+    /// false` is a benign idempotent success ("already set"), not an error.
+    pub fn verify(&self, expected_level: &str) -> Result<(), String> {
+        if self.autonomy != expected_level {
+            return Err(format!(
+                "autonomy set acknowledged level `{}`, expected `{expected_level}`",
+                self.autonomy
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth autonomy gated|full-auto --output json` acknowledgement —
+/// both routes share `run_set_mode_at`'s receipt shape.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatingModeAck {
+    pub mode: String,
+    pub autonomy: String,
+    pub previous: String,
+    pub skills_enable_all_bundled: bool,
+}
+
+impl OperatingModeAck {
+    /// GATED = autonomy `standard` + the curated skill set. Anything else in
+    /// the receipt means the safe-direction switch did not land as requested.
+    pub fn verify_gated(&self) -> Result<(), String> {
+        self.verify_mode("gated", "standard", false)
+    }
+
+    /// FULL-AUTO = autonomy `full` + the entire bundled library routed. A
+    /// mismatched receipt here would silently under- or over-privilege NEOTH.
+    pub fn verify_full_auto(&self) -> Result<(), String> {
+        self.verify_mode("full-auto", "full", true)
+    }
+
+    fn verify_mode(
+        &self,
+        expected_mode: &str,
+        expected_level: &str,
+        expected_bundled: bool,
+    ) -> Result<(), String> {
+        if self.mode != expected_mode {
+            return Err(format!(
+                "operating-mode switch acknowledged mode `{}`, expected `{expected_mode}`",
+                self.mode
+            ));
+        }
+        if self.autonomy != expected_level {
+            return Err(format!(
+                "operating-mode switch acknowledged autonomy `{}`, expected `{expected_level}`",
+                self.autonomy
+            ));
+        }
+        if self.skills_enable_all_bundled != expected_bundled {
+            return Err(format!(
+                "operating-mode switch acknowledged skills_enable_all_bundled={}, expected {expected_bundled}",
+                self.skills_enable_all_bundled
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth autonomy mint-fullauto-token --output json` acknowledgement.
+/// The token is single-use + short-TTL and exists only to be passed straight
+/// back to `autonomy full-auto --gui-token` / `preset apply --gui-token`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FullautoTokenAck {
+    pub token: String,
+}
+
+impl FullautoTokenAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.token.trim().is_empty() {
+            return Err("full-auto token mint returned an empty token".to_string());
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth consent revoke <provider> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRevokeAck {
+    pub provider: String,
+    pub action: String,
+}
+
+impl ConsentRevokeAck {
+    /// Confirm the daemon revoked (or had never granted) exactly the
+    /// requested provider. `noop` = idempotent success: no grant existed.
+    pub fn verify(&self, expected_provider: &str) -> Result<(), String> {
+        if self.provider != expected_provider {
+            return Err(format!(
+                "consent revoke acknowledged provider `{}`, expected `{expected_provider}`",
+                self.provider
+            ));
+        }
+        if self.action != "revoked" && self.action != "noop" {
+            return Err(format!(
+                "consent revoke acknowledged unknown action `{}`",
+                self.action
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -5729,5 +5850,102 @@ mod tests {
             super::scrub_diagnostic("failed to read C:\\Users\\x\\.neoth\\freedom.yaml now"),
             Some("failed to read <path> now".to_string())
         );
+    }
+
+    #[test]
+    fn autonomy_level_ack_matches_the_exact_cli_receipt_shape() {
+        // Guards CLI (cli/autonomy.rs run_set) ↔ struct drift: deny_unknown_fields
+        // makes any added/renamed CLI field fail this decode.
+        let ack: AutonomyLevelAck =
+            serde_json::from_str(r#"{"autonomy":"elevated","previous":"standard","changed":true}"#)
+                .expect("decode autonomy set receipt");
+        assert!(ack.verify("elevated").is_ok());
+        assert!(ack.changed);
+        assert_eq!(ack.previous, "standard");
+        assert!(
+            serde_json::from_str::<AutonomyLevelAck>(
+                r#"{"autonomy":"elevated","previous":"standard","changed":true,"extra":1}"#,
+            )
+            .is_err(),
+            "an unexpected CLI field must fail the exact decode"
+        );
+    }
+
+    #[test]
+    fn autonomy_level_ack_rejects_a_different_level_and_allows_idempotent() {
+        let ack: AutonomyLevelAck =
+            serde_json::from_str(r#"{"autonomy":"strict","previous":"strict","changed":false}"#)
+                .unwrap();
+        // Idempotent re-set is a benign success, not an error.
+        assert!(ack.verify("strict").is_ok());
+        // A level echo that differs from the request must fail the bind.
+        assert!(ack.verify("elevated").is_err());
+    }
+
+    #[test]
+    fn operating_mode_ack_matches_gated_and_full_auto_receipts() {
+        // Shapes pinned against cli/autonomy.rs run_set_mode_at.
+        let gated: OperatingModeAck = serde_json::from_str(
+            r#"{"mode":"gated","autonomy":"standard","previous":"full","skills_enable_all_bundled":false}"#,
+        )
+        .expect("decode gated receipt");
+        assert!(gated.verify_gated().is_ok());
+        assert_eq!(gated.previous, "full");
+        let full: OperatingModeAck = serde_json::from_str(
+            r#"{"mode":"full-auto","autonomy":"full","previous":"standard","skills_enable_all_bundled":true}"#,
+        )
+        .expect("decode full-auto receipt");
+        assert!(full.verify_full_auto().is_ok());
+        assert_eq!(full.previous, "standard");
+    }
+
+    #[test]
+    fn operating_mode_ack_rejects_cross_mode_and_partial_receipts() {
+        let gated: OperatingModeAck = serde_json::from_str(
+            r#"{"mode":"gated","autonomy":"standard","previous":"full","skills_enable_all_bundled":false}"#,
+        )
+        .unwrap();
+        // A gated receipt can never satisfy the FULL-AUTO bind (and vice versa).
+        assert!(gated.verify_full_auto().is_err());
+        // FULL-AUTO with the wrong level or skill breadth = partial privilege
+        // application; the GUI must refuse to display it as success.
+        let wrong_level: OperatingModeAck = serde_json::from_str(
+            r#"{"mode":"full-auto","autonomy":"standard","previous":"standard","skills_enable_all_bundled":true}"#,
+        )
+        .unwrap();
+        assert!(wrong_level.verify_full_auto().is_err());
+        let wrong_breadth: OperatingModeAck = serde_json::from_str(
+            r#"{"mode":"full-auto","autonomy":"full","previous":"standard","skills_enable_all_bundled":false}"#,
+        )
+        .unwrap();
+        assert!(wrong_breadth.verify_full_auto().is_err());
+    }
+
+    #[test]
+    fn fullauto_token_ack_requires_a_non_empty_token() {
+        let ack: FullautoTokenAck = serde_json::from_str(r#"{"token":"tok-1"}"#).unwrap();
+        assert!(ack.verify().is_ok());
+        let blank: FullautoTokenAck = serde_json::from_str(r#"{"token":"  "}"#).unwrap();
+        assert!(blank.verify().is_err());
+        assert!(
+            serde_json::from_str::<FullautoTokenAck>(r#"{"token":"t","ttl":30}"#).is_err(),
+            "an unexpected CLI field must fail the exact decode"
+        );
+    }
+
+    #[test]
+    fn consent_revoke_ack_accepts_revoked_and_noop_only() {
+        let revoked: ConsentRevokeAck =
+            serde_json::from_str(r#"{"provider":"anthropic_api","action":"revoked"}"#).unwrap();
+        assert!(revoked.verify("anthropic_api").is_ok());
+        // Idempotent revoke ("no grant existed") is a benign success.
+        let noop: ConsentRevokeAck =
+            serde_json::from_str(r#"{"provider":"anthropic_api","action":"noop"}"#).unwrap();
+        assert!(noop.verify("anthropic_api").is_ok());
+        // Wrong provider echo or an unknown action must fail the bind.
+        assert!(revoked.verify("openai").is_err());
+        let odd: ConsentRevokeAck =
+            serde_json::from_str(r#"{"provider":"anthropic_api","action":"granted"}"#).unwrap();
+        assert!(odd.verify("anthropic_api").is_err());
     }
 }
