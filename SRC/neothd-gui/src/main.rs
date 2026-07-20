@@ -8318,24 +8318,17 @@ fn main() -> Result<()> {
                     .pick_folder();
                 let Some(dir) = picked else { return };
                 let dir_str = dir.to_string_lossy().to_string();
-                let result = which_neothd().and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("plugin")
-                        .arg("install")
-                        .arg(&dir)
-                        .output()
-                        .ok()
-                });
-                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
-                let msg = result
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
-                if ok {
-                    push_toast(&weak, "success", "Plugin installed", &dir_str);
-                } else {
-                    push_toast(&weak, "warn", "Plugin install failed", &msg);
+                // Typed receipt: the GUI cannot predict the id (the CLI derives
+                // it from plugin.toml), so it reads the acknowledged install
+                // directory back off disk before reporting success.
+                let result = run_neothd_json_action::<gui_action::PluginInstallAck>(
+                    &["plugin", "install", dir_str.as_str()],
+                    "Plugin install",
+                )
+                .and_then(|ack| ack.verify_and_read_back().map(|id| id.to_string()));
+                match &result {
+                    Ok(id) => push_toast(&weak, "success", "Plugin installed", id),
+                    Err(error) => push_toast(&weak, "warn", "Plugin install failed", error),
                 }
                 let plugins = fetch_plugins();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -8348,33 +8341,24 @@ fn main() -> Result<()> {
     }
 
     // ── Plugins: remove by id ──────────────────────────────────────────────────
-    // Shells `neoth plugin remove <id>` → toast + refresh.
-    // The `plugin remove` subcommand is being added in a parallel PR; if the
-    // daemon doesn't support it yet the stderr toast surfaces the error cleanly.
+    // Shells `neoth plugin remove <id> --output json` → typed receipt → refresh.
     {
         let weak_pr = window.as_weak();
         window.on_plugin_remove(move |id| {
             let weak = weak_pr.clone();
             let id = id.to_string();
             std::thread::spawn(move || {
-                let result = which_neothd().and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("plugin")
-                        .arg("remove")
-                        .arg(&id)
-                        .output()
-                        .ok()
-                });
-                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
-                let msg = result
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
-                if ok {
-                    push_toast(&weak, "success", "Plugin removed", &id);
-                } else {
-                    push_toast(&weak, "warn", "Plugin remove failed", &msg);
+                // Typed receipt: confirm the acknowledged id. `plugin remove` is
+                // idempotent, so `ok:false` (not installed) is a benign success.
+                let outcome = run_neothd_json_action::<gui_action::PluginRemoveAck>(
+                    &["plugin", "remove", id.as_str()],
+                    "Plugin remove",
+                )
+                .and_then(|ack| ack.verify(&id));
+                match &outcome {
+                    Ok(true) => push_toast(&weak, "success", "Plugin removed", &id),
+                    Ok(false) => push_toast(&weak, "success", "Plugin was not installed", &id),
+                    Err(error) => push_toast(&weak, "warn", "Plugin remove failed", error),
                 }
                 let plugins = fetch_plugins();
                 let _ = slint::invoke_from_event_loop(move || {

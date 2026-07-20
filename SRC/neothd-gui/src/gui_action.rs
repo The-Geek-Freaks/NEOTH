@@ -952,6 +952,63 @@ impl SkillCreateAck {
     }
 }
 
+/// Exact `neoth plugin install <dir> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PluginInstallAck {
+    pub ok: bool,
+    pub id: String,
+    pub path: String,
+}
+
+impl PluginInstallAck {
+    /// The GUI cannot predict the id (the CLI derives it from plugin.toml), so
+    /// the readback confirms the installed plugin directory is real on disk.
+    /// Returns the installed id.
+    pub fn verify_and_read_back(&self) -> Result<&str, String> {
+        if !self.ok {
+            return Err("plugin install acknowledged failure".to_string());
+        }
+        if self.id.trim().is_empty() {
+            return Err("plugin install acknowledgement is missing its id".to_string());
+        }
+        let path = self.path.trim();
+        if path.is_empty() {
+            return Err("plugin install acknowledgement is missing its path".to_string());
+        }
+        if !Path::new(path).is_dir() {
+            return Err(format!(
+                "plugin install acknowledged `{path}`, but it is not a directory on disk"
+            ));
+        }
+        Ok(self.id.as_str())
+    }
+}
+
+/// Exact `neoth plugin remove <id> --output json` acknowledgement. The not-found
+/// path also emits `reason`, which carries no GUI invariant — hence no
+/// `deny_unknown_fields`.
+#[derive(Debug, Deserialize)]
+pub struct PluginRemoveAck {
+    pub ok: bool,
+    pub id: String,
+}
+
+impl PluginRemoveAck {
+    /// Confirm the acknowledged id matches. `plugin remove` is idempotent, so
+    /// `ok: false` (plugin was not installed) is a benign success — the desired
+    /// end state holds. Returns whether a plugin was actually removed.
+    pub fn verify(&self, expected_id: &str) -> Result<bool, String> {
+        if self.id != expected_id {
+            return Err(format!(
+                "plugin remove acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        Ok(self.ok)
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3493,6 +3550,43 @@ mod tests {
         ))
         .unwrap();
         assert!(ghost.verify_and_read_back("g").is_err()); // not on disk
+    }
+
+    #[test]
+    fn plugin_install_ack_reads_back_the_install_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = dir.path().join("wasm_hello");
+        std::fs::create_dir(&installed).unwrap();
+        let ack: PluginInstallAck = serde_json::from_str(&format!(
+            r#"{{"ok":true,"id":"wasm_hello","path":{:?}}}"#,
+            installed.to_str().unwrap()
+        ))
+        .unwrap();
+        assert_eq!(ack.verify_and_read_back().unwrap(), "wasm_hello");
+        let failed: PluginInstallAck = serde_json::from_str(&format!(
+            r#"{{"ok":false,"id":"x","path":{:?}}}"#,
+            installed.to_str().unwrap()
+        ))
+        .unwrap();
+        assert!(failed.verify_and_read_back().is_err()); // ok:false
+        let ghost: PluginInstallAck = serde_json::from_str(&format!(
+            r#"{{"ok":true,"id":"x","path":{:?}}}"#,
+            dir.path().join("gone").to_str().unwrap()
+        ))
+        .unwrap();
+        assert!(ghost.verify_and_read_back().is_err()); // not on disk
+    }
+
+    #[test]
+    fn plugin_remove_ack_is_idempotent_and_checks_id() {
+        let removed: PluginRemoveAck =
+            serde_json::from_str(r#"{"ok":true,"id":"wasm_hello"}"#).unwrap();
+        assert_eq!(removed.verify("wasm_hello"), Ok(true));
+        // not-found shape carries an extra `reason` (tolerated) → benign no-op.
+        let noop: PluginRemoveAck =
+            serde_json::from_str(r#"{"ok":false,"id":"wasm_hello","reason":"not found"}"#).unwrap();
+        assert_eq!(noop.verify("wasm_hello"), Ok(false));
+        assert!(removed.verify("other").is_err()); // wrong id
     }
 
     #[test]
