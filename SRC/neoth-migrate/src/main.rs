@@ -1288,6 +1288,23 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("unsupported artifact"));
 
+        // Windows runner mtimes are coarse enough for both plan checkpoints
+        // to land on the same tick; `load_plan_status` picks the newest plan
+        // by mtime with a path tie-break, which turns the final assertions
+        // into a sha lottery. Backdate the blocked checkpoint so the
+        // acknowledged apply's plan is strictly newer.
+        let blocked_status = migration_plan::load_plan_status(dir.path()).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(blocked_status.plan_path.as_deref().unwrap())
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new().set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(10),
+                ),
+            )
+            .unwrap();
+
         let acknowledged_manifest = write_manifest(
             dir.path(),
             &format!(
