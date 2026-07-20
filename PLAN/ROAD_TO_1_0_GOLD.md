@@ -367,11 +367,14 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   sessions are explicitly read-only because transcript/session control is not
   implemented.
 
-  This is not complete R4-05 parity. The remaining `OPERATION_INVENTORY` gaps are
+  This is not complete R4-05 parity. `interface.show` closed (2026-07-20,
+  `c718e1bf`): the MAINTENANCE expander shows the persisted default surface
+  through a typed `interface show` probe — populated at startup, on explicit
+  refresh, and re-read from disk after a committed day-two CLI switch. The
+  remaining `OPERATION_INVENTORY` gaps are
   `omi.set-credentials` (first-run compatibility leaf, checks only process exit —
   day-two OMI credential edits already use the stronger typed configure
-  transaction) and `interface.show` (no explicit day-two show/refresh action;
-  the boot readback is already typed) — both partial by design — and
+  transaction — partial by design) and
   `restore.archive`, which remains unwired: archive restore overwrites the live
   `~/.neoth` and is deliberately CLI-only pending an operator decision on a
   confirm-gated GUI action. The nested
