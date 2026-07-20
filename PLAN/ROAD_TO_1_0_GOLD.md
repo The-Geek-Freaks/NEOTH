@@ -351,6 +351,17 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   mint ceremony collapsed into one shared `enable_full_auto_verified()` so no
   surface can drift to a weaker gate, and a source-scan test pins every call
   site against bare-spawn regressions (security-reviewer verdict: SHIP, 0 P0/P1).
+  The preset surface followed (2026-07-20, `a16ae370`): the global `--output`
+  flag now reaches the preset verbs, `delete`/`activate` emit exact receipts
+  (`{name,removed}` / `{name,active}`) verified by `deny_unknown_fields` acks,
+  and the GUI reads presets.yaml back through `preset list --json` (activate:
+  the active marker must match; delete: no operator-owned row may remain — a
+  shadowed built-in staying listed is legitimate). All three apply surfaces
+  (direct, full-auto token, apply-active/GAP-22) share one settled-plan
+  readback — a post-apply dry-run must report zero remaining field changes;
+  the dry-run runs before the consent and token gates by design and mutates
+  nothing, and no apply path gained `--yes` or a weaker ceremony
+  (security-reviewer verdict: SHIP, 0 P0/P1).
   Configured external chat channels remain visible
   but explicitly disabled because no chat route exists, and historical chat
   sessions are explicitly read-only because transcript/session control is not
