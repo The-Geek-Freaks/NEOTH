@@ -806,6 +806,58 @@ impl HemisphereSetAck {
     }
 }
 
+/// Exact `neoth skills --enable|--disable <id> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillToggleAck {
+    pub id: String,
+    pub state: String,
+}
+
+impl SkillToggleAck {
+    /// Confirm the daemon acknowledged the exact skill and target state the GUI
+    /// requested. The CLI lowercases the id, so the id match is case-insensitive.
+    pub fn verify(&self, expected_id: &str, expected_state: &str) -> Result<(), String> {
+        if !self.id.eq_ignore_ascii_case(expected_id) {
+            return Err(format!(
+                "skill toggle acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        if self.state != expected_state {
+            return Err(format!(
+                "skill toggle acknowledged state `{}`, expected `{expected_state}`",
+                self.state
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Exact `neoth skills --uninstall <id> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillUninstallAck {
+    pub id: String,
+    pub removed: bool,
+}
+
+impl SkillUninstallAck {
+    /// Confirm the acknowledged id matches; return whether a skill was actually
+    /// removed. `neoth skills --uninstall` is idempotent, so `removed: false`
+    /// (already absent) is a benign success — the desired end state holds — not
+    /// a failure. Only an id mismatch (wrong skill acknowledged) is an error.
+    pub fn verify(&self, expected_id: &str) -> Result<bool, String> {
+        if !self.id.eq_ignore_ascii_case(expected_id) {
+            return Err(format!(
+                "skill uninstall acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        Ok(self.removed)
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3294,6 +3346,28 @@ mod tests {
             includes_plaintext_credentials: false,
         };
         assert!(ack.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn skill_toggle_ack_verifies_id_and_state() {
+        let ack: SkillToggleAck =
+            serde_json::from_str(r#"{"id":"my-skill","state":"enabled"}"#).unwrap();
+        // CLI lowercases the id → case-insensitive match.
+        assert!(ack.verify("My-Skill", "enabled").is_ok());
+        assert!(ack.verify("my-skill", "disabled").is_err()); // wrong state
+        assert!(ack.verify("other", "enabled").is_err()); // wrong id
+    }
+
+    #[test]
+    fn skill_uninstall_ack_reports_removal_and_rejects_wrong_id() {
+        let removed: SkillUninstallAck =
+            serde_json::from_str(r#"{"id":"gone","removed":true}"#).unwrap();
+        assert_eq!(removed.verify("gone"), Ok(true));
+        // Idempotent no-op (already absent) is a benign success, not an error.
+        let noop: SkillUninstallAck =
+            serde_json::from_str(r#"{"id":"gone","removed":false}"#).unwrap();
+        assert_eq!(noop.verify("gone"), Ok(false));
+        assert!(removed.verify("other").is_err()); // wrong id
     }
 
     fn hemisphere_set_ack_json(segment: &str) -> String {

@@ -8125,26 +8125,23 @@ fn main() -> Result<()> {
         let id = id.to_string();
         std::thread::spawn(move || {
             let flag = if enabled { "--enable" } else { "--disable" };
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("skills")
-                        .arg(flag)
-                        .arg(&id)
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let expected_state = if enabled { "enabled" } else { "disabled" };
+            // Typed receipt: the daemon must acknowledge the exact skill id and
+            // target state before the GUI reports success — a bare exit code is
+            // no longer trusted for this freedom.yaml::skills mutation.
+            let outcome = run_neothd_json_action::<gui_action::SkillToggleAck>(
+                &["skills", flag, id.as_str()],
+                "Skill toggle",
+            )
+            .and_then(|ack| ack.verify(&id, expected_state));
             let skills = fetch_skills();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     apply_skills(&w, skills);
                     let verb = if enabled { "enabled" } else { "disabled" };
-                    w.set_status_line(if ok {
-                        format!("Skill {id} {verb}.").into()
-                    } else {
-                        format!("Skill {verb} failed for {id} (is neothd on PATH?).").into()
+                    w.set_status_line(match outcome {
+                        Ok(()) => format!("Skill {id} {verb}.").into(),
+                        Err(error) => format!("Skill {verb} failed for {id}: {error}").into(),
                     });
                 }
             });
@@ -8237,24 +8234,18 @@ fn main() -> Result<()> {
             let weak = weak_su.clone();
             let id = id.to_string();
             std::thread::spawn(move || {
-                let result = which_neothd().and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("skills")
-                        .arg("--uninstall")
-                        .arg(&id)
-                        .output()
-                        .ok()
-                });
-                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
-                let msg = result
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
-                if ok {
-                    push_toast(&weak, "success", "Skill uninstalled", &id);
-                } else {
-                    push_toast(&weak, "warn", "Skill uninstall failed", &msg);
+                // Typed receipt: require the daemon to acknowledge the exact id
+                // and that a skill was actually removed (`removed: true`) before
+                // reporting success — a no-op or bare exit is no longer trusted.
+                let outcome = run_neothd_json_action::<gui_action::SkillUninstallAck>(
+                    &["skills", "--uninstall", id.as_str()],
+                    "Skill uninstall",
+                )
+                .and_then(|ack| ack.verify(&id));
+                match &outcome {
+                    Ok(true) => push_toast(&weak, "success", "Skill uninstalled", &id),
+                    Ok(false) => push_toast(&weak, "success", "Skill was already removed", &id),
+                    Err(error) => push_toast(&weak, "warn", "Skill uninstall failed", error),
                 }
                 let skills = fetch_skills();
                 let _ = slint::invoke_from_event_loop(move || {
