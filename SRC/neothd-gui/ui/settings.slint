@@ -926,6 +926,10 @@ export component SettingsView inherits Rectangle {
     /// Launch the packaged CLI in a real platform terminal and make CLI the
     /// durable default for the next product launch.
     callback open-cli-clicked;
+    /// interface.show — day-two view of the persisted default surface
+    /// (`neoth interface show`); Rust populates at startup + on refresh.
+    in property <string> interface-preference: "Loading…";
+    callback interface-refresh-clicked;
     // SPEC-06 — operator picked (role, provider) in the Hemispheres rebind
     // control → MainWindow shells `neoth hemispheres set`.
     callback hemisphere-set-clicked(string, string, string);
@@ -5383,6 +5387,24 @@ export component SettingsView inherits Rectangle {
                             label: "Re-run wizard";
                             primary: false;
                             clicked => { root.wizard-rerun-clicked(); }
+                        }
+                    }
+                    // interface.show — the persisted default-surface choice
+                    // ("Open CLI" above changes it; this row shows the truth
+                    // on disk, refreshed via `neoth interface show`).
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Default interface: " + root.interface-preference;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                        }
+                        NeothButton {
+                            label: "Refresh";
+                            primary: false;
+                            clicked => { root.interface-refresh-clicked(); }
                         }
                     }
                     // GAP-07 — Backup + rollback preview (read-only).

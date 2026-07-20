@@ -2083,6 +2083,8 @@ fn main() -> Result<()> {
                 .context("NEOTH CLI binary is missing beside the GUI")
                 .and_then(|bin| switch_to_cli(&bin, &home));
             let weak_for_toast = weak.clone();
+            let switched = result.is_ok();
+            let weak_for_row = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(w) = weak.upgrade() else { return };
                 match result {
@@ -2105,6 +2107,11 @@ fn main() -> Result<()> {
                     }
                 }
             });
+            // interface.show — the default-surface row must reflect the
+            // committed switch (re-read from disk, not assumed).
+            if switched {
+                refresh_interface_preference(weak_for_row);
+            }
         });
     });
 
@@ -8531,6 +8538,27 @@ fn main() -> Result<()> {
             refresh_chat_consent(weak_cc_init);
         });
     }
+
+    // interface.show — populate the day-two "Default interface" settings row
+    // at startup and on explicit refresh.
+    {
+        let weak_if_init = window.as_weak();
+        std::thread::spawn(move || {
+            refresh_interface_preference(weak_if_init);
+        });
+    }
+    let weak_if_refresh = window.as_weak();
+    window.on_interface_refresh_clicked(move || {
+        // Callback runs on the event loop — the interim label set is safe
+        // here and keeps the Refresh button visibly responsive.
+        if let Some(w) = weak_if_refresh.upgrade() {
+            w.set_interface_preference("Loading…".into());
+        }
+        let weak = weak_if_refresh.clone();
+        std::thread::spawn(move || {
+            refresh_interface_preference(weak);
+        });
+    });
 
     // chat-consent-refresh — operator opened the popover; re-probe daemon.
     let weak_cc_refresh = window.as_weak();
@@ -17856,6 +17884,44 @@ fn validate_interface_set_result(
     }
 }
 
+/// Tolerant `interface show --output json` snapshot for the day-two settings
+/// row (query surface; `preferred` stays null until the one-time choice, so
+/// the exact set-acknowledgement struct cannot be reused here).
+#[derive(Debug, Deserialize)]
+struct InterfaceShowSnapshot {
+    chosen: bool,
+    preferred: Option<String>,
+}
+
+/// Human label for the day-two "Default interface" settings row. PURE.
+fn interface_preference_label(chosen: bool, preferred: Option<&str>) -> String {
+    match (chosen, preferred) {
+        (true, Some("gui")) => "GUI (this app)".to_string(),
+        (true, Some("cli")) => "CLI (terminal)".to_string(),
+        (true, Some(other)) => format!("unknown ({other})"),
+        // Covers pre-choice (false, None) plus the contract violations
+        // (true, None) and (false, Some(_)) — none may read as a made choice.
+        _ => "not chosen yet".to_string(),
+    }
+}
+
+/// interface.show — probe the persisted default-surface preference through
+/// the typed CLI boundary and bind the label. Worker-thread only.
+fn refresh_interface_preference(weak: slint::Weak<MainWindow>) {
+    let label = match run_neothd_json_action::<InterfaceShowSnapshot>(
+        &["interface", "show"],
+        "Interface preference probe",
+    ) {
+        Ok(snap) => interface_preference_label(snap.chosen, snap.preferred.as_deref()),
+        Err(error) => format!("unavailable: {error}"),
+    };
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = weak.upgrade() {
+            w.set_interface_preference(label.into());
+        }
+    });
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct GuiCompletionStatusAcknowledgement {
@@ -20045,6 +20111,34 @@ mod tests {
     fn validate_autonomy_rejects_unknown() {
         assert!(validate_autonomy("ultra").is_err());
         assert!(validate_autonomy("").is_err());
+    }
+
+    #[test]
+    fn interface_preference_label_covers_all_show_states() {
+        // Pinned against cli/interface.rs render(): `preferred` is null
+        // until the one-time choice, then "gui"/"cli".
+        assert_eq!(
+            interface_preference_label(true, Some("gui")),
+            "GUI (this app)"
+        );
+        assert_eq!(
+            interface_preference_label(true, Some("cli")),
+            "CLI (terminal)"
+        );
+        assert_eq!(interface_preference_label(false, None), "not chosen yet");
+        // chosen:true with a null/foreign value must not read as a valid choice.
+        assert_eq!(interface_preference_label(true, None), "not chosen yet");
+        assert_eq!(
+            interface_preference_label(true, Some("web")),
+            "unknown (web)"
+        );
+        // Decode contract: the snapshot tolerates a null preferred field.
+        let snap: InterfaceShowSnapshot = serde_json::from_str(
+            r#"{"chosen":false,"preferred":null,"changed":false,"path":"C:/x/interface.json"}"#,
+        )
+        .expect("decode interface show snapshot");
+        assert!(!snap.chosen);
+        assert!(snap.preferred.is_none());
     }
 
     #[test]

@@ -238,6 +238,9 @@ export component MainWindow inherits Window {
     // QM-8 Phase 2: saved preset list + active marker.
     // Populated by a subprocess probe to `neoth preset list`.
     in property <string> preset-summary: "Loading presets…";
+    // interface.show — day-two view of the persisted default surface,
+    // populated by a typed probe to `neoth interface show`.
+    in property <string> interface-preference: "Loading…";
     // SPEC-05: structured preset list for the click-to-activate selector,
     // from `neoth preset list --json`.
     in property <[PresetRow]> preset-list: [];
@@ -397,6 +400,9 @@ export component MainWindow inherits Window {
     callback settings-wizard-rerun-clicked;
     /// Settings offers a reversible GUI -> CLI switch at any time.
     callback settings-open-cli-clicked;
+    /// interface.show — operator asked for a fresh read of the saved
+    /// default-surface preference.
+    callback interface-refresh-clicked;
     // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
     // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
     callback hemisphere-set(string, string, string);
@@ -3419,6 +3425,8 @@ export component MainWindow inherits Window {
             open-cli-clicked => {
                 root.settings-open-cli-clicked();
             }
+            interface-preference: root.interface-preference;
+            interface-refresh-clicked => { root.interface-refresh-clicked(); }
             open-chat-clicked => {
                 root.step = WizardStep.chat;
             }
