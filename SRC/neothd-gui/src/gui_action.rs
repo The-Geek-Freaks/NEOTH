@@ -891,6 +891,67 @@ impl SkillUninstallAck {
     }
 }
 
+/// Exact `neoth skills --install <dir> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillInstallAck {
+    pub id: String,
+    pub installed_at: String,
+    pub replaced_existing: bool,
+}
+
+impl SkillInstallAck {
+    /// The GUI cannot predict the id (the CLI derives it from `skill.yaml`), so
+    /// the readback is that the acknowledged install directory is real on disk.
+    /// Returns `(id, replaced_existing)`.
+    pub fn verify_and_read_back(&self) -> Result<(&str, bool), String> {
+        if self.id.trim().is_empty() {
+            return Err("skill install acknowledgement is missing its id".to_string());
+        }
+        let path = self.installed_at.trim();
+        if path.is_empty() {
+            return Err("skill install acknowledgement is missing its install path".to_string());
+        }
+        if !Path::new(path).is_dir() {
+            return Err(format!(
+                "skill install acknowledged `{path}`, but it is not a directory on disk"
+            ));
+        }
+        Ok((self.id.as_str(), self.replaced_existing))
+    }
+}
+
+/// Exact `neoth skills --create ... --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCreateAck {
+    pub id: String,
+    pub path: String,
+}
+
+impl SkillCreateAck {
+    /// Confirm the acknowledged id matches the requested id and that the created
+    /// skill exists on disk (readback). Returns the created path.
+    pub fn verify_and_read_back(&self, expected_id: &str) -> Result<&str, String> {
+        if !self.id.eq_ignore_ascii_case(expected_id) {
+            return Err(format!(
+                "skill create acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        let path = self.path.trim();
+        if path.is_empty() {
+            return Err("skill create acknowledgement is missing its path".to_string());
+        }
+        if !Path::new(path).exists() {
+            return Err(format!(
+                "skill create acknowledged `{path}`, but nothing is on disk there"
+            ));
+        }
+        Ok(path)
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3389,6 +3450,49 @@ mod tests {
         assert!(ack.verify("My-Skill", "enabled").is_ok());
         assert!(ack.verify("my-skill", "disabled").is_err()); // wrong state
         assert!(ack.verify("other", "enabled").is_err()); // wrong id
+    }
+
+    #[test]
+    fn skill_install_ack_reads_back_the_install_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let installed = dir.path().join("my-skill");
+        std::fs::create_dir(&installed).unwrap();
+        let ack: SkillInstallAck = serde_json::from_str(&format!(
+            r#"{{"id":"my-skill","installed_at":{:?},"replaced_existing":true}}"#,
+            installed.to_str().unwrap()
+        ))
+        .unwrap();
+        assert_eq!(ack.verify_and_read_back().unwrap(), ("my-skill", true));
+        // Missing directory → rejected.
+        let ghost: SkillInstallAck = serde_json::from_str(&format!(
+            r#"{{"id":"x","installed_at":{:?},"replaced_existing":false}}"#,
+            dir.path().join("gone").to_str().unwrap()
+        ))
+        .unwrap();
+        assert!(ghost.verify_and_read_back().is_err());
+    }
+
+    #[test]
+    fn skill_create_ack_verifies_id_and_reads_back_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Production `create_skill` returns the `skill.yaml` FILE path, not the
+        // directory — mirror that so the readback test matches the real artifact.
+        let created = dir.path().join("brand-new").join("skill.yaml");
+        std::fs::create_dir_all(created.parent().unwrap()).unwrap();
+        std::fs::write(&created, b"id: brand-new\n").unwrap();
+        let ack: SkillCreateAck = serde_json::from_str(&format!(
+            r#"{{"id":"brand-new","path":{:?}}}"#,
+            created.to_str().unwrap()
+        ))
+        .unwrap();
+        assert!(ack.verify_and_read_back("Brand-New").is_ok()); // case-insensitive
+        assert!(ack.verify_and_read_back("other").is_err()); // wrong id
+        let ghost: SkillCreateAck = serde_json::from_str(&format!(
+            r#"{{"id":"g","path":{:?}}}"#,
+            dir.path().join("gone").to_str().unwrap()
+        ))
+        .unwrap();
+        assert!(ghost.verify_and_read_back("g").is_err()); // not on disk
     }
 
     #[test]

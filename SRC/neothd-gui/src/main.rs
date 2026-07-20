@@ -8194,24 +8194,29 @@ fn main() -> Result<()> {
                     .pick_folder();
                 let Some(dir) = picked else { return };
                 let dir_str = dir.to_string_lossy().to_string();
-                let result = which_neothd().and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("skills")
-                        .arg("--install")
-                        .arg(&dir)
-                        .output()
-                        .ok()
+                // Typed receipt: the GUI cannot predict the id (the CLI derives
+                // it from skill.yaml), so it reads the acknowledged install
+                // directory back off disk before reporting success.
+                let result = run_neothd_json_action::<gui_action::SkillInstallAck>(
+                    &["skills", "--install", dir_str.as_str()],
+                    "Skill install",
+                )
+                .and_then(|ack| {
+                    ack.verify_and_read_back()
+                        .map(|(id, replaced)| (id.to_string(), replaced))
                 });
-                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
-                let msg = result
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
-                if ok {
-                    push_toast(&weak, "success", "Skill installed", &dir_str);
-                } else {
-                    push_toast(&weak, "warn", "Skill install failed", &msg);
+                match &result {
+                    Ok((id, replaced)) => push_toast(
+                        &weak,
+                        "success",
+                        if *replaced {
+                            "Skill replaced"
+                        } else {
+                            "Skill installed"
+                        },
+                        id,
+                    ),
+                    Err(error) => push_toast(&weak, "warn", "Skill install failed", error),
                 }
                 let skills = fetch_skills();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -8267,32 +8272,29 @@ fn main() -> Result<()> {
             let keywords = keywords.to_string();
             let prompt = prompt.to_string();
             std::thread::spawn(move || {
-                let result = which_neothd().and_then(|bin| {
-                    let mut cmd = spawn_neothd_plain(&bin);
-                    cmd.arg("skills")
-                        .arg("--create")
-                        .arg("--non-interactive")
-                        .arg("--create-id")
-                        .arg(&id)
-                        .arg("--create-description")
-                        .arg(&desc)
-                        .arg("--create-system-prompt")
-                        .arg(&prompt);
-                    if !keywords.is_empty() {
-                        cmd.arg("--create-keywords").arg(&keywords);
-                    }
-                    cmd.output().ok()
-                });
-                let ok = result.as_ref().map(|o| o.status.success()).unwrap_or(false);
-                let msg = result
-                    .as_ref()
-                    .map(|o| String::from_utf8_lossy(&o.stderr).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "neothd not on PATH?".to_string());
-                if ok {
-                    push_toast(&weak, "success", "Skill created", &id);
-                } else {
-                    push_toast(&weak, "warn", "Skill create failed", &msg);
+                let mut args: Vec<&str> = vec![
+                    "skills",
+                    "--create",
+                    "--non-interactive",
+                    "--create-id",
+                    id.as_str(),
+                    "--create-description",
+                    desc.as_str(),
+                    "--create-system-prompt",
+                    prompt.as_str(),
+                ];
+                if !keywords.is_empty() {
+                    args.push("--create-keywords");
+                    args.push(keywords.as_str());
+                }
+                // Typed receipt: confirm the acknowledged id matches the request
+                // and the new skill is on disk before reporting success.
+                let result =
+                    run_neothd_json_action::<gui_action::SkillCreateAck>(&args, "Skill create")
+                        .and_then(|ack| ack.verify_and_read_back(&id).map(|path| path.to_string()));
+                match &result {
+                    Ok(_) => push_toast(&weak, "success", "Skill created", &id),
+                    Err(error) => push_toast(&weak, "warn", "Skill create failed", error),
                 }
                 let skills = fetch_skills();
                 let _ = slint::invoke_from_event_loop(move || {
