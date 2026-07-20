@@ -14275,6 +14275,7 @@ fn apply_preset_direct(name: &str) -> String {
     let Some(bin) = which_neothd() else {
         return "preset apply: neothd binary not found".to_string();
     };
+    // 1. Apply the preset (the write; the CLI prints table text, exit-gated).
     match spawn_neothd_plain(&bin)
         .arg("preset")
         .arg("apply")
@@ -14282,25 +14283,28 @@ fn apply_preset_direct(name: &str) -> String {
         .arg("--yes")
         .output()
     {
-        Ok(o) if o.status.success() => {
-            // Try to extract fields_changed count from JSON output.
-            let stdout = String::from_utf8_lossy(&o.stdout);
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&stdout)
-                && let Some(n) = v
-                    .get("fields_changed")
-                    .and_then(|f| f.as_array())
-                    .map(|a| a.len())
-            {
-                return format!("Applied preset `{name}` ({n} fields changed).");
-            }
-            format!("Applied preset `{name}`.")
+        Ok(o) if o.status.success() => {}
+        Ok(o) => {
+            return format!(
+                "preset apply `{name}` failed (exit {}): {}",
+                o.status,
+                String::from_utf8_lossy(&o.stderr).trim()
+            );
         }
-        Ok(o) => format!(
-            "preset apply `{name}` failed (exit {}): {}",
-            o.status,
-            String::from_utf8_lossy(&o.stderr).trim()
-        ),
-        Err(e) => format!("preset apply could not start: {e}"),
+        Err(e) => return format!("preset apply could not start: {e}"),
+    }
+    // 2. Typed readback: a post-apply dry-run must report zero remaining field
+    //    changes — proof the config now matches the preset. A bare exit code is
+    //    not trusted for this freedom.yaml mutation.
+    match run_neothd_json_action::<gui_action::PresetPlanAck>(
+        &["preset", "apply", name, "--dry-run"],
+        "Preset apply readback",
+    ) {
+        Ok(plan) => match plan.verify_settled(name) {
+            Ok(()) => format!("Applied preset `{name}`."),
+            Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
+        },
+        Err(error) => format!("Preset `{name}` applied, but the readback failed: {error}"),
     }
 }
 

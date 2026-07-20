@@ -1009,6 +1009,37 @@ impl PluginRemoveAck {
     }
 }
 
+/// Exact `neoth preset apply <name> --dry-run` plan (always emitted as JSON).
+/// The GUI uses it as a post-apply readback: after a successful apply a fresh
+/// dry-run must report zero remaining field changes. `autonomy_requested`/
+/// `warn_changes` carry no GUI invariant here → no `deny_unknown_fields`.
+#[derive(Debug, Deserialize)]
+pub struct PresetPlanAck {
+    pub name: String,
+    pub fields_changed: Vec<String>,
+}
+
+impl PresetPlanAck {
+    /// Confirm the acknowledged preset name matches and the preset is fully
+    /// settled — zero fields remain to change, i.e. the config now matches the
+    /// preset. A non-empty plan after apply means the write did not fully land.
+    pub fn verify_settled(&self, expected_name: &str) -> Result<(), String> {
+        if self.name != expected_name {
+            return Err(format!(
+                "preset dry-run acknowledged `{}`, expected `{expected_name}`",
+                self.name
+            ));
+        }
+        if !self.fields_changed.is_empty() {
+            return Err(format!(
+                "{} preset field(s) still differ after apply",
+                self.fields_changed.len()
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Exact `neoth omi resume --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3550,6 +3581,22 @@ mod tests {
         ))
         .unwrap();
         assert!(ghost.verify_and_read_back("g").is_err()); // not on disk
+    }
+
+    #[test]
+    fn preset_plan_ack_confirms_settled_after_apply() {
+        let settled: PresetPlanAck = serde_json::from_str(
+            r#"{"name":"weekend","fields_changed":[],"autonomy_requested":null,"warn_changes":[]}"#,
+        )
+        .unwrap();
+        assert!(settled.verify_settled("weekend").is_ok());
+        // Fields still differ → the apply did not fully land.
+        let unsettled: PresetPlanAck = serde_json::from_str(
+            r#"{"name":"weekend","fields_changed":["cloud.enabled"],"autonomy_requested":null,"warn_changes":[]}"#,
+        )
+        .unwrap();
+        assert!(unsettled.verify_settled("weekend").is_err());
+        assert!(settled.verify_settled("other").is_err()); // wrong name
     }
 
     #[test]
