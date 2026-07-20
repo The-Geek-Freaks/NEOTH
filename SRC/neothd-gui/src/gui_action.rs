@@ -834,6 +834,39 @@ impl SkillToggleAck {
     }
 }
 
+/// Exact `neoth plugin enable|disable <id> --output json` acknowledgement —
+/// the fields the GUI verifies. The changed path also emits optional
+/// `granted_capability`/`manifest_sha256`/`wasm_sha256`, which carry no GUI
+/// invariant, so this omits `deny_unknown_fields`; a shape test pins the receipt.
+#[derive(Debug, Deserialize)]
+pub struct PluginToggleAck {
+    pub id: String,
+    pub new: String,
+    pub changed: bool,
+}
+
+impl PluginToggleAck {
+    /// Confirm the acknowledged plugin id and resulting activation state match
+    /// the request. `enable`/`disable` are idempotent, so `changed: false`
+    /// (already in the target state) is a benign success. Returns whether the
+    /// activation actually changed.
+    pub fn verify(&self, expected_id: &str, expected_state: &str) -> Result<bool, String> {
+        if self.id != expected_id {
+            return Err(format!(
+                "plugin toggle acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        if self.new != expected_state {
+            return Err(format!(
+                "plugin toggle acknowledged state `{}`, expected `{expected_state}`",
+                self.new
+            ));
+        }
+        Ok(self.changed)
+    }
+}
+
 /// Exact `neoth skills --uninstall <id> --output json` acknowledgement.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -3356,6 +3389,25 @@ mod tests {
         assert!(ack.verify("My-Skill", "enabled").is_ok());
         assert!(ack.verify("my-skill", "disabled").is_err()); // wrong state
         assert!(ack.verify("other", "enabled").is_err()); // wrong id
+    }
+
+    #[test]
+    fn plugin_toggle_ack_verifies_id_and_state() {
+        // Changed path with the optional approval fields — tolerated (no
+        // deny_unknown_fields); pins the full receipt shape.
+        let changed: PluginToggleAck = serde_json::from_str(
+            r#"{"id":"wasm-hello","previous":"pending","new":"active","changed":true,"granted_capability":"none","manifest_sha256":"ab","wasm_sha256":"cd"}"#,
+        )
+        .unwrap();
+        assert_eq!(changed.verify("wasm-hello", "active"), Ok(true));
+        // Idempotent no-op (already active) is a benign success.
+        let noop: PluginToggleAck = serde_json::from_str(
+            r#"{"id":"wasm-hello","previous":"active","new":"active","changed":false}"#,
+        )
+        .unwrap();
+        assert_eq!(noop.verify("wasm-hello", "active"), Ok(false));
+        assert!(changed.verify("other", "active").is_err()); // wrong id
+        assert!(changed.verify("wasm-hello", "disabled").is_err()); // wrong state
     }
 
     #[test]

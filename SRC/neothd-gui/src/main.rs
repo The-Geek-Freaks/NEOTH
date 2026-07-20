@@ -8157,26 +8157,23 @@ fn main() -> Result<()> {
         let id = id.to_string();
         std::thread::spawn(move || {
             let action = if enabled { "enable" } else { "disable" };
-            let ok = which_neothd()
-                .and_then(|bin| {
-                    spawn_neothd_plain(&bin)
-                        .arg("plugin")
-                        .arg(action)
-                        .arg(&id)
-                        .output()
-                        .ok()
-                })
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+            let expected_state = if enabled { "active" } else { "disabled" };
+            // Typed receipt: require the daemon to acknowledge the exact plugin
+            // id and resulting activation state before reporting success — a
+            // bare exit code no longer gates this WASM activation mutation.
+            let outcome = run_neothd_json_action::<gui_action::PluginToggleAck>(
+                &["plugin", action, id.as_str()],
+                "Plugin toggle",
+            )
+            .and_then(|ack| ack.verify(&id, expected_state));
             let plugins = fetch_plugins();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     apply_plugins(&w, plugins);
                     let verb = if enabled { "enabled" } else { "disabled" };
-                    w.set_status_line(if ok {
-                        format!("Plugin {id} {verb}.").into()
-                    } else {
-                        format!("Plugin {verb} failed for {id} (is neothd on PATH?).").into()
+                    w.set_status_line(match outcome {
+                        Ok(_) => format!("Plugin {id} {verb}.").into(),
+                        Err(error) => format!("Plugin {verb} failed for {id}: {error}").into(),
                     });
                 }
             });
