@@ -340,7 +340,18 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   saved interface preference back after the terminal Ready handshake and confirms
   `interface.json` committed `cli`; a success-looking launch that never persisted
   the switch surfaces as a failure toast instead of a false success — promoting
-  that row to Verified as well. Configured external chat channels remain visible
+  that row to Verified as well. The Tier-1 autonomy/consent surface (2026-07-20,
+  `0e3670a7`) now binds all eight GUI mutation paths — autonomy level set, the
+  three FULL-AUTO entry points (settings radio, chat consent strip, FULL-AUTO
+  switch), the two GATED switch-backs, consent revoke, and the full-auto preset
+  token mint — to exact `deny_unknown_fields` receipts (`AutonomyLevelAck`,
+  `OperatingModeAck`, `FullautoTokenAck`, `ConsentRevokeAck`) with post-mutation
+  readbacks (`autonomy show` must report the committed mode/level; `consent
+  list` must no longer list a revoked provider). The triple-duplicated FULL-AUTO
+  mint ceremony collapsed into one shared `enable_full_auto_verified()` so no
+  surface can drift to a weaker gate, and a source-scan test pins every call
+  site against bare-spawn regressions (security-reviewer verdict: SHIP, 0 P0/P1).
+  Configured external chat channels remain visible
   but explicitly disabled because no chat route exists, and historical chat
   sessions are explicitly read-only because transcript/session control is not
   implemented.
