@@ -308,6 +308,46 @@ pub fn render_context_block(files: &[RelevantFile]) -> String {
     crate::security::redact::sanitize_tool_output(&out)
 }
 
+/// CRG-01 — render depth-1 callers of the symbols the prompt matched, so the
+/// decomposer sees the structural blast radius without a grep round-trip.
+/// `per_symbol_cap` bounds the lines per matched symbol; symbols are
+/// deduplicated across files. Empty string when no matched symbol has a
+/// caller in the graph. Same sanitize pipeline as [`render_context_block`] —
+/// persisted edges are untrusted prompt input too.
+pub fn render_callers_block(
+    graph: &crate::code_map::graph::CallGraph,
+    files: &[RelevantFile],
+    per_symbol_cap: usize,
+) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut lines: Vec<String> = Vec::new();
+    for file in files {
+        for symbol in &file.matched_symbols {
+            if !seen.insert(symbol.clone()) {
+                continue;
+            }
+            let mut callers = graph.callers_of(symbol, 1);
+            callers.sort_by(|a, b| a.symbol.cmp(&b.symbol).then(a.file_path.cmp(&b.file_path)));
+            callers.truncate(per_symbol_cap);
+            for caller in callers {
+                lines.push(format!(
+                    "  - {symbol} <- {} ({})",
+                    caller.symbol, caller.file_path
+                ));
+            }
+        }
+    }
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("# callers of matched symbols (depth 1, NEOTH code-map)\n");
+    for line in lines {
+        out.push_str(&line);
+        out.push('\n');
+    }
+    crate::security::redact::sanitize_tool_output(&out)
+}
+
 /// Bundled architecture-improvement skill which consumes GRAPH-02 findings.
 pub const ARCHITECTURE_SKILL_ID: &str = "improve_codebase_architecture";
 
@@ -756,6 +796,96 @@ mod tests {
             .unwrap()
             .is_none(),
             "an unknown/currently-unmapped repo must never fall back to another persisted root"
+        );
+    }
+
+    #[test]
+    fn render_callers_block_lists_deduped_capped_callers() {
+        let graph = crate::code_map::graph::CallGraph::from_edges(vec![
+            CodeEdge {
+                from_file: "src/a.rs".into(),
+                from_symbol: "alpha".into(),
+                to_name: "verify_token".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "src/b.rs".into(),
+                from_symbol: "beta".into(),
+                to_name: "verify_token".into(),
+                kind: EdgeKind::Calls,
+            },
+            CodeEdge {
+                from_file: "src/c.rs".into(),
+                from_symbol: "gamma".into(),
+                to_name: "verify_token".into(),
+                kind: EdgeKind::Calls,
+            },
+        ]);
+        let files = vec![
+            RelevantFile {
+                root: "/repo/a".into(),
+                path: "src/auth.rs".into(),
+                identifier_hits: 2,
+                matched_symbols: vec!["verify_token".into()],
+                path_keyword_overlap: 0,
+            },
+            // The same symbol matched through a second file — the callers
+            // section must not duplicate.
+            RelevantFile {
+                root: "/repo/a".into(),
+                path: "src/auth2.rs".into(),
+                identifier_hits: 1,
+                matched_symbols: vec!["verify_token".into()],
+                path_keyword_overlap: 0,
+            },
+        ];
+        let block = render_callers_block(&graph, &files, 2);
+        assert!(block.starts_with("# callers of matched symbols"));
+        // Cap 2 keeps alpha+beta (sorted), drops gamma; dedupe keeps one set.
+        assert_eq!(block.matches("verify_token <-").count(), 2);
+        assert!(block.contains("verify_token <- alpha (src/a.rs)"));
+        assert!(block.contains("verify_token <- beta (src/b.rs)"));
+        assert!(!block.contains("gamma"));
+    }
+
+    #[test]
+    fn render_callers_block_empty_without_matches_or_callers() {
+        let graph = crate::code_map::graph::CallGraph::from_edges(Vec::new());
+        assert!(render_callers_block(&graph, &[], 3).is_empty());
+        let files = vec![RelevantFile {
+            root: "/r".into(),
+            path: "src/x.rs".into(),
+            identifier_hits: 1,
+            matched_symbols: vec!["lonely".into()],
+            path_keyword_overlap: 0,
+        }];
+        assert!(
+            render_callers_block(&graph, &files, 3).is_empty(),
+            "a matched symbol with no callers renders nothing"
+        );
+    }
+
+    #[test]
+    fn render_callers_block_sanitizes_persisted_names() {
+        // Persisted edges are untrusted prompt input — same posture as
+        // rendered_code_map_context_sanitizes_persisted_roots_paths_and_symbols.
+        let graph = crate::code_map::graph::CallGraph::from_edges(vec![CodeEdge {
+            from_file: "src/\x1b[31mevil.rs".into(),
+            from_symbol: "att\x07acker".into(),
+            to_name: "verify_token".into(),
+            kind: EdgeKind::Calls,
+        }]);
+        let files = vec![RelevantFile {
+            root: "/r".into(),
+            path: "src/auth.rs".into(),
+            identifier_hits: 1,
+            matched_symbols: vec!["verify_token".into()],
+            path_keyword_overlap: 0,
+        }];
+        let block = render_callers_block(&graph, &files, 3);
+        assert!(
+            !block.contains('\x1b') && !block.contains('\x07'),
+            "control bytes from persisted edges must never reach a provider prompt"
         );
     }
 }

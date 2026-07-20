@@ -114,6 +114,57 @@ fn repo_map_context_from(conn: &rusqlite::Connection, root: &str) -> Option<Stri
     if text.is_empty() { None } else { Some(text) }
 }
 
+/// CRG-01 — cap on the prompt-targeted recall files. Small on purpose: the
+/// block is a targeting hint, not a file dump; `truncate_to_budget` still
+/// hard-clamps the merged context.
+const RECALL_CONTEXT_MAX_FILES: usize = 8;
+/// CRG-01 — depth-1 caller lines per matched symbol.
+const RECALL_CALLERS_PER_SYMBOL: usize = 3;
+
+/// CRG-01 — prompt-targeted code-map context: the files whose symbols the
+/// prompt names, plus depth-1 callers of those symbols. Best-effort like
+/// [`repo_map_context`]: `None` when the DB is missing/unreadable or nothing
+/// matches, and the decomposer proceeds exactly as before.
+fn prompt_recall_context(prompt: &str) -> Option<String> {
+    let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
+    let root = std::env::current_dir().ok()?.to_string_lossy().to_string();
+    prompt_recall_context_from(&conn, &root, prompt)
+}
+
+/// Testable core (mirrors [`repo_map_context_from`]). Recall searches every
+/// persisted root, so the result is filtered to the working root — a prompt
+/// about Project A must never surface Project B's files. The callers section
+/// is independently best-effort — an edge-load failure never drops the file
+/// list.
+fn prompt_recall_context_from(
+    conn: &rusqlite::Connection,
+    root: &str,
+    prompt: &str,
+) -> Option<String> {
+    let files =
+        crate::code_map::recall::relevant_files_for_prompt(conn, prompt, RECALL_CONTEXT_MAX_FILES)
+            .ok()?;
+    let files: Vec<_> = files.into_iter().filter(|f| f.root == root).collect();
+    if files.is_empty() {
+        return None;
+    }
+    let files_block = crate::code_map::recall::render_context_block(&files);
+    // Root-scoped edges only — cross-root symbol-name conflation would
+    // attribute Project B's callers to Project A's symbols.
+    let callers_block = crate::code_map::persist::load_edges(conn, root)
+        .ok()
+        .map(|edges| {
+            let graph = crate::code_map::graph::CallGraph::from_edges(edges);
+            crate::code_map::recall::render_callers_block(&graph, &files, RECALL_CALLERS_PER_SYMBOL)
+        })
+        .unwrap_or_default();
+    if callers_block.is_empty() {
+        Some(files_block)
+    } else {
+        Some(format!("{files_block}\n{callers_block}"))
+    }
+}
+
 pub async fn run_code(args: CodeArgs) -> Result<()> {
     // `--apply` needs a dispatch path to apply INTO. Both `--dispatch`
     // (fresh session) and `--run-pending` (existing Backlog) are dispatch
@@ -218,16 +269,27 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
 
     // GOLD-ADAPT-AWE-AIDER-01 — feed the aider-style repo-map summary as the
     // decomposer's project_context (best-effort: None when the repo isn't indexed).
+    // CRG-01 — prepend the prompt-targeted recall block (matched files +
+    // depth-1 callers): `truncate_to_budget` keeps the context head when
+    // space binds, so the targeted block survives over the generic summary.
+    let recall_ctx = prompt_recall_context(&prompt);
+    if recall_ctx.is_some() {
+        println!("injecting prompt-targeted code-map context …");
+    }
     let repo_ctx = repo_map_context();
     if repo_ctx.is_some() {
         println!("injecting repo-map context (code_map summary) …");
     }
+    let project_ctx = match (recall_ctx, repo_ctx) {
+        (Some(recall), Some(repo)) => Some(format!("{recall}\n\n{repo}")),
+        (recall, repo) => recall.or(repo),
+    };
     let result = decompose(
         &llm,
         &conn,
         session_id,
         &prompt,
-        repo_ctx.as_deref(),
+        project_ctx.as_deref(),
         now_ns,
     )
     .await
@@ -996,6 +1058,72 @@ mod tests {
         assert!(
             repo_map_context_from(&conn, "/nonexistent/unindexed/root").is_none(),
             "an unindexed root must yield None (decomposer runs context-free)"
+        );
+    }
+
+    // CRG-01 — a prompt naming a persisted symbol surfaces that file as
+    // targeted context; a prompt matching nothing keeps the decomposer
+    // context-free (the same safety property as the repo map above). The
+    // callers renderer itself is unit-tested in code_map::recall.
+    #[test]
+    fn prompt_recall_context_targets_prompt_symbols() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("code_map.db");
+        let mut conn = crate::code_map::persist::open(&db).expect("open fresh code_map db");
+        let map = crate::code_map::walker::RepoMap {
+            root: "/repo/a".into(),
+            files: vec![crate::code_map::walker::RepoFile {
+                path: "src/auth/middleware.rs".into(),
+                language: crate::code_map::walker::Language::Rust,
+                bytes: 200,
+                loc: 30,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![crate::code_map::symbols::Symbol {
+                    name: "verify_token".into(),
+                    kind: crate::code_map::symbols::SymbolKind::Function,
+                    line: 12,
+                }],
+            }],
+            report: crate::code_map::walker::ScanReport::default(),
+        };
+        crate::code_map::persist::persist_map(&mut conn, &map).unwrap();
+        // A second persisted root whose symbol also matches the prompt — the
+        // working-root filter must keep it out of Project A's context.
+        let foreign = crate::code_map::walker::RepoMap {
+            root: "/repo/b".into(),
+            files: vec![crate::code_map::walker::RepoFile {
+                path: "src/foreign/token.rs".into(),
+                language: crate::code_map::walker::Language::Rust,
+                bytes: 100,
+                loc: 10,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![crate::code_map::symbols::Symbol {
+                    name: "verify_token".into(),
+                    kind: crate::code_map::symbols::SymbolKind::Function,
+                    line: 3,
+                }],
+            }],
+            report: crate::code_map::walker::ScanReport::default(),
+        };
+        crate::code_map::persist::persist_map(&mut conn, &foreign).unwrap();
+
+        let ctx = prompt_recall_context_from(&conn, "/repo/a", "fix verify_token refresh handling")
+            .expect("a prompt naming a persisted symbol must surface recall context");
+        assert!(ctx.contains("src/auth/middleware.rs"));
+        assert!(ctx.contains("verify_token"));
+        assert!(
+            !ctx.contains("src/foreign/token.rs"),
+            "a foreign persisted root must never leak into this repo's context"
+        );
+        assert!(
+            prompt_recall_context_from(&conn, "/repo/a", "zzzz qqqq").is_none(),
+            "no identifier/keyword match must keep the decomposer context-free"
+        );
+        assert!(
+            prompt_recall_context_from(&conn, "/repo/unindexed", "fix verify_token").is_none(),
+            "an unindexed working root must yield None even when other roots match"
         );
     }
 
