@@ -622,7 +622,7 @@ mod tests {
         .unwrap_err();
 
         assert!(
-            error.to_string().contains("not installed or bundled"),
+            format!("{error:#}").contains("not installed or bundled"),
             "ghost denial must explain the missing runtime Skill: {error:#}"
         );
         assert_eq!(
