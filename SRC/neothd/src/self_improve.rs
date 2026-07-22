@@ -1011,6 +1011,39 @@ fn remove_journal(path: &Path) -> Result<()> {
     }
 }
 
+#[cfg(test)]
+type BeforeSkillWriteHook = Box<dyn FnOnce() + Send + 'static>;
+
+#[cfg(test)]
+static BEFORE_SKILL_WRITE_HOOK: std::sync::Mutex<Option<BeforeSkillWriteHook>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+fn set_before_skill_write_hook(hook: impl FnOnce() + Send + 'static) {
+    *BEFORE_SKILL_WRITE_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+}
+
+#[cfg(test)]
+fn run_before_skill_write_hook() {
+    let hook = BEFORE_SKILL_WRITE_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(hook) = hook {
+        hook();
+    }
+}
+
+#[cfg(test)]
+fn clear_before_skill_write_hook() {
+    BEFORE_SKILL_WRITE_HOOK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+}
+
 fn stage_journal_path(home: &Path) -> PathBuf {
     home.join("self_improve_stage_journal.json")
 }
@@ -1896,7 +1929,7 @@ fn commit_accept_skill_write_locked(
     }
     crate::util::atomic_write::atomic_write_private(journal_path, &bytes)
         .context("write accept journal")?;
-    write()?;
+    run_journaled_skill_write(journal_path, write)?;
     commit_proposal_transition_locked(
         home,
         proposal_id,
@@ -1904,6 +1937,27 @@ fn commit_accept_skill_write_locked(
         Some(current.to_string()),
     )?;
     remove_journal(journal_path)
+}
+
+fn run_journaled_skill_write(
+    journal_path: &Path,
+    write: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    #[cfg(test)]
+    run_before_skill_write_hook();
+
+    match write() {
+        Ok(()) => Ok(()),
+        Err(error) if error.is::<crate::skills::store::ConditionalReplacePreconditionFailed>() => {
+            if let Err(cleanup_error) = remove_journal(journal_path) {
+                return Err(error.context(format!(
+                    "target replacement did not commit, but cleanup of the fresh self-improve journal failed: {cleanup_error:#}"
+                )));
+            }
+            Err(error)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// Roll back an accepted proposal: restore the backed-up content to the skill.
@@ -2040,7 +2094,7 @@ fn commit_rollback_skill_write_locked(
     }
     crate::util::atomic_write::atomic_write_private(journal_path, &bytes)
         .context("write rollback journal")?;
-    write()?;
+    run_journaled_skill_write(journal_path, write)?;
     commit_proposal_transition_locked(home, proposal_id, ProposalStatus::RolledBack, None)?;
     remove_journal(journal_path)
 }
@@ -3596,6 +3650,14 @@ mod tests {
         }
     }
 
+    struct BeforeSkillWriteHookReset;
+
+    impl Drop for BeforeSkillWriteHookReset {
+        fn drop(&mut self) {
+            clear_before_skill_write_hook();
+        }
+    }
+
     #[test]
     fn command_output_capped_timeout_child() {
         if std::env::var_os("NEOTH_TEST_SLOW_CAPPED_COMMAND").is_some() {
@@ -3888,6 +3950,109 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "manual-v");
         assert_no_external_replacement_artifacts(skill.parent().unwrap());
+    }
+
+    #[test]
+    fn installed_accept_precondition_failure_clears_fresh_journal_and_allows_retry() {
+        let _env_lock = crate::test_env::lock();
+        let _hook_reset = BeforeSkillWriteHookReset;
+        let home = tempfile::tempdir().unwrap();
+        install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
+        let skill = home.path().join("skills").join("pinned").join("skill.md");
+        let id = stage_proposal(
+            home.path(),
+            installed_proposal(home.path(), "accept-precondition", "live-v1", "improved"),
+        )
+        .unwrap();
+        force_verified_approved(home.path(), &id);
+
+        let concurrent_skill = skill.clone();
+        set_before_skill_write_hook(move || {
+            std::fs::write(
+                &concurrent_skill,
+                "manual concurrent edit longer than live-v1",
+            )
+            .unwrap();
+        });
+        let error = accept_proposal(home.path(), &id)
+            .expect_err("accept must reject a post-journal concurrent edit");
+
+        assert!(error.is::<crate::skills::store::ConditionalReplacePreconditionFailed>());
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "manual concurrent edit longer than live-v1"
+        );
+        assert!(!journal_path(home.path()).exists());
+        let proposal = unique_proposal_by_id(&load_proposals_raw(home.path()).unwrap(), &id)
+            .unwrap()
+            .clone();
+        assert_eq!(proposal.status, ProposalStatus::VerifiedApproved);
+        assert!(proposal.backup.is_none());
+        assert!(!load_ledger_raw(home.path()).unwrap()[0].accepted);
+        recover_pending_journal(home.path()).unwrap();
+
+        std::fs::write(&skill, "live-v1").unwrap();
+        accept_proposal(home.path(), &id)
+            .expect("clean retry must not be blocked by a stale journal");
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "improved");
+        assert_eq!(
+            unique_proposal_by_id(&load_proposals_raw(home.path()).unwrap(), &id)
+                .unwrap()
+                .status,
+            ProposalStatus::Accepted
+        );
+    }
+
+    #[test]
+    fn installed_rollback_precondition_failure_clears_fresh_journal_and_allows_retry() {
+        let _env_lock = crate::test_env::lock();
+        let _hook_reset = BeforeSkillWriteHookReset;
+        let home = tempfile::tempdir().unwrap();
+        install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
+        let skill = home.path().join("skills").join("pinned").join("skill.md");
+        let id = stage_proposal(
+            home.path(),
+            installed_proposal(home.path(), "rollback-precondition", "live-v1", "improved"),
+        )
+        .unwrap();
+        force_verified_approved(home.path(), &id);
+        accept_proposal(home.path(), &id).unwrap();
+
+        let concurrent_skill = skill.clone();
+        set_before_skill_write_hook(move || {
+            std::fs::write(
+                &concurrent_skill,
+                "manual rollback edit longer than improved",
+            )
+            .unwrap();
+        });
+        let error = rollback_proposal(home.path(), &id)
+            .expect_err("rollback must reject a post-journal concurrent edit");
+
+        assert!(error.is::<crate::skills::store::ConditionalReplacePreconditionFailed>());
+        assert_eq!(
+            std::fs::read_to_string(&skill).unwrap(),
+            "manual rollback edit longer than improved"
+        );
+        assert!(!journal_path(home.path()).exists());
+        let proposal = unique_proposal_by_id(&load_proposals_raw(home.path()).unwrap(), &id)
+            .unwrap()
+            .clone();
+        assert_eq!(proposal.status, ProposalStatus::Accepted);
+        assert_eq!(proposal.backup.as_deref(), Some("live-v1"));
+        assert!(load_ledger_raw(home.path()).unwrap()[0].accepted);
+        recover_pending_journal(home.path()).unwrap();
+
+        std::fs::write(&skill, "improved").unwrap();
+        rollback_proposal(home.path(), &id)
+            .expect("clean retry must not be blocked by a stale journal");
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "live-v1");
+        assert_eq!(
+            unique_proposal_by_id(&load_proposals_raw(home.path()).unwrap(), &id)
+                .unwrap()
+                .status,
+            ProposalStatus::RolledBack
+        );
     }
 
     #[test]

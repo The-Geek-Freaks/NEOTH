@@ -630,6 +630,29 @@ pub(crate) struct FileReplaceReport {
     pub(crate) warnings: Vec<String>,
 }
 
+/// A conditional replacement proved that its authorized target generation is
+/// no longer current before the namespace replacement committed.
+///
+/// Callers may use this marker to discard transaction state that exists only
+/// to recover a possibly committed replacement. Every other replacement error
+/// remains indeterminate and must preserve that recovery state.
+#[derive(Debug)]
+pub(crate) struct ConditionalReplacePreconditionFailed {
+    display_path: PathBuf,
+}
+
+impl std::fmt::Display for ConditionalReplacePreconditionFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "replacement target {} no longer has the authorized byte generation",
+            self.display_path.display()
+        )
+    }
+}
+
+impl std::error::Error for ConditionalReplacePreconditionFailed {}
+
 #[cfg(test)]
 pub(crate) fn replace_existing_regular_file(
     parent: &Dir,
@@ -804,12 +827,15 @@ fn require_regular_file_bytes(
     display_path: &Path,
     expected: &[u8],
 ) -> Result<()> {
-    let actual = read_regular_file_bounded(parent, name, display_path, expected.len())?;
+    let actual = read_regular_file_bounded(parent, name, display_path, expected.len())
+        .with_context(|| ConditionalReplacePreconditionFailed {
+            display_path: display_path.to_path_buf(),
+        })?;
     if actual != expected {
-        anyhow::bail!(
-            "replacement target {} no longer has the authorized byte generation",
-            display_path.display()
-        );
+        return Err(ConditionalReplacePreconditionFailed {
+            display_path: display_path.to_path_buf(),
+        }
+        .into());
     }
     Ok(())
 }
