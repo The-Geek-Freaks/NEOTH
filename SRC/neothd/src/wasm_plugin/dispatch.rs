@@ -1980,7 +1980,8 @@ mod tests {
         use crate::config::reload::ReloadResult;
         use crate::hooks::dispatcher::PluginInvoker;
 
-        let cases: [(&str, fn(&mut crate::config::WasmPluginsConfig)); 3] = [
+        type TightenConfig = fn(&mut crate::config::WasmPluginsConfig);
+        let cases: [(&str, TightenConfig); 3] = [
             ("pin", |config| {
                 config
                     .pinned_hashes
