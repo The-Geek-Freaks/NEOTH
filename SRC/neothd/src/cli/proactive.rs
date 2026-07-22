@@ -2,7 +2,7 @@
 //! staging chain. Subcommands:
 //!
 //!   - `neoth proactive list [--status <s>]`
-//!     Print pending / approved / rejected / discarded proposals.
+//!     Print proposals filtered by their authenticated lifecycle.
 //!   - `neoth proactive accept <id> [--note <text>]`
 //!     Flip a proposal to Approved.
 //!   - `neoth proactive reject <id> [--note <text>]`
@@ -43,17 +43,17 @@ pub struct ProactiveArgs {
 pub enum ProactiveAction {
     /// Print staged proposals.
     List {
-        /// Filter: `pending` / `approved` / `rejected` / `all`.
+        /// Filter: `pending` / `approved` / `rejected` / `applying` /
+        /// `applied` / `revoked` / `all`.
         #[arg(long, default_value = "pending")]
         status: String,
     },
     /// Mark a proposal Approved. For a **Skill** proposal (KF-04 idle
-    /// forge) this ADOPTS it — the draft manifest is written live to
-    /// `~/.neoth/skills/<id>/skill.yaml` (the operator's accept is the
-    /// per-command GO; the skill system still gates loading). For
-    /// config/cron proposals NEOTH never edits operator config: the
-    /// operator copy-pastes the draft YAML into the live config + runs
-    /// `neoth reload`.
+    /// forge) this installs the exact displayed draft with Generated
+    /// provenance and grants Active authority bound to this proposal id and
+    /// exact manifest claims. For config/cron proposals NEOTH never edits
+    /// operator config: the operator copy-pastes the draft YAML into the live
+    /// config + runs `neoth reload`.
     Accept {
         id: String,
         #[arg(long, default_value = "")]
@@ -112,13 +112,59 @@ pub enum ProactiveAction {
     },
 }
 
-pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
+pub async fn run_proactive(args: ProactiveArgs) -> Result<()> {
     let home = args.home.clone().unwrap_or_else(default_neoth_home);
-
     match args.action {
+        ProactiveAction::Accept { id, note } => {
+            let approval_home = home.clone();
+            let approval_id = id.clone();
+            let updated = tokio::task::spawn_blocking(move || {
+                set_proposal_status(
+                    &approval_home,
+                    &approval_id,
+                    ProposalStatus::Approved,
+                    &note,
+                )
+                .with_context(|| format!("approve proposal {approval_id}"))
+            })
+            .await
+            .context("proposal approval worker failed")??;
+            print_status_change(&updated);
+            // Acceptance is already durable. A later authority failure leaves
+            // the exact generated install pending and non-routable; re-running
+            // this command resumes that generation deterministically.
+            if updated.kind == ProposalKind::Skill {
+                match crate::proactive::action_staging::adopt_approved_skill(&home, &updated, None)
+                    .await
+                {
+                    Ok(report) => {
+                        print_skill_adoption_report(&report);
+                        for warning in crate::skills::operator_skill_warnings(&report.warnings) {
+                            eprintln!("  warning: {warning}");
+                        }
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "proposal {id} was accepted, but Skill adoption did not finish; fix the cause and re-run `neoth proactive accept {id}`"
+                            )
+                        });
+                    }
+                }
+            }
+            Ok(())
+        }
+        action => tokio::task::spawn_blocking(move || run_proactive_blocking(&home, action))
+            .await
+            .context("proactive CLI filesystem worker failed")?,
+    }
+}
+
+fn run_proactive_blocking(home: &std::path::Path, action: ProactiveAction) -> Result<()> {
+    match action {
         ProactiveAction::List { status } => {
             let filter = parse_status_filter(&status)?;
-            let items = list_proposals(&home, filter)?;
+            let items = list_proposals(home, filter)?;
             if items.is_empty() {
                 println!("(no proposals matching status={status})");
                 return Ok(());
@@ -134,47 +180,19 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             }
             Ok(())
         }
-        ProactiveAction::Accept { id, note } => {
-            let updated = set_proposal_status(&home, &id, ProposalStatus::Approved, &note)
-                .with_context(|| format!("approve proposal {id}"))?;
-            print_status_change(&updated);
-            // KF-04: accepting a Skill proposal ADOPTS it — write the draft
-            // manifest live so the forge -> propose -> accept loop produces a
-            // usable skill, not just a flag flip. The acceptance is already
-            // recorded above; a write failure therefore returns a non-zero
-            // command result with explicit partial-state context. Re-running
-            // `accept` retries the idempotent transactional write.
-            if updated.kind == ProposalKind::Skill {
-                match crate::proactive::action_staging::adopt_approved_skill(&home, &updated) {
-                    Ok(report) => {
-                        println!(
-                            "  skill written → {} (live on next `neoth reload` or hot-watch)",
-                            report.path.display(),
-                        );
-                        for warning in crate::skills::operator_skill_warnings(&report.warnings) {
-                            eprintln!("  warning: {warning}");
-                        }
-                    }
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!(
-                                "proposal {id} is approved, but Skill adoption failed; fix the cause and re-run `neoth proactive accept {id}`"
-                            )
-                        });
-                    }
-                }
-            }
-            Ok(())
+        ProactiveAction::Accept { .. } => {
+            anyhow::bail!("internal error: proactive accept escaped the async authority path")
         }
         ProactiveAction::Reject { id, note } => {
-            let updated = set_proposal_status(&home, &id, ProposalStatus::Rejected, &note)
+            let updated = set_proposal_status(home, &id, ProposalStatus::Rejected, &note)
                 .with_context(|| format!("reject proposal {id}"))?;
             print_status_change(&updated);
             Ok(())
         }
         ProactiveAction::Show { id } => {
-            let p =
-                load_proposal(&home, &id).with_context(|| format!("proposal {id} not found"))?;
+            let p = load_proposal(home, &id)
+                .with_context(|| format!("authenticate proposal {id}"))?
+                .with_context(|| format!("proposal {id} not found"))?;
             print_full_proposal(&p);
             Ok(())
         }
@@ -185,7 +203,7 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
         } => {
             let filter = parse_status_filter(&status)?;
             let vault_root = vault.unwrap_or_else(default_vault_path);
-            let outcome = sync_proposals_to_obsidian(&home, &vault_root, &subdir, filter)
+            let outcome = sync_proposals_to_obsidian(home, &vault_root, &subdir, filter)
                 .with_context(|| {
                     format!(
                         "sync proposals to {}/{subdir}/Proposals/",
@@ -205,10 +223,10 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             dest,
             default,
             failure,
-        } => run_route(&home, source, channel, dest, default, failure),
+        } => run_route(home, source, channel, dest, default, failure),
         ProactiveAction::Intelligence { limit, json } => {
             use crate::reflection::{ReflectionObservation, load_staged_observations};
-            let mut obs: Vec<ReflectionObservation> = load_staged_observations(&home);
+            let mut obs: Vec<ReflectionObservation> = load_staged_observations(home);
             // Newest first.
             obs.sort_by_key(|o| Reverse(o.generated_ts_unix));
             if limit > 0 {
@@ -329,6 +347,41 @@ fn print_status_change(p: &ProposedAction) {
     }
 }
 
+fn print_skill_adoption_report(report: &crate::proactive::action_staging::SkillAdoptionReport) {
+    println!("  generated Skill adoption:");
+    println!("    proposal id:          {}", report.proposal_id);
+    println!("    skill id:             {}", report.id);
+    println!(
+        "    installed at:         {}",
+        report.installed_at.display()
+    );
+    println!("    installed new:        {}", report.installed_new);
+    println!("    authority changed:    {}", report.authority_changed);
+    println!("    provenance:           {:?}", report.provenance);
+    println!("    authority state:      {:?}", report.authority_state);
+    println!(
+        "    manifest SHA-256:     {}",
+        report.install_manifest_sha256
+    );
+    println!(
+        "    package SHA-256:      {}",
+        report.install_package_generation_sha256
+    );
+    println!(
+        "    pending tree SHA-256: {}",
+        report.pending_installed_generation_sha256
+    );
+    println!(
+        "    active tree SHA-256:  {}",
+        report.authority_installed_generation_sha256
+    );
+    println!(
+        "    authority SHA-256:    {}",
+        report.authority_record_sha256
+    );
+    println!("    routable:             true");
+}
+
 fn print_full_proposal(p: &ProposedAction) {
     println!("id:       {}", p.id);
     println!("kind:     {}", p.kind.as_str());
@@ -356,9 +409,12 @@ fn parse_status_filter(s: &str) -> Result<Option<ProposalStatus>> {
         "pending" => Ok(Some(ProposalStatus::Pending)),
         "approved" => Ok(Some(ProposalStatus::Approved)),
         "rejected" => Ok(Some(ProposalStatus::Rejected)),
+        "applying" => Ok(Some(ProposalStatus::Applying)),
+        "applied" => Ok(Some(ProposalStatus::Applied)),
+        "revoked" => Ok(Some(ProposalStatus::Revoked)),
         "all" => Ok(None),
         other => anyhow::bail!(
-            "unknown status filter {other:?} — expected pending / approved / rejected / all",
+            "unknown status filter {other:?} — expected pending / approved / rejected / applying / applied / revoked / all",
         ),
     }
 }
@@ -383,6 +439,32 @@ fn default_vault_path() -> PathBuf {
 mod tests {
     use super::*;
     use crate::proactive::action_staging::{ProposalKind, make_proposal_id, save_proposal};
+
+    fn run_proactive_test(args: ProactiveArgs) -> Result<()> {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build proactive CLI test runtime")
+            .block_on(run_proactive(args))
+    }
+
+    fn adopt_skill_test(
+        home: &std::path::Path,
+        proposal: &ProposedAction,
+    ) -> Result<crate::proactive::action_staging::SkillAdoptionReport> {
+        let mut pending = proposal.clone();
+        pending.status = ProposalStatus::Pending;
+        pending.operator_note.clear();
+        save_proposal(home, &pending)?;
+        let approved = set_proposal_status(home, &pending.id, ProposalStatus::Approved, "test")?;
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build skill-adoption test runtime")
+            .block_on(crate::proactive::action_staging::adopt_approved_skill(
+                home, &approved, None,
+            ))
+    }
 
     fn sample(id: &str, title: &str) -> ProposedAction {
         ProposedAction {
@@ -411,6 +493,18 @@ mod tests {
             parse_status_filter("rejected").unwrap(),
             Some(ProposalStatus::Rejected),
         );
+        assert_eq!(
+            parse_status_filter("applying").unwrap(),
+            Some(ProposalStatus::Applying),
+        );
+        assert_eq!(
+            parse_status_filter("applied").unwrap(),
+            Some(ProposalStatus::Applied),
+        );
+        assert_eq!(
+            parse_status_filter("revoked").unwrap(),
+            Some(ProposalStatus::Revoked),
+        );
         assert_eq!(parse_status_filter("all").unwrap(), None);
     }
 
@@ -433,8 +527,8 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("accept");
-        let loaded = load_proposal(home.path(), &id).unwrap();
+        run_proactive_test(args).expect("accept");
+        let loaded = load_proposal(home.path(), &id).unwrap().unwrap();
         assert_eq!(loaded.status, ProposalStatus::Approved);
         assert_eq!(loaded.operator_note, "looks good");
     }
@@ -452,8 +546,8 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("reject");
-        let loaded = load_proposal(home.path(), &id).unwrap();
+        run_proactive_test(args).expect("reject");
+        let loaded = load_proposal(home.path(), &id).unwrap().unwrap();
         assert_eq!(loaded.status, ProposalStatus::Rejected);
         assert_eq!(loaded.operator_note, "not now");
     }
@@ -468,7 +562,7 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        let err = run_proactive(args).unwrap_err();
+        let err = run_proactive_test(args).unwrap_err();
         let msg = format!("{err:?}");
         assert!(msg.contains("approve proposal"));
     }
@@ -484,9 +578,17 @@ mod tests {
             &make_proposal_id(ProposalKind::CronJob, "b", "y", 200),
             "approved one",
         );
-        approved.status = ProposalStatus::Approved;
+        let approved_id = approved.id.clone();
+        approved.status = ProposalStatus::Pending;
         save_proposal(home.path(), &pending).unwrap();
         save_proposal(home.path(), &approved).unwrap();
+        set_proposal_status(
+            home.path(),
+            &approved_id,
+            ProposalStatus::Approved,
+            "approved in test",
+        )
+        .unwrap();
 
         let args = ProactiveArgs {
             action: ProactiveAction::List {
@@ -495,7 +597,7 @@ mod tests {
             home: Some(home.path().to_path_buf()),
         };
         // The runner prints to stdout — we just assert it doesn't error.
-        run_proactive(args).expect("list pending");
+        run_proactive_test(args).expect("list pending");
     }
 
     #[test]
@@ -508,7 +610,7 @@ mod tests {
             action: ProactiveAction::Show { id: id.clone() },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("show");
+        run_proactive_test(args).expect("show");
     }
 
     #[test]
@@ -518,7 +620,7 @@ mod tests {
             action: ProactiveAction::Show { id: "nope".into() },
             home: Some(home.path().to_path_buf()),
         };
-        let err = run_proactive(args).unwrap_err();
+        let err = run_proactive_test(args).unwrap_err();
         assert!(format!("{err:?}").contains("nope"));
     }
 
@@ -537,7 +639,7 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("sync");
+        run_proactive_test(args).expect("sync");
         let expected = vault
             .path()
             .join("NEOTH")
@@ -550,7 +652,7 @@ mod tests {
 
     /// Build a Skill `ProposedAction` whose `draft_yaml` is a real,
     /// loader-compatible manifest (same path the forge uses).
-    fn skill_proposal(id: &str) -> ProposedAction {
+    fn skill_proposal(generated_ts_unix: i64) -> ProposedAction {
         use crate::skills::creator::{CreateParams, build_manifest};
         let (_, yaml) = build_manifest(&CreateParams {
             id: "dream_kf04_test".into(),
@@ -559,13 +661,15 @@ mod tests {
             system_prompt: "You help with the test theme.".into(),
         })
         .expect("build_manifest");
+        let title = "Skill: test".to_string();
+        let id = make_proposal_id(ProposalKind::Skill, &title, &yaml, generated_ts_unix);
         ProposedAction {
-            id: id.to_string(),
+            id,
             kind: ProposalKind::Skill,
-            title: "Skill: test".into(),
+            title,
             rationale: "r".into(),
             draft_yaml: yaml,
-            generated_ts_unix: 100,
+            generated_ts_unix,
             status: ProposalStatus::Pending,
             operator_note: String::new(),
         }
@@ -574,8 +678,9 @@ mod tests {
     #[test]
     fn accept_skill_proposal_writes_live_loader_compatible_skill() {
         let home = tempfile::tempdir().unwrap();
-        let id = make_proposal_id(ProposalKind::Skill, "skill", "y", 100);
-        save_proposal(home.path(), &skill_proposal(&id)).unwrap();
+        let proposal = skill_proposal(100);
+        let id = proposal.id.clone();
+        save_proposal(home.path(), &proposal).unwrap();
 
         let args = ProactiveArgs {
             action: ProactiveAction::Accept {
@@ -584,12 +689,12 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("accept skill");
+        run_proactive_test(args).expect("accept skill");
 
         // Status flipped...
         assert_eq!(
-            load_proposal(home.path(), &id).unwrap().status,
-            ProposalStatus::Approved,
+            load_proposal(home.path(), &id).unwrap().unwrap().status,
+            ProposalStatus::Applied,
         );
         // ...AND the manifest landed live at <home>/skills/<id>/skill.yaml,
         // re-parseable by the loader (closes the forge->accept loop).
@@ -603,17 +708,58 @@ mod tests {
         let m: crate::skills::schema::SkillManifest =
             serde_yaml::from_str(&body).expect("written skill must be loader-parseable");
         assert_eq!(m.id, "dream_kf04_test");
+        let current = crate::skills::installer::inspect_installed_authority(
+            &home.path().join("skills"),
+            "dream_kf04_test",
+        )
+        .unwrap();
+        assert_eq!(
+            current.authority.provenance,
+            crate::skills::authority::SkillProvenance::Generated
+        );
+        assert_eq!(
+            current.authority.state,
+            crate::skills::authority::SkillAuthorityState::Active
+        );
+
+        run_proactive_test(ProactiveArgs {
+            action: ProactiveAction::Accept {
+                id,
+                note: "second identical accept".to_string(),
+            },
+            home: Some(home.path().to_path_buf()),
+        })
+        .expect("second identical accept must be idempotent");
+        let repeated = crate::skills::installer::inspect_installed_authority(
+            &home.path().join("skills"),
+            "dream_kf04_test",
+        )
+        .unwrap();
+        assert_eq!(
+            repeated.installed_generation_sha256,
+            current.installed_generation_sha256
+        );
+        assert_eq!(
+            repeated.authority.record_sha256,
+            current.authority.record_sha256
+        );
     }
 
     #[test]
     fn accept_skill_proposal_returns_error_when_adoption_is_partial() {
         let home = tempfile::tempdir().unwrap();
-        let id = make_proposal_id(ProposalKind::Skill, "broken-skill", "y", 101);
-        let mut proposal = skill_proposal(&id);
+        let mut proposal = skill_proposal(101);
         proposal.draft_yaml = "- not\n- a\n- manifest\n".to_string();
+        proposal.id = make_proposal_id(
+            proposal.kind,
+            &proposal.title,
+            &proposal.draft_yaml,
+            proposal.generated_ts_unix,
+        );
+        let id = proposal.id.clone();
         save_proposal(home.path(), &proposal).unwrap();
 
-        let error = run_proactive(ProactiveArgs {
+        let error = run_proactive_test(ProactiveArgs {
             action: ProactiveAction::Accept {
                 id: id.clone(),
                 note: String::new(),
@@ -622,10 +768,10 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(format!("{error:#}").contains("approved, but Skill adoption failed"));
+        assert!(format!("{error:#}").contains("accepted, but Skill adoption did not finish"));
         assert_eq!(
-            load_proposal(home.path(), &id).unwrap().status,
-            ProposalStatus::Approved,
+            load_proposal(home.path(), &id).unwrap().unwrap().status,
+            ProposalStatus::Applying,
             "the recoverable partial status must stay explicit for an idempotent retry"
         );
         assert!(!home.path().join("skills").exists());
@@ -644,7 +790,7 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("accept cron");
+        run_proactive_test(args).expect("accept cron");
 
         // Only Skill proposals adopt-on-accept; a CronJob accept never
         // writes a skill (config/cron stays operator-copies-manually).
@@ -667,7 +813,7 @@ mod tests {
             home: Some(home.path().to_path_buf()),
         };
         // No staged_observations.jsonl → "(no reflection observations yet…)" printed.
-        run_proactive(args).expect("intelligence empty");
+        run_proactive_test(args).expect("intelligence empty");
     }
 
     #[test]
@@ -689,7 +835,7 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("intelligence with one entry");
+        run_proactive_test(args).expect("intelligence with one entry");
     }
 
     #[test]
@@ -708,7 +854,7 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("intelligence json mode");
+        run_proactive_test(args).expect("intelligence json mode");
     }
 
     #[test]
@@ -733,18 +879,18 @@ mod tests {
             },
             home: Some(home.path().to_path_buf()),
         };
-        run_proactive(args).expect("intelligence with limit");
+        run_proactive_test(args).expect("intelligence with limit");
     }
 
     #[test]
     fn write_accepted_skill_rejects_malformed_draft_and_writes_nothing() {
         let home = tempfile::tempdir().unwrap();
-        let mut p = skill_proposal("p-id");
+        let mut p = skill_proposal(100);
         // A YAML sequence can't deserialize into the SkillManifest struct.
         p.draft_yaml = "- not\n- a\n- manifest\n".into();
+        p.id = make_proposal_id(p.kind, &p.title, &p.draft_yaml, p.generated_ts_unix);
         p.status = ProposalStatus::Approved;
-        let err =
-            crate::proactive::action_staging::adopt_approved_skill(home.path(), &p).unwrap_err();
+        let err = adopt_skill_test(home.path(), &p).unwrap_err();
         assert!(format!("{err:#}").contains("SkillManifest"));
         assert!(
             !home.path().join("skills").exists(),

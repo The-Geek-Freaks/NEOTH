@@ -3,8 +3,8 @@
 //! The proposal producer, operator review CLI and this consumer all use the
 //! typed `ProposedAction` schema. Explicit `neoth proactive accept` adopts a
 //! skill immediately; this optional cron is the repair/reconciliation path for
-//! approved proposals whose live write previously failed or pre-dates that
-//! direct adoption wiring.
+//! Approved or recoverable Applying proposals whose exact Generated install or Active
+//! proposal-bound authority did not finish.
 
 use std::path::Path;
 
@@ -18,30 +18,33 @@ use crate::proactive::action_staging::{
 /// Reconcile mature approved Skill proposals into the live skill directory.
 ///
 /// The age gate uses `ProposedAction::generated_ts_unix`; approval uses the
-/// real `ProposalStatus::Approved`; the live YAML is the producer's
-/// `draft_yaml`. `adopt_approved_skill` parses the real `SkillManifest`,
-/// validates its id, and writes `<home>/skills/<id>/skill.yaml` atomically.
-pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
-    let home = home.to_path_buf();
-    let cfg = *cfg;
-    tokio::task::spawn_blocking(move || run_skill_curator_tick_blocking(&home, &cfg))
-        .await
-        .map_err(|error| anyhow::anyhow!("skill curator filesystem worker failed: {error}"))?
-}
-
-fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
+/// authenticated `ProposalStatus::Approved`/`Applying` lifecycle. Historical
+/// Applied, Revoked, Pending, and Rejected proposals never reach adoption.
+pub async fn run_skill_curator_tick(
+    home: &Path,
+    cfg: &SkillCuratorConfig,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+) -> anyhow::Result<()> {
     if !cfg.enabled {
         return Ok(());
     }
 
     let now_unix = crate::time::now_unix_i64();
     let min_age_secs = cfg.min_age_days.saturating_mul(86_400) as i64;
-    let proposals = list_proposals(home, Some(ProposalStatus::Approved))?;
+    let proposal_home = home.to_path_buf();
+    let proposals = tokio::task::spawn_blocking(move || list_proposals(&proposal_home, None))
+        .await
+        .map_err(|error| anyhow::anyhow!("skill curator proposal scan worker failed: {error}"))??;
     let mut promoted = 0usize;
     let mut promoted_with_warnings = 0usize;
 
     for proposal in proposals {
-        if proposal.kind != ProposalKind::Skill {
+        if proposal.kind != ProposalKind::Skill
+            || !matches!(
+                proposal.status,
+                ProposalStatus::Approved | ProposalStatus::Applying
+            )
+        {
             continue;
         }
         let age_secs = now_unix.saturating_sub(proposal.generated_ts_unix);
@@ -50,12 +53,12 @@ fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> any
                 proposal_id = %proposal.id,
                 age_secs,
                 min_age_secs,
-                "skill_curator: approved proposal not mature yet"
+                "skill_curator: adoptable proposal not mature yet"
             );
             continue;
         }
 
-        match adopt_approved_skill(home, &proposal) {
+        match adopt_approved_skill(home, &proposal, writer).await {
             Ok(report) => {
                 promoted += 1;
                 let warning_count = report.warnings.len();
@@ -72,16 +75,26 @@ fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> any
                 }
                 info!(
                     proposal_id = %proposal.id,
-                    dest = %report.path.display(),
+                    skill_id = %report.id,
+                    dest = %report.installed_at.display(),
+                    installed_new = report.installed_new,
+                    authority_changed = report.authority_changed,
+                    provenance = ?report.provenance,
+                    authority_state = ?report.authority_state,
+                    install_manifest_sha256 = %report.install_manifest_sha256,
+                    install_package_generation_sha256 = %report.install_package_generation_sha256,
+                    pending_installed_generation_sha256 = %report.pending_installed_generation_sha256,
+                    authority_installed_generation_sha256 = %report.authority_installed_generation_sha256,
+                    authority_record_sha256 = %report.authority_record_sha256,
                     warning_count,
-                    "skill_curator: reconciled approved skill"
+                    "skill_curator: reconciled approved generated skill authority"
                 );
             }
             Err(error) => {
                 warn!(
                     proposal_id = %proposal.id,
                     error = %error,
-                    "skill_curator: approved skill reconciliation failed"
+                    "skill_curator: generated skill reconciliation failed"
                 );
             }
         }
@@ -103,7 +116,8 @@ mod tests {
     use super::*;
     use crate::proactive::ProactiveQueue;
     use crate::proactive::action_staging::{
-        ProposedAction, make_proposal_id, set_proposal_status, stage_and_enqueue,
+        ProposedAction, load_proposal, make_proposal_id,
+        revoke_generated_skill_proposals_for_skill_id, set_proposal_status, stage_and_enqueue,
     };
     use crate::skills::creator::{CreateParams, build_manifest};
     use tempfile::tempdir;
@@ -142,14 +156,28 @@ mod tests {
         }
     }
 
+    fn persist_proposal(home: &Path, proposal: &ProposedAction) {
+        let mut pending = proposal.clone();
+        pending.status = ProposalStatus::Pending;
+        pending.operator_note.clear();
+        crate::proactive::action_staging::save_proposal(home, &pending).unwrap();
+        if proposal.status != ProposalStatus::Pending {
+            set_proposal_status(home, &pending.id, proposal.status, "test verdict").unwrap();
+        }
+    }
+
     #[tokio::test]
     async fn no_op_when_disabled_or_no_proposals_exist() {
         let dir = tempdir().unwrap();
         let mut cfg = default_cfg();
         cfg.enabled = false;
-        run_skill_curator_tick(dir.path(), &cfg).await.unwrap();
+        run_skill_curator_tick(dir.path(), &cfg, None)
+            .await
+            .unwrap();
         cfg.enabled = true;
-        run_skill_curator_tick(dir.path(), &cfg).await.unwrap();
+        run_skill_curator_tick(dir.path(), &cfg, None)
+            .await
+            .unwrap();
         assert!(!dir.path().join("skills").exists());
     }
 
@@ -168,7 +196,7 @@ mod tests {
         )
         .unwrap();
 
-        run_skill_curator_tick(dir.path(), &default_cfg())
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
             .await
             .unwrap();
         let dest = dir
@@ -182,6 +210,112 @@ mod tests {
                 .unwrap()
                 .contains("curated_skill")
         );
+        let loaded = crate::skills::loader::load_all(&dir.path().join("skills"))
+            .await
+            .unwrap();
+        let skill = loaded
+            .iter()
+            .find(|skill| skill.id() == "curated_skill")
+            .unwrap();
+        assert_eq!(
+            skill.provenance(),
+            crate::skills::authority::SkillProvenance::Generated
+        );
+        assert_eq!(
+            skill.authority_state(),
+            crate::skills::authority::SkillAuthorityState::Active
+        );
+        assert!(skill.is_routable());
+        assert_eq!(
+            load_proposal(dir.path(), &proposal_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ProposalStatus::Applied
+        );
+
+        let first_generation = crate::skills::installer::inspect_installed_authority(
+            &dir.path().join("skills"),
+            "curated_skill",
+        )
+        .unwrap()
+        .installed_generation_sha256;
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
+            .await
+            .unwrap();
+        let second_generation = crate::skills::installer::inspect_installed_authority(
+            &dir.path().join("skills"),
+            "curated_skill",
+        )
+        .unwrap()
+        .installed_generation_sha256;
+        assert_eq!(
+            first_generation, second_generation,
+            "Applied must be a no-op"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoked_applied_proposal_never_reinstalls_an_absent_target() {
+        let dir = tempdir().unwrap();
+        let proposal = skill_proposal("revoked_curated_skill", 10, ProposalStatus::Approved);
+        let proposal_id = proposal.id.clone();
+        persist_proposal(dir.path(), &proposal);
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
+            .await
+            .unwrap();
+
+        let revoked = revoke_generated_skill_proposals_for_skill_id(
+            dir.path(),
+            "revoked_curated_skill",
+            "test uninstall",
+        )
+        .unwrap();
+        assert_eq!(revoked.revoked_proposal_ids, vec![proposal_id.clone()]);
+        crate::skills::installer::uninstall(&dir.path().join("skills"), "revoked_curated_skill")
+            .unwrap();
+
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
+            .await
+            .unwrap();
+        assert!(
+            !dir.path()
+                .join("skills")
+                .join("revoked_curated_skill")
+                .exists()
+        );
+        assert_eq!(
+            load_proposal(dir.path(), &proposal_id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ProposalStatus::Revoked
+        );
+    }
+
+    #[tokio::test]
+    async fn applying_with_absent_target_never_becomes_a_fresh_install() {
+        let dir = tempdir().unwrap();
+        let proposal = skill_proposal("applying_absent", 10, ProposalStatus::Approved);
+        persist_proposal(dir.path(), &proposal);
+        let approved = load_proposal(dir.path(), &proposal.id).unwrap().unwrap();
+        std::fs::write(dir.path().join("skills"), b"block installer").unwrap();
+        adopt_approved_skill(dir.path(), &approved, None)
+            .await
+            .unwrap_err();
+        std::fs::remove_file(dir.path().join("skills")).unwrap();
+        assert_eq!(
+            load_proposal(dir.path(), &proposal.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ProposalStatus::Applying
+        );
+
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
+            .await
+            .unwrap();
+        assert!(!dir.path().join("skills").exists());
     }
 
     #[tokio::test]
@@ -191,8 +325,8 @@ mod tests {
             skill_proposal("young_skill", 2, ProposalStatus::Approved),
         ] {
             let dir = tempdir().unwrap();
-            crate::proactive::action_staging::save_proposal(dir.path(), &proposal).unwrap();
-            run_skill_curator_tick(dir.path(), &default_cfg())
+            persist_proposal(dir.path(), &proposal);
+            run_skill_curator_tick(dir.path(), &default_cfg(), None)
                 .await
                 .unwrap();
             assert!(!dir.path().join("skills").exists());
@@ -204,14 +338,14 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut invalid = skill_proposal("invalid_skill", 10, ProposalStatus::Approved);
         invalid.draft_yaml = "- not\n- a\n- manifest\n".to_string();
-        crate::proactive::action_staging::save_proposal(dir.path(), &invalid).unwrap();
+        persist_proposal(dir.path(), &invalid);
 
         let mut non_skill = skill_proposal("not_a_skill", 10, ProposalStatus::Approved);
         non_skill.kind = ProposalKind::ConfigTweak;
         non_skill.id = format!("{}-config", non_skill.id);
-        crate::proactive::action_staging::save_proposal(dir.path(), &non_skill).unwrap();
+        persist_proposal(dir.path(), &non_skill);
 
-        run_skill_curator_tick(dir.path(), &default_cfg())
+        run_skill_curator_tick(dir.path(), &default_cfg(), None)
             .await
             .unwrap();
         assert!(!dir.path().join("skills").exists());
