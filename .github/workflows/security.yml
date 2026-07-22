@@ -100,8 +100,8 @@ jobs:
         with:
           manifest-path: SRC/Cargo.toml
           command: check
-          arguments: --workspace --all-features --locked
-          command-arguments: --config SRC/deny.toml --deny yanked
+          arguments: --workspace --all-features --locked --config SRC/deny.toml
+          command-arguments: --deny yanked
           rust-version: '1.91'
 
       - name: Run cargo-deny for isolated release signer
@@ -109,11 +109,10 @@ jobs:
         with:
           manifest-path: .github/release-tools/neoth-release-signer/Cargo.toml
           command: check
-          # The action places `arguments` before `check` and
-          # `command-arguments` after it. cargo-deny 0.19 treats `--config`
-          # and lint overrides as check-command arguments.
-          arguments: --all-features --locked
-          command-arguments: --config SRC/deny.toml --deny yanked
+          # The pinned action runs cargo-deny 0.20: `--config` belongs to the
+          # graph arguments before `check`; lint overrides follow the command.
+          arguments: --all-features --locked --config SRC/deny.toml
+          command-arguments: --deny yanked
           rust-version: '1.91'
 
   bridge-audit:

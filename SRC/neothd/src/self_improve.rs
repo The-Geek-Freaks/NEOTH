@@ -1012,25 +1012,28 @@ fn remove_journal(path: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-type BeforeSkillWriteHook = Box<dyn FnOnce() + Send + 'static>;
+type BeforeSkillWriteHook = Box<dyn FnOnce() + 'static>;
 
 #[cfg(test)]
-static BEFORE_SKILL_WRITE_HOOK: std::sync::Mutex<Option<BeforeSkillWriteHook>> =
-    std::sync::Mutex::new(None);
+std::thread_local! {
+    static BEFORE_SKILL_WRITE_HOOK: std::cell::RefCell<Option<BeforeSkillWriteHook>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 #[cfg(test)]
-fn set_before_skill_write_hook(hook: impl FnOnce() + Send + 'static) {
-    *BEFORE_SKILL_WRITE_HOOK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(hook));
+fn set_before_skill_write_hook(hook: impl FnOnce() + 'static) {
+    BEFORE_SKILL_WRITE_HOOK.with(|slot| {
+        let previous = slot.replace(Some(Box::new(hook)));
+        assert!(
+            previous.is_none(),
+            "before-skill-write test hook was already armed"
+        );
+    });
 }
 
 #[cfg(test)]
 fn run_before_skill_write_hook() {
-    let hook = BEFORE_SKILL_WRITE_HOOK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take();
+    let hook = BEFORE_SKILL_WRITE_HOOK.with(|slot| slot.borrow_mut().take());
     if let Some(hook) = hook {
         hook();
     }
@@ -1038,10 +1041,9 @@ fn run_before_skill_write_hook() {
 
 #[cfg(test)]
 fn clear_before_skill_write_hook() {
-    BEFORE_SKILL_WRITE_HOOK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .take();
+    BEFORE_SKILL_WRITE_HOOK.with(|slot| {
+        slot.borrow_mut().take();
+    });
 }
 
 fn stage_journal_path(home: &Path) -> PathBuf {
