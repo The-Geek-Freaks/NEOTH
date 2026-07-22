@@ -405,19 +405,11 @@ fn scan_bound_manifests_with_limits(
     scan
 }
 
-fn scan_installed_skills_checked(home: &Path, config_path: &Path) -> InstalledSkillScan {
-    let policy = match crate::skills::loader::load_skill_policy_from_config_path(config_path) {
-        Ok(policy) => policy,
-        Err(error) => {
-            return InstalledSkillScan {
-                rows: Vec::new(),
-                failures: vec![ManifestScanFailure {
-                    component: "skill:<policy>".to_string(),
-                    error: format!("cannot establish effective skill policy: {error:#}"),
-                }],
-            };
-        }
-    };
+fn scan_installed_skills_checked(
+    home: &Path,
+    policy: &crate::config::SkillsConfig,
+) -> InstalledSkillScan {
+    let policy = crate::skills::loader::SkillPolicy::from_config(policy);
     let bound = scan_bound_manifests(&home.join("skills"), "skill", "skill.yaml");
     let mut scan = InstalledSkillScan {
         rows: Vec::new(),
@@ -504,8 +496,11 @@ fn error_is_not_found(error: &anyhow::Error) -> bool {
 /// [`InstalledSkillRow`] per skill. Unsafe links/reparse points and malformed
 /// manifests are rejected without being read through and logged. The real
 /// cron path additionally turns each rejection into a failed component row.
-pub fn scan_installed_skills_rows(home: &Path) -> Vec<InstalledSkillRow> {
-    let scan = scan_installed_skills_checked(home, &home.join("freedom.yaml"));
+pub fn scan_installed_skills_rows(
+    home: &Path,
+    policy: &crate::config::SkillsConfig,
+) -> Vec<InstalledSkillRow> {
+    let scan = scan_installed_skills_checked(home, policy);
     log_manifest_scan_failures(&scan.failures);
     scan.rows
 }
@@ -513,8 +508,11 @@ pub fn scan_installed_skills_rows(home: &Path) -> Vec<InstalledSkillRow> {
 /// Backwards-compatible alias: callers that don't need the source
 /// URL keep the `(name, version)` shape. New callers use
 /// [`scan_installed_skills_rows`] directly.
-pub fn scan_installed_skills(home: &Path) -> Vec<(String, String)> {
-    scan_installed_skills_rows(home)
+pub fn scan_installed_skills(
+    home: &Path,
+    policy: &crate::config::SkillsConfig,
+) -> Vec<(String, String)> {
+    scan_installed_skills_rows(home, policy)
         .into_iter()
         .map(|r| (r.name, r.version))
         .collect()
@@ -562,16 +560,6 @@ impl From<&crate::wasm_plugin::discovery::DiscoveredPlugin> for PluginGeneration
 struct InstalledPluginScan {
     rows: Vec<InstalledPluginRow>,
     failures: Vec<ManifestScanFailure>,
-}
-
-fn load_plugin_probe_policy(
-    config_path: &Path,
-) -> Result<crate::config::WasmPluginsConfig, String> {
-    crate::config::FreedomConfig::load_from_path_or_default(config_path)
-        .map(|config| config.plugins.wasm)
-        // Config errors can contain ambient paths or parser excerpts. The
-        // updater result is persistent/audited, so keep it bounded and opaque.
-        .map_err(|_| "cannot load current active plugin policy config".to_string())
 }
 
 fn safe_discovery_reason(error: &crate::wasm_plugin::discovery::DiscoveryError) -> String {
@@ -662,19 +650,10 @@ fn redact_plugin_manifest_scan_failure(mut failure: ManifestScanFailure) -> Mani
     failure
 }
 
-fn scan_installed_plugins_checked(home: &Path, config_path: &Path) -> InstalledPluginScan {
-    let policy = match load_plugin_probe_policy(config_path) {
-        Ok(policy) => policy,
-        Err(error) => {
-            return InstalledPluginScan {
-                rows: Vec::new(),
-                failures: vec![ManifestScanFailure {
-                    component: "plugin:<policy>".to_string(),
-                    error: format!("cannot establish effective plugin policy: {error}"),
-                }],
-            };
-        }
-    };
+fn scan_installed_plugins_checked(
+    home: &Path,
+    policy: &crate::config::WasmPluginsConfig,
+) -> InstalledPluginScan {
     let bound = scan_bound_manifests(&home.join("plugins"), "plugin", "plugin.toml");
     let mut scan = InstalledPluginScan {
         rows: Vec::new(),
@@ -705,7 +684,7 @@ fn scan_installed_plugins_checked(home: &Path, config_path: &Path) -> InstalledP
                     }
                 };
                 let admission =
-                    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy);
+                    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, policy);
                 let disabled_reason = admission.as_ref().err().map(safe_admission_reason);
                 scan.rows.push(InstalledPluginRow {
                     name: component,
@@ -733,8 +712,11 @@ fn scan_installed_plugins_checked(home: &Path, config_path: &Path) -> InstalledP
 /// [`InstalledPluginRow`] per plugin. Unsafe links/reparse points and malformed
 /// manifests are rejected without being read through and logged. The real
 /// cron path additionally turns each rejection into a failed component row.
-pub fn scan_installed_plugins_rows(home: &Path, config_path: &Path) -> Vec<InstalledPluginRow> {
-    let scan = scan_installed_plugins_checked(home, config_path);
+pub fn scan_installed_plugins_rows(
+    home: &Path,
+    policy: &crate::config::WasmPluginsConfig,
+) -> Vec<InstalledPluginRow> {
+    let scan = scan_installed_plugins_checked(home, policy);
     log_manifest_scan_failures(&scan.failures);
     scan.rows
 }
@@ -742,8 +724,11 @@ pub fn scan_installed_plugins_rows(home: &Path, config_path: &Path) -> Vec<Insta
 /// Backwards-compatible alias: callers that don't need the source
 /// URL keep the `(name, version)` shape. New callers use
 /// [`scan_installed_plugins_rows`] directly.
-pub fn scan_installed_plugins(home: &Path, config_path: &Path) -> Vec<(String, String)> {
-    scan_installed_plugins_rows(home, config_path)
+pub fn scan_installed_plugins(
+    home: &Path,
+    policy: &crate::config::WasmPluginsConfig,
+) -> Vec<(String, String)> {
+    scan_installed_plugins_rows(home, policy)
         .into_iter()
         .map(|r| (r.name, r.version))
         .collect()
@@ -768,13 +753,13 @@ fn invalid_source_probe_status(source: &str) -> Option<String> {
 
 fn revalidate_skill_at_resolver_sink(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::SkillsConfig,
     row: &InstalledSkillRow,
 ) -> Result<String, String> {
     if !row.enabled {
         return Err(DISABLED_SKILL_PROBE_MSG.to_string());
     }
-    let current = read_exact_skill_row_at_sink(home, config_path, &row.id)?;
+    let current = read_exact_skill_row_at_sink(home, accepted_policy, &row.id)?;
     if !current.enabled {
         return Err(DISABLED_SKILL_PROBE_MSG.to_string());
     }
@@ -802,7 +787,7 @@ fn revalidate_skill_at_resolver_sink(
 /// generation checks while making sink work O(1) per resolver call.
 fn read_exact_skill_row_at_sink(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::SkillsConfig,
     id: &str,
 ) -> Result<InstalledSkillRow, String> {
     crate::skills::creator::validate_skill_id(id).map_err(|_| {
@@ -865,14 +850,11 @@ fn read_exact_skill_row_at_sink(
         );
     }
 
-    // Read the exact daemon-selected config after binding the artifact, as
-    // close as possible to the egress decision. Disabled/visibility-off wins.
-    let policy =
-        crate::skills::loader::load_skill_policy_from_config_path(config_path).map_err(|_| {
-            "upstream probe skipped without network: current skill policy is unavailable"
-                .to_string()
-        })?;
-    policy.apply_to_manifest(&mut manifest);
+    // Re-apply the immutable policy generation accepted by ReloadController.
+    // The raw config file may already contain a newer rejected candidate and
+    // therefore must never become authority at this egress boundary.
+    crate::skills::loader::SkillPolicy::from_config(accepted_policy)
+        .apply_to_manifest(&mut manifest);
     Ok(InstalledSkillRow {
         name: component_name("skill", id),
         version: manifest.version,
@@ -885,10 +867,10 @@ fn read_exact_skill_row_at_sink(
 
 async fn resolve_skill_latest_at_sink(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::SkillsConfig,
     row: &InstalledSkillRow,
 ) -> Result<String, String> {
-    resolve_skill_latest_at_sink_with_resolver(home, config_path, row, |source| async move {
+    resolve_skill_latest_at_sink_with_resolver(home, accepted_policy, row, |source| async move {
         crate::updater::skill_resolver::resolve_latest_version(&source).await
     })
     .await
@@ -896,7 +878,7 @@ async fn resolve_skill_latest_at_sink(
 
 async fn resolve_skill_latest_at_sink_with_resolver<R, Fut>(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::SkillsConfig,
     row: &InstalledSkillRow,
     resolver: R,
 ) -> Result<String, String>
@@ -905,10 +887,10 @@ where
     Fut: std::future::Future<Output = Result<String, String>>,
 {
     let home = home.to_path_buf();
-    let config_path = config_path.to_path_buf();
+    let accepted_policy = accepted_policy.clone();
     let row = row.clone();
     let source = tokio::task::spawn_blocking(move || {
-        revalidate_skill_at_resolver_sink(&home, &config_path, &row)
+        revalidate_skill_at_resolver_sink(&home, &accepted_policy, &row)
     })
     .await
     .map_err(|_| {
@@ -922,7 +904,7 @@ where
 
 fn revalidate_plugin_at_resolver_sink(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::WasmPluginsConfig,
     row: &InstalledPluginRow,
 ) -> Result<String, String> {
     if !row.enabled {
@@ -953,11 +935,10 @@ fn revalidate_plugin_at_resolver_sink(
                 .to_string(),
         );
     }
-    // Load policy after the bounded artifact read. This keeps revocation and
-    // approval as fresh as possible at the actual egress boundary.
-    let policy = load_plugin_probe_policy(config_path)
-        .map_err(|error| format!("upstream probe skipped without network: {error}"))?;
-    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy).map_err(
+    // Re-validate against the exact immutable policy generation accepted by
+    // ReloadController. A newer on-disk candidate may have failed reload and
+    // cannot override the running daemon's policy at the network boundary.
+    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, accepted_policy).map_err(
         |error| {
             format!(
                 "upstream probe skipped without network: {}",
@@ -978,7 +959,7 @@ fn revalidate_plugin_at_resolver_sink(
 
 async fn resolve_plugin_latest_at_sink<R, Fut>(
     home: &Path,
-    config_path: &Path,
+    accepted_policy: &crate::config::WasmPluginsConfig,
     row: &InstalledPluginRow,
     resolver: &R,
 ) -> Result<String, String>
@@ -987,10 +968,10 @@ where
     Fut: std::future::Future<Output = Result<String, String>>,
 {
     let home = home.to_path_buf();
-    let config_path = config_path.to_path_buf();
+    let accepted_policy = accepted_policy.clone();
     let row = row.clone();
     let source = tokio::task::spawn_blocking(move || {
-        revalidate_plugin_at_resolver_sink(&home, &config_path, &row)
+        revalidate_plugin_at_resolver_sink(&home, &accepted_policy, &row)
     })
     .await
     .map_err(|_| {
@@ -1019,17 +1000,19 @@ where
 /// `PluginManifest` routes through the resolver; plugins without
 /// the field keep the sentinel so the audit chain still
 /// distinguishes "operator hasn't opted in" from "resolver failed". The
-/// caller must pass the daemon's exact active `config_path`; both the initial
-/// scan and the final resolver sink re-read that path and never reconstruct a
-/// default `home/freedom.yaml` for plugin admission.
+/// caller must pass the daemon's immutable accepted skill and plugin policy
+/// snapshots. Raw config files are deliberately not consulted: the file may
+/// already contain a newer candidate rejected by `ReloadController`.
 pub async fn skill_plugin_specs_for_home_async(
     home: PathBuf,
-    config_path: PathBuf,
+    skills_policy: crate::config::SkillsConfig,
+    plugin_policy: crate::config::WasmPluginsConfig,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     skill_plugin_specs_for_home_async_with_plugin_resolver(
         home,
-        config_path,
+        skills_policy,
+        plugin_policy,
         gate,
         |source| async move {
             crate::updater::skill_resolver::resolve_latest_version(&source).await
@@ -1040,7 +1023,8 @@ pub async fn skill_plugin_specs_for_home_async(
 
 async fn skill_plugin_specs_for_home_async_with_plugin_resolver<R, Fut>(
     home: PathBuf,
-    config_path: PathBuf,
+    skills_policy: crate::config::SkillsConfig,
+    plugin_policy: crate::config::WasmPluginsConfig,
     gate: GateDecision,
     plugin_resolver: R,
 ) -> Vec<ComponentSpec>
@@ -1052,11 +1036,12 @@ where
     // The capability API is synchronous. Keep a large operator store off the
     // Tokio worker before beginning the asynchronous network probes.
     let scan_home = home.clone();
-    let scan_config_path = config_path.clone();
+    let scan_skills_policy = skills_policy.clone();
+    let scan_plugin_policy = plugin_policy.clone();
     let (skill_scan, plugin_scan) = match tokio::task::spawn_blocking(move || {
         (
-            scan_installed_skills_checked(&scan_home, &scan_config_path),
-            scan_installed_plugins_checked(&scan_home, &scan_config_path),
+            scan_installed_skills_checked(&scan_home, &scan_skills_policy),
+            scan_installed_plugins_checked(&scan_home, &scan_plugin_policy),
         )
     })
     .await
@@ -1088,7 +1073,7 @@ where
             Err(DISABLED_SKILL_PROBE_MSG.to_string())
         } else {
             match row.source.as_deref() {
-                Some(_) => resolve_skill_latest_at_sink(&home, &config_path, &row).await,
+                Some(_) => resolve_skill_latest_at_sink(&home, &skills_policy, &row).await,
                 None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
             }
         };
@@ -1116,7 +1101,8 @@ where
         } else {
             match row.source.as_deref() {
                 Some(_) => {
-                    resolve_plugin_latest_at_sink(&home, &config_path, &row, &plugin_resolver).await
+                    resolve_plugin_latest_at_sink(&home, &plugin_policy, &row, &plugin_resolver)
+                        .await
                 }
                 None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
             }
@@ -1133,11 +1119,12 @@ where
 /// [`skill_plugin_specs_for_home_async`].
 pub fn skill_plugin_specs_for_home(
     home: &Path,
-    config_path: &Path,
+    skills_policy: &crate::config::SkillsConfig,
+    plugin_policy: &crate::config::WasmPluginsConfig,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     let mut installed: Vec<(String, String, Result<String, String>, GateDecision)> = Vec::new();
-    let skill_scan = scan_installed_skills_checked(home, config_path);
+    let skill_scan = scan_installed_skills_checked(home, skills_policy);
     log_manifest_scan_failures(&skill_scan.failures);
     for failure in skill_scan.failures {
         installed.push((
@@ -1160,7 +1147,7 @@ pub fn skill_plugin_specs_for_home(
         };
         installed.push((row.name, row.version, Err(latest), gate.clone()));
     }
-    let plugin_scan = scan_installed_plugins_checked(home, config_path);
+    let plugin_scan = scan_installed_plugins_checked(home, plugin_policy);
     log_manifest_scan_failures(&plugin_scan.failures);
     for failure in plugin_scan.failures {
         installed.push((
@@ -1191,10 +1178,9 @@ pub fn skill_plugin_specs_for_home(
     crate::updater::pipeline::skill_plugin_specs(installed)
 }
 
-/// Sync builder for the U-04 cron-builder closure. The home and exact active
-/// config paths are captured by value so each tick re-reads disk (operator-
-/// added skills and policy changes between ticks become visible without a
-/// daemon restart).
+/// Sync builder for the U-04 cron-builder closure. Installed artifacts are
+/// rescanned each tick, while policy is taken only from the immutable config
+/// generation accepted by `ReloadController` for that tick.
 ///
 /// U-02b: when invoked from the cron's `spawn_blocking` context the
 /// builder hands control to `skill_plugin_specs_for_home_async` via
@@ -1204,12 +1190,18 @@ pub fn skill_plugin_specs_for_home(
 /// shape the cron-audit chain saw before U-02b.
 pub fn skill_plugin_specs_blocking(
     home: PathBuf,
-    config_path: PathBuf,
+    skills_policy: crate::config::SkillsConfig,
+    plugin_policy: crate::config::WasmPluginsConfig,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_async(home, config_path, gate)),
-        Err(_) => skill_plugin_specs_for_home(&home, &config_path, gate),
+        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_async(
+            home,
+            skills_policy,
+            plugin_policy,
+            gate,
+        )),
+        Err(_) => skill_plugin_specs_for_home(&home, &skills_policy, &plugin_policy, gate),
     }
 }
 
@@ -1290,6 +1282,113 @@ mod tests {
 
     fn config_path(home: &Path) -> PathBuf {
         home.join("freedom.yaml")
+    }
+
+    fn accepted_policies_at(
+        path: &Path,
+    ) -> (
+        crate::config::SkillsConfig,
+        crate::config::WasmPluginsConfig,
+    ) {
+        let config = crate::config::FreedomConfig::load_from_path_or_default(path)
+            .expect("accepted policy fixture");
+        (config.skills, config.plugins.wasm)
+    }
+
+    // Compatibility helpers keep the older fixture call sites concise. They
+    // snapshot the fixture config once at entry; production cron wiring never
+    // calls these and receives ReloadController's accepted generation.
+    fn scan_installed_skills(home: &Path) -> Vec<(String, String)> {
+        let (skills, _) = accepted_policies_at(&config_path(home));
+        super::scan_installed_skills(home, &skills)
+    }
+
+    fn scan_installed_skills_rows(home: &Path) -> Vec<InstalledSkillRow> {
+        let (skills, _) = accepted_policies_at(&config_path(home));
+        super::scan_installed_skills_rows(home, &skills)
+    }
+
+    fn scan_installed_skills_checked(home: &Path, path: &Path) -> InstalledSkillScan {
+        let (skills, _) = accepted_policies_at(path);
+        super::scan_installed_skills_checked(home, &skills)
+    }
+
+    fn scan_installed_plugins(home: &Path, path: &Path) -> Vec<(String, String)> {
+        let (_, plugins) = accepted_policies_at(path);
+        super::scan_installed_plugins(home, &plugins)
+    }
+
+    fn scan_installed_plugins_rows(home: &Path, path: &Path) -> Vec<InstalledPluginRow> {
+        let (_, plugins) = accepted_policies_at(path);
+        super::scan_installed_plugins_rows(home, &plugins)
+    }
+
+    fn scan_installed_plugins_checked(home: &Path, path: &Path) -> InstalledPluginScan {
+        let (_, plugins) = accepted_policies_at(path);
+        super::scan_installed_plugins_checked(home, &plugins)
+    }
+
+    fn skill_plugin_specs_for_home(
+        home: &Path,
+        path: &Path,
+        gate: GateDecision,
+    ) -> Vec<ComponentSpec> {
+        let (skills, plugins) = accepted_policies_at(path);
+        super::skill_plugin_specs_for_home(home, &skills, &plugins, gate)
+    }
+
+    async fn skill_plugin_specs_for_home_async(
+        home: PathBuf,
+        path: PathBuf,
+        gate: GateDecision,
+    ) -> Vec<ComponentSpec> {
+        let (skills, plugins) = accepted_policies_at(&path);
+        super::skill_plugin_specs_for_home_async(home, skills, plugins, gate).await
+    }
+
+    async fn skill_plugin_specs_for_home_async_with_plugin_resolver<R, Fut>(
+        home: PathBuf,
+        path: PathBuf,
+        gate: GateDecision,
+        resolver: R,
+    ) -> Vec<ComponentSpec>
+    where
+        R: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+    {
+        let (skills, plugins) = accepted_policies_at(&path);
+        super::skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home, skills, plugins, gate, resolver,
+        )
+        .await
+    }
+
+    async fn resolve_skill_latest_at_sink_with_resolver<R, Fut>(
+        home: &Path,
+        path: &Path,
+        row: &InstalledSkillRow,
+        resolver: R,
+    ) -> Result<String, String>
+    where
+        R: FnOnce(String) -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+    {
+        let (skills, _) = accepted_policies_at(path);
+        super::resolve_skill_latest_at_sink_with_resolver(home, &skills, row, resolver).await
+    }
+
+    async fn resolve_plugin_latest_at_sink<R, Fut>(
+        home: &Path,
+        path: &Path,
+        row: &InstalledPluginRow,
+        resolver: &R,
+    ) -> Result<String, String>
+    where
+        R: Fn(String) -> Fut,
+        Fut: std::future::Future<Output = Result<String, String>>,
+    {
+        let (_, plugins) = accepted_policies_at(path);
+        super::resolve_plugin_latest_at_sink(home, &plugins, row, resolver).await
     }
 
     fn denied_gate() -> GateDecision {
@@ -1747,7 +1846,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn skill_resolver_sink_reloads_policy_before_egress() {
+    async fn rejected_on_disk_skill_policy_never_overrides_accepted_snapshot() {
         let home = tempfile::tempdir().unwrap();
         write_skill(
             home.path(),
@@ -1756,22 +1855,36 @@ mod tests {
         );
         let custom_path = home.path().join("custom.yaml");
         std::fs::write(&custom_path, "skills:\n  enabled: [revoked-at-sink]\n").unwrap();
-        let row = scan_installed_skills_checked(home.path(), &custom_path)
+        let (accepted_skills, accepted_plugins) = accepted_policies_at(&custom_path);
+        let row = super::scan_installed_skills_checked(home.path(), &accepted_skills)
             .rows
             .pop()
             .expect("initially enabled skill generation");
         std::fs::write(&custom_path, "skills:\n  disabled: [revoked-at-sink]\n").unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let result = resolve_skill_latest_at_sink_with_resolver(
+
+        let specs = super::skill_plugin_specs_for_home(
             home.path(),
-            &custom_path,
+            &accepted_skills,
+            &accepted_plugins,
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            NO_REGISTRY_RESOLVER_MSG
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = super::resolve_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &accepted_skills,
             &row,
             counting_resolver(calls.clone()),
         )
         .await;
 
-        assert_eq!(result.unwrap_err(), DISABLED_SKILL_PROBE_MSG);
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(result.as_deref(), Ok("v9.9.9"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]
@@ -2080,7 +2193,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn custom_config_path_denial_is_rechecked_at_resolver_sink() {
+    async fn rejected_on_disk_plugin_policy_never_overrides_accepted_snapshot() {
         let home = tempfile::tempdir().unwrap();
         let manifest = "id = \"sink_denied\"\nname = \"Sink Denied\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/sink-denied\"\n";
         write_plugin(home.path(), "sink_denied", manifest);
@@ -2088,7 +2201,8 @@ mod tests {
         let allowed = std::fs::read_to_string(config_path(home.path())).unwrap();
         let custom_path = home.path().join("custom.yaml");
         std::fs::write(&custom_path, &allowed).unwrap();
-        let row = scan_installed_plugins_checked(home.path(), &custom_path)
+        let (accepted_skills, accepted_plugins) = accepted_policies_at(&custom_path);
+        let row = super::scan_installed_plugins_checked(home.path(), &accepted_plugins)
             .rows
             .pop()
             .expect("custom config initially admits the exact generation");
@@ -2098,17 +2212,30 @@ mod tests {
             allowed.replacen("enabled: true", "enabled: false", 1),
         )
         .unwrap();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let result = resolve_plugin_latest_at_sink(
+
+        let specs = super::skill_plugin_specs_for_home(
             home.path(),
-            &custom_path,
+            &accepted_skills,
+            &accepted_plugins,
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            NO_REGISTRY_RESOLVER_MSG
+        );
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = super::resolve_plugin_latest_at_sink(
+            home.path(),
+            &accepted_plugins,
             &row,
             &counting_resolver(calls.clone()),
         )
         .await;
 
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
-        assert!(result.unwrap_err().contains("host is disabled"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.as_deref(), Ok("v9.9.9"));
     }
 
     #[tokio::test]
@@ -2331,7 +2458,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn resolver_sink_reloads_revocation_before_egress() {
+    async fn resolver_sink_enforces_newly_accepted_revocation_snapshot() {
         let home = tempfile::tempdir().unwrap();
         let manifest = "id = \"revoked_at_barrier\"\nname = \"Revoked\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/revoked\"\n";
         write_plugin(home.path(), "revoked_at_barrier", manifest);
@@ -2345,10 +2472,11 @@ mod tests {
             manifest,
             "    revoked_ids: [revoked_at_barrier]\n",
         );
+        let (_, accepted_plugins) = accepted_policies_at(&config_path(home.path()));
         let calls = Arc::new(AtomicUsize::new(0));
-        let result = resolve_plugin_latest_at_sink(
+        let result = super::resolve_plugin_latest_at_sink(
             home.path(),
-            &config_path(home.path()),
+            &accepted_plugins,
             &row,
             &counting_resolver(calls.clone()),
         )

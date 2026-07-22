@@ -2988,16 +2988,16 @@ pub(crate) fn spawn_updater_cli_cron(
 /// U-02 — skill/plugin update probe cron (captures `home` for the spec scan).
 pub(crate) fn spawn_updater_skill_cron(
     home: &std::path::Path,
-    config_path: &std::path::Path,
+    _config_path: &std::path::Path,
     reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     let home_for_skills = home.to_path_buf();
-    let config_for_plugins = config_path.to_path_buf();
-    let builder: UpdaterSpecBuilder = Arc::new(move |_config, gate| {
+    let builder: UpdaterSpecBuilder = Arc::new(move |config, gate| {
         crate::updater::probes::skill_plugin_specs_blocking(
             home_for_skills.clone(),
-            config_for_plugins.clone(),
+            config.skills.clone(),
+            config.plugins.wasm.clone(),
             gate,
         )
     });

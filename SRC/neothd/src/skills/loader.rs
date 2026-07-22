@@ -359,7 +359,7 @@ pub(crate) struct SkillPolicy {
 }
 
 impl SkillPolicy {
-    fn from_config(config: &crate::config::SkillsConfig) -> Self {
+    pub(crate) fn from_config(config: &crate::config::SkillsConfig) -> Self {
         Self {
             enabled: config
                 .enabled
