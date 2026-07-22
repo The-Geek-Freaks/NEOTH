@@ -48,6 +48,19 @@ These are unfinished v1 contracts, not accepted post-1.0 limitations:
   `openclaw.json`, uses the same read-only source-set/inventory-bound inspector
   as `import-openclaw`, and reports `apply_available=false`. Its former
   provider-only flags fail closed.
+- **Provider/model parity:** remote Ollama endpoints now cross remote cost and
+  consent authorization, and provider help no longer advertises the nonexistent
+  `hemispheres test --live` flag. Those are two narrow correctness fixes only.
+  OpenClaw-class provider/auth/model/capability parity across every Hemisphere,
+  Skill, Cron, Buddy, GUI and migration consumer remains an open v1.0 contract.
+- **Installed-Skill authority:** capability-bound storage, generation receipts
+  and typed repairability prevent partial/stale lifecycle success, but they are
+  not activation authority. External provenance, enabled state, effective tool
+  scope and the meaning of an omitted/empty allowlist remain open.
+- **Recurring updater egress:** daemon update lanes are reload-aware but
+  deliberately report `SkippedByGate` and perform no GitHub/npm/Git probe until
+  request-bound transport authorization and mandatory intent/result WAL are
+  wired. Manual signed update remains available.
 
 ## Implemented boundaries and operational limitations
 
@@ -94,7 +107,8 @@ above.
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Release self-knowledge | Every archive and native installer carries a pinned-Graphify map of the exact tag. Runtime verification binds version, source HEAD, closed file set, and canonical payload digest; upgrade/uninstall preserve operator-owned `User Overlays`. |
 | Automation | Local cron plus a default-off, loopback-only n8n ingress API with bearer scopes, endpoint-specific consent/cost gates and typed request/downstream audit events. Zero-friction post-install n8n coupling and the shared adoption lifecycle remain open. |
-| Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
+| Skills | Bounded, no-follow generation install/create/uninstall with typed preflight/final receipts and broken-entry repairability. External activation/tool authority remains an open Gold contract; Skill receipts are not signatures or capability grants. |
+| WASM plugins | Exact manifest/WASM-digest approval, runtime capability enforcement, revocation, bounded discovery, and hostcall WAL events. |
 | Private mesh | Authenticated peeroxide/iroh carriers share durable per-peer pending frames, exact cursor-bound ACKs, restart replay, and transactional receive/materialization for canonical memory and ground-truth snapshots. Raw ingress remains default-off and the mesh is intentionally scoped to typed NEOTH content rather than arbitrary device files. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
 | Docs | Quickstart, privacy proof, install, CLI, providers, local models, channels, plugins, compare pages, security policy. |

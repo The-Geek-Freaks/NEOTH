@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-07-18
+**Created:** 2026-05-24  **Last updated:** 2026-07-22
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **Current WS-LF inventory integrity (2026-07-18):** the original 79
@@ -62,6 +62,48 @@
 > verdict; R3-10 remains open until the pushed head's required workflows finish
 > green and the remaining public-truth reconciliation is complete.
 >
+> **Forensic resume 2026-07-22:** Claude's three-day delta was re-audited
+> against current `main`, not accepted from commit messages. Eight confirmed
+> release contracts are now explicit as GOLD-R3-11..18: the capability-bound
+> Skill store, missing-root portable first install, repository-local code-map
+> recall, typed untrusted prompt framing, verified plugin removal and CRG
+> adoption reconciliation, plus explicit authority/activation receipts for
+> installed Skills whose empty tool scope currently means unrestricted by the
+> Skill layer, plus a hardened remote Skill/update-source network boundary.
+> WS-R3 is therefore honestly **9 done / 9 open**
+> until implementation and evidence close them. The previous pushed baseline
+> `0883e064` is exact-head green in CI, Security and Code Quality; work after it
+> remains unverified and may not inherit that verdict.
+>
+> **Provider-parity correction 2026-07-22:** GOLD-R4-14 is now explicit and
+> OPEN. NEOTH's generic `openai_compat` transport and current native adapters
+> are useful substrate, but a comment claiming structural extensibility is not
+> proof that every OpenClaw-supported provider works across every hemisphere,
+> Council/Cron/Skill/Buddy path, setup surface, model catalog and final-model
+> cost/consent boundary. The release baseline is the current upstream OpenClaw
+> provider registry and is intentionally broader than OpenRouter, Kilo, Kimi
+> and Qwen alone. WS-R4 therefore stands at **14 total / 13 open / 1 done**.
+>
+> **Local source checkpoint 2026-07-22 (no broad box closed; exact-head
+> validation pending):** the current Skill lifecycle uses capability-bound,
+> no-follow storage and generation-bound preflight/final receipts through CLI
+> and GUI; broken inventory exposes typed repairability; the Skill registry is
+> bound to the daemon's exact config path and only accepted reload generations.
+> This is integrity and lifecycle progress, **not installed-Skill authority**:
+> provenance, activation, effective tool scope and the omitted-allowlist
+> contract remain open under R3-17. Self-Improve shell verification now needs
+> both its default-off master switch and an exact operator-owned command
+> allowlist entry, reports no filesystem/network isolation, and retains its
+> accept/rollback journal until namespace durability is confirmed. Plugin
+> discovery now has an aggregate retained-WASM budget. Recurring updater lanes
+> consume accepted live config but deliberately emit `SkippedByGate` and do no
+> GitHub/npm/Git network work until request-bound leaf authorization and
+> intent/result WAL are wired; manual update commands are unchanged. Remote
+> Ollama locality/cost classification and the stale `--live` help example are
+> corrected, but those are only two narrow R4-14 leaves. Counts remain
+> **WS-R3 18 total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13
+> open**. No local pass count or pushed-head verdict is claimed here.
+>
 > **Current Windows/cross-platform CI correction (2026-07-18; R3-10 remains
 > open):** forensic logs for exact head `d73227ca` identified 20 Windows
 > failures rather than treating the failed aggregate as one opaque result.
@@ -107,7 +149,9 @@
 > drift **1/1**, plus green strict Core, locked slim no-default lib+bins and
 > locked GUI all-target Clippy. These are local working-tree results, not a
 > pushed exact-head verdict. R3-10 remains open for the remaining public-truth
-> sweep and visible CI/Security/CodeQL; WS-R4 remains **1 done / 12 open**. The 2026-07-18 lost-feature
+> sweep and visible CI/Security/CodeQL; at that dated checkpoint WS-R4 was **1
+> done / 12 open**. R4-14, added on 2026-07-22, supersedes that count: WS-R4 is
+> now **1 done / 13 open**. The 2026-07-18 lost-feature
 > archaeology is also v1.0 scope: every confirmed P1/P2 loss and the orphaned
 > `plans/001..003` criteria are tracked open in the authoritative ROAD rather
 > than deferred to 1.1.
@@ -250,10 +294,16 @@
 > authenticate their transport/bot but still lack a mandatory human sender/
 > conversation gate; ROAD R4-07 remains open. ROAD R4 now has thirteen
 > contracts: the added R4-11..13 make adaptive communication, a real Mobile
-> Companion and Cluster product completion explicit. Current count is **1 done /
-> 12 open**; no new broad R4 box is claimed complete by this evidence.
+> Companion and Cluster product completion explicit. That dated count was **1
+> done / 12 open**; R4-14 was added on 2026-07-22, so the current count is **1
+> done / 13 open**. No new broad R4 box is claimed complete by this evidence.
 >
-> **Current forensic Gold correction (2026-07-15):** the historical completion totals below are not current release readiness. `PLAN/ROAD_TO_1_0_GOLD.md` carries WS-R3 with ten explicitly reopened runtime/integrity contracts and WS-R4 with thirteen zero-friction install, GUI/CLI parity, Buddy, channel, mobile, cluster, adaptive-communication, clean-machine and public-launch contracts. GOLD-R3-01..03 are now closed: one typed instance-path contract reaches the runtime/background surfaces, registries validate before atomic publication, and Cron briefing regeneration shares the original absolute deadline and never delivers a rejected body. Current-source evidence includes exact Rust 1.91 Core/GUI Clippy, `custom` **43/43**, `serve_pipeline` **13/13**, registry/mode focused **9/9**, real-process interface **13/13**, TTS **23/23**, atomic private writes **6/6** and self-wiki/Clap inventory **10/10**. Generated CLI docs were regenerated for this source boundary and the focused drift gate is **1/1** green; the remaining public-document reconciliation and visible exact-head CI/Security/CodeQL still keep R3-10 open. The honest package/workflow MSRV is now 1.91 because the locked advertised `cluster-iroh` graph cannot build on 1.90; Cargo manifests, Clippy policy, CI, Security, publish and release workflows share that floor. GOLD-R3-04 is closed by one canonical 15-channel GUI/CLI registry plus transactional Telegram token/sender-policy wiring (**27/27** focused tests and GUI/Slint check). GOLD-R3-05 is closed by the full Cron CRUD/schedule/provider/MCP/delivery/reload contract, vendor-isolated credentials and three explicit Custom fail-closed rails. GOLD-R3-06 is closed by instance-home-bound daemon/channel metering, exact-once terminal/stream/fallback accounting, a reviewed production raw-call surface, and a type-level `AuthorizedProvider` boundary for sub-agent/self-improve QA. GOLD-R3-07 is closed by pushed commit `8e25e148`; GOLD-R3-09 is proven by the shared durable Peeroxide/Iroh state machine (cluster 343/343 plus locked Iroh 5 passed / 1 intentional external-network ignore); GOLD-R3-08 remains closed and the current locked `neoth-migrate` suite is **125/125**, including the strict read-only OpenClaw config ledger. GOLD-R4-03 is closed by the product launcher and now includes the previously missing core-only path: bare first launch falls into CLI setup, explicit GUI requests fail clearly without searching PATH, and a failed GUI request cannot mutate a CLI preference (**13/13** real-process tests). WS-R3 therefore stands at **9 done / 1 open**, while WS-R4 stands at **1 done / 12 open**. R3-10 still requires final truth reconciliation and visible exact-head CI/Security/CodeQL. The new zero-friction audit confirms that model progress, intent-only install flags, Obsidian/preload and n8n post-install coupling, WhatsApp runtime packaging, complete release feature flags and several clean-machine runtime proofs remain open under WS-R4. SNYK-01, SNYK-02, B22, GRAPH-03 and the public `neoth` naming contract remain closed. The v1.0.0 tag remains blocked until every WS-R3/WS-R4 box is closed and exact-head CI/Security/CodeQL plus clean-machine installer tests are green.
+> **Historical forensic Gold correction (2026-07-15):** the historical completion totals below are not current release readiness. `PLAN/ROAD_TO_1_0_GOLD.md` then carried WS-R3 with ten explicitly reopened runtime/integrity contracts and WS-R4 with thirteen zero-friction install, GUI/CLI parity, Buddy, channel, mobile, cluster, adaptive-communication, clean-machine and public-launch contracts. GOLD-R3-01..03 were closed: one typed instance-path contract reaches the runtime/background surfaces, registries validate before atomic publication, and Cron briefing regeneration shares the original absolute deadline and never delivers a rejected body. Source evidence at that checkpoint included exact Rust 1.91 Core/GUI Clippy, `custom` **43/43**, `serve_pipeline` **13/13**, registry/mode focused **9/9**, real-process interface **13/13**, TTS **23/23**, atomic private writes **6/6** and self-wiki/Clap inventory **10/10**. Generated CLI docs were regenerated for that source boundary and the focused drift gate was **1/1** green; remaining public-document reconciliation and visible exact-head CI/Security/CodeQL still kept R3-10 open. The honest package/workflow MSRV was raised to 1.91 because the locked advertised `cluster-iroh` graph could not build on 1.90; Cargo manifests, Clippy policy, CI, Security, publish and release workflows share that floor. GOLD-R3-04 was closed by one canonical 15-channel GUI/CLI registry plus transactional Telegram token/sender-policy wiring (**27/27** focused tests and GUI/Slint check). GOLD-R3-05 was closed by the full Cron CRUD/schedule/provider/MCP/delivery/reload contract, vendor-isolated credentials and three explicit Custom fail-closed rails. GOLD-R3-06 was closed by instance-home-bound daemon/channel metering, exact-once terminal/stream/fallback accounting, a reviewed production raw-call surface, and a type-level `AuthorizedProvider` boundary for sub-agent/self-improve QA. GOLD-R3-07 was closed by pushed commit `8e25e148`; GOLD-R3-09 was proven by the shared durable Peeroxide/Iroh state machine (cluster 343/343 plus locked Iroh 5 passed / 1 intentional external-network ignore); GOLD-R3-08 remained closed and the locked `neoth-migrate` suite was **125/125**, including the strict read-only OpenClaw config ledger. GOLD-R4-03 was closed by the product launcher and included the previously missing core-only path: bare first launch falls into CLI setup, explicit GUI requests fail clearly without searching PATH, and a failed GUI request cannot mutate a CLI preference (**13/13** real-process tests). The then-current counts were **R3 9 done / 1 open** and **R4 1 done / 12 open**. The zero-friction audit confirmed that model progress, intent-only install flags, Obsidian/preload and n8n post-install coupling, WhatsApp runtime packaging, complete release feature flags and several clean-machine runtime proofs remained open under WS-R4. SNYK-01, SNYK-02, B22, GRAPH-03 and the public `neoth` naming contract remained closed.
+>
+> The 2026-07-22 re-audit supersedes only those dated counts, not the evidence:
+> it added R3-11..18 and R4-14. Current counts are **R3 18 total / 9 done / 9
+> open** and **R4 14 total / 1 done / 13 open**. The v1.0.0 tag remains blocked
+> until every current box and exact-head/clean-machine gate is green.
 >
 > **Current R4 integration wave (2026-07-15; no broad box closed yet):** Windows release binaries now have a static-MSVC-CRT build contract plus PE normal/delay-import inspection and a real GUI event-loop runtime probe; OpenClaw `openclaw.json` is excluded from memory and receives a secret-safe JSON5/`$include` field ledger, but apply, multi-account and runtime behavior parity remain open. The release-bound Graphify path now uses a locked Python 3.12.10 / `graphifyy==0.8.41` / `matplotlib==3.10.8` environment, the real extract -> local tracked-code recovery -> cluster -> HTML/Wiki/Obsidian/SVG/GraphML pipeline, repository-relative graph identities, and closed HEAD/version/source/payload manifests. Local contracts prove recursive portable/DEB/RPM/macOS App+PKG+DMG/Windows Setup staging, native preflight, transactional installer/updater rollback, native status/verify/query, immutable per-release Wiki/Obsidian baselines, persistent overlays and reviewed-overlay recall. Portable support now lives under a package-owned `neoth-support/` root; markerless NEOTH collisions fail closed while unrelated shared-bin files survive. Existing public entrypoints are atomically replaced and normal `neoth`/`neothd` startup recovers executable-bound interrupted journals before dispatch. Windows detached handoff and cleanup are private-namespace/request/receipt bound and reject elevated portable execution before the first staging, ACL, helper or delete effect. Current focused evidence: self-update **73/73**, transaction killpoints **17/17**, bundle/ownership **10/10**, real process recovery **2/2**, zero-installer delegation **3/3**, release-snapshot **13/13**, Self-Knowledge CLI **4/4**, Cron scheduler/reload **14/14**, Cron activation **11/11**, Wiki Cron **5/5**, bootstrap adversarial fixtures **56/56**, release-asset/golden tests **7/7**, exact-head selector **7/7** and release-manifest tests **6/6**; Linux, Windows-static and release-isolation contracts are also green. Release CI now uses the correct Windows ARM64 runner, seven-day handoff retention and newest-run exact-head semantics. Native signed-installer execution remains an exact-platform CI gate, so this slice closes no broad WS-R4 box yet. Three dependency-ordered execution plans now bind the remaining channel/OpenClaw migration, capability/adoption lifecycle and GUI/CLI/Buddy projection work back into the Gold roadmap; their unchecked acceptance boxes remain v1.0 scope. GUI/Buddy parity, visible download/build/materialization progress, full Self-Improve proposal/review wiring, public Wiki publication, signed native-installer execution and exact-head CI/Security/CodeQL/clean-machine proof remain explicit blockers rather than hidden follow-ups.
 >

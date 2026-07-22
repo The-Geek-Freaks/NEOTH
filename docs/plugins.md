@@ -42,6 +42,46 @@ neoth skills --uninstall rust-review
 # Skills hot-reload automatically (file watcher) — no reload command needed.
 ```
 
+Local Skill installation is capability-bound: NEOTH validates `skill.yaml`
+before publication, copies only bounded regular files without following links
+or reparse points, and commits a complete generation under a cross-process
+lock. Replacing an existing Skill requires explicit `--force`; interrupted
+replacements are recovered before the next runtime load, inventory, update
+probe, Self-Improve write, or uninstall.
+
+Install and create use a two-step generation contract. Preflight reports the
+exact source manifest/generation and the current destination generation (or
+`absent`). The mutation must echo those expectations, rechecks the destination
+under the store lock, and returns the generation it replaced. The desktop
+accepts success only after the typed receipt and an exact post-commit readback.
+Uninstall likewise requires an ID/generation-bound receipt and confirms that
+the ID is absent afterwards. Broken inventory rows are typed as
+`manifest_replaceable` or `remove_only`; the GUI never offers a manifest repair
+for an unsafe or structurally ambiguous directory.
+
+This storage contract prevents partial generations, link traversal and stale
+GUI success. It is **not an activation or capability grant**. External Skills
+are data/prompt packages rather than WASM code, but their provenance, enabled
+state, effective tool scope, delegation and model override still need the
+explicit operator-visible authority contract tracked by GOLD-R3-17. In
+particular, a generation receipt does not assign a safe meaning to an omitted
+or empty `tool_allowlist`.
+
+An optional `source: git+https://...` enables version checks only for an
+effectively enabled Skill. Version probes currently accept repositories hosted
+on `github.com`, `gitlab.com`, or `codeberg.org`; self-hosted forges remain
+disabled until an explicit operator host policy exists. Userinfo, non-default
+ports, redirects, credential helpers, interactive prompts, and inherited Git
+request configuration are rejected or disabled. A disabled Skill never starts
+the Git probe. Even an eligible source does not create recurring daemon egress
+in the current release candidate: updater lanes return `SkippedByGate` until
+request-bound transport authorization and intent/result WAL are complete.
+
+The running registry uses the daemon's exact `freedom.yaml` path, including a
+custom `neoth serve --config ...` instance. It rebuilds Skill routing only from
+a configuration generation accepted by the shared reload controller; malformed
+or rejected candidates leave the previous validated routing snapshot active.
+
 ## Plugins
 
 Plugins are code and therefore need stronger boundaries.
@@ -73,12 +113,27 @@ memory_limit_bytes = 67108864
 # title = "My Plugin"
 ```
 
+The same updater-source restrictions apply to plugins. A plugin source is
+probed only while the WASM host is enabled and the exact plugin has an active,
+approval-bound activation record and is not revoked. Pending, inactive, or
+revoked plugins do not create background network traffic; a malformed existing
+`freedom.yaml` fails the probe closed instead of falling back to permissive
+defaults. The same recurring-daemon deny gate applies after those eligibility
+checks; manual operator-initiated probes remain separate.
+
 `id` must be snake_case and the artifact filename is always `plugin.wasm`.
 `requested_permissions` is one of `none`, `read_only`, `write`, `execute`, or
 `dangerous`. Explicit fuel must be non-zero and is capped at 10,000,000; memory
 must be at least one 64-KiB WASM page and is capped at 256 MiB. The accepted
 limits are carried into each Wasmtime store; omitted values use the daemon
 defaults (1,000,000 fuel and 64 MiB).
+
+Discovery also applies a namespace-wide payload ceiling: each `plugin.wasm` is
+limited to 128 MiB and one discovery snapshot retains at most 256 MiB across
+all plugins, including inactive candidates inspected before activation policy.
+The updater's read-only inventory has its own 512 MiB aggregate scan ceiling.
+Exceeding either limit is a visible discovery/probe error, not an empty plugin
+set or a partially accepted success.
 
 > **Feature gate:** WASM plugin support is compiled in only when `neothd` is built with
 > `--features wasm-plugin-host`. Stock release binaries (from GitHub Releases / winget) already

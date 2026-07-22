@@ -566,12 +566,19 @@ Common environment variables:
 | Change | Reload |
 | :-- | :-- |
 | Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
+| Recurring updater discovery | Reload-aware but currently network-denied: enabled daemon lanes emit `SkippedByGate` and perform no GitHub/npm/Git probe until request-bound transport authorization plus intent/result WAL are wired. Manual operator update commands are unaffected. |
 | Provider config | Restart-bound. `neoth reload` rejects changes to the constructed provider runtime (kind, binary, key reference, endpoint, model/aliases, region/API version, inference and recursive-subslot topology, fallback chain, Claude CLI runtime, transport settings and provider decorators such as history compaction). The running provider graph remains on its previous generation until the supervised daemon restarts. |
 | Channels | The running daemon watches effective file/keychain credentials, validates the new generation, and stop-then-starts only the changed adapter. A malformed credential store stops the channel fleet fail-closed instead of retaining stale secrets. If a mutation reports that its reload request failed, run `neoth reload`; a full daemon restart is not the normal path. |
 | OMI | `neoth omi configure` verifies the persisted effective generation and requests reload. `neoth reload` validates effective file/keychain credentials and restarts only the OMI workers. Invalid changes that cross neither a privacy nor authentication boundary preserve the last valid runtime; after a credential/auth change or monotonic privacy reduction, the prior surface stays stopped rather than restoring stale authority or capture. A configure success receipt proves the request was written, not that asynchronous activation has completed. |
 | Cluster | `neoth cluster configure` saves one complete typed snapshot. Enabled lifecycle changes, and changes while a daemon owns the prior state, return `restart_required: true`; restart the supervised daemon to activate transport, mDNS or carrier changes. Gossip privacy/replay policy is hot-reloadable on Peeroxide and Iroh. Disabled plus stopped is already inert and returns `false`. |
 | Plugins | Restart after enabling/disabling code plugins. |
 | Policy | Reload where supported; restart for safest behavior. |
+
+The Skills row is bound to the exact config file passed to the daemon, not an
+inferred default-home filename. Skill policy and routing publish only after the
+shared reload controller accepts the complete config generation. A malformed
+candidate keeps the previous validated routing snapshot; raw file-watcher
+activity alone cannot change effective Skill policy.
 
 ## Validate config
 

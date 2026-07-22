@@ -19,8 +19,10 @@ with private permissions at `~/.neoth/release/minisign.key` on the provisioning
 maintainer's machine and copied into the GitHub Actions secret
 (`NEOTH_RELEASE_MINISIGN_SECRET`) without printing it. CI signs each artifact
 (`neoth release sign` → `<asset>.minisig`); the daemon's `updater::sig_verify`
-checks that signature against the pinned public key before any auto-update. An
-attacker who swaps a release cannot forge a signature without the private key.
+checks that signature against the pinned public key before any update apply.
+The recurring network-discovery lane is separately disabled as documented
+below. An attacker who swaps a release cannot forge a signature without the
+private key.
 
 ## Release self-knowledge inputs
 
@@ -225,17 +227,21 @@ as privileged. Configure the repo accordingly:
 
 ---
 
-## How an end-user verifies (no action needed by them)
+## How an end-user verifies and the updater enforces authenticity
 
-The self-updater does it automatically:
+Signature verification itself is automatic on every supported apply path:
 
 - **Manual** (`neoth update --self --apply`): requires a verified signature by
   default. `--allow-unsigned` is the explicit trusted-recovery escape; a
   present-but-invalid signature still bails. The globally signed minisign
   trusted comment must also equal `file:neoth-<tag>-<target>.<ext>`, binding the
   authenticated bytes to the selected version and platform.
-- **Unattended** (daemon auto-update): refuses anything short of a verified
-  signature — no swap without cryptographic provenance.
+- **Recurring daemon discovery:** currently performs no release, npm or Git
+  network probe. The live reload-aware lanes report `SkippedByGate` until each
+  concrete transport consumes request-bound authorization and records mandatory
+  intent/result WAL. Consequently no unattended download, stage or swap is
+  claimed in the current source. The dormant unattended apply boundary still
+  refuses anything short of a verified signature; manual update is unaffected.
 
 The binary installers also fail closed: they verify `<asset>.minisig` with the
 versioned key, or use Cosign with the exact tagged workflow identity. If Cosign

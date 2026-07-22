@@ -207,7 +207,7 @@ operator.
 | **Automation** | Runs small local cron jobs and larger n8n workflows through a default-off, scoped localhost API with endpoint-specific consent and WAL auditing. |
 | **Channels** | One canonical GUI/CLI registry for Telegram, Slack, WhatsApp Business, repository-owned WhatsApp Web/Baileys, Discord, Signal, LINE, IRC, iMessage through BlueBubbles, Mattermost, Google Chat, Matrix, Twitch, Nostr, and the full-duplex Keet-identity Pear/Hyperswarm companion. Private/work inbound adapters require an exact operator identity in addition to transport authentication; missing policies keep them off and mismatches are WAL-audited before the pipeline. Read-only live probes are shared by both surfaces, and hot credential/policy rotation restarts only the affected adapter. The Keet companion creates private NEOTH topics; it does not claim access to existing Keet app rooms because no supported room/message API exists. |
 | **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
-| **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
+| **Extensions** | Installs Skills as bounded, no-follow data generations with typed receipts; explicit external-Skill activation/tool authority remains a Gold blocker. WASM code uses exact-digest operator approval, runtime capability checks, revocation and hostcall audit. |
 | **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
 
 <img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH real-life automation — Paperless documents, optional IMAP email triage, CalDAV calendar, workflows, and notes become useful only after memory, approval, and audit gates" width="100%">
@@ -286,6 +286,12 @@ manifest-derived fuel/memory-limit snapshot. A call
 above the approved level is refused fail-closed at runtime and recorded as a
 `0xC7 PLUGIN_CAP_DENIED` audit frame — visible in
 `neoth wal show --type plugin_cap_denied`, never silent.
+
+Skills have a deliberately different boundary. They are prompt/data packages,
+not executable WASM modules, so a Skill install receipt proves exact bytes and
+transactional publication but is not a code-signature or capability approval.
+The external-Skill provenance/activation/effective-tool-scope contract remains
+open for v1.0; NEOTH does not market the WASM sandbox as protection for Skills.
 
 <img src=".github/assets/neoth-readme-fail-closed.svg" alt="NEOTH fail-closed consent — boundary crossings are denied by default and proceed only on an explicit, persisted operator grant; both allow and deny are audited" width="100%">
 

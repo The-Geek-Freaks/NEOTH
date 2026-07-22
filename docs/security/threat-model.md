@@ -44,7 +44,7 @@ commands, under their documented command-specific gates.
 | 7 | Web search | `tools/web_search.rs`, `cli/search.rs` | Fixed Brave/Tavily APIs or trusted operator-configured SearXNG | Explicit command; Brave/Tavily need an API key; no dedicated autonomy action or typed WAL event |
 | 8 | arXiv search | `tools/arxiv.rs`, `cli/arxiv.rs` | `export.arxiv.org/api/query` | Explicit anonymous read-only command; current constant starts with HTTP and follows the service redirect to HTTPS; no dedicated autonomy action or typed WAL event |
 | 9 | Text-to-speech | `media/tts_dispatch.rs`, `media/tts_cloud.rs`, `media/tts_provider.rs`, `cli/tts.rs` | Offline system/Piper engines; Microsoft Edge speech, ElevenLabs, Azure Speech, or an operator-configured ViitorVoice sidecar | Local by default; every non-local provider requires `media.cloud_tts_enabled`; credential requirements are provider-specific; metadata-only `0xCD` audit when a WAL sink is available |
-| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | Bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback; explicit manual `--allow-unsigned` recovery only |
+| 10 | Self-updater | `updater/self_update.rs`, `daemon/updater_cron.rs` | `api.github.com` releases + GitHub CDN; npm/Git sources for component probes | Manual update uses bounded download/extraction + SHA-256 + **minisign signature and signed asset-name binding** (`updater/sig_verify.rs`, compile-time pinned pubkey) + stage-path confinement + release-bound closed-set self-knowledge verification + primary-last transactional bundle/directory rollback. Recurring daemon probes are currently denied before network and report `SkippedByGate` until request-bound leaf authorization plus intent/result WAL exist. Explicit manual `--allow-unsigned` recovery only. |
 | 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | REST send and read-only bot-identity probe; Gateway receive requires an exact immutable sender snowflake; rejected senders get a metadata-only WAL gate event; CHANNEL_EGRESS audit on sends |
 | 12 | Email / Gmail IMAP ingest | `email/imap_fetch.rs`, `cli/email.rs`, `daemon/email_ingest_cron.rs` | Configured IMAP/TLS server (Gmail default); `oauth2.googleapis.com` only when refreshing XOAUTH2 credentials | Network-live only in builds with `imap_fetch`; daemon poll default OFF; non-destructive fetch, local triage, fail-closed quarantine; no SMTP |
 | 13 | Slack, WhatsApp Business, Signal and LINE inbound | `channels/slack_socket.rs`, `channels/webhook_listener.rs`, `channels/signal.rs` | Slack Socket Mode, signed Meta/LINE webhooks, local signal-cli | Transport authentication is followed by an exact immutable sender gate before pipeline dispatch. Missing policy prevents inbound startup; mismatches are dropped without reply and append metadata-only `CHANNEL_GATE_REJECTED` evidence. |
@@ -318,13 +318,19 @@ passes a bounded, version-bound verification pipeline before any binary swap:
 - **Manual path** (`neoth update --self --apply`, `require=true` by default) —
   requires `Verified`. The explicit `--allow-unsigned` trusted-recovery flag
   sets `require=false`; a *present-but-invalid* signature **always bails**.
-- **Unattended path** (`daemon/auto_update::spawn_self_stage`,
-  `require=true`) — hard-bails any non-`Verified` status. Combined with
-  the `Action::SelfBinaryReplace` Confirm-at-every-level gate, this
-  means daemon-initiated self-replace requires BOTH a verified signature
-  AND a TTY confirm — the daemon has no TTY, so the unattended path
-  stage-only stages + drops a notification sidecar; the operator runs
-  the manual apply to confirm + swap.
+- **Recurring daemon path** (`daemon/updater_cron.rs`) — the live accepted
+  config controls enablement and cadence, but every currently enabled lane
+  receives an explicit deny gate. Components report `SkippedByGate`, and the
+  builder performs no GitHub/npm/`git ls-remote` request. Automatic discovery
+  and staging therefore do not run today. Request-bound authorization and
+  mandatory intent/result WAL must land at each concrete transport leaf before
+  this gate may become an operator-derived allow decision.
+- **Dormant unattended apply boundary** (`daemon/auto_update::spawn_self_stage`,
+  `require=true`) — still hard-bails any non-`Verified` status and additionally
+  requires the Confirm-at-every-level `Action::SelfBinaryReplace` decision.
+  The recurring discovery gate above currently prevents a daemon probe from
+  reaching this boundary. The operator uses the manual path to confirm and
+  swap.
 
 Public-download **provenance** (separate from self-update verify) is
 provided by **cosign keyless** (Sigstore OIDC) — every release publishes
@@ -606,19 +612,30 @@ messages, calendar bodies, and task data off cleartext remote transports.
 
 ### 4.9 Opt-in self-improve shell verifier
 
-Proposal-supplied shell verification is disabled by default. Enabling
-`allow_shell_verify: true` in `self_improve.yaml` is an explicit operator
-opt-in. The verifier runs in an ephemeral working directory with a scrubbed
-environment, a wall-clock limit, output draining, and whole-process-tree
-termination (a Windows Job Object or a Unix process group). A token guard also
-rejects common network clients and remote-execution tools.
+Proposal-supplied shell verification is disabled by default. Setting
+`allow_shell_verify: true` in `self_improve.yaml` is only the master switch:
+the complete command must also match one byte-for-byte entry in the
+operator-owned `approved_verification_commands` list. Model, SkillOpt, and
+proposal text cannot add process-spawn authority. An approved command runs in
+a temporary working directory with a scrubbed environment, a wall-clock
+limit, output draining, and whole-process-tree termination (a Windows Job
+Object or a Unix process group). A token guard also rejects common network
+clients and remote-execution tools as defense in depth.
 
-That boundary does **not** provide OS-level network isolation. An allowed
-interpreter or build tool can still open a socket through its own libraries.
-`neoth self-improve status` reports both the opt-in state and
+That boundary does **not** provide OS-level filesystem or network isolation.
+An explicitly approved interpreter or build tool retains the operator's host
+filesystem rights and can open a socket through its own libraries. `neoth
+self-improve status` reports the master switch, effective state, exact-approved
+command count, and both non-isolation facts so a switch with an empty allowlist
+cannot be mistaken for an executable verifier.
+The machine-readable status pins `shell_verify_filesystem_isolated: false` and
 `shell_verify_network_isolated: false`; do not enable the shell verifier for
 untrusted proposals on a network-connected host. Persisted verified evidence
 and the separate operator accept step remain mandatory even when it is enabled.
+Accept and rollback keep their durability journal until the capability-bound
+Skill namespace confirms the replacement is durable. A durability warning
+stops status/ledger finalization and retains the journal; recovery re-syncs the
+namespace before publishing the terminal transition.
 
 ### 4.10 External tool output, recall, and CCR
 

@@ -105,8 +105,8 @@ the release gates:
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 0¹ | 185 (all in-plan boxes) |
 | WS-HR Headroom token-compression port (native Rust) | 16 | 1 (HR-00, operator-only) | 15 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
-| WS-R3 Forensic Gold correction (2026-07-14) | 10 | **1** | **9** |
-| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 13 | **12** | **1** |
+| WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 18 | **9** | **9** |
+| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 14 | **13** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **116** | **2** |
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
@@ -179,6 +179,107 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   and local workflow-definition proofs, not a completed exact-head run. The
   final README/channel/migration/architecture/release reconciliation plus
   visible exact-head CI, Security and CodeQL remain required.
+
+- [ ] **GOLD-R3-11 Capability-bound Skill store:** replace path-check-then-use
+  installation, creation, teaching, loading, update probing, inventory and
+  uninstall flows with one handle-relative no-follow store. The exact validated
+  manifest generation must be committed transactionally; recursive copy/delete
+  may never follow symlinks, junctions, reparse points or special files; size,
+  entry and depth bounds are mandatory; CLI and GUI must expose the same strict
+  receipts, warnings, force behavior and broken-entry states. A cross-process
+  mutation lock must serialize cooperating NEOTH instances on Windows, macOS
+  and Linux, including Self-Improve writes. Replacement must have durable
+  recovery across process/host interruption; a reader may not publish a
+  transient missing generation, and Self-Improve must reject a changed or
+  deleted package instead of mixing/resurrecting generations. Unix symlink,
+  Windows junction/reparse, source-swap, failed-copy, rollback, crash-point,
+  malformed/oversized manifest and concurrent-writer regressions are release
+  evidence. The trust boundary is untrusted Skill content and
+  cooperating NEOTH processes, not a hostile process already running under the
+  same OS identity, which can directly modify the user's Skill files.
+- [ ] **GOLD-R3-12 Missing-root portable install transaction:** make first
+  portable install work when the final install root does not yet exist. Stage
+  outside the absent destination, bind the physical/canonical bundle and target
+  parents, commit into place without crossing volumes or following links, and
+  preserve rollback/ownership-marker semantics. Cover clean Windows/macOS/Linux
+  paths, spaces/non-ASCII, interrupted first install, collision, symlink/junction
+  and no-partial-root cases; the release build log must not claim this journey
+  passed until the native artifact actually exercises it.
+- [ ] **GOLD-R3-13 Repository-local code-map recall:** apply canonical repo-root
+  containment before result limiting, then rank and truncate inside that root.
+  A large unrelated repository may never consume the global top-k and hide all
+  matches from the active repository. Bind cache/index generation to canonical
+  root identity and cover multi-repo skew, non-canonical CWD, stale index and
+  deterministic tie ordering in CLI, GUI, self-improve and Graphify consumers.
+- [ ] **GOLD-R3-14 Typed untrusted-context prompt framing:** repository paths,
+  filenames, tool output, retrieved text and every other untrusted field must
+  not be interpolated into executable XML-like/system delimiters. Use one typed
+  serializer or length-bound encoded envelope across primary, retry, fallback,
+  Council, channel, Buddy and sub-agent prompts; adversarial closing tags,
+  control characters, Unicode confusables, truncation and nested payloads must
+  remain data rather than instructions.
+- [ ] **GOLD-R3-15 Verified plugin removal transaction:** plugin removal may
+  report success only after the plugin bytes, every config/reference edge and
+  registry/runtime publication have completed or rolled back as one recoverable
+  transaction. Discarded cleanup errors, partial DELETE-plus-save state and
+  stale active references fail visibly in CLI/GUI/Buddy and Doctor. Cover
+  malformed config, injected second-write failure, restart recovery, idempotent
+  retry and exact postcondition readback.
+- [ ] **GOLD-R3-16 CRG adoption reconciliation:** merge the confirmed contextual
+  retrieval/generation adoption backlog into this authoritative roadmap with
+  one disposition and evidence owner per source feature. Trace every retained
+  algorithm through ingestion, index, retrieval, prompt/citation consumer,
+  configuration, lifecycle, GUI/CLI/Buddy visibility and release packaging;
+  classify genuine supersession explicitly and leave every unimplemented or
+  only-researched leaf open for v1.0 rather than hiding it in a side document.
+- [ ] **GOLD-R3-17 Explicit installed-Skill authority:** an imported or
+  generated Skill must never gain ambiguous authority merely because its
+  manifest omitted a field. Define and migrate one explicit meaning for an
+  empty `tool_allowlist`, distinguish bundled trust from user/community
+  provenance, and require an operator-visible activation/capability decision
+  before an externally sourced Skill can route. Install/replace receipts and
+  GUI confirmation must bind the exact manifest hash, enabled state, effective
+  tool scope, delegation, model override and upstream source; later edits or
+  updates invalidate that decision. Global autonomy, permission, cost, WAL and
+  MCP server gates remain mandatory and cannot be weakened by a Skill. Cover
+  old manifests, non-interactive CLI, GUI/Buddy, auto-extraction acceptance,
+  updater replacement, empty/unknown tools and rollback/revocation.
+- [ ] **GOLD-R3-18 Secure remote Skill/update source boundary:** an installed
+  manifest's `source` value may not turn the updater cron into ambient network
+  authority. Parse remote references structurally; reject userinfo, control
+  characters, unsafe schemes, loopback/private/link-local/reserved destinations
+  and DNS/redirect rebinding, or bind them to an explicit operator-approved host
+  policy. Run Git with terminal prompts, credential helpers, inherited request
+  headers/cookies/proxies and unconstrained redirects disabled; bound output and
+  redact URLs/diagnostics before audit or UI publication. Disabled/unapproved
+  Skills may not trigger background fetches. Cover IPv4/IPv6 aliases, DNS
+  changes, redirect targets, URL credentials, hostile Git config, oversized
+  stderr, timeout and CLI/GUI/cron-visible failure states.
+
+  **Local source checkpoint 2026-07-22 (all R3-11/R3-17/R3-18 boxes remain
+  OPEN; no exact-head verdict yet):** the current working tree consolidates
+  Skill install, create, teach, load, inventory, update-probe, Self-Improve and
+  uninstall access on the capability-bound store. Install/create preflight and
+  final receipts bind the exact source manifest/generation and the observed
+  destination generation (or `absent`); replacement rechecks that destination
+  under the mutation lock, and GUI success requires typed receipt plus exact
+  readback. Broken inventory rows now distinguish manifest-replaceable entries
+  from remove-only entries instead of presenting every broken directory as
+  repairable. The Skill registry consumes the daemon's exact config path and
+  rebuilds routing only from an accepted `ReloadController` generation; a
+  rejected candidate cannot publish new Skill policy.
+
+  These generation receipts establish identity, integrity and concurrency
+  preconditions only. They do **not** decide whether an external Skill may
+  activate, which tools it may call, or what an omitted `tool_allowlist` means.
+  **R3-17 therefore remains explicitly open.** The working tree also bounds
+  retained WASM discovery bytes across the whole plugin namespace and hardens
+  remote Git source parsing/probing, but the recurring updater is intentionally
+  fail-closed: each enabled tick receives a deny gate, produces
+  `SkippedByGate`, and performs no GitHub/npm/`git ls-remote` egress until the
+  concrete transport leaf consumes request-bound authority and writes its own
+  mandatory intent/result WAL. Manual operator-initiated update commands are
+  unaffected. This is a safe R3-18 slice, not completion of R3-18.
 
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 
@@ -389,6 +490,91 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
 - [ ] **GOLD-R4-11 Default-on local communication adaptation:** ship a subject-isolated, deterministic local communication-profile engine that learns observable presentation and clarification preferences across authenticated sessions, applies them on every CLI, Channel, GUI, Buddy, Council, retry, fallback and sub-agent prompt path, and exposes the same inspect/correct/pin/reset/forget controls everywhere. Explicit settings outrank feedback and passive evidence; passive evidence requires bounded provenance, multi-session confidence and decay. FULL-AUTO may promote stable low-risk accommodations to durable-until-revoked state, but never bypasses subject, poisoning, privacy or medical-inference guards. Health, autism and ADHD labels may be stored only after an explicit operator declaration and are not exported to a provider unless the operator explicitly selects label export; the default prompt exports accommodations only. Incognito performs zero profile reads and writes. `self-dev accept` must transactionally apply every proposal type or report a typed recoverable failure; `Accepted` without an effect is forbidden.
 - [ ] **GOLD-R4-12 Real Mobile Companion product:** replace the current loopback/one-shot pairing preview with a versioned, authenticated, durable phone protocol and installable Android and iOS clients. Pairing must use an actually reachable route/carrier, bind a durable revocable device identity and scoped authority, survive daemon/app restart and upgrade, provide chat/stream/cancel/status/notifications/file-transfer plus encrypted ACKed offline replay, and expose list/status/revoke/retry in CLI, GUI and Buddy. Release gates must build, sign and content-test APK/AAB and iOS archive/TestFlight-ready artifacts, exercise emulator/simulator and clean-device pair/reconnect/revoke/upgrade flows, and never call timeout/rejection a successful pair.
 - [ ] **GOLD-R4-13 Cluster product completion:** retain the proven authenticated durable gossip/ACK/replay substrate, then finish the missing master-side task coordinator, idempotent delegated-execution/result outbox, correlation/deadline/retry/redelegation, operator/device/capability binding, transactional audited peer mutation and GUI/CLI/Buddy/Doctor control parity. The product must state and test whether remote material remains an explicit backup/restore ledger or participates in recall; cross-origin conflicts may never be silently merged. Every advertised transport and mDNS setting must be consumed or removed, and no worker-only task executor may be marketed as complete distributed execution.
+- [ ] **GOLD-R4-14 OpenClaw-class LLM provider and model parity:** every
+  inference provider supported by the current OpenClaw provider registry must
+  be either natively available in NEOTH or covered by an equally capable typed
+  OpenAI-/Anthropic-compatible adapter with an explicit, tested disposition.
+  The parity baseline is the upstream
+  [`model-providers.md`](https://github.com/openclaw/openclaw/blob/main/docs/concepts/model-providers.md),
+  re-snapshotted and diff-tested for every real release; it currently includes
+  OpenAI/Codex, Anthropic/Claude, Google Gemini/Vertex/Gemini CLI, AWS Bedrock,
+  Azure OpenAI, OpenCode, Z.AI/GLM, Kilo Gateway, Kimi Coding, Moonshot/Kimi,
+  MiniMax, OpenRouter, Qwen Cloud/OAuth/Alibaba DashScope, Arcee, BytePlus,
+  Cerebras, Chutes, ClawRouter, Cohere, DeepInfra, DeepSeek, Featherless,
+  GitHub Copilot, GMI, Groq, Hugging Face Inference, Mistral, NVIDIA, Novita,
+  Ollama/Ollama Cloud, Qianfan, Synthetic, Tencent TokenHub, Together, Venice,
+  Vercel AI Gateway, Volcano Engine, xAI, Xiaomi, LM Studio, vLLM, SGLang and
+  secure operator-defined endpoints. Provider aliases alone are not parity:
+  auth/OAuth and key rotation, endpoint/region selection, model discovery and
+  capability metadata, model-id normalization, text/image/tool/thinking and
+  streaming semantics, context/output ceilings, usage/pricing, retry/fallback
+  classification and redacted diagnostics must work. Every provider must be
+  selectable independently for every hemisphere, Cerebellum/profile learner,
+  Council leaf, skill/dispatch override, Cron/automation, Buddy, GUI and CLI;
+  all routes must traverse the same final-model Cost/Consent, autonomy,
+  permission, WAL/metering and secret-isolation boundary. Setup, status,
+  probe, model download/discovery progress and failure/retry must be visible in
+  both GUI and CLI. OpenClaw import must preserve supported provider/model/auth
+  references without silently falling back. Release evidence requires a
+  machine-readable parity matrix, registry-to-factory-to-surface drift tests,
+  mock protocol/stream/tool/cost tests per transport family, and opt-in live
+  probes that never expose credentials.
+
+  **Forensic provider baseline (2026-07-22; remains OPEN):** the current core
+  has thirteen runtime `InferenceProvider` variants (twelve in the default
+  build) and sixteen named endpoint presets, but **zero provider qualifies as
+  native-complete under this contract**. OpenAI, Anthropic, Gemini, Cohere,
+  Bedrock, Azure, Copilot, Ollama, Claude CLI, LocalQwen/LocalOuro and the
+  generic OpenAI transport are real partial implementations; the request
+  envelope is still text-only, tool/image parts are absent, and several native
+  adapters use buffered rather than protocol-native streaming. DeepSeek, xAI,
+  Mistral, Moonshot/Kimi, Z.AI, Together, Groq and OpenRouter are only named
+  `openai_compat` endpoint shortcuts. Kilo, Codex OAuth/CLI, Vertex, Gemini CLI,
+  Kimi Coding, MiniMax, Qwen OAuth/DashScope, Arcee, BytePlus, Cerebras, Chutes,
+  ClawRouter, DeepInfra, Featherless, Hugging Face, NVIDIA, Novita, Qianfan,
+  Tencent TokenHub, Vercel/Volcano/Venice/Xiaomi/Synthetic/GMI, SGLang and a
+  Custom Anthropic endpoint have no complete typed disposition. A manual
+  `/chat/completions` URL is not a support claim until its auth, capability,
+  discovery, cost and mock-wire contracts pass.
+
+  Confirmed cross-surface gaps: `profile_provider` is explicitly unwired;
+  Skills can override only a model, not a provider instance; Cron selects the
+  first slot sharing a coarse enum, so two independent `openai_compat` vendors
+  collide; Buddy has no provider/model/fallback controls; GUI hemisphere edits
+  omit per-role endpoint/auth/region/API-version fields; discovery supports
+  only a subset and does not inventory Skill/Cron/Buddy consumers;
+  `MAX_CATALOG_PROVIDERS = 16` cannot hold the baseline; aliases are global
+  instead of provider-scoped; generic Consent/WAL entries expose only
+  `openai_compat`; OpenClaw import does not migrate provider/model/auth
+  references. Each is a release-blocking R4-14 leaf, not a documentation
+  cleanup.
+
+  **Two narrow working-tree corrections (2026-07-22; R4-14 remains OPEN):**
+  Ollama locality is now derived from the normalized endpoint: loopback uses
+  `local_ollama`, while LAN/public/Ollama-Cloud endpoints identify as
+  `ollama_remote` and cross the paid-provider authorization boundary. Provider
+  help now recommends the implemented `hemispheres test --question "Reply with
+  OK"` path instead of the nonexistent `--live` flag. These remove two concrete
+  false/free-help defects; they do not add any missing provider, transport,
+  authentication, capability, discovery, consumer-parity or migration work.
+
+  Required architecture/build order: introduce one data-driven
+  `ProviderDescriptor` (stable vendor id, aliases, transport, endpoints, auth,
+  discovery, capabilities, pricing and region semantics) plus
+  `ProviderInstance` (instance id, descriptor id, credential reference,
+  endpoint/region/project overrides, model and fallback). Keep a small closed
+  transport set (OpenAI Chat/Responses, Anthropic Messages, Gemini/Vertex,
+  Bedrock, Azure, Cohere, Ollama, CLI transports and local engines) and retain
+  legacy enums only as migration aliases. Then, in order: (1) check in and
+  drift-test the upstream provider snapshot; (2) migrate every consumer to
+  `provider_instance_id`; (3) finish typed text/image/tool/result/thinking and
+  unified streaming/usage envelopes; (4) add auth/transport descriptors; (5)
+  expand provider-scoped catalog/discovery/capabilities/pricing; (6) bind Cost,
+  Consent, WAL and metering to instance + descriptor + final wire model; (7)
+  wire Hemisphere/Profile/Council/Skill/Cron/Buddy/GUI/CLI from the same
+  registry; and (8) ship typed setup/probe/progress, OpenClaw migration and the
+  clean-machine/mock/live release matrix. Do not solve this by adding forty
+  more duplicated enum arms.
 
 **Current Keet slice (2026-07-14; boxes remain open):** `bridges/keet/` now
 implements a repository-owned, full-duplex Keet-identity Pear/Hyperswarm text
@@ -2537,7 +2723,23 @@ Recommended waves:
 - **Tests:** hostile absolute-path write; HOME read; renamed-network-tool/Python process spawn; timeout with child process; `DISAPPROVE` and mixed BLOCK/APPROVE; direct pending accept rejection; read failure preserves file/status; untracked content drift rejects; approved evidence digest round-trip; legacy verifier default-deny.
 - **Done:** no source comment claims isolation that the OS boundary does not enforce; no proposal-controlled shell reaches the host by default; only matching, persisted green evidence can authorize verified accept.
 - **STOP:** if a real cross-platform sandbox is not available, ship default-deny/typed trusted profiles. Do not weaken the gate to keep legacy convenience.
-- **Current release contract (2026-07-16):** the opt-in shell path has ephemeral-filesystem, scrubbed-environment, timeout, output and child-tree containment, plus a named-client denylist; it does **not** claim OS-level network isolation. `neoth self-improve status` exposes `shell_verify_enabled` and `shell_verify_network_isolated=false`, and the operator threat model carries the same warning. The default remains off and Full autonomy never turns it on. Earlier “network isolation” / “refuses network egress” language in this historical audit block is superseded by this contract.
+- **Superseded release contract (2026-07-16):** the earlier
+  "ephemeral-filesystem" wording overstated a temporary working directory as a
+  filesystem sandbox. Retain this dated line only as audit history; the current
+  contract below replaces it.
+- **Current local-source contract (2026-07-22; validation pending):** the shell
+  verifier is default-off. `allow_shell_verify: true` is only a master switch;
+  the complete command must also match an exact operator-owned
+  `approved_verification_commands` entry. An approved command receives a
+  temporary cwd, scrubbed environment, timeout/output bounds and process-tree
+  termination. It receives **no OS-level filesystem or network isolation** and
+  may still use the operator's host rights. Machine-readable status reports
+  both non-isolation facts and the exact-approved command count. Accept and
+  rollback retain their durability journal until the Skill namespace reports a
+  durable replacement; a durability warning aborts final state/ledger
+  publication and recovery must re-sync before finalizing. The historical
+  evidence/required-work bullets above describe the original finding and must
+  not be read as current source. Full autonomy never enables the verifier.
 
 ### B02 — MCP-TRUST-METADATA (P0)
 

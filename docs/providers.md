@@ -74,6 +74,11 @@ neoth init --force
 `known`, `show <provider>`, and `test <provider>`. Provider mutations go through
 the onboarding wizard or the hemisphere configuration commands.
 
+`provider test` does not accept a `--live` flag. Its help points to the
+implemented interactive wire check,
+`neoth hemispheres test --question "Reply with OK"`; `--live` belongs to
+`neoth doctor --live` for the separate service-health probes.
+
 Typical `~/.neoth/freedom.yaml` configuration:
 
 ```yaml
@@ -85,6 +90,18 @@ profile:
   learn_provider: local_qwen
   allow_cloud_fallback: false
 ```
+
+For Ollama, only normalized loopback endpoints (`localhost`, `127.0.0.0/8`, or
+`[::1]`) identify as `local_ollama`. LAN, public and Ollama Cloud endpoints
+identify as `ollama_remote` and cross the same paid-provider authorization
+boundary as other remote inference. Selecting the Ollama provider kind does
+not by itself make a remote endpoint local or free.
+
+The `known` catalogue and a configurable OpenAI-compatible URL are discovery
+and transport substrate, not a claim of OpenClaw-class provider parity. Auth,
+OAuth, region/project fields, capability/model discovery, tool/image/thinking
+wire semantics, pricing and every Hemisphere/Skill/Cron/Buddy/GUI consumer
+still require an explicit tested provider disposition before v1.0 Gold.
 
 ## Privacy behavior
 
