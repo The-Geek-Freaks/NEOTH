@@ -1272,7 +1272,6 @@ async fn run_writer(
         // Workstream F: compressed segments buffer frames in-memory;
         // the file write happens on finalize (rotate/shutdown).
         let result = if state.compression == CompressionPolicy::Zstd3 {
-            state.pending_frames.extend_from_slice(&frame);
             // For compressed segments we also write frames immediately to
             // a temp staging area so recovery still works on unclean shutdown.
             // However we keep the design simple: write raw frames to the file
@@ -1280,9 +1279,19 @@ async fn run_writer(
             // the compressed body. This way the file is always parseable even
             // after a crash (just uncompressed despite the header flag).
             // On clean finalize the compressed form replaces the raw form.
-            let r = write_only(&mut state.file, &frame).await;
+            // The live staging bytes obey the same durability classifier as
+            // uncompressed segments. In particular, required authority-audit
+            // EXTENDED frames must be on stable storage before append() ACKs;
+            // compression may change the later representation, never weaken
+            // the acknowledgement contract.
+            let r = if immediate {
+                write_and_sync(&mut state.file, &frame).await
+            } else {
+                write_only(&mut state.file, &frame).await
+            };
             if r.is_ok() {
-                pending_unsynced = true;
+                state.pending_frames.extend_from_slice(&frame);
+                pending_unsynced = !immediate;
             }
             r
         } else if immediate {
