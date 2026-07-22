@@ -37,13 +37,11 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
     "CC0-1.0",
     "0BSD",
     "MPL-2.0",
-    "OpenSSL",
     # SX-05b additions (2026-05-25):
     # CDLA-Permissive-2.0 — Community Data License Agreement, permissive,
     # used by webpki-roots (transitive via reqwest, tokio-tungstenite, hf-hub).

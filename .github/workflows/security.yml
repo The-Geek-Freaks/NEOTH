@@ -101,6 +101,7 @@ jobs:
           manifest-path: SRC/neothd/Cargo.toml
           command: check
           arguments: --all-features
+          command-arguments: --deny yanked
           rust-version: '1.91'
 
       - name: Run cargo-deny for isolated release signer
@@ -113,6 +114,7 @@ jobs:
           # putting this in command-arguments makes cargo-deny reject the
           # otherwise valid shared policy as an unexpected check argument.
           arguments: --all-features --config SRC/deny.toml
+          command-arguments: --deny yanked
           rust-version: '1.91'
 
   bridge-audit:
