@@ -50,7 +50,7 @@ sha2 = "0.10"
 unicode-segmentation = "1.12"
 # P1-20 reads the canonical raw-turn store and reuses the core external-text
 # sanitizer; no second GUI-only transcript/redaction implementation.
-neothd = { package = "neoth", path = "../neothd", default-features = false }
+neothd = { package = "neoth", path = "../neothd", version = "=1.0.0", default-features = false }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 # H3 — native desktop tray. Linux deliberately uses StatusNotifierItem below
