@@ -67,7 +67,7 @@ pub struct ResolvedMode {
 }
 
 impl ModeRegistry {
-    /// Build from a slice of loaded skills. Walks every skill's
+    /// Build from a slice of loaded skills. Walks every enabled skill's
     /// `modes:` list, asserts no two modes claim the same id, and
     /// returns the flat lookup.
     ///
@@ -78,6 +78,9 @@ impl ModeRegistry {
     pub fn from_skills(skills: &[Skill]) -> Result<Self> {
         let mut entries = HashMap::new();
         for s in skills {
+            if !s.manifest.enabled {
+                continue;
+            }
             for m in &s.manifest.modes {
                 if let Some(prior) = entries.get(&m.id) {
                     let prior: &ResolvedMode = prior;
@@ -226,6 +229,25 @@ mod tests {
         assert!(r.get("fact-check").is_some());
         assert!(r.get("plan").is_some());
         assert!(r.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn registry_excludes_modes_from_disabled_skills() {
+        let mut disabled = make_skill(
+            "disabled-skill",
+            vec![make_mode("disabled-mode", &["disabled"], Oversight::High)],
+        );
+        disabled.manifest.enabled = false;
+        let enabled = make_skill(
+            "enabled-skill",
+            vec![make_mode("enabled-mode", &["enabled"], Oversight::High)],
+        );
+
+        let r = ModeRegistry::from_skills(&[disabled, enabled]).unwrap();
+
+        assert!(r.get("disabled-mode").is_none());
+        assert!(r.match_trigger("disabled").is_none());
+        assert!(r.get("enabled-mode").is_some());
     }
 
     #[test]

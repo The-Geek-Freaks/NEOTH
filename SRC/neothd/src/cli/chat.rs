@@ -286,6 +286,12 @@ struct PromptBundle {
     resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
 }
 
+fn routed_skill_tool_allowlist(
+    skill: Option<&crate::skills::schema::Skill>,
+) -> Option<Vec<String>> {
+    skill.map(|skill| skill.manifest.tool_allowlist.clone())
+}
+
 #[derive(Debug)]
 pub(super) struct BudgetedProviderRequest {
     pub(super) prompt: String,
@@ -1136,9 +1142,9 @@ async fn build_prompt_bundle(
     } else {
         mode_registry.match_trigger(&prompt)
     };
-    // SC-11 — captured in the skill branch below; stays None for the
-    // eval-suppressed / mode-activation / no-skill paths (no skill →
-    // no tool-allowlist gate). Owned so it outlives the match block to
+    // SC-11 — captured from the exact routed skill below, including a mode's
+    // parent. It stays None only for eval-suppressed / no-skill paths (no
+    // skill → no tool-allowlist gate). Owned so it outlives the match block to
     // the MCP dispatch call.
     let mut skill_tool_allowlist: Option<Vec<String>> = None;
     // GOLD-ADAPT-OH-13: extended to 3-tuple to capture `delegate_to` from the
@@ -1185,6 +1191,7 @@ async fn build_prompt_bundle(
         // security principal. Preserve the parent's delegation boundary just
         // like its model, effort and tool allowlist.
         let delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
+        skill_tool_allowlist = routed_skill_tool_allowlist(parent);
         crate::analytics::babel::signals::emit(
             crate::analytics::babel::signals::SignalKind::SkillMode,
         );
@@ -1273,9 +1280,8 @@ async fn build_prompt_bundle(
         // GOLD-CCPARITY-EFFORT-03: capture per-skill effort/reasoning-budget.
         let effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
-        skill_tool_allowlist = skill_match
-            .as_ref()
-            .map(|m| m.skill.manifest.tool_allowlist.clone());
+        skill_tool_allowlist =
+            routed_skill_tool_allowlist(skill_match.as_ref().map(|matched| matched.skill));
         (layer, id, delegate, model, effort)
     };
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
@@ -13320,6 +13326,18 @@ mod tests {
             path: std::path::PathBuf::from(format!("/skills/{id}")),
             content_hash: String::new(),
         }
+    }
+
+    #[test]
+    fn mode_inherits_parent_skill_tool_allowlist() {
+        let mut parent = make_test_skill("mode-parent", &[], true);
+        parent.manifest.tool_allowlist = vec!["github::search_code".into()];
+
+        assert_eq!(
+            routed_skill_tool_allowlist(Some(&parent)),
+            Some(vec!["github::search_code".into()])
+        );
+        assert_eq!(routed_skill_tool_allowlist(None), None);
     }
 
     /// Catalog renders a table when at least one enabled skill is present,
