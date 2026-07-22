@@ -1096,9 +1096,11 @@ mod tests {
             assert_eq!(value["target_generation_sha256"], "b".repeat(64));
             assert_eq!(
                 value["replaced_generation_sha256"],
-                replaced_existing
-                    .then(|| serde_json::Value::String("c".repeat(64)))
-                    .unwrap_or(serde_json::Value::Null)
+                if replaced_existing {
+                    serde_json::Value::String("c".repeat(64))
+                } else {
+                    serde_json::Value::Null
+                }
             );
             assert_eq!(value["replaced_existing"], replaced_existing);
             assert_eq!(
