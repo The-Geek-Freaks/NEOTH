@@ -1008,6 +1008,14 @@ async fn commit_verified_part(
     if part == destination {
         return verify_fingerprint(destination, expected).await;
     }
+
+    // Copying and hashing use unique sidecars and may run concurrently, but
+    // publishing one destination is a single transaction. Without this
+    // process-local tier, a second task can quarantine the first task's valid
+    // winner between its rename and post-commit verification. Production
+    // callers additionally hold ModelDownloadAttempt's cross-process root
+    // lock for the complete download lifecycle.
+    let _commit = artifact_commit_mutex(destination)?.lock_owned().await;
     if verify_fingerprint(destination, expected).await.is_ok() {
         let _ = tokio::fs::remove_file(part).await;
         return Ok(());
@@ -1066,6 +1074,22 @@ async fn commit_verified_part(
             })
         }
     }
+}
+
+fn artifact_commit_mutex(destination: &Path) -> Result<Arc<tokio::sync::Mutex<()>>> {
+    let filename = destination.file_name().with_context(|| {
+        format!(
+            "model destination has no filename: {}",
+            destination.display()
+        )
+    })?;
+    let parent = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let parent = std::fs::canonicalize(parent)
+        .with_context(|| format!("canonicalize model destination parent {}", parent.display()))?;
+    Ok(process_model_mutex(&parent.join(filename)))
 }
 
 async fn verify_fingerprint(path: &Path, expected: &ArtifactFingerprint) -> Result<()> {
@@ -1300,28 +1324,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_installers_accept_the_same_verified_winner() {
+    async fn commit_waits_for_the_destination_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.bin");
+        let destination = dir.path().join("model.bin");
+        std::fs::write(&source, b"verified model bytes").unwrap();
+
+        let (part, fingerprint) = copy_to_unique_part(&source, &destination).await.unwrap();
+        let mutex = artifact_commit_mutex(&destination).unwrap();
+        let blocker = Arc::clone(&mutex).lock_owned().await;
+        let mut commit = Box::pin(commit_verified_part(&part, &destination, &fingerprint));
+        let first_poll = std::future::poll_fn(|context| {
+            std::task::Poll::Ready(std::future::Future::poll(commit.as_mut(), context))
+        })
+        .await;
+
+        assert!(first_poll.is_pending());
+        assert!(part.is_file());
+        assert!(!destination.exists());
+
+        drop(blocker);
+        assert!(
+            Arc::clone(&mutex).try_lock_owned().is_err(),
+            "the released permit must be reserved for the queued commit"
+        );
+        commit.await.unwrap();
+        assert_eq!(std::fs::read(destination).unwrap(), b"verified model bytes");
+    }
+
+    #[test]
+    fn destination_aliases_share_one_commit_mutex() {
+        let dir = tempfile::tempdir().unwrap();
+        let child = dir.path().join("child");
+        std::fs::create_dir(&child).unwrap();
+        let destination = dir.path().join("model.bin");
+        let alias = child.join("..").join("model.bin");
+
+        let direct = artifact_commit_mutex(&destination).unwrap();
+        let aliased = artifact_commit_mutex(&alias).unwrap();
+        assert!(Arc::ptr_eq(&direct, &aliased));
+    }
+
+    #[tokio::test]
+    async fn concurrent_commits_accept_the_same_verified_winner() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source.bin");
         let destination = dir.path().join("model.bin");
         std::fs::write(&source, vec![0xA5; COPY_BUFFER_BYTES + 17]).unwrap();
 
         let expected = fingerprint_file(&source).await.unwrap();
+        let (left_part, left_fingerprint) =
+            copy_to_unique_part(&source, &destination).await.unwrap();
+        let (right_part, right_fingerprint) =
+            copy_to_unique_part(&source, &destination).await.unwrap();
         let (left, right) = tokio::join!(
-            install_from_hf_source(&source, &destination, &expected),
-            install_from_hf_source(&source, &destination, &expected)
+            commit_verified_part(&left_part, &destination, &left_fingerprint),
+            commit_verified_part(&right_part, &destination, &right_fingerprint)
         );
-        assert_eq!(left.unwrap(), right.unwrap());
-        assert_eq!(
-            fingerprint_file(&destination).await.unwrap(),
-            fingerprint_file(&source).await.unwrap()
-        );
+        left.unwrap();
+        right.unwrap();
+        assert_eq!(fingerprint_file(&destination).await.unwrap(), expected);
         let sidecars: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(Result::ok)
-            .filter(|entry| entry.file_name().to_string_lossy().contains(".part."))
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.contains(".part.") || name.contains(".corrupt.")
+            })
             .collect();
-        assert!(sidecars.is_empty(), "part files leaked: {sidecars:?}");
+        assert!(sidecars.is_empty(), "install sidecars leaked: {sidecars:?}");
     }
 
     #[tokio::test]
