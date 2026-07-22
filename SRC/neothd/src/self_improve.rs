@@ -630,6 +630,20 @@ fn with_locked_installed_skill<T>(
     })
 }
 
+fn replace_installed_skill_document_if_matches(
+    target: &InstalledSkillTarget,
+    view: &InstalledSkillView<'_>,
+    replacement: &[u8],
+) -> Result<crate::skills::store::FileReplaceReport> {
+    crate::skills::store::replace_existing_regular_file_if_matches_report(
+        view.dir,
+        OsStr::new("skill.md"),
+        &target.skill_path,
+        view.content.as_bytes(),
+        replacement,
+    )
+}
+
 #[derive(Clone, Copy)]
 enum InstalledGenerationState {
     Staged,
@@ -1760,10 +1774,9 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
                     &view.content,
                     Some(generations),
                     || {
-                        let report = crate::skills::store::replace_existing_regular_file_report(
-                            view.dir,
-                            OsStr::new("skill.md"),
-                            &target.skill_path,
+                        let report = replace_installed_skill_document_if_matches(
+                            &target,
+                            &view,
                             p.after.as_bytes(),
                         )?;
                         if !report.warnings.is_empty() {
@@ -1933,10 +1946,9 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
                     &backup,
                     Some(generations),
                     || {
-                        let report = crate::skills::store::replace_existing_regular_file_report(
-                            view.dir,
-                            OsStr::new("skill.md"),
-                            &target.skill_path,
+                        let report = replace_installed_skill_document_if_matches(
+                            &target,
+                            &view,
                             backup.as_bytes(),
                         )?;
                         if !report.warnings.is_empty() {
@@ -3822,6 +3834,60 @@ mod tests {
             "improved"
         );
         assert!(!other_home.path().join("skills").join("pinned").exists());
+    }
+
+    #[test]
+    fn installed_accept_compare_and_swap_preserves_a_concurrent_document_edit() {
+        let _env_lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
+        let skill = home.path().join("skills").join("pinned").join("skill.md");
+        let target = installed_skill_target(home.path(), &skill.display().to_string())
+            .unwrap()
+            .expect("installed target");
+
+        with_locked_installed_skill(&target, |view| {
+            assert_eq!(view.content, "live-v1");
+            std::fs::write(&skill, "edit-v2").unwrap();
+            let error = replace_installed_skill_document_if_matches(&target, &view, b"improved")
+                .expect_err("accept must refuse bytes changed after its bound read");
+            assert!(format!("{error:#}").contains("authorized byte generation"));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "edit-v2");
+        assert_no_external_replacement_artifacts(skill.parent().unwrap());
+    }
+
+    #[test]
+    fn installed_rollback_compare_and_swap_preserves_a_concurrent_document_edit() {
+        let _env_lock = crate::test_env::lock();
+        let home = tempfile::tempdir().unwrap();
+        install_test_skill(
+            home.path(),
+            "source-v1",
+            "generation-one",
+            "improved",
+            false,
+        );
+        let skill = home.path().join("skills").join("pinned").join("skill.md");
+        let target = installed_skill_target(home.path(), &skill.display().to_string())
+            .unwrap()
+            .expect("installed target");
+
+        with_locked_installed_skill(&target, |view| {
+            assert_eq!(view.content, "improved");
+            std::fs::write(&skill, "manual-v").unwrap();
+            let error = replace_installed_skill_document_if_matches(&target, &view, b"live-v1")
+                .expect_err("rollback must refuse bytes changed after its bound read");
+            assert!(format!("{error:#}").contains("authorized byte generation"));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&skill).unwrap(), "manual-v");
+        assert_no_external_replacement_artifacts(skill.parent().unwrap());
     }
 
     #[test]
