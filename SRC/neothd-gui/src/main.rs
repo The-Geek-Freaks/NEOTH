@@ -8335,26 +8335,41 @@ fn main() -> Result<()> {
                 // The callback is gated again against the verified inventory:
                 // bundled rows never reach the destructive CLI path even if a
                 // malformed/stale UI event fabricates their id.
-                let mutation_outcome = verified_skill_uninstall_target_in_cache(&id)
+                let generation = match verified_skill_uninstall_target_in_cache(&id)
                     .and_then(|()| inspect_skill_target_from_gui(&id))
                     .and_then(|preflight| {
-                        let generation = preflight.target_generation_sha256.ok_or_else(|| {
+                        preflight.target_generation_sha256.ok_or_else(|| {
                             format!(
                                 "skill `{id}` disappeared before confirmation; refresh the inventory"
                             )
-                        })?;
-                        let confirmed = rfd::MessageDialog::new()
-                            .set_level(rfd::MessageLevel::Warning)
-                            .set_title("Confirm current skill removal")
-                            .set_description(format!(
-                                "Remove the currently verified generation of `{id}`? A changed replacement will be preserved automatically."
-                            ))
-                            .set_buttons(rfd::MessageButtons::YesNo)
-                            .show()
-                            == rfd::MessageDialogResult::Yes;
-                        if !confirmed {
-                            return Err("skill removal was cancelled; no files were changed".to_string());
-                        }
+                        })
+                    }) {
+                    Ok(generation) => generation,
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Skill uninstall failed", &error);
+                        let weak_status = weak.clone();
+                        let id_status = id.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak_status.upgrade() {
+                                w.set_status_line(
+                                    format!("Skill uninstall failed for {id_status}: {error}")
+                                        .into(),
+                                );
+                            }
+                        });
+                        return;
+                    }
+                };
+                let confirmed = rfd::MessageDialog::new()
+                    .set_level(rfd::MessageLevel::Warning)
+                    .set_title("Confirm current skill removal")
+                    .set_description(format!(
+                        "Remove the currently verified generation of `{id}`? A changed replacement will be preserved automatically."
+                    ))
+                    .set_buttons(rfd::MessageButtons::YesNo)
+                    .show()
+                    == rfd::MessageDialogResult::Yes;
+                let mutation_outcome = match dispatch_confirmed_skill_uninstall(confirmed, || {
                         let args = skill_uninstall_cli_args(&id, &generation);
                         let args = args.iter().map(String::as_str).collect::<Vec<_>>();
                         run_neothd_json_action::<gui_action::SkillUninstallAck>(
@@ -8362,7 +8377,28 @@ fn main() -> Result<()> {
                             "Skill uninstall",
                         )
                         .and_then(|ack| ack.verify(&id, &generation))
-                    });
+                    }) {
+                    SkillUninstallDispatch::Cancelled => {
+                        push_toast(
+                            &weak,
+                            "info",
+                            "Skill unchanged",
+                            "Removal was cancelled; no files were changed.",
+                        );
+                        let weak_status = weak.clone();
+                        let id_status = id.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak_status.upgrade() {
+                                w.set_status_line(
+                                    format!("Skill {id_status} unchanged; removal cancelled.")
+                                        .into(),
+                                );
+                            }
+                        });
+                        return;
+                    }
+                    SkillUninstallDispatch::Executed(outcome) => outcome,
+                };
                 let skills = fetch_skills();
                 let outcome = mutation_outcome.and_then(|verified| match &skills {
                     Ok(fresh) => {
@@ -13298,6 +13334,26 @@ fn inspect_skill_target_from_gui(
         "Skill target preflight",
     )
     .and_then(|ack| ack.verify_target(&target_skills_dir, id))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum SkillUninstallDispatch<T> {
+    Cancelled,
+    Executed(T),
+}
+
+/// Keep a declined exact-generation uninstall distinct from a failed
+/// mutation. The dispatch closure is deliberately never evaluated on cancel,
+/// so neither the CLI mutation nor its post-mutation inventory refresh runs.
+fn dispatch_confirmed_skill_uninstall<T>(
+    confirmed: bool,
+    dispatch: impl FnOnce() -> T,
+) -> SkillUninstallDispatch<T> {
+    if confirmed {
+        SkillUninstallDispatch::Executed(dispatch())
+    } else {
+        SkillUninstallDispatch::Cancelled
+    }
 }
 
 fn skill_uninstall_cli_args(id: &str, generation_sha256: &str) -> Vec<String> {
@@ -20304,6 +20360,47 @@ mod tests {
 
         assert!(verify_skill_uninstall_target(&summaries, "bundled").is_err());
         assert!(verify_skill_uninstall_target(&summaries, "missing").is_err());
+    }
+
+    #[test]
+    fn declined_skill_uninstall_is_not_dispatched_or_refreshed_as_a_failure() {
+        let dispatched = std::cell::Cell::new(false);
+        let outcome = dispatch_confirmed_skill_uninstall(false, || {
+            dispatched.set(true);
+            "mutated"
+        });
+        assert_eq!(outcome, SkillUninstallDispatch::Cancelled);
+        assert!(!dispatched.get());
+
+        let outcome = dispatch_confirmed_skill_uninstall(true, || {
+            dispatched.set(true);
+            "mutated"
+        });
+        assert_eq!(outcome, SkillUninstallDispatch::Executed("mutated"));
+        assert!(dispatched.get());
+
+        let source = include_str!("main.rs");
+        let callback = source
+            .split("window.on_skill_uninstall(move |id| {")
+            .nth(1)
+            .expect("skill uninstall callback")
+            .split("// ── Skills: create via non-interactive wizard")
+            .next()
+            .expect("skill uninstall callback end");
+        let cancelled = callback
+            .find("SkillUninstallDispatch::Cancelled")
+            .expect("explicit cancellation arm");
+        let executed = callback
+            .find("SkillUninstallDispatch::Executed")
+            .expect("executed mutation arm");
+        let refresh = callback
+            .find("let skills = fetch_skills();")
+            .expect("post-mutation inventory refresh");
+        let cancellation_arm = &callback[cancelled..executed];
+        assert!(cancelled < executed && executed < refresh);
+        assert!(cancellation_arm.contains("\"info\""));
+        assert!(cancellation_arm.contains("return;"));
+        assert!(!cancellation_arm.contains("Skill uninstall failed"));
     }
 
     #[test]
