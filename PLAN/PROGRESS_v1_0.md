@@ -95,10 +95,12 @@
 > both its default-off master switch and an exact operator-owned command
 > allowlist entry, reports no filesystem/network isolation, and retains its
 > accept/rollback journal until namespace durability is confirmed. Plugin
-> discovery now has an aggregate retained-WASM budget. Recurring updater lanes
-> consume accepted live config but deliberately emit `SkippedByGate` and do no
-> GitHub/npm/Git network work until request-bound leaf authorization and
-> intent/result WAL are wired; manual update commands are unchanged. Remote
+> discovery now has an aggregate retained-WASM budget. The U-04 recurring
+> updater **probe** lanes consume accepted live config and deliberately emit
+> `SkippedByGate` without GitHub/npm/Git network work. Two older MV-01b CLI
+> auto-apply/self-stage loops still run separately from frozen startup policy
+> and can perform npm/OSV/registry/GitHub egress; those loops therefore do not
+> inherit the U-04 safety claim. Manual update commands are unchanged. Remote
 > Ollama locality/cost classification and the stale `--live` help example are
 > corrected, but those are only two narrow R4-14 leaves. Counts remain
 > **WS-R3 18 total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13
@@ -120,6 +122,48 @@
 > broader R3-18 request-bound remote-leaf authority/WAL work and all unrelated
 > R3/R4/WS-LF tasks remain open; counts stay **WS-R3 9 done / 9 open** and
 > **WS-R4 1 done / 13 open**.
+>
+> **Installed-authority local checkpoint 2026-07-22 (not yet pushed; R3-17
+> remains OPEN):** the current worktree adds signed, generation-bound inactive
+> authority for external Skills; exact provenance/capability activation;
+> in-process native GUI consent; HMAC-authenticated proactive proposals;
+> pre-debounce invalidation on public Skill/sidecar/anchor/key changes; and
+> authentication-driven cross-namespace crash recovery. Retained MCP calls are
+> limited to operator-pinned server-qualified read-only capabilities, and Cron
+> v1 migration rejects ambiguous bare tool ids. Static independent review
+> passes those slices. The release-blocking remainder is explicit: revision-one
+> install/replacement authority still needs required Install-intent WAL ACK
+> before publication plus correlated commit/abort outcome, and uninstall needs
+> the equivalent Removal lifecycle. Real mock-MCP subprocess/reconnect E2E also
+> remains outstanding. No broad box or dashboard count changes at this
+> checkpoint.
+>
+> **R3-18 recurring-egress correction 2026-07-22:** the hidden legacy loops
+> make the previous daemon-wide wording false. Generic `updater.enabled`
+> defaults on independently of the GUI's `auto_update.enabled/auto_apply`
+> switches, so the visible GUI state can say off while Elevated/Full still
+> schedules npm CLI updates. Actual npm, OSV, registry, GitHub metadata and
+> release-asset leaves do not yet share one request-bound permission plus
+> mandatory pre-network intent/result WAL, and some inherit proxy/config/
+> credential or redirect behavior. All recurring lanes must be consolidated
+> under the accepted reload generation, each concrete leaf must consume the
+> same exact permit/audit binding, and CLI/GUI/Cron must expose typed sanitized
+> outcomes. R3-18 remains OPEN; no count changes.
+>
+> **R3-11..R3-16 forensic correction 2026-07-22:** none of these six boxes is
+> yet closable. R3-11's main capability-bound store is real, but the capability
+> evolver deployment probe and Dreaming baseline still use ambient path reads,
+> and release evidence lacks a true second-process lock test. R3-12's generic
+> transaction supports missing roots, while the real bundle marker still calls
+> `tempdir_in` inside the absent destination first. R3-13 ranks/truncates across
+> all repositories before root filtering and has divergent Chat/CLI/MCP
+> consumers. R3-14 has selected `wrap_untrusted` users but raw coding repair,
+> repo/attachment/recall/Council/sub-agent prompt interpolation remains. R3-15
+> deletes plugin bytes before a discarded config-write error and lacks runtime
+> readback/recovery. R3-16 still has CRG-01 partial and CRG-02..05 absent from an
+> authoritative disposition/evidence-owner matrix. The dependency order is
+> R3-12/R3-11 and R3-15 as independent lanes, then R3-13 -> R3-14 -> R3-16.
+> No dashboard count changes.
 >
 > **Current Windows/cross-platform CI correction (2026-07-18; R3-10 remains
 > open):** forensic logs for exact head `d73227ca` identified 20 Windows

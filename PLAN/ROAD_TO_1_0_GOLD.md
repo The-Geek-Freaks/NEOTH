@@ -232,6 +232,47 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   configuration, lifecycle, GUI/CLI/Buddy visibility and release packaging;
   classify genuine supersession explicitly and leave every unimplemented or
   only-researched leaf open for v1.0 rather than hiding it in a side document.
+
+  **R3-11..R3-16 forensic re-audit 2026-07-22 (all six remain OPEN):**
+
+  - **R3-11:** the capability-bound installer/loader/inventory/uninstall core,
+    bounded no-follow copy/delete, durable recovery and OS-visible mutation
+    lock are real. Two production readers still bypass it:
+    `self_improvement_collector::is_verified_deployed` follows an ambient
+    manifest path and can treat missing `mtime` as deployed, while
+    `dreaming_task` reads the installed baseline with raw
+    `read_to_string`. Migrate both to a locked, generation-bound store read and
+    add a real second-process mutation-lock regression; thread-only evidence is
+    insufficient for the Windows/macOS/Linux release claim.
+  - **R3-12:** the generic `InstallTransaction` already supports a missing
+    destination and has a child-crash fixture, but the real portable bundle
+    path calls `tempdir_in(resolved_root)` for its marker before that root
+    exists. Stage the marker from the existing same-volume transaction anchor,
+    then exercise the actual bundle apply into an absent path with spaces/
+    Unicode, collision, link/reparse and hard-crash cases.
+  - **R3-13:** recall still aggregates and truncates globally before the active
+    root is filtered. CLI code, normal Chat, code-map CLI and in-process
+    Codegraph therefore disagree; Self-Improve has no equivalent consumer.
+    Make canonical root plus index generation mandatory at query time, filter
+    before ranking/limiting, and include root in the deterministic tie-break.
+  - **R3-14:** `wrap_untrusted` protects selected MCP/deep-research/teacher
+    paths only. Coding decomposition/repair, enriched repo context, attachments,
+    recall fragments, Council and sub-agent dispatch still interpolate raw
+    strings into imitable delimiters. Replace those parallel conventions with
+    one typed context-class/source-id/limit-aware encoding boundary and run the
+    same adversarial corpus through every consumer.
+  - **R3-15:** `plugin remove` deletes bytes first, discards config mutation
+    failure, ignores pin/revocation/runtime edges and can report success before
+    inventory readback. A missing directory also returns before stale-reference
+    reconciliation. Build a durable removal journal/transaction with exact
+    config and runtime-generation postconditions; GUI success must follow that
+    typed readback, not precede refresh.
+  - **R3-16:** `PLAN/CRG_ADOPTION_2026_07_20.md` still has CRG-01..05 open and
+    no authoritative disposition/evidence-owner matrix. CRG-01 is partial and
+    inherits R3-13; native impact-radius, diff-hunk-to-symbol mapping,
+    `TestedBy`/test-gap edges and the codegraph hook consumer remain absent.
+    Reconcile after R3-13/R3-14 rather than closing the umbrella checkbox.
+
 - [ ] **GOLD-R3-17 Explicit installed-Skill authority:** an imported or
   generated Skill must never gain ambiguous authority merely because its
   manifest omitted a field. Define and migrate one explicit meaning for an
@@ -274,12 +315,19 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   activate, which tools it may call, or what an omitted `tool_allowlist` means.
   **R3-17 therefore remains explicitly open.** The working tree also bounds
   retained WASM discovery bytes across the whole plugin namespace and hardens
-  remote Git source parsing/probing, but the recurring updater is intentionally
-  fail-closed: each enabled tick receives a deny gate, produces
+  remote Git source parsing/probing. The U-04 recurring **probe** supervisor is
+  intentionally fail-closed: each enabled tick receives a deny gate, produces
   `SkippedByGate`, and performs no GitHub/npm/`git ls-remote` egress until the
   concrete transport leaf consumes request-bound authority and writes its own
-  mandatory intent/result WAL. Manual operator-initiated update commands are
-  unaffected. This is a safe R3-18 slice, not completion of R3-18.
+  mandatory intent/result WAL. This does **not** describe the whole daemon:
+  the older MV-01b CLI auto-apply and self-stage loops still start separately
+  from startup snapshots and can reach npm/OSV/registry/GitHub leaves without
+  the same request-bound pre-network contract. Reload disable or an autonomy/
+  security downgrade cannot currently stop those frozen loops. Manual
+  operator-initiated update commands are unaffected. Consolidating all three
+  recurring lanes under one reload-owned supervisor and hardening every actual
+  transport leaf is a blocking R3-18 remainder; the U-04 slice alone is not
+  completion.
 
   **Pushed verification checkpoint 2026-07-22 (source head `75273d6f`; all
   broad boxes and counts unchanged):** the post-implementation review found
@@ -310,6 +358,59 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   broader R3-18 remote-leaf authority/WAL contract, R3-10 exact-head evidence,
   and all unrelated R3/R4/WS-LF tasks remain open.** Counts remain **WS-R3 18
   total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13 open**.
+
+  **Installed-authority local checkpoint 2026-07-22 (verification/commit/push
+  still pending; R3-17 remains OPEN):** imported, community and generated
+  Skills now land inactive behind a signed manifest/package-generation-bound
+  authority record and an independent current-anchor commit marker. Empty
+  installed tool scope is explicit deny-all; activation is provenance-aware,
+  binds the exact tool/delegation/model/source claims, and keeps global
+  autonomy, permission, cost and WAL gates mandatory. Native GUI consent
+  performs the same exact-generation decision in-process with truthful `Gui`
+  provenance; Generated activation remains bound to an authenticated Approved
+  proactive proposal whose complete payload is HMAC-protected. Public package,
+  sidecar, anchor or authority-key changes invalidate active installed grants
+  before reload debounce. Cross-namespace recovery authenticates the exact
+  public/anchor or rollback pair, treats the current anchor as the sole commit
+  marker, restores exactly one known-good predecessor, rolls interrupted fresh
+  installs back to absent, propagates candidate I/O errors, and preserves every
+  artifact when zero or multiple candidates authenticate.
+
+  Retained external MCP calls additionally require an operator-pinned
+  server-qualified read-only tool, immutable `tools/list` read-only metadata,
+  the exact retained client and the normal global/server approval gates. Cron
+  v1 bare tool ids migrate only when one capability is unambiguous; ambiguous,
+  missing or unknown server bindings fail closed. This still needs a real
+  subprocess mock-MCP reconnect/poisoning E2E.
+
+  **Known blocking remainder before R3-17 can close:** first install and
+  replacement still publish the inactive revision-one authority generation
+  without a required pre-publication Install WAL acknowledgement. The next
+  slice must bind source generation, observed destination generation and prior
+  anchor state in an opaque prepared install; ACK the exact intent before any
+  public rename; publish the current anchor last; and record a correlated
+  committed/aborted outcome without ever mistaking an intent for a commit.
+  Uninstall needs the equivalent Removal intent/outcome and anchor cleanup.
+  Until that is implemented, independently reviewed and exact-head green, this
+  checkpoint is progress evidence only, not a release-completion claim.
+
+  **R3-18 recurring-egress correction 2026-07-22:** forensic leaf tracing found
+  that the GUI's `auto_update.*` controls do not govern the older generic
+  `updater.enabled` CLI auto-apply loop, whose default is enabled at elevated/
+  full autonomy. A user can therefore see both GUI update switches off while
+  recurring npm update work still runs. The two legacy loops also keep startup
+  policy snapshots, while npm view/install, OSV, dependency-health registry,
+  GitHub metadata and release-asset HTTP leaves lack one request-bound permit
+  plus mandatory pre-network intent/result WAL. Several clients inherit proxy/
+  credential/config state or accept automatic redirects; the npm installer
+  pipes child output without concurrent drains. Release assets are byte- and
+  signature-checked, but an untrusted metadata URL can still reach persisted
+  state/audit before credential-free origin validation. Required closure:
+  remove the parallel frozen loops, put apply/stage behind the accepted live
+  reload generation, add one exact remote-update authorizer/audit contract,
+  consume it at every HTTP/Git/npm leaf, bound and sanitize all transport
+  diagnostics, and make CLI/GUI/Cron expose the same typed per-lane state.
+  R3-18 remains OPEN.
 
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 
