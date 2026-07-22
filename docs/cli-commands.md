@@ -1450,8 +1450,8 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--provider-model <MODEL>` — Override default model
 - `--provider-region <REGION>` — AWS region for `aws_bedrock` (for example `eu-central-1`). Falls back to AWS_REGION/AWS_DEFAULT_REGION, then `us-east-1`
 - `--provider-api-version <VERSION>` — Azure OpenAI API version (for example `2024-10-21`)
-- `--auto-update` — Enable release checks in the daemon (check-only; no auto-apply)
-- `--auto-update-apply` — Enable release checks and automatically stage verified updates. Binary replacement remains an explicit `neoth update --self --apply`
+- `--auto-update` — Arm the recurring release-check supervisor. The current v1 safety boundary keeps unattended GitHub/npm/Git network probes `SkippedByGate` until request-bound transport authorization and mandatory intent/result WAL are wired. Manual `neoth update` remains available
+- `--auto-update-apply` — Arm the recurring update supervisor with apply intent. The current v1 safety boundary performs no unattended network probe, staging, or replacement until the concrete transport authorization/audit contract is complete. Binary replacement remains an explicit `neoth update --self --apply`
 - `--no-auto-update` — Explicitly disable release checks during unattended reconfiguration
 - `--telegram-token <TOKEN>` — Telegram bot token. Prefer env NEOTH_TELEGRAM_TOKEN
 - `--telegram-user-id <USER_ID>` — Restrict Telegram bot to a single user ID
@@ -2671,7 +2671,7 @@ Show details for one provider by id (e.g. `claude_cli`, `openai_compat`)
 
 ### `neoth provider test`
 
-Show where a provider is wired into the hemispheres (live round-trip: `neoth hemispheres test --role <r> --live`)
+Show where a provider is wired into the hemispheres (live round-trip: `neoth hemispheres test --role <r> --question "Reply with OK"`)
 
 - `<PROVIDER>`
 
@@ -3235,8 +3235,17 @@ _Aliases:_ `neoth skill`
 - `--test <MESSAGE>` — Run the router against an arbitrary message and report the match
 - `--run-tests <SKILL_ID>` — Run the RED/GREEN scenario suite for a skill. Loads `~/.neoth/skills/<id>/tests/*.yaml`, runs each scenario twice (without and with the skill's system prompt), reports pass/fail. Requires a working provider in `freedom.yaml`. Phase 33+ (obra/ superpowers Item #3 port)
 - `--install <PATH>` — QM-11 install a skill from a local directory containing `skill.yaml`. Validates the manifest BEFORE copying; refuses to replace an existing install unless `--force` is set
+- `--inspect-install <PATH>` — Validate a local skill source and report the exact manifest generation plus whether its id already exists. Read-only except crash recovery
+- `--inspect-target <SKILL_ID>` — Inspect the exact currently-live public entry (healthy or broken) without following links/reparse points. Read-only except crash recovery
+- `--expected-id <ID>` — Bind an install to the id returned by `--inspect-install`
+- `--expected-generation-sha256 <SHA256>` — Bind an install to every path/type/byte in the package inspected before GUI replacement confirmation
+- `--expected-target-generation-sha256 <SHA256_OR_ABSENT>` — Bind replacement consent to the exact installed generation seen during preflight. Use `absent` when preflight observed no destination
+- `--expected-create-id <ID>` — Bind GUI create/repair to the exact id returned by `--inspect-target`
+- `--expected-create-target-generation-sha256 <SHA256_OR_ABSENT>` — Bind create/repair to the exact destination generation, or to explicit absence with the literal `absent`
 - `--uninstall <SKILL_ID>` — QM-11 uninstall the named skill from `~/.neoth/skills/<id>/`. Idempotent — missing id is reported as such, not an error
-- `--force` — QM-11: force replacement when `--install` would overwrite an existing skill of the same id
+- `--expected-uninstall-id <ID>` — Bind GUI uninstall to the exact id returned by `--inspect-target`
+- `--expected-uninstall-generation-sha256 <SHA256>` — Bind GUI uninstall to the exact healthy or broken destination generation returned by `--inspect-target`
+- `--force` — Explicitly replace an existing skill for `--install` or replace its manifest for `--create`. Both operations refuse replacement by default
 - `--create` — UX-06 — create a new skill manifest via an interactive wizard (or `--create-*` flags / `--non-interactive`). Writes a validated `~/.neoth/skills/<id>/skill.yaml` — no Rust required
 - `--create-id <ID>` — UX-06 non-interactive: skill id (kebab-case, `[a-zA-Z0-9_-]`)
 - `--create-description <DESC>` — UX-06 non-interactive: one-line description
