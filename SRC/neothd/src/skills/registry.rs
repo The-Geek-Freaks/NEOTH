@@ -88,6 +88,18 @@ fn validate_loaded_skills(skills: Vec<Skill>) -> Result<Vec<Skill>> {
     Ok(skills)
 }
 
+/// Compare the complete runtime-relevant skill snapshot before publishing a
+/// new Arc. Some filesystem backends (notably macOS FSEvents) can report a
+/// watched directory as modified when only a sibling file changed. Reloading
+/// is harmless, but replacing an identical Arc would falsely signal a new
+/// routing generation to pinned readers.
+fn skill_snapshots_match(current: &[Skill], candidate: &[Skill]) -> Result<bool> {
+    let current = serde_json::to_vec(current).context("serialize current skill snapshot")?;
+    let candidate =
+        serde_json::to_vec(candidate).context("serialize candidate skill snapshot")?;
+    Ok(current == candidate)
+}
+
 /// Process-wide live skill registry. Set by `serve.rs::run_serve` at
 /// daemon boot via [`init_global`]; chat / channel-pipeline / skill
 /// dispatch paths inside the daemon read from it via [`global`] so
@@ -256,7 +268,11 @@ impl SkillRegistry {
             )
         })?;
         let new_count = new.len();
-        let prev = self.inner.load().len();
+        let current = self.inner.load_full();
+        let prev = current.len();
+        if skill_snapshots_match(&current, &new)? {
+            return Ok((prev, new_count));
+        }
         self.inner.store(Arc::new(new));
         Ok((prev, new_count))
     }

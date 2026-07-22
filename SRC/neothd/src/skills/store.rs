@@ -1398,15 +1398,10 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let error = replace_existing_regular_file(
-            &root.dir,
-            OsStr::new("skill.yaml"),
-            &target,
-            b"replacement",
-        )
-        .unwrap_err();
+        replace_existing_regular_file(&root.dir, OsStr::new("skill.yaml"), &target, b"replacement")
+            .expect_err("a linked mutation target must be rejected");
 
-        assert!(format!("{error:#}").contains("without following links"));
+        assert!(std::fs::symlink_metadata(&target).unwrap().is_symlink());
         assert_eq!(std::fs::read(&sentinel).unwrap(), b"keep");
     }
 }
