@@ -613,9 +613,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("nostr-cursor.json");
         let now = GIFT_WRAP_OVERLAP_SECS + 10_000;
+        let retain_after = now.saturating_sub(GIFT_WRAP_OVERLAP_SECS);
         let mut state = NostrCursorState::new("pubkey-a".into(), 1);
-        state.processed_event_ids.insert("expired".into(), 9_998);
-        state.processed_event_ids.insert("edge".into(), 9_999);
+        state
+            .processed_event_ids
+            .insert("expired".into(), retain_after.saturating_sub(1));
+        state
+            .processed_event_ids
+            .insert("edge".into(), retain_after);
         state.processed_event_ids.insert("recent".into(), now);
         state.persist(&path).unwrap();
 

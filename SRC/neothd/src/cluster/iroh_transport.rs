@@ -1094,9 +1094,11 @@ mod tests {
             },
         };
         let origin = crate::cluster::PeerPubkey::new("iroh-peer-pk");
+        let mut vector_clock = VectorClock::new();
+        vector_clock.tick(&origin);
         let frame = GossipFrame {
             protocol_version: SYNC_PROTOCOL_VERSION,
-            vector_clock: VectorClock::new(),
+            vector_clock,
             origin: origin.clone(),
             event_seq: 1,
             content_sha256: envelope.content_sha256(),
