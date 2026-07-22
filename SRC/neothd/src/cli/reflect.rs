@@ -293,7 +293,16 @@ async fn tech_news(
     max_gaps: usize,
     output: OutputFormat,
 ) -> Result<()> {
-    let stories = hackernews::top_stories(limit)
+    let config_path = home.join("freedom.yaml");
+    let config = FreedomConfig::load_from_path(&config_path).with_context(|| {
+        format!(
+            "load active reflection policy from {}",
+            config_path.display()
+        )
+    })?;
+    let http =
+        crate::tools::external_http::ExternalHttpAuthorizer::interactive(config.autonomy_policy())?;
+    let stories = hackernews::top_stories(&http, limit)
         .await
         .context("fetch Hacker News top stories")?;
     let topics = ReflectTopics::load(home);
@@ -448,11 +457,13 @@ fn emit_topics(topics: &ReflectTopics, output: OutputFormat, headline: &str) {
 /// surface, never panics). Shared by the CLI + the weekly cron refresh.
 pub fn collect_covered(home: &std::path::Path) -> Vec<String> {
     let mut covered = Vec::new();
-    let skills_dir = crate::skills::installer::default_skills_dir();
-    for e in crate::skills::installer::list_installed(&skills_dir) {
-        covered.push(e.dir_name);
-        if let Some(id) = e.manifest_id {
-            covered.push(id);
+    let skills_dir = home.join("skills");
+    if let Ok(entries) = crate::skills::installer::list_installed(&skills_dir) {
+        for entry in entries {
+            covered.push(entry.dir_name);
+            if let Some(id) = entry.manifest_id {
+                covered.push(id);
+            }
         }
     }
     if let Ok(conn) = store::open(&home.join("views.db")) {
@@ -462,4 +473,27 @@ pub fn collect_covered(home: &std::path::Path) -> Vec<String> {
         }
     }
     covered
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collect_covered_reads_skills_from_the_supplied_home() {
+        let home = tempfile::tempdir().unwrap();
+        let skill_dir = home.path().join("skills").join("home-specific");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            "id: home-specific\n\
+             description: Home-specific test skill\n\
+             trigger_keywords: [home]\n\
+             system_prompt: Use this home.\n",
+        )
+        .unwrap();
+
+        let covered = collect_covered(home.path());
+        assert!(covered.iter().any(|item| item == "home-specific"));
+    }
 }

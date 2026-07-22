@@ -260,8 +260,9 @@ fn provider_bindings(
 /// dispatched on any hemisphere, and where? It does NOT make a live LLM call
 /// (that would bill a metered provider) and does NOT construct the provider
 /// (which could eagerly load local weights) — it points at
-/// `neoth hemispheres test --role <r> --live` for the real round-trip, which
-/// already exists. Honest scope: confirm the wiring + hand off the round-trip.
+/// `neoth hemispheres test --role <r> --question "Reply with OK"` for the real
+/// round-trip, which already exists. Honest scope: confirm the wiring + hand
+/// off the round-trip.
 pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
     let target = InferenceProvider::from_str(provider_str).ok_or_else(|| {
         anyhow::anyhow!(
@@ -281,7 +282,7 @@ pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
                     "provider": target.as_str(),
                     "wired": wired,
                     "roles": roles,
-                    "live_round_trip": "neoth hemispheres test --role <role> --live",
+                    "live_round_trip": "neoth hemispheres test --role <role> --question \"Reply with OK\"",
                 }))?
             );
         }
@@ -293,7 +294,7 @@ pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
                     roles.join(", ")
                 );
                 println!(
-                    "  live round-trip: `neoth hemispheres test --role {} --live`",
+                    "  live round-trip: `neoth hemispheres test --role {} --question \"Reply with OK\"`",
                     // first concrete role label, or 'left' for the single-mode collapse
                     roles
                         .iter()

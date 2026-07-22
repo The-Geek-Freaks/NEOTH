@@ -34,13 +34,27 @@
 //! a third party. Staging makes "did I see this?" the precondition
 //! to any change.
 
-use std::fs::{self, OpenOptions};
+use std::ffi::{OsStr, OsString};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_std::fs::OpenOptions as CapOpenOptions;
 use serde::{Deserialize, Serialize};
 
 use crate::proactive::{ProactiveItem, ProactiveQueue};
+use crate::skills::store::{
+    BoundDirectory, cap_metadata_is_link_like, open_bound_directory, read_regular_file_bounded,
+    remove_child_file, rename_child, replace_existing_regular_file_report,
+};
+
+const MAX_PROPOSAL_BYTES: usize = 1024 * 1024;
+const MAX_PROPOSAL_ENTRIES: usize = 4096;
+const MAX_PROPOSAL_ID_BYTES: usize = 128;
+const PROPOSAL_MUTATION_LOCK_FILE: &str = ".neoth-proposals.lock";
+const PROPOSAL_STAGE_PREFIX: &str = ".neoth-proposal-stage-";
+static PROPOSAL_MUTATION_LOCK: Mutex<()> = Mutex::new(());
 
 /// Kinds of operator-config artefact NEOTH may propose. New variants
 /// are non-breaking — operator vaults pin existing variants by
@@ -153,8 +167,11 @@ impl ProposedAction {
 /// and the curator reconciliation cron. The draft is parsed as the real
 /// [`SkillManifest`], its id is validated as a safe directory component, and
 /// the shared atomic writer creates `<home>/skills/<id>/skill.yaml`.
-pub fn adopt_approved_skill(home: &Path, proposal: &ProposedAction) -> anyhow::Result<PathBuf> {
-    use crate::skills::creator::{validate_skill_id, write_skill_yaml};
+pub fn adopt_approved_skill(
+    home: &Path,
+    proposal: &ProposedAction,
+) -> anyhow::Result<crate::skills::creator::CreateReport> {
+    use crate::skills::creator::{ExistingSkillPolicy, validate_skill_id, write_skill_yaml};
     use crate::skills::schema::SkillManifest;
     use anyhow::Context;
 
@@ -178,7 +195,12 @@ pub fn adopt_approved_skill(home: &Path, proposal: &ProposedAction) -> anyhow::R
         })?;
     validate_skill_id(&manifest.id)
         .with_context(|| format!("skill id {:?} is not a safe directory name", manifest.id))?;
-    write_skill_yaml(&home.join("skills"), &manifest.id, &proposal.draft_yaml)
+    write_skill_yaml(
+        &home.join("skills"),
+        &manifest.id,
+        &proposal.draft_yaml,
+        ExistingSkillPolicy::KeepIfIdentical,
+    )
 }
 
 fn escape_yaml_string(s: &str) -> String {
@@ -228,58 +250,412 @@ pub fn proposals_dir(home: &Path) -> PathBuf {
 
 /// Path to one proposal's JSON file.
 pub fn proposal_path(home: &Path, id: &str) -> PathBuf {
-    proposals_dir(home).join(format!("{id}.json"))
+    let name = proposal_file_name(id).unwrap_or_else(|_| {
+        let hash = xxhash_rust::xxh3::xxh3_64(id.as_bytes());
+        OsString::from(format!(".invalid-proposal-id-{hash:016x}.json"))
+    });
+    proposals_dir(home).join(name)
 }
 
-/// Persist a proposal to disk. Atomic — body lands in `.tmp` then
-/// renames. Overwrites any existing file with the same id.
-pub fn save_proposal(home: &Path, proposal: &ProposedAction) -> std::io::Result<PathBuf> {
-    fs::create_dir_all(proposals_dir(home))?;
-    let final_path = proposal_path(home, &proposal.id);
-    let tmp_path = final_path.with_extension("json.tmp");
-    let body = serde_json::to_vec_pretty(proposal).map_err(std::io::Error::other)?;
+fn validate_proposal_id(id: &str) -> std::io::Result<()> {
+    if id.is_empty()
+        || id.len() > MAX_PROPOSAL_ID_BYTES
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        let mut f = OpenOptions::new()
-            .create(true)
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "invalid proposal id {id:?}: expected 1..={MAX_PROPOSAL_ID_BYTES} ASCII letters, digits, '-' or '_'"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn proposal_file_name(id: &str) -> std::io::Result<OsString> {
+    validate_proposal_id(id)?;
+    Ok(OsString::from(format!("{id}.json")))
+}
+
+fn proposals_root(home: &Path, create: bool) -> std::io::Result<Option<BoundDirectory>> {
+    open_bound_directory(&proposals_dir(home), create, "proposal store").map_err(anyhow_to_io)
+}
+
+struct ProposalMutationGuard {
+    _process: MutexGuard<'static, ()>,
+    _file: std::fs::File,
+}
+
+fn lock_proposal_mutations(root: &BoundDirectory) -> std::io::Result<ProposalMutationGuard> {
+    let process = PROPOSAL_MUTATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let started = std::time::Instant::now();
+    loop {
+        let mut options = CapOpenOptions::new();
+        options
+            .read(true)
             .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(&body)?;
-        f.flush()?;
+            .create(true)
+            .follow(FollowSymlinks::No);
+        #[cfg(windows)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            const FILE_SHARE_READ: u32 = 0x0000_0001;
+            options.share_mode(FILE_SHARE_READ);
+        }
+        let file = match root.dir.open_with(PROPOSAL_MUTATION_LOCK_FILE, &options) {
+            Ok(file) => file,
+            #[cfg(windows)]
+            Err(error) if error.raw_os_error() == Some(32) => {
+                if started.elapsed() >= std::time::Duration::from_secs(5) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "proposal mutation lock held for >5s at {}",
+                            root.display_path
+                                .join(PROPOSAL_MUTATION_LOCK_FILE)
+                                .display()
+                        ),
+                    ));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "proposal mutation lock is not a real regular file: {}",
+                    root.display_path
+                        .join(PROPOSAL_MUTATION_LOCK_FILE)
+                        .display()
+                ),
+            ));
+        }
+        let file = file.into_std();
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd as _;
+            // SAFETY: flock operates on a live, owned regular-file descriptor.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.kind() == std::io::ErrorKind::WouldBlock
+                    && started.elapsed() < std::time::Duration::from_secs(5)
+                {
+                    drop(file);
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    continue;
+                }
+                if error.kind() == std::io::ErrorKind::WouldBlock {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "proposal mutation lock held for >5s at {}",
+                            root.display_path
+                                .join(PROPOSAL_MUTATION_LOCK_FILE)
+                                .display()
+                        ),
+                    ));
+                }
+                return Err(error);
+            }
+        }
+        return Ok(ProposalMutationGuard {
+            _process: process,
+            _file: file,
+        });
     }
-    if final_path.exists() {
-        fs::remove_file(&final_path)?;
+}
+
+fn anyhow_is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .any(|error| error.kind() == std::io::ErrorKind::NotFound)
+}
+
+fn anyhow_to_io(error: anyhow::Error) -> std::io::Error {
+    let kind = error
+        .chain()
+        .find_map(|cause| {
+            cause
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind)
+        })
+        .unwrap_or(std::io::ErrorKind::Other);
+    std::io::Error::new(kind, error)
+}
+
+fn decode_proposal(bytes: Vec<u8>, display_path: &Path) -> std::io::Result<ProposedAction> {
+    let body = String::from_utf8(bytes).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "staged proposal {} is not UTF-8: {error}",
+                display_path.display()
+            ),
+        )
+    })?;
+    serde_json::from_str(&body).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("parse staged proposal {}: {error}", display_path.display()),
+        )
+    })
+}
+
+fn read_proposal_from_root(
+    root: &BoundDirectory,
+    id: &str,
+) -> std::io::Result<Option<ProposedAction>> {
+    let name = proposal_file_name(id)?;
+    let display_path = root.display_path.join(&name);
+    let bytes = match read_regular_file_bounded(&root.dir, &name, &display_path, MAX_PROPOSAL_BYTES)
+    {
+        Ok(bytes) => bytes,
+        Err(error) if anyhow_is_not_found(&error) => return Ok(None),
+        Err(error) => return Err(anyhow_to_io(error)),
+    };
+    let proposal = decode_proposal(bytes, &display_path)?;
+    if proposal.id != id {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "proposal filename id {id:?} does not match record id {:?} at {}",
+                proposal.id,
+                display_path.display()
+            ),
+        ));
     }
-    fs::rename(&tmp_path, &final_path)?;
+    Ok(Some(proposal))
+}
+
+fn proposal_body(proposal: &ProposedAction) -> std::io::Result<Vec<u8>> {
+    validate_proposal_id(&proposal.id)?;
+    let body = serde_json::to_vec_pretty(proposal).map_err(std::io::Error::other)?;
+    if body.len() > MAX_PROPOSAL_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "proposal {} exceeds the {MAX_PROPOSAL_BYTES}-byte limit",
+                proposal.id
+            ),
+        ));
+    }
+    Ok(body)
+}
+
+fn create_proposal_file(
+    root: &BoundDirectory,
+    proposal: &ProposedAction,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let final_name = proposal_file_name(&proposal.id)?;
+    let final_path = root.display_path.join(&final_name);
+    create_new_regular_file(root, &final_name, &final_path, body, PROPOSAL_STAGE_PREFIX)
+}
+
+fn create_new_regular_file(
+    root: &BoundDirectory,
+    final_name: &OsStr,
+    final_path: &Path,
+    body: &[u8],
+    stage_prefix: &str,
+) -> std::io::Result<()> {
+    let stage_name = OsString::from(format!("{stage_prefix}{}", uuid::Uuid::new_v4().simple()));
+    let stage_path = root.display_path.join(&stage_name);
+    let mut options = CapOpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut stage = root.dir.open_with(&stage_name, &options)?;
+    let write_result = (|| -> std::io::Result<()> {
+        stage.write_all(body)?;
+        stage.sync_all()?;
+        drop(stage);
+        rename_child(
+            &root.dir,
+            &stage_name,
+            &root.dir,
+            final_name,
+            false,
+            &stage_path,
+            final_path,
+        )
+        .map_err(anyhow_to_io)
+    })();
+    if write_result.is_err() {
+        match remove_child_file(&root.dir, &stage_name, &stage_path) {
+            Ok(()) => {}
+            Err(cleanup_error) if anyhow_is_not_found(&cleanup_error) => {}
+            Err(cleanup_error) => {
+                tracing::warn!(
+                    path = %stage_path.display(),
+                    error = %cleanup_error,
+                    "failed to remove staged proposal after write failure"
+                );
+            }
+        }
+    }
+    write_result
+}
+
+fn replace_proposal_file(
+    root: &BoundDirectory,
+    proposal: &ProposedAction,
+    body: &[u8],
+) -> std::io::Result<()> {
+    let name = proposal_file_name(&proposal.id)?;
+    let path = root.display_path.join(&name);
+    let report = replace_existing_regular_file_report(&root.dir, &name, &path, body)
+        .map_err(anyhow_to_io)?;
+    for warning in report.warnings {
+        tracing::warn!(path = %path.display(), %warning, "proposal replacement committed with warning");
+    }
+    Ok(())
+}
+
+fn same_stable_payload(left: &ProposedAction, right: &ProposedAction) -> bool {
+    left.id == right.id
+        && left.kind == right.kind
+        && left.title == right.title
+        && left.draft_yaml == right.draft_yaml
+}
+
+/// Persist a proposal to disk. Every mutation is serialized across daemon and
+/// CLI processes, and both staging and commit stay relative to a stable
+/// directory capability. A terminal operator verdict cannot be overwritten.
+pub fn save_proposal(home: &Path, proposal: &ProposedAction) -> std::io::Result<PathBuf> {
+    validate_proposal_id(&proposal.id)?;
+    let root = proposals_root(home, true)?.expect("created proposal root must exist");
+    let _guard = lock_proposal_mutations(&root)?;
+    let final_path = proposal_path(home, &proposal.id);
+    let existing = read_proposal_from_root(&root, &proposal.id)?;
+    if let Some(existing) = existing.as_ref()
+        && existing.status != ProposalStatus::Pending
+        && existing != proposal
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "proposal {} already has terminal status {}; refusing to overwrite the operator verdict",
+                proposal.id,
+                existing.status.as_str()
+            ),
+        ));
+    }
+    if existing.as_ref() == Some(proposal) {
+        return Ok(final_path);
+    }
+    let body = proposal_body(proposal)?;
+    if existing.is_some() {
+        replace_proposal_file(&root, proposal, &body)?;
+    } else {
+        create_proposal_file(&root, proposal, &body)?;
+    }
     Ok(final_path)
 }
 
 /// Load one proposal by id. Returns `None` when the file is
 /// missing or malformed (corrupted disk doesn't kill the read path).
 pub fn load_proposal(home: &Path, id: &str) -> Option<ProposedAction> {
-    let path = proposal_path(home, id);
-    let body = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&body).ok()
+    validate_proposal_id(id).ok()?;
+    let root = proposals_root(home, false).ok()??;
+    read_proposal_from_root(&root, id).ok()?
 }
 
-/// Load every proposal in `proposals_dir`, optionally filtered by
-/// status. Files that fail to parse are silently skipped — the
-/// caller iterates whatever survived. Sorted ascending by id (which
-/// starts with unix-seconds, so older proposals come first).
-pub fn list_proposals(home: &Path, status_filter: Option<ProposalStatus>) -> Vec<ProposedAction> {
-    let dir = proposals_dir(home);
-    let Ok(read) = fs::read_dir(&dir) else {
-        return Vec::new();
+/// Load every proposal in `proposals_dir`, optionally filtered by status.
+/// A missing directory is an empty store; every other directory-entry, read,
+/// or JSON error is surfaced so autonomous consumers fail closed instead of
+/// silently skipping corrupted approved proposals. Sorted ascending by id
+/// (which starts with unix-seconds, so older proposals come first).
+pub fn list_proposals(
+    home: &Path,
+    status_filter: Option<ProposalStatus>,
+) -> std::io::Result<Vec<ProposedAction>> {
+    let Some(root) = proposals_root(home, false)? else {
+        return Ok(Vec::new());
     };
-    let mut out: Vec<ProposedAction> = read
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
-        .filter_map(|e| fs::read_to_string(e.path()).ok())
-        .filter_map(|b| serde_json::from_str::<ProposedAction>(&b).ok())
-        .filter(|p| status_filter.map(|s| p.status == s).unwrap_or(true))
-        .collect();
+    let read = root.dir.entries()?;
+
+    let mut out = Vec::new();
+    let mut entry_count = 0usize;
+    for entry in read {
+        let entry = entry?;
+        entry_count = entry_count.checked_add(1).ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "proposal entry counter overflow",
+            )
+        })?;
+        if entry_count > MAX_PROPOSAL_ENTRIES {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "proposal store {} exceeds the {MAX_PROPOSAL_ENTRIES}-entry limit",
+                    root.display_path.display()
+                ),
+            ));
+        }
+        let name = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "proposal store {} contains a non-UTF-8 entry name",
+                    root.display_path.display()
+                ),
+            ));
+        };
+        let Some(id) = name_text.strip_suffix(".json") else {
+            continue;
+        };
+        validate_proposal_id(id).map_err(|error| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "invalid proposal filename {} under {}: {error}",
+                    name_text,
+                    root.display_path.display()
+                ),
+            )
+        })?;
+        let path = root.display_path.join(&name);
+        let bytes = read_regular_file_bounded(&root.dir, &name, &path, MAX_PROPOSAL_BYTES)
+            .map_err(anyhow_to_io)?;
+        let proposal = decode_proposal(bytes, &path)?;
+        if proposal.id != id {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "proposal filename id {id:?} does not match record id {:?} at {}",
+                    proposal.id,
+                    path.display()
+                ),
+            ));
+        }
+        if status_filter
+            .map(|status| proposal.status == status)
+            .unwrap_or(true)
+        {
+            out.push(proposal);
+        }
+    }
     out.sort_by(|a, b| a.id.cmp(&b.id));
-    out
+    Ok(out)
 }
 
 /// Mark a proposal as `Approved` or `Rejected`. Returns the
@@ -292,15 +668,43 @@ pub fn set_proposal_status(
     new_status: ProposalStatus,
     operator_note: &str,
 ) -> std::io::Result<ProposedAction> {
-    let mut p = load_proposal(home, id).ok_or_else(|| {
+    validate_proposal_id(id)?;
+    if new_status == ProposalStatus::Pending {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "an operator verdict must be approved or rejected, not pending",
+        ));
+    }
+    let root = proposals_root(home, false)?.ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("proposal {id} not found"),
         )
     })?;
+    let _guard = lock_proposal_mutations(&root)?;
+    let mut p = read_proposal_from_root(&root, id)?.ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("proposal {id} not found"),
+        )
+    })?;
+    if p.status == new_status {
+        return Ok(p);
+    }
+    if p.status != ProposalStatus::Pending {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "proposal {id} already has terminal status {}; refusing transition to {}",
+                p.status.as_str(),
+                new_status.as_str()
+            ),
+        ));
+    }
     p.status = new_status;
     p.operator_note = operator_note.to_string();
-    save_proposal(home, &p)?;
+    let body = proposal_body(&p)?;
+    replace_proposal_file(&root, &p, &body)?;
     Ok(p)
 }
 
@@ -325,7 +729,8 @@ pub fn sync_proposals_to_obsidian(
     subdir: &str,
     status_filter: Option<ProposalStatus>,
 ) -> std::io::Result<ProposalSyncOutcome> {
-    let proposals = list_proposals(neoth_home, status_filter);
+    crate::cli::obsidian::validate_subdir(Path::new(subdir)).map_err(anyhow_to_io)?;
+    let proposals = list_proposals(neoth_home, status_filter)?;
     let dest_dir = vault_root.join(subdir).join("Proposals");
     if proposals.is_empty() {
         return Ok(ProposalSyncOutcome {
@@ -334,27 +739,55 @@ pub fn sync_proposals_to_obsidian(
             target_paths: Vec::new(),
         });
     }
-    fs::create_dir_all(&dest_dir)?;
+    let dest_root = open_bound_directory(&dest_dir, true, "proposal vault view")
+        .map_err(anyhow_to_io)?
+        .expect("created proposal vault view must exist");
+    let _guard = lock_proposal_mutations(&dest_root)?;
 
     let mut target_paths = Vec::with_capacity(proposals.len());
     let mut written = 0usize;
     for p in &proposals {
-        let final_path = dest_dir.join(format!("{}.md", p.id));
-        let tmp_path = final_path.with_extension("md.tmp");
+        validate_proposal_id(&p.id)?;
+        let final_name = OsString::from(format!("{}.md", p.id));
+        let final_path = dest_root.display_path.join(&final_name);
         let body = p.to_obsidian_md();
-        {
-            let mut f = OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(&tmp_path)?;
-            f.write_all(body.as_bytes())?;
-            f.flush()?;
+        match dest_root.dir.symlink_metadata(&final_name) {
+            Ok(metadata) => {
+                if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "proposal vault target is not a real regular file: {}",
+                            final_path.display()
+                        ),
+                    ));
+                }
+                let report = replace_existing_regular_file_report(
+                    &dest_root.dir,
+                    &final_name,
+                    &final_path,
+                    body.as_bytes(),
+                )
+                .map_err(anyhow_to_io)?;
+                for warning in report.warnings {
+                    tracing::warn!(
+                        path = %final_path.display(),
+                        %warning,
+                        "proposal vault view replacement committed with warning"
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                create_new_regular_file(
+                    &dest_root,
+                    &final_name,
+                    &final_path,
+                    body.as_bytes(),
+                    ".neoth-proposal-view-stage-",
+                )?;
+            }
+            Err(error) => return Err(error),
         }
-        if final_path.exists() {
-            fs::remove_file(&final_path)?;
-        }
-        fs::rename(&tmp_path, &final_path)?;
         target_paths.push(final_path);
         written += 1;
     }
@@ -394,7 +827,38 @@ pub fn stage_and_enqueue(
     proposal: ProposedAction,
     queue: &mut ProactiveQueue,
 ) -> std::io::Result<(ProposedAction, bool)> {
-    save_proposal(home, &proposal)?;
+    validate_proposal_id(&proposal.id)?;
+    if proposal.status != ProposalStatus::Pending || !proposal.operator_note.is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "new proposal {} must start pending with an empty operator note",
+                proposal.id
+            ),
+        ));
+    }
+    let root = proposals_root(home, true)?.expect("created proposal root must exist");
+    let _guard = lock_proposal_mutations(&root)?;
+    if let Some(existing) = read_proposal_from_root(&root, &proposal.id)? {
+        if !same_stable_payload(&existing, &proposal) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "proposal id {} collides with different staged content",
+                    proposal.id
+                ),
+            ));
+        }
+        if existing.status == ProposalStatus::Pending {
+            let item = build_proposal_notification(&existing);
+            let enqueued = queue.enqueue(item);
+            return Ok((existing, enqueued));
+        }
+        return Ok((existing, false));
+    }
+    let body = proposal_body(&proposal)?;
+    create_proposal_file(&root, &proposal, &body)?;
+    drop(_guard);
     let item = build_proposal_notification(&proposal);
     let enqueued = queue.enqueue(item);
     Ok((proposal, enqueued))
@@ -507,6 +971,20 @@ mod tests {
     }
 
     #[test]
+    fn proposal_ids_cannot_escape_the_capability_root() {
+        let home = tempfile::tempdir().unwrap();
+        let mut proposal = sample(ProposalKind::CronJob, "escape", 100);
+        proposal.id = "../../outside".to_string();
+
+        let error = save_proposal(home.path(), &proposal).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!home.path().join("outside.json").exists());
+        assert!(proposal_path(home.path(), &proposal.id).starts_with(proposals_dir(home.path())));
+        assert!(load_proposal(home.path(), &proposal.id).is_none());
+    }
+
+    #[test]
     fn save_overwrites_existing_atomically() {
         let home = tempfile::tempdir().unwrap();
         let mut p = sample(ProposalKind::CronJob, "title", 100);
@@ -517,18 +995,72 @@ mod tests {
         assert_eq!(loaded.title, "new title");
         // No .tmp leaks.
         let dir = proposals_dir(home.path());
-        let leftover_tmp_count = std::fs::read_dir(&dir)
+        let leftover_stage_count = std::fs::read_dir(&dir)
             .unwrap()
             .filter(|e| {
                 e.as_ref()
                     .unwrap()
-                    .path()
-                    .extension()
-                    .and_then(|x| x.to_str())
-                    == Some("tmp")
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(PROPOSAL_STAGE_PREFIX)
             })
             .count();
-        assert_eq!(leftover_tmp_count, 0);
+        assert_eq!(leftover_stage_count, 0);
+    }
+
+    #[test]
+    fn approved_skill_adoption_returns_the_complete_create_report() {
+        let home = tempfile::tempdir().unwrap();
+        let (_, draft_yaml) =
+            crate::skills::creator::build_manifest(&crate::skills::creator::CreateParams {
+                id: "typed_report".to_string(),
+                description: "Typed adoption report".to_string(),
+                keywords: vec!["report".to_string()],
+                system_prompt: "Exercise the typed adoption path.".to_string(),
+            })
+            .unwrap();
+        let mut proposal = sample(ProposalKind::Skill, "typed report", 100);
+        proposal.status = ProposalStatus::Approved;
+        proposal.draft_yaml = draft_yaml;
+
+        let report = adopt_approved_skill(home.path(), &proposal).unwrap();
+
+        assert_eq!(report.id, "typed_report");
+        assert_eq!(
+            report.path,
+            home.path()
+                .join("skills")
+                .join("typed_report")
+                .join("skill.yaml")
+        );
+        assert!(!report.replaced_existing);
+        assert!(report.warnings.is_empty());
+    }
+
+    #[test]
+    fn proposal_reads_reject_oversized_files_before_allocation() {
+        let home = tempfile::tempdir().unwrap();
+        let path = proposals_dir(home.path()).join("oversized.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(MAX_PROPOSAL_BYTES as u64 + 1).unwrap();
+
+        assert!(load_proposal(home.path(), "oversized").is_none());
+        let error = list_proposals(home.path(), None).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("exceeds"));
+    }
+
+    #[test]
+    fn proposal_writes_reject_oversized_records() {
+        let home = tempfile::tempdir().unwrap();
+        let mut proposal = sample(ProposalKind::Skill, "oversized", 100);
+        proposal.draft_yaml = "x".repeat(MAX_PROPOSAL_BYTES);
+
+        let error = save_proposal(home.path(), &proposal).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!proposal_path(home.path(), &proposal.id).exists());
     }
 
     #[test]
@@ -538,7 +1070,7 @@ mod tests {
         let later = sample(ProposalKind::Skill, "later", 200);
         save_proposal(home.path(), &later).unwrap();
         save_proposal(home.path(), &earlier).unwrap();
-        let all = list_proposals(home.path(), None);
+        let all = list_proposals(home.path(), None).unwrap();
         assert_eq!(all.len(), 2);
         assert!(all[0].id < all[1].id);
     }
@@ -552,9 +1084,55 @@ mod tests {
         a.status = ProposalStatus::Pending;
         save_proposal(home.path(), &a).unwrap();
         save_proposal(home.path(), &b).unwrap();
-        let pending = list_proposals(home.path(), Some(ProposalStatus::Pending));
+        let pending = list_proposals(home.path(), Some(ProposalStatus::Pending)).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, a.id);
+    }
+
+    #[test]
+    fn list_proposals_missing_directory_is_empty() {
+        let home = tempfile::tempdir().unwrap();
+        let proposals = list_proposals(home.path(), None).unwrap();
+        assert!(proposals.is_empty());
+        assert!(!proposals_dir(home.path()).exists());
+    }
+
+    #[test]
+    fn list_proposals_propagates_json_corruption() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(proposals_dir(home.path())).unwrap();
+        std::fs::write(proposals_dir(home.path()).join("broken.json"), b"{not-json").unwrap();
+
+        let error = list_proposals(home.path(), None).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("broken.json"));
+    }
+
+    #[test]
+    fn list_proposals_rejects_filename_record_id_mismatch() {
+        let home = tempfile::tempdir().unwrap();
+        let proposal = sample(ProposalKind::CronJob, "mismatch", 100);
+        std::fs::create_dir_all(proposals_dir(home.path())).unwrap();
+        std::fs::write(
+            proposals_dir(home.path()).join("different-id.json"),
+            serde_json::to_vec(&proposal).unwrap(),
+        )
+        .unwrap();
+
+        let error = list_proposals(home.path(), None).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("does not match record id"));
+    }
+
+    #[test]
+    fn list_proposals_propagates_entry_read_failure() {
+        let home = tempfile::tempdir().unwrap();
+        let unreadable = proposals_dir(home.path()).join("directory.json");
+        std::fs::create_dir_all(&unreadable).unwrap();
+
+        let error = list_proposals(home.path(), None).unwrap_err();
+        assert_ne!(error.kind(), std::io::ErrorKind::NotFound);
     }
 
     #[test]
@@ -578,6 +1156,58 @@ mod tests {
         let err =
             set_proposal_status(home.path(), "nope", ProposalStatus::Approved, "").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn proposal_verdicts_are_terminal_and_idempotent() {
+        let home = tempfile::tempdir().unwrap();
+        let proposal = sample(ProposalKind::CronJob, "terminal", 100);
+        save_proposal(home.path(), &proposal).unwrap();
+        let approved = set_proposal_status(
+            home.path(),
+            &proposal.id,
+            ProposalStatus::Approved,
+            "first verdict",
+        )
+        .unwrap();
+
+        let repeated = set_proposal_status(
+            home.path(),
+            &proposal.id,
+            ProposalStatus::Approved,
+            "must not replace the first audit note",
+        )
+        .unwrap();
+        assert_eq!(repeated, approved);
+
+        let error = set_proposal_status(
+            home.path(),
+            &proposal.id,
+            ProposalStatus::Rejected,
+            "reverse verdict",
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert_eq!(load_proposal(home.path(), &proposal.id).unwrap(), approved);
+    }
+
+    #[test]
+    fn direct_save_cannot_overwrite_a_terminal_verdict() {
+        let home = tempfile::tempdir().unwrap();
+        let proposal = sample(ProposalKind::CronJob, "terminal", 100);
+        save_proposal(home.path(), &proposal).unwrap();
+        let approved = set_proposal_status(
+            home.path(),
+            &proposal.id,
+            ProposalStatus::Approved,
+            "approved",
+        )
+        .unwrap();
+
+        let error = save_proposal(home.path(), &proposal).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(load_proposal(home.path(), &proposal.id).unwrap(), approved);
     }
 
     #[test]
@@ -607,6 +1237,27 @@ mod tests {
         .unwrap();
         assert_eq!(out.written, 0);
         assert!(out.target_paths.is_empty());
+    }
+
+    #[test]
+    fn sync_rejects_a_subdir_that_escapes_the_vault() {
+        let home = tempfile::tempdir().unwrap();
+        let vault_parent = tempfile::tempdir().unwrap();
+        let vault = vault_parent.path().join("vault");
+        std::fs::create_dir(&vault).unwrap();
+        let proposal = sample(ProposalKind::CronJob, "escape", 100);
+        save_proposal(home.path(), &proposal).unwrap();
+
+        let error = sync_proposals_to_obsidian(
+            home.path(),
+            &vault,
+            "../outside",
+            Some(ProposalStatus::Pending),
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::Other);
+        assert!(!vault_parent.path().join("outside").exists());
     }
 
     #[test]
@@ -653,6 +1304,43 @@ mod tests {
     }
 
     #[test]
+    fn sync_replaces_an_existing_view_without_ambient_remove() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let mut proposal = sample(ProposalKind::CronJob, "first title", 100);
+        save_proposal(home.path(), &proposal).unwrap();
+        let first = sync_proposals_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            Some(ProposalStatus::Pending),
+        )
+        .unwrap();
+        proposal.title = "updated title".to_string();
+        save_proposal(home.path(), &proposal).unwrap();
+
+        let second = sync_proposals_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            Some(ProposalStatus::Pending),
+        )
+        .unwrap();
+
+        assert_eq!(second.target_paths, first.target_paths);
+        let body = std::fs::read_to_string(&second.target_paths[0]).unwrap();
+        assert!(body.contains("# Proposal — updated title"));
+        let view_dir = second.target_paths[0].parent().unwrap();
+        assert!(!std::fs::read_dir(view_dir).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".neoth-proposal-view-stage-")
+        }));
+    }
+
+    #[test]
     fn build_proposal_notification_dedup_key_includes_id() {
         let p = sample(ProposalKind::CronJob, "title", 100);
         let item = build_proposal_notification(&p);
@@ -685,6 +1373,76 @@ mod tests {
         assert!(e1);
         assert!(!e2, "duplicate proposal must not enqueue twice");
         assert_eq!(q.len(), 1);
+    }
+
+    #[test]
+    fn pending_retry_can_restore_a_missing_queue_notification() {
+        let home = tempfile::tempdir().unwrap();
+        let proposal = sample(ProposalKind::CronJob, "recover notification", 100);
+        save_proposal(home.path(), &proposal).unwrap();
+        let mut fresh_queue = ProactiveQueue::new();
+
+        let (returned, enqueued) =
+            stage_and_enqueue(home.path(), proposal.clone(), &mut fresh_queue).unwrap();
+
+        assert!(enqueued);
+        assert_eq!(fresh_queue.len(), 1);
+        assert_eq!(returned, proposal);
+    }
+
+    #[test]
+    fn stable_retry_preserves_terminal_verdict_and_does_not_reenqueue() {
+        let home = tempfile::tempdir().unwrap();
+        let mut first_queue = ProactiveQueue::new();
+        let proposal = sample(ProposalKind::Skill, "stable", 100);
+        stage_and_enqueue(home.path(), proposal.clone(), &mut first_queue).unwrap();
+        let approved = set_proposal_status(
+            home.path(),
+            &proposal.id,
+            ProposalStatus::Approved,
+            "ship it",
+        )
+        .unwrap();
+        let mut fresh_queue = ProactiveQueue::new();
+        let mut retry = proposal;
+        retry.generated_ts_unix = 999;
+        retry.rationale = "producer generated a newer explanation".to_string();
+
+        let (returned, enqueued) = stage_and_enqueue(home.path(), retry, &mut fresh_queue).unwrap();
+
+        assert!(!enqueued);
+        assert!(fresh_queue.is_empty());
+        assert_eq!(returned, approved);
+        assert_eq!(load_proposal(home.path(), &approved.id).unwrap(), approved);
+    }
+
+    #[test]
+    fn stable_id_collision_with_different_payload_fails_closed() {
+        let home = tempfile::tempdir().unwrap();
+        let mut queue = ProactiveQueue::new();
+        let proposal = sample(ProposalKind::CronJob, "original", 100);
+        stage_and_enqueue(home.path(), proposal.clone(), &mut queue).unwrap();
+        let mut collision = proposal.clone();
+        collision.title = "different".to_string();
+
+        let error = stage_and_enqueue(home.path(), collision, &mut queue).unwrap_err();
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert_eq!(load_proposal(home.path(), &proposal.id).unwrap(), proposal);
+    }
+
+    #[test]
+    fn proposal_store_uses_an_os_visible_mutation_lock() {
+        let home = tempfile::tempdir().unwrap();
+        let root = proposals_root(home.path(), true).unwrap().unwrap();
+        let _guard = lock_proposal_mutations(&root).unwrap();
+        let second = crate::util::locked_file::try_lock_file_once(
+            &root.display_path.join(PROPOSAL_MUTATION_LOCK_FILE),
+            "proposal mutation",
+        )
+        .unwrap();
+
+        assert!(second.is_none());
     }
 
     #[test]

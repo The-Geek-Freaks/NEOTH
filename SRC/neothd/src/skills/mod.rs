@@ -36,6 +36,7 @@ pub mod plan_attestation;
 pub mod registry;
 pub mod router;
 pub mod schema;
+pub(crate) mod store;
 pub mod teacher;
 pub mod test_harness;
 /// Round-3 v0.4 ARCH-07 — LOWKEY skill versioning + prompt-bundle

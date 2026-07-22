@@ -797,18 +797,27 @@ pub fn parse_hemispheres(json: &str) -> HemispheresSnapshot {
 /// One installed skill for the Skills panel.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SkillSummary {
+    /// Safe display id. Broken filesystem names may contain controls.
     pub id: String,
+    /// Exact CLI argument for repair/removal actions.
+    pub operation_id: String,
     pub description: String,
     pub enabled: bool,
     /// Trigger keywords joined with ", " for display.
     pub keywords: String,
     /// GOLD-ADAPT-AOS-01 — manifest `tags`; first tag = index domain group.
     pub tags: Vec<String>,
+    pub broken: bool,
+    pub error: String,
+    pub path: String,
+    pub origin: String,
+    pub repairable: bool,
 }
 
-/// Parse `neoth skills --list --output json` (a JSON array of SkillManifest).
-/// PURE + robust (malformed → empty). A skill missing `enabled` defaults to
-/// `true` (matching the daemon's `#[serde(default = "default_true")]`).
+/// Parse the tagged diagnostic `neoth skills --list --output json` contract.
+/// Production uses the stricter typed mapper in `main.rs`; this tolerant pure
+/// projection is retained for presentation tests and standalone fixtures.
+#[cfg(test)]
 pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
@@ -817,7 +826,30 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
         return Vec::new();
     };
     arr.iter()
-        .filter_map(|s| {
+        .filter_map(|row| {
+            let status = row.get("status")?.as_str()?;
+            if status == "broken" {
+                let id = row.get("id")?.as_str()?.to_string();
+                let error = diagnostic_skill_display_text(row.get("error")?.as_str()?, 512);
+                let path = diagnostic_skill_display_text(row.get("path")?.as_str()?, 512);
+                return Some(SkillSummary {
+                    repairable: valid_skill_operation_id(&id),
+                    operation_id: id.clone(),
+                    id: diagnostic_skill_display_text(&id, 128),
+                    description: String::new(),
+                    enabled: false,
+                    keywords: String::new(),
+                    tags: Vec::new(),
+                    broken: true,
+                    error,
+                    path,
+                    origin: "user".to_string(),
+                });
+            }
+            if status != "healthy" {
+                return None;
+            }
+            let s = row.get("manifest")?;
             let id = s.get("id")?.as_str()?.to_string();
             let description = s
                 .get("description")
@@ -846,13 +878,51 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
                 })
                 .unwrap_or_default();
             Some(SkillSummary {
+                repairable: false,
+                operation_id: id.clone(),
                 id,
                 description,
                 enabled,
                 keywords,
                 tags,
+                broken: false,
+                error: String::new(),
+                path: row
+                    .get("path")
+                    .and_then(|path| path.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                origin: row
+                    .get("origin")
+                    .and_then(|origin| origin.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
             })
         })
+        .collect()
+}
+
+#[cfg(test)]
+fn valid_skill_operation_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+}
+
+#[cfg(test)]
+fn diagnostic_skill_display_text(value: &str, max_chars: usize) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                '�'
+            } else {
+                character
+            }
+        })
+        .take(max_chars)
         .collect()
 }
 
@@ -864,11 +934,17 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillIndexRow {
     pub id: String,
+    pub operation_id: String,
     pub description: String,
     pub enabled: bool,
     pub keywords: String,
     pub tags: String,
     pub is_header: bool,
+    pub broken: bool,
+    pub error: String,
+    pub path: String,
+    pub origin: String,
+    pub repairable: bool,
 }
 
 /// Group skills by their first tag ("general" when untagged), alphabetical
@@ -882,16 +958,22 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
             || s.description.to_lowercase().contains(&needle)
             || s.keywords.to_lowercase().contains(&needle)
             || s.tags.iter().any(|t| t.to_lowercase().contains(&needle))
+            || s.error.to_lowercase().contains(&needle)
+            || s.path.to_lowercase().contains(&needle)
+            || s.origin.to_lowercase().contains(&needle)
     };
     let mut groups: std::collections::BTreeMap<String, Vec<&SkillSummary>> =
         std::collections::BTreeMap::new();
     for s in skills.iter().filter(|s| matches(s)) {
-        let domain = s
-            .tags
-            .first()
-            .map(|t| t.trim().to_lowercase())
-            .filter(|t| !t.is_empty())
-            .unwrap_or_else(|| "general".to_string());
+        let domain = if s.broken {
+            "broken".to_string()
+        } else {
+            s.tags
+                .first()
+                .map(|t| t.trim().to_lowercase())
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| "general".to_string())
+        };
         groups.entry(domain).or_default().push(s);
     }
     let mut out = Vec::new();
@@ -899,19 +981,31 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
         members.sort_by(|a, b| a.id.cmp(&b.id));
         out.push(SkillIndexRow {
             id: domain.to_uppercase(),
+            operation_id: String::new(),
             description: String::new(),
             enabled: true,
             keywords: String::new(),
             tags: String::new(),
             is_header: true,
+            broken: false,
+            error: String::new(),
+            path: String::new(),
+            origin: String::new(),
+            repairable: false,
         });
         out.extend(members.into_iter().map(|s| SkillIndexRow {
             id: s.id.clone(),
+            operation_id: s.operation_id.clone(),
             description: s.description.clone(),
             enabled: s.enabled,
             keywords: s.keywords.clone(),
             tags: s.tags.join(", "),
             is_header: false,
+            broken: s.broken,
+            error: s.error.clone(),
+            path: s.path.clone(),
+            origin: s.origin.clone(),
+            repairable: s.repairable,
         }));
     }
     out
@@ -6218,8 +6312,8 @@ mod tests {
     #[test]
     fn parse_skills_array_with_keywords() {
         let json = r#"[
-            {"id":"verification","description":"verify before done","trigger_keywords":["verify","check"],"enabled":true},
-            {"id":"research","description":"deep research","trigger_keywords":[]}
+            {"status":"healthy","manifest":{"id":"verification","description":"verify before done","trigger_keywords":["verify","check"],"enabled":true},"origin":"bundled","path":null},
+            {"status":"healthy","manifest":{"id":"research","description":"deep research","trigger_keywords":[]},"origin":"user","path":"/skills/research"}
         ]"#;
         let rows = parse_skills(json);
         assert_eq!(rows.len(), 2);
@@ -6228,24 +6322,57 @@ mod tests {
         assert!(rows[0].enabled);
         assert!(rows[1].enabled, "missing enabled defaults true");
         assert_eq!(rows[1].keywords, "");
+        assert_eq!(rows[0].origin, "bundled");
+        assert_eq!(rows[1].operation_id, "research");
+        assert!(!rows[1].repairable, "healthy rows do not need repair");
     }
 
     // ── GOLD-ADAPT-AOS-01 — tags + grouped index ───────────────────────
     #[test]
     fn parse_skills_reads_tags() {
-        let rows = parse_skills(r#"[{"id":"a","tags":["security","net"]},{"id":"b"}]"#);
+        let rows = parse_skills(
+            r#"[
+                {"status":"healthy","manifest":{"id":"a","description":"A","tags":["security","net"]},"origin":"bundled","path":null},
+                {"status":"healthy","manifest":{"id":"b","description":"B"},"origin":"bundled","path":null}
+            ]"#,
+        );
         assert_eq!(rows[0].tags, vec!["security", "net"]);
         assert!(rows[1].tags.is_empty());
+    }
+
+    #[test]
+    fn parse_skills_keeps_broken_rows_removable_and_only_valid_ids_repairable() {
+        let rows = parse_skills(
+            r#"[
+                {"status":"broken","id":"broken-skill","error":"missing skill.yaml","path":"/skills/broken-skill"},
+                {"status":"broken","id":"bad\nskill","error":"bad\nmanifest","path":"/skills/bad\nskill"}
+            ]"#,
+        );
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].broken);
+        assert_eq!(rows[0].operation_id, "broken-skill");
+        assert!(rows[0].repairable);
+        assert_eq!(rows[0].origin, "user");
+        assert_eq!(rows[1].operation_id, "bad\nskill");
+        assert_eq!(rows[1].id, "bad�skill");
+        assert_eq!(rows[1].error, "bad�manifest");
+        assert!(!rows[1].repairable);
     }
 
     #[test]
     fn group_skill_rows_groups_by_first_tag_sorted_with_headers() {
         let mk = |id: &str, tags: &[&str], desc: &str| SkillSummary {
             id: id.into(),
+            operation_id: id.into(),
             description: desc.into(),
             enabled: true,
             keywords: String::new(),
             tags: tags.iter().map(|s| s.to_string()).collect(),
+            broken: false,
+            error: String::new(),
+            path: format!("/skills/{id}"),
+            origin: "user".to_string(),
+            repairable: false,
         };
         let skills = vec![
             mk("zeta", &["security"], ""),
@@ -6286,7 +6413,12 @@ mod tests {
             "object, not array -> empty"
         );
         // id-less entry skipped.
-        let rows = parse_skills(r#"[{"description":"no id"},{"id":"ok"}]"#);
+        let rows = parse_skills(
+            r#"[
+                {"status":"healthy","manifest":{"description":"no id"},"origin":"bundled","path":null},
+                {"status":"healthy","manifest":{"id":"ok","description":"OK"},"origin":"bundled","path":null}
+            ]"#,
+        );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "ok");
     }

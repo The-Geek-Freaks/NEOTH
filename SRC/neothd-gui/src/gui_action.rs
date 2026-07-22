@@ -873,21 +873,192 @@ impl PluginToggleAck {
 pub struct SkillUninstallAck {
     pub id: String,
     pub removed: bool,
+    pub removed_generation_sha256: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedSkillUninstall {
+    pub removed: bool,
+    pub removed_generation_sha256: String,
+    pub warnings: Vec<String>,
+}
+
+impl VerifiedSkillUninstall {
+    pub fn warning_detail(&self) -> Option<String> {
+        skill_warning_detail(&self.warnings)
+    }
 }
 
 impl SkillUninstallAck {
-    /// Confirm the acknowledged id matches; return whether a skill was actually
-    /// removed. `neoth skills --uninstall` is idempotent, so `removed: false`
-    /// (already absent) is a benign success — the desired end state holds — not
-    /// a failure. Only an id mismatch (wrong skill acknowledged) is an error.
-    pub fn verify(&self, expected_id: &str) -> Result<bool, String> {
-        if !self.id.eq_ignore_ascii_case(expected_id) {
+    /// Confirm that the GUI removed the exact generation it inspected before
+    /// confirmation. Direct CLI uninstall remains idempotent, but a GUI-bound
+    /// operation cannot accept `removed: false` or an unbound generation.
+    pub fn verify(
+        &self,
+        expected_id: &str,
+        expected_generation_sha256: &str,
+    ) -> Result<VerifiedSkillUninstall, String> {
+        if self.id != expected_id {
             return Err(format!(
                 "skill uninstall acknowledged id `{}`, expected `{expected_id}`",
                 self.id
             ));
         }
-        Ok(self.removed)
+        if !valid_sha256(expected_generation_sha256)
+            || self.removed_generation_sha256.as_deref() != Some(expected_generation_sha256)
+            || !self.removed
+        {
+            return Err(
+                "skill uninstall acknowledgement does not match the bound destination generation"
+                    .to_string(),
+            );
+        }
+        Ok(VerifiedSkillUninstall {
+            removed: self.removed,
+            removed_generation_sha256: expected_generation_sha256.to_string(),
+            warnings: self.warnings.clone(),
+        })
+    }
+}
+
+/// Exact read-only `neoth skills --inspect-target <id> --output json`
+/// acknowledgement. It binds both healthy directories and broken no-follow
+/// entries without granting activation authority.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillTargetPreflightAck {
+    pub id: String,
+    pub target_generation_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSkillTargetPreflight {
+    pub id: String,
+    pub target_generation_sha256: Option<String>,
+}
+
+impl SkillTargetPreflightAck {
+    pub fn verify_target(
+        &self,
+        target_skills_dir: &Path,
+        expected_id: &str,
+    ) -> Result<VerifiedSkillTargetPreflight, String> {
+        if self.id != expected_id {
+            return Err(format!(
+                "skill target preflight acknowledged id `{}`, expected `{expected_id}`",
+                self.id
+            ));
+        }
+        if self
+            .target_generation_sha256
+            .as_deref()
+            .is_some_and(|digest| !valid_sha256(digest))
+        {
+            return Err("skill target preflight generation is not lowercase SHA-256".to_string());
+        }
+        let readback =
+            neothd::skills::installer::inspect_installed_target(target_skills_dir, expected_id)
+                .map_err(|error| format!("could not verify skill target preflight: {error:#}"))?;
+        if readback.target_generation_sha256 != self.target_generation_sha256 {
+            return Err(
+                "skill destination generation changed before confirmation; inspect it again"
+                    .to_string(),
+            );
+        }
+        Ok(VerifiedSkillTargetPreflight {
+            id: self.id.clone(),
+            target_generation_sha256: self.target_generation_sha256.clone(),
+        })
+    }
+}
+
+/// Exact read-only `neoth skills --inspect-install <dir> --output json`
+/// acknowledgement. The GUI verifies the source bytes again before asking for
+/// replacement consent.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillInstallPreflightAck {
+    pub id: String,
+    pub source_manifest_sha256: String,
+    pub source_generation_sha256: String,
+    pub replacing_existing: bool,
+    pub target_generation_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSkillInstallPreflight {
+    pub id: String,
+    pub source_manifest_sha256: String,
+    pub source_generation_sha256: String,
+    pub replacing_existing: bool,
+    pub target_generation_sha256: Option<String>,
+}
+
+impl SkillInstallPreflightAck {
+    pub fn verify_source(
+        &self,
+        source_dir: &Path,
+        target_skills_dir: &Path,
+    ) -> Result<VerifiedSkillInstallPreflight, String> {
+        if self.id.is_empty()
+            || self.id.len() > 64
+            || !self
+                .id
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+        {
+            return Err("skill install preflight contains an invalid id".to_string());
+        }
+        if !valid_sha256(&self.source_manifest_sha256) {
+            return Err("skill install preflight hash is not lowercase SHA-256".to_string());
+        }
+        if !valid_sha256(&self.source_generation_sha256) {
+            return Err("skill install preflight generation is not lowercase SHA-256".to_string());
+        }
+        if self
+            .target_generation_sha256
+            .as_deref()
+            .is_some_and(|digest| !valid_sha256(digest))
+        {
+            return Err(
+                "skill install preflight target generation is not lowercase SHA-256".to_string(),
+            );
+        }
+        let readback =
+            neothd::skills::installer::inspect_local_install(source_dir, target_skills_dir)
+                .map_err(|error| format!("could not verify skill install preflight: {error:#}"))?;
+        if readback.id != self.id {
+            return Err(format!(
+                "skill install preflight acknowledged id `{}`, but the source reports `{}`",
+                self.id, readback.id
+            ));
+        }
+        if readback.source_manifest_sha256 != self.source_manifest_sha256 {
+            return Err("skill install preflight manifest changed before confirmation".to_string());
+        }
+        if readback.source_generation_sha256 != self.source_generation_sha256 {
+            return Err("skill install preflight package changed before confirmation".to_string());
+        }
+        if readback.replacing_existing != self.replacing_existing {
+            return Err(
+                "skill install replacement state changed before confirmation; inspect it again"
+                    .to_string(),
+            );
+        }
+        if readback.target_generation_sha256 != self.target_generation_sha256 {
+            return Err(
+                "skill install destination generation changed before confirmation; inspect it again"
+                    .to_string(),
+            );
+        }
+        Ok(VerifiedSkillInstallPreflight {
+            id: self.id.clone(),
+            source_manifest_sha256: self.source_manifest_sha256.clone(),
+            source_generation_sha256: self.source_generation_sha256.clone(),
+            replacing_existing: self.replacing_existing,
+            target_generation_sha256: self.target_generation_sha256.clone(),
+        })
     }
 }
 
@@ -898,26 +1069,151 @@ pub struct SkillInstallAck {
     pub id: String,
     pub installed_at: String,
     pub replaced_existing: bool,
+    pub source_manifest_sha256: String,
+    pub source_generation_sha256: String,
+    pub replaced_generation_sha256: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedSkillInstall {
+    pub id: String,
+    pub replaced_existing: bool,
+    pub source_manifest_sha256: String,
+    pub source_generation_sha256: String,
+    pub replaced_generation_sha256: Option<String>,
+    pub warnings: Vec<String>,
+}
+
+fn skill_warning_detail(warnings: &[String]) -> Option<String> {
+    if warnings.is_empty() {
+        return None;
+    }
+    let mut visible = warnings
+        .iter()
+        .take(3)
+        .map(|warning| {
+            warning
+                .chars()
+                .map(|ch| if ch.is_control() { ' ' } else { ch })
+                .take(MAX_DIAGNOSTIC_CHARS)
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    if warnings.len() > visible.len() {
+        visible.push(format!(
+            "{} more warning(s)",
+            warnings.len() - visible.len()
+        ));
+    }
+    Some(visible.join("; "))
+}
+
+impl VerifiedSkillInstall {
+    /// Bounded, single-line detail for a toast/status line. The complete list
+    /// remains available in `warnings`; this projection prevents an OS error
+    /// from flooding the GUI while never hiding that further warnings exist.
+    pub fn warning_detail(&self) -> Option<String> {
+        skill_warning_detail(&self.warnings)
+    }
 }
 
 impl SkillInstallAck {
-    /// The GUI cannot predict the id (the CLI derives it from `skill.yaml`), so
-    /// the readback is that the acknowledged install directory is real on disk.
-    /// Returns `(id, replaced_existing)`.
-    pub fn verify_and_read_back(&self) -> Result<(&str, bool), String> {
-        if self.id.trim().is_empty() {
-            return Err("skill install acknowledgement is missing its id".to_string());
-        }
-        let path = self.installed_at.trim();
-        if path.is_empty() {
-            return Err("skill install acknowledgement is missing its install path".to_string());
-        }
-        if !Path::new(path).is_dir() {
+    /// Verify the final receipt against the exact preflight generation and
+    /// read the committed manifest back from its canonical install directory.
+    pub fn verify_and_read_back(
+        &self,
+        expected_id: &str,
+        expected_manifest_sha256: &str,
+        expected_generation_sha256: &str,
+        expected_replaced_generation_sha256: Option<&str>,
+        expected_install_dir: &Path,
+        replacement_authorized: bool,
+    ) -> Result<VerifiedSkillInstall, String> {
+        if self.id != expected_id {
             return Err(format!(
-                "skill install acknowledged `{path}`, but it is not a directory on disk"
+                "skill install acknowledged id `{}`, expected `{expected_id}`",
+                self.id
             ));
         }
-        Ok((self.id.as_str(), self.replaced_existing))
+        if !valid_sha256(&self.source_manifest_sha256)
+            || self.source_manifest_sha256 != expected_manifest_sha256
+        {
+            return Err(
+                "skill install acknowledgement does not match the preflight manifest generation"
+                    .to_string(),
+            );
+        }
+        if !valid_sha256(&self.source_generation_sha256)
+            || self.source_generation_sha256 != expected_generation_sha256
+        {
+            return Err(
+                "skill install acknowledgement does not match the preflight package generation"
+                    .to_string(),
+            );
+        }
+        if self.replaced_generation_sha256.as_deref() != expected_replaced_generation_sha256
+            || self
+                .replaced_generation_sha256
+                .as_deref()
+                .is_some_and(|digest| !valid_sha256(digest))
+        {
+            return Err(
+                "skill install acknowledgement does not match the preflight destination generation"
+                    .to_string(),
+            );
+        }
+        if self.replaced_existing != expected_replaced_generation_sha256.is_some() {
+            return Err(
+                "skill install replacement bit conflicts with the bound destination generation"
+                    .to_string(),
+            );
+        }
+        if self.replaced_existing && !replacement_authorized {
+            return Err(format!(
+                "skill install acknowledged replacement of `{}`, but the GUI did not authorize replacement",
+                self.id
+            ));
+        }
+        let path = self.installed_at.trim();
+        require_exact_path(path, expected_install_dir)?;
+        let installed_path = Path::new(path);
+        let metadata = std::fs::symlink_metadata(installed_path).map_err(|error| {
+            format!("could not inspect acknowledged skill directory `{path}`: {error}")
+        })?;
+        if !metadata.file_type().is_dir() {
+            return Err(format!(
+                "skill install acknowledged `{path}`, but it is not a real directory on disk"
+            ));
+        }
+        let target_skills_dir = expected_install_dir.parent().ok_or_else(|| {
+            format!(
+                "expected skill install path `{}` has no skills root",
+                expected_install_dir.display()
+            )
+        })?;
+        let readback =
+            neothd::skills::installer::inspect_current_install(target_skills_dir, expected_id)
+                .map_err(|error| {
+                    format!("could not read back installed skill generation: {error:#}")
+                })?;
+        if readback.id != self.id
+            || readback.manifest_sha256 != expected_manifest_sha256
+            || readback.generation_sha256 != expected_generation_sha256
+        {
+            return Err(
+                "installed skill generation does not match the verified install receipt"
+                    .to_string(),
+            );
+        }
+        Ok(VerifiedSkillInstall {
+            id: self.id.clone(),
+            replaced_existing: self.replaced_existing,
+            source_manifest_sha256: self.source_manifest_sha256.clone(),
+            source_generation_sha256: self.source_generation_sha256.clone(),
+            replaced_generation_sha256: self.replaced_generation_sha256.clone(),
+            warnings: self.warnings.clone(),
+        })
     }
 }
 
@@ -927,28 +1223,101 @@ impl SkillInstallAck {
 pub struct SkillCreateAck {
     pub id: String,
     pub path: String,
+    pub manifest_sha256: String,
+    pub target_generation_sha256: String,
+    pub replaced_generation_sha256: Option<String>,
+    pub replaced_existing: bool,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedSkillCreate {
+    pub id: String,
+    pub path: String,
+    pub target_generation_sha256: String,
+    pub replaced_generation_sha256: Option<String>,
+    pub replaced_existing: bool,
+    pub warnings: Vec<String>,
+}
+
+impl VerifiedSkillCreate {
+    pub fn warning_detail(&self) -> Option<String> {
+        skill_warning_detail(&self.warnings)
+    }
 }
 
 impl SkillCreateAck {
-    /// Confirm the acknowledged id matches the requested id and that the created
-    /// skill exists on disk (readback). Returns the created path.
-    pub fn verify_and_read_back(&self, expected_id: &str) -> Result<&str, String> {
-        if !self.id.eq_ignore_ascii_case(expected_id) {
+    /// Confirm id, absolute manifest path, on-disk manifest id, and replacement
+    /// authorization. A non-force request must never accept a replacement bit.
+    pub fn verify_and_read_back(
+        &self,
+        expected_id: &str,
+        expected_manifest_sha256: &str,
+        expected_manifest_path: &Path,
+        expected_replaced_generation_sha256: Option<&str>,
+    ) -> Result<VerifiedSkillCreate, String> {
+        if self.id != expected_id {
             return Err(format!(
                 "skill create acknowledged id `{}`, expected `{expected_id}`",
                 self.id
             ));
         }
-        let path = self.path.trim();
-        if path.is_empty() {
-            return Err("skill create acknowledgement is missing its path".to_string());
+        if self.replaced_generation_sha256.as_deref() != expected_replaced_generation_sha256
+            || self
+                .replaced_generation_sha256
+                .as_deref()
+                .is_some_and(|digest| !valid_sha256(digest))
+            || self.replaced_existing != expected_replaced_generation_sha256.is_some()
+        {
+            return Err(
+                "skill create acknowledgement does not match the bound destination generation"
+                    .to_string(),
+            );
         }
-        if !Path::new(path).exists() {
-            return Err(format!(
-                "skill create acknowledged `{path}`, but nothing is on disk there"
-            ));
+        if !valid_sha256(&self.manifest_sha256) || self.manifest_sha256 != expected_manifest_sha256
+        {
+            return Err(
+                "skill create acknowledgement does not match the requested manifest generation"
+                    .to_string(),
+            );
         }
-        Ok(path)
+        require_exact_path(&self.path, expected_manifest_path)?;
+        if !valid_sha256(&self.target_generation_sha256) {
+            return Err("skill create target generation is not lowercase SHA-256".to_string());
+        }
+        let expected_skill_dir = expected_manifest_path.parent().ok_or_else(|| {
+            format!(
+                "expected skill manifest path `{}` has no skill directory",
+                expected_manifest_path.display()
+            )
+        })?;
+        let expected_skills_root = expected_skill_dir.parent().ok_or_else(|| {
+            format!(
+                "expected skill manifest path `{}` has no skills root",
+                expected_manifest_path.display()
+            )
+        })?;
+        let readback = neothd::skills::installer::inspect_current_install(
+            expected_skills_root,
+            expected_id,
+        )
+        .map_err(|error| format!("could not read back created skill generation: {error:#}"))?;
+        if readback.id != self.id
+            || readback.manifest_sha256 != expected_manifest_sha256
+            || readback.generation_sha256 != self.target_generation_sha256
+        {
+            return Err(
+                "created skill manifest does not match the exact requested generation".to_string(),
+            );
+        }
+        Ok(VerifiedSkillCreate {
+            id: self.id.clone(),
+            path: self.path.clone(),
+            target_generation_sha256: self.target_generation_sha256.clone(),
+            replaced_generation_sha256: self.replaced_generation_sha256.clone(),
+            replaced_existing: self.replaced_existing,
+            warnings: self.warnings.clone(),
+        })
     }
 }
 
@@ -2579,7 +2948,7 @@ fn is_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     hex::encode(sha2::Sha256::digest(bytes))
 }
@@ -3710,24 +4079,305 @@ mod tests {
         assert!(ack.verify("other", "enabled").is_err()); // wrong id
     }
 
+    fn write_test_skill(path: &Path, id: &str, asset: &[u8]) {
+        std::fs::create_dir_all(path).unwrap();
+        std::fs::write(
+            path.join("skill.yaml"),
+            format!("id: {id}\ndescription: {id} test skill\n"),
+        )
+        .unwrap();
+        std::fs::write(path.join("asset.txt"), asset).unwrap();
+    }
+
+    fn install_preflight_ack(
+        preflight: &neothd::skills::installer::InstallPreflight,
+    ) -> SkillInstallPreflightAck {
+        serde_json::from_value(serde_json::json!({
+            "id": preflight.id,
+            "source_manifest_sha256": preflight.source_manifest_sha256,
+            "source_generation_sha256": preflight.source_generation_sha256,
+            "replacing_existing": preflight.replacing_existing,
+            "target_generation_sha256": preflight.target_generation_sha256,
+        }))
+        .unwrap()
+    }
+
     #[test]
-    fn skill_install_ack_reads_back_the_install_dir() {
+    fn skill_install_preflight_verifies_manifest_generation_and_replacement_state() {
         let dir = tempfile::tempdir().unwrap();
-        let installed = dir.path().join("my-skill");
-        std::fs::create_dir(&installed).unwrap();
-        let ack: SkillInstallAck = serde_json::from_str(&format!(
-            r#"{{"id":"my-skill","installed_at":{:?},"replaced_existing":true}}"#,
-            installed.to_str().unwrap()
-        ))
+        let source = dir.path().join("source");
+        let target = dir.path().join("skills");
+        write_test_skill(&source, "my-skill", b"generation one");
+
+        let new_preflight =
+            neothd::skills::installer::inspect_local_install(&source, &target).unwrap();
+        assert!(!new_preflight.replacing_existing);
+        let new_ack = install_preflight_ack(&new_preflight);
+        let verified = new_ack.verify_source(&source, &target).unwrap();
+        assert_eq!(verified.id, "my-skill");
+        assert!(!verified.replacing_existing);
+
+        write_test_skill(&target.join("my-skill"), "my-skill", b"installed");
+        let replacement_preflight =
+            neothd::skills::installer::inspect_local_install(&source, &target).unwrap();
+        assert!(replacement_preflight.replacing_existing);
+        let replacement_ack = install_preflight_ack(&replacement_preflight);
+        assert!(
+            replacement_ack
+                .verify_source(&source, &target)
+                .unwrap()
+                .replacing_existing
+        );
+
+        let stale_state: SkillInstallPreflightAck = serde_json::from_value(serde_json::json!({
+            "id": replacement_preflight.id,
+            "source_manifest_sha256": replacement_preflight.source_manifest_sha256,
+            "source_generation_sha256": replacement_preflight.source_generation_sha256,
+            "replacing_existing": false,
+            "target_generation_sha256": replacement_preflight.target_generation_sha256,
+        }))
         .unwrap();
-        assert_eq!(ack.verify_and_read_back().unwrap(), ("my-skill", true));
-        // Missing directory → rejected.
-        let ghost: SkillInstallAck = serde_json::from_str(&format!(
-            r#"{{"id":"x","installed_at":{:?},"replaced_existing":false}}"#,
-            dir.path().join("gone").to_str().unwrap()
-        ))
+        assert!(stale_state.verify_source(&source, &target).is_err());
+
+        std::fs::write(source.join("asset.txt"), b"generation two").unwrap();
+        assert!(replacement_ack.verify_source(&source, &target).is_err());
+    }
+
+    #[test]
+    fn skill_install_preflight_wire_contract_requires_both_hashes() {
+        let hash = "a".repeat(64);
+        assert!(
+            serde_json::from_value::<SkillInstallPreflightAck>(serde_json::json!({
+                "id": "my-skill",
+                "source_manifest_sha256": hash,
+                "replacing_existing": false,
+                "target_generation_sha256": null,
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<SkillInstallPreflightAck>(serde_json::json!({
+                "id": "my-skill",
+                "source_manifest_sha256": "a".repeat(64),
+                "source_generation_sha256": "b".repeat(64),
+                "replacing_existing": false,
+                "target_generation_sha256": null,
+                "surprise": true,
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn skill_target_preflight_binds_absent_healthy_and_broken_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let absent: SkillTargetPreflightAck = serde_json::from_value(serde_json::json!({
+            "id": "alpha",
+            "target_generation_sha256": null,
+        }))
         .unwrap();
-        assert!(ghost.verify_and_read_back().is_err());
+        assert!(absent.verify_target(&skills, "alpha").is_ok());
+
+        let healthy = skills.join("alpha");
+        write_test_skill(&healthy, "alpha", b"one");
+        let inspected =
+            neothd::skills::installer::inspect_installed_target(&skills, "alpha").unwrap();
+        let healthy_ack: SkillTargetPreflightAck = serde_json::from_value(serde_json::json!({
+            "id": "alpha",
+            "target_generation_sha256": inspected.target_generation_sha256,
+        }))
+        .unwrap();
+        assert!(healthy_ack.verify_target(&skills, "alpha").is_ok());
+        std::fs::write(healthy.join("asset.txt"), b"two").unwrap();
+        assert!(healthy_ack.verify_target(&skills, "alpha").is_err());
+
+        let broken = skills.join("broken");
+        std::fs::write(&broken, b"broken one").unwrap();
+        let inspected =
+            neothd::skills::installer::inspect_installed_target(&skills, "broken").unwrap();
+        let broken_ack: SkillTargetPreflightAck = serde_json::from_value(serde_json::json!({
+            "id": "broken",
+            "target_generation_sha256": inspected.target_generation_sha256,
+        }))
+        .unwrap();
+        assert!(broken_ack.verify_target(&skills, "broken").is_ok());
+        std::fs::write(&broken, b"broken two").unwrap();
+        assert!(broken_ack.verify_target(&skills, "broken").is_err());
+    }
+
+    #[test]
+    fn skill_install_ack_reads_back_exact_path_id_and_generation() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let installed = skills.join("my-skill");
+        write_test_skill(&installed, "my-skill", b"installed asset");
+        let generation =
+            neothd::skills::installer::inspect_local_install(&installed, &skills).unwrap();
+        let ack: SkillInstallAck = serde_json::from_value(serde_json::json!({
+            "id": "my-skill",
+            "installed_at": installed.to_string_lossy(),
+            "replaced_existing": false,
+            "source_manifest_sha256": generation.source_manifest_sha256,
+            "source_generation_sha256": generation.source_generation_sha256,
+            "replaced_generation_sha256": null,
+            "warnings": [],
+        }))
+        .unwrap();
+        let verified = ack
+            .verify_and_read_back(
+                "my-skill",
+                &generation.source_manifest_sha256,
+                &generation.source_generation_sha256,
+                None,
+                &installed,
+                false,
+            )
+            .unwrap();
+        assert_eq!(verified.id, "my-skill");
+        assert!(!verified.replaced_existing);
+        assert_eq!(
+            verified.source_manifest_sha256,
+            generation.source_manifest_sha256
+        );
+        assert_eq!(
+            verified.source_generation_sha256,
+            generation.source_generation_sha256
+        );
+
+        let wrong_path = dir.path().join("other");
+        assert!(
+            ack.verify_and_read_back(
+                "my-skill",
+                &generation.source_manifest_sha256,
+                &generation.source_generation_sha256,
+                None,
+                &wrong_path,
+                false,
+            )
+            .is_err()
+        );
+
+        std::fs::write(installed.join("asset.txt"), b"tampered after receipt").unwrap();
+        assert!(
+            ack.verify_and_read_back(
+                "my-skill",
+                &generation.source_manifest_sha256,
+                &generation.source_generation_sha256,
+                None,
+                &installed,
+                false,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn skill_install_readback_rejects_an_old_tree_when_another_generation_is_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let installed = skills.join("my-skill");
+        write_test_skill(&installed, "my-skill", b"old live generation");
+        let generation =
+            neothd::skills::installer::inspect_current_install(&skills, "my-skill").unwrap();
+        let ack: SkillInstallAck = serde_json::from_value(serde_json::json!({
+            "id": "my-skill",
+            "installed_at": installed.to_string_lossy(),
+            "replaced_existing": false,
+            "source_manifest_sha256": generation.manifest_sha256,
+            "source_generation_sha256": generation.generation_sha256,
+            "replaced_generation_sha256": null,
+            "warnings": [],
+        }))
+        .unwrap();
+
+        std::fs::rename(&installed, skills.join("old-opened-source")).unwrap();
+        write_test_skill(&installed, "my-skill", b"different live generation");
+        assert!(
+            ack.verify_and_read_back(
+                "my-skill",
+                &generation.manifest_sha256,
+                &generation.generation_sha256,
+                None,
+                &installed,
+                false,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn skill_install_ack_requires_replacement_authorization_and_surfaces_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        let installed = skills.join("my-skill");
+        write_test_skill(&installed, "my-skill", b"installed asset");
+        let generation =
+            neothd::skills::installer::inspect_local_install(&installed, &skills).unwrap();
+        let replaced_generation = "c".repeat(64);
+        let ack: SkillInstallAck = serde_json::from_value(serde_json::json!({
+            "id": "my-skill",
+            "installed_at": installed.to_string_lossy(),
+            "replaced_existing": true,
+            "source_manifest_sha256": generation.source_manifest_sha256,
+            "source_generation_sha256": generation.source_generation_sha256,
+            "replaced_generation_sha256": replaced_generation,
+            "warnings": ["old backup cleanup failed"],
+        }))
+        .unwrap();
+
+        assert!(
+            ack.verify_and_read_back(
+                "my-skill",
+                &generation.source_manifest_sha256,
+                &generation.source_generation_sha256,
+                Some(&replaced_generation),
+                &installed,
+                false,
+            )
+            .is_err()
+        );
+        let verified = ack
+            .verify_and_read_back(
+                "my-skill",
+                &generation.source_manifest_sha256,
+                &generation.source_generation_sha256,
+                Some(&replaced_generation),
+                &installed,
+                true,
+            )
+            .unwrap();
+        assert_eq!(
+            verified.warning_detail().as_deref(),
+            Some("old backup cleanup failed")
+        );
+    }
+
+    #[test]
+    fn skill_install_ack_keeps_other_wire_fields_strict() {
+        let error = serde_json::from_value::<SkillInstallAck>(serde_json::json!({
+            "id": "my-skill",
+            "installed_at": "my-skill",
+            "replaced_existing": false,
+            "source_manifest_sha256": "a".repeat(64),
+            "source_generation_sha256": "b".repeat(64),
+            "warnings": [],
+            "surprise": true,
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `surprise`"));
+        assert!(
+            serde_json::from_value::<SkillInstallAck>(serde_json::json!({
+                "id": "my-skill",
+                "installed_at": "my-skill",
+                "replaced_existing": false,
+                "source_manifest_sha256": "a".repeat(64),
+                "source_generation_sha256": "b".repeat(64),
+            }))
+            .is_err(),
+            "warnings is part of the exact install receipt"
+        );
     }
 
     #[test]
@@ -3737,20 +4387,143 @@ mod tests {
         // directory — mirror that so the readback test matches the real artifact.
         let created = dir.path().join("brand-new").join("skill.yaml");
         std::fs::create_dir_all(created.parent().unwrap()).unwrap();
-        std::fs::write(&created, b"id: brand-new\n").unwrap();
-        let ack: SkillCreateAck = serde_json::from_str(&format!(
-            r#"{{"id":"brand-new","path":{:?}}}"#,
-            created.to_str().unwrap()
-        ))
+        let manifest = b"id: brand-new\ndescription: Brand new skill\n";
+        let digest = sha256_hex(manifest);
+        std::fs::write(&created, manifest).unwrap();
+        let live =
+            neothd::skills::installer::inspect_current_install(dir.path(), "brand-new").unwrap();
+        let ack: SkillCreateAck = serde_json::from_value(serde_json::json!({
+            "id": "brand-new",
+            "path": created.to_string_lossy(),
+            "manifest_sha256": digest,
+            "target_generation_sha256": live.generation_sha256,
+            "replaced_generation_sha256": null,
+            "replaced_existing": false,
+            "warnings": [],
+        }))
         .unwrap();
-        assert!(ack.verify_and_read_back("Brand-New").is_ok()); // case-insensitive
-        assert!(ack.verify_and_read_back("other").is_err()); // wrong id
-        let ghost: SkillCreateAck = serde_json::from_str(&format!(
-            r#"{{"id":"g","path":{:?}}}"#,
-            dir.path().join("gone").to_str().unwrap()
-        ))
+        let verified = ack
+            .verify_and_read_back("brand-new", &digest, &created, None)
+            .unwrap();
+        assert_eq!(verified.id, "brand-new");
+        assert_eq!(verified.path, created.to_string_lossy().to_string());
+        assert!(!verified.replaced_existing);
+        assert!(verified.warnings.is_empty());
+        assert!(
+            ack.verify_and_read_back("Brand-New", &digest, &created, None)
+                .is_err()
+        );
+        assert!(
+            ack.verify_and_read_back("other", &digest, &created, None)
+                .is_err()
+        );
+        let ghost: SkillCreateAck = serde_json::from_value(serde_json::json!({
+            "id": "g",
+            "path": dir.path().join("gone").to_string_lossy(),
+            "manifest_sha256": "0".repeat(64),
+            "target_generation_sha256": "1".repeat(64),
+            "replaced_generation_sha256": null,
+            "replaced_existing": false,
+            "warnings": [],
+        }))
         .unwrap();
-        assert!(ghost.verify_and_read_back("g").is_err()); // not on disk
+        assert!(
+            ghost
+                .verify_and_read_back(
+                    "g",
+                    &"0".repeat(64),
+                    &dir.path().join("g").join("skill.yaml"),
+                    None,
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn skill_create_ack_requires_explicit_replacement_authorization() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = dir.path().join("existing").join("skill.yaml");
+        std::fs::create_dir_all(created.parent().unwrap()).unwrap();
+        let manifest = b"id: existing\ndescription: Existing skill\n";
+        let digest = sha256_hex(manifest);
+        std::fs::write(&created, manifest).unwrap();
+        let live =
+            neothd::skills::installer::inspect_current_install(dir.path(), "existing").unwrap();
+        let replaced = "c".repeat(64);
+        let ack: SkillCreateAck = serde_json::from_value(serde_json::json!({
+            "id": "existing",
+            "path": created.to_string_lossy(),
+            "manifest_sha256": digest,
+            "target_generation_sha256": live.generation_sha256,
+            "replaced_generation_sha256": replaced,
+            "replaced_existing": true,
+            "warnings": ["directory sync warning"],
+        }))
+        .unwrap();
+
+        assert!(
+            ack.verify_and_read_back("existing", &digest, &created, None)
+                .is_err()
+        );
+        let verified = ack
+            .verify_and_read_back("existing", &digest, &created, Some(&replaced))
+            .unwrap();
+        assert!(verified.replaced_existing);
+        assert_eq!(
+            verified.warning_detail().as_deref(),
+            Some("directory sync warning")
+        );
+    }
+
+    #[test]
+    fn skill_create_ack_rejects_path_or_manifest_id_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let wrong_dir = dir.path().join("other").join("skill.yaml");
+        std::fs::create_dir_all(wrong_dir.parent().unwrap()).unwrap();
+        let wrong_path_manifest = b"id: expected\ndescription: Wrong directory\n";
+        let wrong_path_digest = sha256_hex(wrong_path_manifest);
+        std::fs::write(&wrong_dir, wrong_path_manifest).unwrap();
+        let wrong_path: SkillCreateAck = serde_json::from_value(serde_json::json!({
+            "id": "expected",
+            "path": wrong_dir.to_string_lossy(),
+            "manifest_sha256": wrong_path_digest,
+            "target_generation_sha256": "a".repeat(64),
+            "replaced_generation_sha256": null,
+            "replaced_existing": false,
+            "warnings": [],
+        }))
+        .unwrap();
+        assert!(
+            wrong_path
+                .verify_and_read_back(
+                    "expected",
+                    &wrong_path_digest,
+                    &dir.path().join("expected").join("skill.yaml"),
+                    None,
+                )
+                .is_err()
+        );
+
+        let expected = dir.path().join("expected").join("skill.yaml");
+        std::fs::create_dir_all(expected.parent().unwrap()).unwrap();
+        let wrong_manifest_body = b"id: other\ndescription: Wrong manifest\n";
+        let wrong_manifest_digest = sha256_hex(wrong_manifest_body);
+        std::fs::write(&expected, wrong_manifest_body).unwrap();
+        let wrong_manifest: SkillCreateAck = serde_json::from_value(serde_json::json!({
+            "id": "expected",
+            "path": expected.to_string_lossy(),
+            "manifest_sha256": wrong_manifest_digest,
+            "target_generation_sha256": "b".repeat(64),
+            "replaced_generation_sha256": null,
+            "replaced_existing": false,
+            "warnings": [],
+        }))
+        .unwrap();
+        assert!(
+            wrong_manifest
+                .verify_and_read_back("expected", &wrong_manifest_digest, &expected, None)
+                .is_err()
+        );
     }
 
     #[test]
@@ -3827,14 +4600,32 @@ mod tests {
 
     #[test]
     fn skill_uninstall_ack_reports_removal_and_rejects_wrong_id() {
-        let removed: SkillUninstallAck =
-            serde_json::from_str(r#"{"id":"gone","removed":true}"#).unwrap();
-        assert_eq!(removed.verify("gone"), Ok(true));
-        // Idempotent no-op (already absent) is a benign success, not an error.
-        let noop: SkillUninstallAck =
-            serde_json::from_str(r#"{"id":"gone","removed":false}"#).unwrap();
-        assert_eq!(noop.verify("gone"), Ok(false));
-        assert!(removed.verify("other").is_err()); // wrong id
+        let generation = "a".repeat(64);
+        let removed: SkillUninstallAck = serde_json::from_value(serde_json::json!({
+            "id": "gone",
+            "removed": true,
+            "removed_generation_sha256": generation,
+            "warnings": ["cleanup pending"],
+        }))
+        .unwrap();
+        let verified = removed.verify("gone", &generation).unwrap();
+        assert!(verified.removed);
+        assert_eq!(
+            verified.warning_detail().as_deref(),
+            Some("cleanup pending")
+        );
+        // GUI removal is bound to a present generation; a direct-CLI no-op
+        // cannot satisfy that typed acknowledgement.
+        let noop: SkillUninstallAck = serde_json::from_str(
+            r#"{"id":"gone","removed":false,"removed_generation_sha256":null,"warnings":[]}"#,
+        )
+        .unwrap();
+        assert!(noop.verify("gone", &generation).is_err());
+        assert!(removed.verify("other", &generation).is_err()); // wrong id
+        assert!(
+            serde_json::from_str::<SkillUninstallAck>(r#"{"id":"gone","removed":true}"#).is_err(),
+            "generation and warnings are part of the exact uninstall receipt"
+        );
     }
 
     fn hemisphere_set_ack_json(segment: &str) -> String {

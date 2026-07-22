@@ -118,7 +118,7 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
     match args.action {
         ProactiveAction::List { status } => {
             let filter = parse_status_filter(&status)?;
-            let items = list_proposals(&home, filter);
+            let items = list_proposals(&home, filter)?;
             if items.is_empty() {
                 println!("(no proposals matching status={status})");
                 return Ok(());
@@ -141,19 +141,27 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             // KF-04: accepting a Skill proposal ADOPTS it — write the draft
             // manifest live so the forge -> propose -> accept loop produces a
             // usable skill, not just a flag flip. The acceptance is already
-            // recorded above; a write failure is surfaced as a warning rather
-            // than failing the command (re-running `accept` retries the write,
-            // which is idempotent).
+            // recorded above; a write failure therefore returns a non-zero
+            // command result with explicit partial-state context. Re-running
+            // `accept` retries the idempotent transactional write.
             if updated.kind == ProposalKind::Skill {
                 match crate::proactive::action_staging::adopt_approved_skill(&home, &updated) {
-                    Ok(path) => println!(
-                        "  skill written → {} (live on next `neoth reload` or hot-watch)",
-                        path.display(),
-                    ),
-                    Err(e) => eprintln!(
-                        "  warning: proposal accepted but skill write failed: {e:#}\n  \
-                         (fix the cause + re-run `neoth proactive accept {id}` to retry)",
-                    ),
+                    Ok(report) => {
+                        println!(
+                            "  skill written → {} (live on next `neoth reload` or hot-watch)",
+                            report.path.display(),
+                        );
+                        for warning in report.warnings {
+                            eprintln!("  warning: {warning}");
+                        }
+                    }
+                    Err(error) => {
+                        return Err(error).with_context(|| {
+                            format!(
+                                "proposal {id} is approved, but Skill adoption failed; fix the cause and re-run `neoth proactive accept {id}`"
+                            )
+                        });
+                    }
                 }
             }
             Ok(())
@@ -595,6 +603,32 @@ mod tests {
         let m: crate::skills::schema::SkillManifest =
             serde_yaml::from_str(&body).expect("written skill must be loader-parseable");
         assert_eq!(m.id, "dream_kf04_test");
+    }
+
+    #[test]
+    fn accept_skill_proposal_returns_error_when_adoption_is_partial() {
+        let home = tempfile::tempdir().unwrap();
+        let id = make_proposal_id(ProposalKind::Skill, "broken-skill", "y", 101);
+        let mut proposal = skill_proposal(&id);
+        proposal.draft_yaml = "- not\n- a\n- manifest\n".to_string();
+        save_proposal(home.path(), &proposal).unwrap();
+
+        let error = run_proactive(ProactiveArgs {
+            action: ProactiveAction::Accept {
+                id: id.clone(),
+                note: String::new(),
+            },
+            home: Some(home.path().to_path_buf()),
+        })
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("approved, but Skill adoption failed"));
+        assert_eq!(
+            load_proposal(home.path(), &id).unwrap().status,
+            ProposalStatus::Approved,
+            "the recoverable partial status must stay explicit for an idempotent retry"
+        );
+        assert!(!home.path().join("skills").exists());
     }
 
     #[test]

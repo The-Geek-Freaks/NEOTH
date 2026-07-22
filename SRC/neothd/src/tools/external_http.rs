@@ -30,6 +30,7 @@ pub enum ExternalHttpSurface {
     SearchTavily,
     SearchSearxng,
     Arxiv,
+    HackerNews,
 }
 
 impl ExternalHttpSurface {
@@ -41,6 +42,7 @@ impl ExternalHttpSurface {
             Self::SearchTavily => "search_tavily",
             Self::SearchSearxng => "search_searxng",
             Self::Arxiv => "arxiv",
+            Self::HackerNews => "hacker_news",
         }
     }
 }
@@ -386,11 +388,30 @@ impl ExternalHttpAuthorizer {
 
     #[cfg(test)]
     pub(crate) fn test_allow() -> Self {
+        Self::test_policy(
+            AutonomyPolicySnapshot::test_level(crate::permissions::AutonomyLevel::Standard),
+            ConfirmStrategy::AlwaysAllow,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_policy(policy: AutonomyPolicySnapshot, confirm: ConfirmStrategy) -> Self {
         Self {
-            policy: ExternalHttpPolicySource::Fixed(AutonomyPolicySnapshot::test_level(
-                crate::permissions::AutonomyLevel::Standard,
-            )),
-            confirm: ConfirmStrategy::AlwaysAllow,
+            policy: ExternalHttpPolicySource::Fixed(policy),
+            confirm,
+            channel_asker: None,
+            sink: Arc::new(NoopAuditSink),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_reload(
+        controller: Arc<crate::config::reload::ReloadController>,
+        confirm: ConfirmStrategy,
+    ) -> Self {
+        Self {
+            policy: ExternalHttpPolicySource::Reload(controller),
+            confirm,
             channel_asker: None,
             sink: Arc::new(NoopAuditSink),
         }
@@ -632,5 +653,37 @@ mod tests {
         };
         assert!(permit.require(&first).is_ok());
         assert!(permit.require(&second).is_err());
+    }
+
+    #[tokio::test]
+    async fn request_drift_cannot_reach_transport() {
+        let called = Arc::new(AtomicBool::new(false));
+        let called_by_transport = Arc::clone(&called);
+        let auth = authorizer(Arc::new(RecordingSink::default()));
+        let authorised = ExternalHttpRequest::get(
+            "https://example.com/api/item/1",
+            ExternalHttpSurface::HackerNews,
+        );
+        let drifted = ExternalHttpRequest::get(
+            "https://example.com/api/item/2",
+            ExternalHttpSurface::HackerNews,
+        );
+
+        let result = auth
+            .execute(authorised, |permit| async move {
+                permit.require(&drifted)?;
+                called_by_transport.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "a permit must reject a changed concrete URL"
+        );
+        assert!(
+            !called.load(Ordering::SeqCst),
+            "request drift must be rejected before the transport call"
+        );
     }
 }

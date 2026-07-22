@@ -6,6 +6,9 @@
 //!
 //! ## Gate chain (evaluated in order, first failure wins)
 //!
+//! 0. The Skill id is canonicalised and must resolve to a real, fully loadable
+//!    bundled or installed Skill. Its exact content/install generation is bound
+//!    before any config mutation.
 //! 1. `freedom.yaml::self_activation.enabled` must be `true`  → else Deny.
 //! 2. For skill toggle: `skills.disabled` list MUST NOT already contain the
 //!    skill id (preflight firewall — `disabled` wins and toggling would be a
@@ -18,6 +21,9 @@
 //!    Confirm / Deny.  The `evaluate` layer knows nothing about FreedomConfig;
 //!    callers in steps 3-4 short-circuit before reaching it when sovereign
 //!    pre-conditions are not met.
+//! 6. After publication, the exact runtime loader must see the same Skill
+//!    generation in the requested effective state. A readback failure is an
+//!    explicit partial-state error and never emits a success receipt.
 //!
 //! ## WAL audit trail
 //!
@@ -35,7 +41,9 @@
 //! never invents an incomplete schedule/prompt. The change therefore takes
 //! effect on the next tick without restarting the daemon.
 
-use anyhow::Result;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::{
@@ -106,7 +114,7 @@ pub enum SelfActivateAction {
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 /// Run `neoth self-activate`.  `output` is the global `--output` flag value.
-pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result<()> {
+pub async fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let yaml = home.join("freedom.yaml");
     if !yaml.exists() {
@@ -115,17 +123,6 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
             yaml.display()
         );
     }
-    let cfg = FreedomConfig::load_from_path(&yaml)
-        .map_err(|e| anyhow::anyhow!("load freedom.yaml: {e}"))?;
-
-    // Gate 1 — feature kill-switch.
-    if !cfg.self_activation.enabled {
-        anyhow::bail!(
-            "self-activation is disabled. Set `self_activation.enabled: true` \
-             in freedom.yaml to allow NEOTH to toggle its own skills/crons."
-        );
-    }
-
     match args.action {
         SelfActivateAction::Skill {
             id,
@@ -137,7 +134,7 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
                 anyhow::bail!("specify --enable or --disable");
             }
             let turn_on = enable;
-            run_skill_toggle(&yaml, &id, turn_on, output)
+            run_skill_toggle(&yaml, &home.join("skills"), &id, turn_on, output).await
         }
         SelfActivateAction::Cron {
             job_id,
@@ -149,6 +146,14 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
             if !enable && !disable {
                 anyhow::bail!("specify --enable or --disable");
             }
+            let cfg = FreedomConfig::load_from_path(&yaml)
+                .map_err(|e| anyhow::anyhow!("load freedom.yaml: {e}"))?;
+            if !cfg.self_activation.enabled {
+                anyhow::bail!(
+                    "self-activation is disabled. Set `self_activation.enabled: true` \
+                     in freedom.yaml to allow NEOTH to toggle its own skills/crons."
+                );
+            }
             let turn_on = enable;
             run_cron_toggle(cfg, &home, &job_id, turn_on, confirm_cron, output)
         }
@@ -157,13 +162,72 @@ pub fn run_self_activate(args: SelfActivateArgs, output: OutputFormat) -> Result
 
 // ── Skill toggle ──────────────────────────────────────────────────────────────
 
-fn run_skill_toggle(
-    config_path: &std::path::Path,
+#[derive(Debug, PartialEq, Eq)]
+struct LoadableSkillIdentity {
+    path: PathBuf,
+    content_hash: String,
+    installed_generation_sha256: Option<String>,
+    enabled: bool,
+    visibility: crate::config::SkillVisibility,
+}
+
+fn canonical_skill_id(id: &str) -> Result<String> {
+    let canonical = id.trim().to_ascii_lowercase();
+    crate::skills::creator::validate_skill_id(&canonical)
+        .with_context(|| format!("self-activation skill id `{id}` is not canonical"))?;
+    Ok(canonical)
+}
+
+async fn loadable_skill_identity(
+    config_path: &Path,
+    skills_dir: &Path,
+    id: &str,
+) -> Result<LoadableSkillIdentity> {
+    let skills = crate::skills::loader::load_all_from_config_path(skills_dir, config_path)
+        .await
+        .with_context(|| {
+            format!(
+                "load the exact Skill generation for `{id}` from {}",
+                skills_dir.display()
+            )
+        })?;
+    let skill = skills
+        .into_iter()
+        .find(|skill| skill.id() == id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("skill `{id}` is not installed or bundled and cannot be self-activated")
+        })?;
+    let installed_generation_sha256 =
+        crate::skills::installer::inspect_installed_target(skills_dir, id)
+            .with_context(|| format!("bind the installed Skill generation for `{id}`"))?
+            .target_generation_sha256;
+    let enabled = skill.is_enabled();
+    let visibility = skill.visibility();
+    Ok(LoadableSkillIdentity {
+        path: skill.path,
+        content_hash: skill.content_hash,
+        installed_generation_sha256,
+        enabled,
+        visibility,
+    })
+}
+
+async fn run_skill_toggle(
+    config_path: &Path,
+    skills_dir: &Path,
     id: &str,
     turn_on: bool,
     output: OutputFormat,
 ) -> Result<()> {
-    let id_lc = id.trim().to_lowercase();
+    let id_lc = canonical_skill_id(id)?;
+    let before = loadable_skill_identity(config_path, skills_dir, &id_lc)
+        .await
+        .context("self-activation preflight failed before freedom.yaml was changed")?;
+    if turn_on && before.visibility == crate::config::SkillVisibility::Off {
+        anyhow::bail!(
+            "skill `{id_lc}` has effective visibility `off` and cannot be enabled by self-activate"
+        );
+    }
 
     FreedomConfig::update_at(config_path, |cfg| {
         // Re-check the kill-switch inside the exact generation that will be
@@ -232,6 +296,19 @@ fn run_skill_toggle(
             );
         }
 
+        if turn_on
+            && cfg
+                .skills
+                .visibility_overrides
+                .get(&id_lc)
+                .is_some_and(|visibility| *visibility == crate::config::SkillVisibility::Off)
+        {
+            anyhow::bail!(
+                "skill '{id_lc}' has `skills.visibility_overrides: off` — this operator \
+                 block cannot be overridden by self-activate"
+            );
+        }
+
         // Gate 5 — permission system (Full+sovereign → Allow).
         let decision = evaluate(&action, &cfg.autonomy_policy());
         match decision {
@@ -255,6 +332,31 @@ fn run_skill_toggle(
         Ok(())
     })
     .map_err(|e| anyhow::anyhow!("write freedom.yaml: {e}"))?;
+
+    let after = loadable_skill_identity(config_path, skills_dir, &id_lc)
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "self-activation changed freedom.yaml, but exact runtime readback failed; \
+                 state may be partial and no success receipt was emitted: {error:#}"
+            )
+        })?;
+    if before.path != after.path
+        || before.content_hash != after.content_hash
+        || before.installed_generation_sha256 != after.installed_generation_sha256
+    {
+        anyhow::bail!(
+            "self-activation changed freedom.yaml, but Skill `{id_lc}` vanished or was replaced \
+             before exact readback; state may be partial and no success receipt was emitted"
+        );
+    }
+    if after.enabled != turn_on {
+        anyhow::bail!(
+            "self-activation changed freedom.yaml, but exact runtime readback reports Skill \
+             `{id_lc}` as {}; state may be partial and no success receipt was emitted",
+            if after.enabled { "enabled" } else { "disabled" }
+        );
+    }
 
     // WAL audit note: 0xD0 CONFIG_RELOADED fires automatically when the daemon
     // hot-reloads freedom.yaml and sees "skills" in changed_fields.
@@ -500,6 +602,119 @@ mod tests {
             cfg.self_activation.skill_allowed("FACT-CHECK"),
             "allowlist check should be case-insensitive"
         );
+    }
+
+    #[tokio::test]
+    async fn allowlisted_ghost_skill_cannot_mutate_freedom_yaml() {
+        let dir = TempDir::new().unwrap();
+        let cfg = make_cfg(AutonomyLevel::Full, true);
+        let yaml_path = write_freedom_yaml(&dir, &cfg);
+        let original = std::fs::read(&yaml_path).unwrap();
+
+        let error = run_skill_toggle(
+            &yaml_path,
+            &dir.path().join("skills"),
+            "fact-check",
+            true,
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.to_string().contains("not installed or bundled"),
+            "ghost denial must explain the missing runtime Skill: {error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&yaml_path).unwrap(),
+            original,
+            "a ghost allowlist entry must not publish a config mutation"
+        );
+    }
+
+    #[tokio::test]
+    async fn malformed_skill_id_is_rejected_before_config_mutation() {
+        let dir = TempDir::new().unwrap();
+        let mut cfg = make_cfg(AutonomyLevel::Full, true);
+        cfg.self_activation
+            .skill_allowlist
+            .push("../fact-check".to_string());
+        let yaml_path = write_freedom_yaml(&dir, &cfg);
+        let original = std::fs::read(&yaml_path).unwrap();
+
+        let error = run_skill_toggle(
+            &yaml_path,
+            &dir.path().join("skills"),
+            "../FACT-CHECK",
+            true,
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("not canonical"), "{error:#}");
+        assert_eq!(std::fs::read(&yaml_path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn broken_allowlisted_skill_cannot_mutate_freedom_yaml() {
+        let dir = TempDir::new().unwrap();
+        let mut cfg = make_cfg(AutonomyLevel::Full, true);
+        cfg.self_activation.skill_allowlist = vec!["broken".to_string()];
+        let yaml_path = write_freedom_yaml(&dir, &cfg);
+        let broken_dir = dir.path().join("skills").join("broken");
+        std::fs::create_dir_all(&broken_dir).unwrap();
+        std::fs::write(broken_dir.join("skill.yaml"), "id: [not valid yaml").unwrap();
+        let original = std::fs::read(&yaml_path).unwrap();
+
+        let error = run_skill_toggle(
+            &yaml_path,
+            &dir.path().join("skills"),
+            "broken",
+            true,
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("preflight failed"), "{error:#}");
+        assert_eq!(std::fs::read(&yaml_path).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn real_skill_toggle_requires_exact_runtime_readback() {
+        let dir = TempDir::new().unwrap();
+        let mut cfg = make_cfg(AutonomyLevel::Full, true);
+        cfg.self_activation.skill_allowlist = vec!["academic_research".to_string()];
+        let yaml_path = write_freedom_yaml(&dir, &cfg);
+        let skills_dir = dir.path().join("skills");
+
+        run_skill_toggle(
+            &yaml_path,
+            &skills_dir,
+            "ACADEMIC_RESEARCH",
+            false,
+            OutputFormat::Json,
+        )
+        .await
+        .unwrap();
+
+        let readback = FreedomConfig::load_from_path(&yaml_path).unwrap();
+        assert!(
+            readback
+                .skills
+                .disabled
+                .iter()
+                .any(|id| id == "academic_research")
+        );
+        let loaded = crate::skills::loader::load_all_from_config_path(&skills_dir, &yaml_path)
+            .await
+            .unwrap();
+        let skill = loaded
+            .iter()
+            .find(|skill| skill.id() == "academic_research")
+            .unwrap();
+        assert!(!skill.is_enabled());
     }
 
     #[test]

@@ -2929,91 +2929,86 @@ pub(crate) fn spawn_bg_monitor_task(
     Some(handle)
 }
 
-// ── Region-7 updater lanes (U-04 + MV-01b). The three probe crons share one
-// `UpdaterCronConfig` (built once in run_serve + cloned into each) and differ
-// only by their ComponentSpec builder closure + UpdaterTaskKind. The two
-// auto_update lanes (cli-apply / self-stage) gate internally on autonomy. All
-// WAL-emitting; per-site keeps each handle/abort-site/worker_watch unchanged. ──
+// ── Region-7 updater lanes (U-04 + MV-01b). Each probe supervisor reads the
+// accepted ReloadController generation for enablement, cadence, autonomy, and
+// self-update repo/ring. The builders receive a policy-derived gate; they never
+// fabricate Allow. All are WAL-emitting and retain the same shutdown handles. ──
 
 /// Shared type of the `ComponentSpec` builder closure each updater probe cron
 /// hands to `spawn_updater_cron_loop`.
-type UpdaterSpecBuilder =
-    Arc<dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static>;
+type UpdaterSpecBuilder = Arc<
+    dyn Fn(
+            Arc<FreedomConfig>,
+            crate::updater::pipeline::GateDecision,
+        ) -> Vec<crate::updater::pipeline::ComponentSpec>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 /// U-01 — neoth-self GitHub-Releases update probe cron (`0x44`/`0x45`).
 pub(crate) fn spawn_updater_self_cron(
-    mut cfg: crate::daemon::updater_cron::UpdaterCronConfig,
-    auto_update: crate::config::AutoUpdateConfig,
+    reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    cfg.enabled = cfg.enabled && auto_update.enabled && auto_update.check_interval_secs != 0;
-    cfg.interval_secs = auto_update.check_interval_secs;
-    let repo = auto_update.repo;
-    let channel = auto_update.channel;
-    let builder: UpdaterSpecBuilder = Arc::new(move || {
+    let builder: UpdaterSpecBuilder = Arc::new(move |config, gate| {
         crate::updater::probes::neoth_self_specs_blocking_for(
-            &repo,
-            channel,
-            crate::updater::pipeline::GateDecision::Allow,
+            &config.auto_update.repo,
+            config.auto_update.channel,
+            gate,
         )
     });
     let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        cfg,
         crate::wal::payloads_u04::UpdaterTaskKind::NeothSelf,
         builder,
+        reload_controller,
         writer,
     );
-    if handle.is_some() {
-        info!("updater cron loop spawned: neoth_self (U-01)");
-    }
-    handle
+    info!("live updater cron supervisor spawned: neoth_self (U-01)");
+    Some(handle)
 }
 
 /// U-03 — CLI-version npm-registry update probe cron (claude/codex/gemini).
 pub(crate) fn spawn_updater_cli_cron(
-    cfg: crate::daemon::updater_cron::UpdaterCronConfig,
+    reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
-    let builder: UpdaterSpecBuilder = Arc::new(|| {
-        crate::updater::probes::cli_version_specs_blocking(
-            crate::updater::pipeline::GateDecision::Allow,
-        )
-    });
+    let builder: UpdaterSpecBuilder =
+        Arc::new(|_config, gate| crate::updater::probes::cli_version_specs_blocking(gate));
     let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        cfg,
         crate::wal::payloads_u04::UpdaterTaskKind::CliVersions,
         builder,
+        reload_controller,
         writer,
     );
-    if handle.is_some() {
-        info!("updater cron loop spawned: cli_version (U-03)");
-    }
-    handle
+    info!("live updater cron supervisor spawned: cli_version (U-03)");
+    Some(handle)
 }
 
 /// U-02 — skill/plugin update probe cron (captures `home` for the spec scan).
 pub(crate) fn spawn_updater_skill_cron(
-    cfg: crate::daemon::updater_cron::UpdaterCronConfig,
     home: &std::path::Path,
+    config_path: &std::path::Path,
+    reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     let home_for_skills = home.to_path_buf();
-    let builder: UpdaterSpecBuilder = Arc::new(move || {
+    let config_for_plugins = config_path.to_path_buf();
+    let builder: UpdaterSpecBuilder = Arc::new(move |_config, gate| {
         crate::updater::probes::skill_plugin_specs_blocking(
             home_for_skills.clone(),
-            crate::updater::pipeline::GateDecision::Allow,
+            config_for_plugins.clone(),
+            gate,
         )
     });
     let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        cfg,
         crate::wal::payloads_u04::UpdaterTaskKind::SkillPlugin,
         builder,
+        reload_controller,
         writer,
     );
-    if handle.is_some() {
-        info!("updater cron loop spawned: skill_plugin (U-02)");
-    }
-    handle
+    info!("live updater cron supervisor spawned: skill_plugin (U-02)");
+    Some(handle)
 }
 
 /// MV-01b — CLI auto-apply loop. Internally `None` at autonomy below
@@ -3056,11 +3051,25 @@ pub(crate) fn spawn_self_stage(
 
 /// G-01 — weekly reflection cron (enqueues proactive items; per-week dedup key
 /// in the producer keeps emissions to one/ISO-week regardless of tick rate).
-/// WAL-free, home-only. Bare `JoinHandle<()>` (always spawns).
-pub(crate) fn spawn_reflection_cron(home: &std::path::Path) -> JoinHandle<()> {
+/// Its optional HN refresh resolves live policy from the daemon's exact reload
+/// controller and writes mandatory intent/result frames through the daemon WAL.
+pub(crate) fn spawn_reflection_cron(
+    home: &std::path::Path,
+    reload_controller: &std::sync::Arc<crate::config::reload::ReloadController>,
+    writer: &WalWriterHandle,
+) -> JoinHandle<()> {
+    let http = std::sync::Arc::new(
+        crate::tools::external_http::ExternalHttpAuthorizer::with_reload_writer(
+            std::sync::Arc::clone(reload_controller),
+            crate::permissions::ConfirmStrategy::FailClosed,
+            writer.clone(),
+        ),
+    );
     let handle = crate::daemon::reflection_cron::spawn_reflection_cron_loop(
         home.to_path_buf(),
         crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
+        std::sync::Arc::clone(reload_controller),
+        http,
     );
     info!(
         interval_secs = crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
@@ -6192,13 +6201,16 @@ pub(crate) fn check_onboarding_complete(
 /// provider is unconsented), primes the process-wide `SkillRegistry` + its
 /// filesystem watcher, and installs the GOLD-WIRE-10 domain-event bus. The
 /// caller-supplied `neoth_home` is authoritative so custom `--config` homes use
-/// the same consent marker and skill directory as the rest of the daemon.
+/// the same consent marker and skill directory as the rest of the daemon. The
+/// reload controller is authoritative for both the exact custom config filename
+/// and the accepted live generation of its skill-routing policy.
 /// Returns the `WatcherHandle` (bound by the caller for the daemon lifetime).
 /// Async because the skill registry loads off disk.
 pub(crate) async fn prime_runtime_services(
     config: &FreedomConfig,
     credentials: &crate::config::credentials::Credentials,
     neoth_home: &std::path::Path,
+    reload_controller: std::sync::Arc<ReloadController>,
 ) -> anyhow::Result<Option<crate::skills::registry::WatcherHandle>> {
     config
         .omi
@@ -6218,14 +6230,17 @@ pub(crate) async fn prime_runtime_services(
     // (250ms debounce). The watcher handle is owned by the daemon lifetime.
     let skill_watcher = {
         let skills_dir = neoth_home.join("skills");
-        let reg = crate::skills::SkillRegistry::load(&skills_dir)
-            .await
-            .with_context(|| {
-                format!(
-                    "load skill registry for daemon instance at {}",
-                    skills_dir.display()
-                )
-            })?;
+        let reg = crate::skills::SkillRegistry::load_with_reload_controller(
+            &skills_dir,
+            reload_controller,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "load skill registry for daemon instance at {}",
+                skills_dir.display()
+            )
+        })?;
         let watcher = reg.watch().with_context(|| {
             format!(
                 "start skill registry watcher for daemon instance at {}",
@@ -6242,6 +6257,7 @@ pub(crate) async fn prime_runtime_services(
         info!(
             skill_count = reg.snapshot().len(),
             dir = %skills_dir.display(),
+            config = %reg.config_path().display(),
             watcher_active = true,
             "skill registry primed for daemon"
         );
@@ -6879,35 +6895,13 @@ pub(crate) fn bootstrap_plugin_invoker(
     // the engine. Unknown ids and `Pending` ids fall through to
     // the operator-visible bootstrap-skipped log line — they show up in
     // `neoth plugin list` so flipping them on is one command away.
-    #[allow(clippy::type_complexity)]
-    let (
-        activations,
-        pinned_hashes,
-        require_all_pinned,
-        author_pubkey,
-        require_signature,
-        revoked_ids,
-    ): (
-        std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivationRecord>,
-        std::collections::BTreeMap<String, String>,
-        bool,
-        Option<String>,
-        bool,
-        Vec<String>,
-    ) = {
+    let wasm_config = {
         // Use the already validated config owned by this exact daemon
         // instance. Re-reading the process-global default path here made a
         // custom `--config` discover plugins from one home while authorising
         // them against another home's policy.
         let cfg = reload_controller.latest();
-        (
-            cfg.plugins.wasm.activations.clone(),
-            cfg.plugins.wasm.pinned_hashes.clone(),
-            cfg.plugins.wasm.require_all_pinned,
-            cfg.plugins.wasm.author_pubkey.clone(),
-            cfg.plugins.wasm.require_signature,
-            cfg.plugins.wasm.revoked_ids.clone(),
-        )
+        cfg.plugins.wasm.clone()
     };
 
     let pre_filter = report.loaded.len();
@@ -6926,37 +6920,24 @@ pub(crate) fn bootstrap_plugin_invoker(
     // engine. Collected separately so the operator sees a SECURITY skip,
     // not a benign Pending one.
     let mut skipped_integrity: Vec<(String, String)> = Vec::new();
-    let integrity_policy = crate::wasm_plugin::discovery::IntegrityPolicy {
-        pinned: &pinned_hashes,
-        require_all_pinned,
-        author_pubkey: author_pubkey.as_deref(),
-        require_signature,
-        revoked: &revoked_ids,
-    };
     report.loaded.retain(|p| {
-        let record = activations.get(&p.manifest.id).cloned().unwrap_or_default();
+        let record = wasm_config
+            .activations
+            .get(&p.manifest.id)
+            .cloned()
+            .unwrap_or_default();
         match record.state {
             crate::wasm_plugin::discovery::PluginActivation::Active => {
-                match record.validate_for(p) {
-                    Ok(_) => {}
-                    Err(e) => {
-                        skipped_approval.push((p.manifest.id.clone(), e.to_string()));
-                        return false;
-                    }
-                }
-                // Bound approval is necessary but not sufficient — the binary
-                // must also pass the operator's independent integrity policy.
-                match crate::wasm_plugin::discovery::verify_integrity(p, &integrity_policy) {
-                    Ok(()) => {
-                        let Some(approval) = record.approval.clone() else {
-                            skipped_approval.push((
-                                p.manifest.id.clone(),
-                                "validated activation unexpectedly lacked approval".to_string(),
-                            ));
-                            return false;
-                        };
+                match crate::wasm_plugin::discovery::validate_runtime_admission(p, &wasm_config) {
+                    Ok(approval) => {
                         approved_bindings.insert(p.manifest.id.clone(), approval);
                         true
+                    }
+                    Err(
+                        e @ crate::wasm_plugin::discovery::RuntimePluginAdmissionError::Approval(_),
+                    ) => {
+                        skipped_approval.push((p.manifest.id.clone(), e.to_string()));
+                        false
                     }
                     Err(e) => {
                         skipped_integrity.push((p.manifest.id.clone(), e.to_string()));
@@ -7035,7 +7016,10 @@ pub(crate) fn bootstrap_plugin_invoker(
     // SC-03 — surface the independent policy state accurately. Exact activation
     // approval still pins each manifest and WASM digest; this warning means the
     // operator has not added a second managed pin/signature policy.
-    if pinned_hashes.is_empty() && !require_all_pinned && !report.loaded.is_empty() {
+    if wasm_config.pinned_hashes.is_empty()
+        && !wasm_config.require_all_pinned
+        && !report.loaded.is_empty()
+    {
         warn!(
             active = ?report.loaded_ids(),
             "independent SC-03 pin/signature policy INACTIVE — exact activation-bound \
@@ -7122,9 +7106,11 @@ pub(crate) fn bootstrap_plugin_invoker(
         }
     }
     .with_runtime_handles(Some(wal_writer), recall_db)
-    // Live authority removal: reload-time disable, revocation, legacy state,
+    .with_integrity_policy(&wasm_config)
+    // Live authority gate: reload-time disable, revocation, legacy state,
     // digest drift, or permission mutation must reach the compiled invoker
-    // without a daemon restart. New or changed approval still needs restart.
+    // without a daemon restart. New/changed approval or integrity posture
+    // stays refused until restart revalidates the compiled artifact.
     .with_reload_controller(reload_controller);
     if invoker.is_empty() {
         warn!("plugin discovery returned entries but zero compiled — invoker not registered");
@@ -8126,11 +8112,15 @@ mod tests {
         let provider = crate::cli::init::ProviderKind::OpenaiApi;
         config.provider_kind = Some(provider);
         crate::consent::grant(home.path(), provider).unwrap();
+        let config_path = home.path().join("operator-instance.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let reload_controller = Arc::new(ReloadController::new(config.clone(), config_path));
 
         let result = prime_runtime_services(
             &config,
             &crate::config::credentials::Credentials::default(),
             home.path(),
+            reload_controller,
         )
         .await;
 

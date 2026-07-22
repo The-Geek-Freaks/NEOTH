@@ -108,11 +108,17 @@ export struct HemisphereRow {
 // eyebrow (first manifest tag), skill rows carry tags + trigger keywords.
 export struct SkillRow {
     id: string,
+    operation-id: string,
     description: string,
     enabled: bool,
     keywords: string,  // joined trigger keywords
     tags: string,      // joined manifest tags
     is-header: bool,   // domain group header row
+    broken: bool,
+    error: string,
+    path: string,
+    origin: string,
+    repairable: bool,
 }
 
 // SPEC-05 — one saved preset for the selector (moved here from main.slint
@@ -2071,7 +2077,14 @@ export component SettingsView inherits Rectangle {
                         label: "New skill…";
                         primary: false;
                         size: "sm";
-                        clicked => { skill-create-open = !skill-create-open; }
+                        clicked => {
+                            skill-create-repairing = false;
+                            sc-id = "";
+                            sc-desc = "";
+                            sc-keywords = "";
+                            sc-prompt = "";
+                            skill-create-open = !skill-create-open;
+                        }
                     }
                     Text {
                         text: "Or ask in chat: 'build me a skill that…' — NEOTH creates it.";
@@ -2085,6 +2098,7 @@ export component SettingsView inherits Rectangle {
                 }
                 // ── Inline create form (toggled) ───────────────────────────
                 property <bool> skill-create-open: false;
+                property <bool> skill-create-repairing: false;
                 property <string> sc-id: "";
                 property <string> sc-desc: "";
                 property <string> sc-keywords: "";
@@ -2095,7 +2109,7 @@ export component SettingsView inherits Rectangle {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
                         Text {
-                            text: "NEW SKILL";
+                            text: skill-create-repairing ? "REPAIR SKILL MANIFEST" : "NEW SKILL";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-bold;
@@ -2121,13 +2135,14 @@ export component SettingsView inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             NeothButton {
-                                label: "Create";
+                                label: skill-create-repairing ? "Repair" : "Create";
                                 primary: true;
                                 size: "sm";
                                 enabled: sc-id != "" && sc-desc != "" && sc-prompt != "";
                                 clicked => {
                                     root.skill-create-clicked(sc-id, sc-desc, sc-keywords, sc-prompt);
                                     skill-create-open = false;
+                                    skill-create-repairing = false;
                                     sc-id = "";
                                     sc-desc = "";
                                     sc-keywords = "";
@@ -2138,7 +2153,10 @@ export component SettingsView inherits Rectangle {
                                 label: "Cancel";
                                 primary: false;
                                 size: "sm";
-                                clicked => { skill-create-open = false; }
+                                clicked => {
+                                    skill-create-open = false;
+                                    skill-create-repairing = false;
+                                }
                             }
                         }
                     }
@@ -2180,7 +2198,7 @@ export component SettingsView inherits Rectangle {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
                         Text {
-                            text: root.skills-total + " skill(s) installed";
+                            text: root.skills-total + " skill entries and diagnostics";
                             overflow: elide;
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
@@ -2222,8 +2240,13 @@ export component SettingsView inherits Rectangle {
                                     // to mid-row (NeothCheckBox inherits Rectangle,
                                     // which fills by default).
                                     width: 28px;
+                                    enabled: !s.broken;
                                     checked: s.enabled;
-                                    toggled(v) => { root.skill-toggle-clicked(s.id, v); }
+                                    toggled(v) => {
+                                        if !s.broken {
+                                            root.skill-toggle-clicked(s.operation-id, v);
+                                        }
+                                    }
                                 }
                                 Text {
                                     text: s.id;
@@ -2233,6 +2256,13 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.text-primary;
                                     horizontal-stretch: 1;
                                 }
+                                if s.broken: Text {
+                                    text: "BROKEN";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.consent;
+                                    vertical-alignment: center;
+                                }
                                 if s.tags != "": Text {
                                     text: s.tags;
                                     font-family: Theme.font-mono;
@@ -2240,27 +2270,41 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.text-tertiary;
                                     vertical-alignment: center;
                                 }
-                                // Per-row uninstall. The daemon no-ops gracefully if
-                                // the skill is built-in / already absent.
+                                if s.broken && s.repairable && s.origin == "user": NeothButton {
+                                    label: "Repair manifest…";
+                                    primary: false;
+                                    size: "sm";
+                                    clicked => {
+                                        skill-create-repairing = true;
+                                        sc-id = s.operation-id;
+                                        sc-desc = "";
+                                        sc-keywords = "";
+                                        sc-prompt = "";
+                                        skill-create-open = true;
+                                    }
+                                }
+                                // Bundled skills have no removable user directory.
                                 property <bool> sk-confirming: false;
-                                if !sk-confirming: NeothButton {
-                                    label: "Uninstall";
+                                if s.origin == "user" && !sk-confirming: NeothButton {
+                                    label: s.broken ? "Remove broken" : "Uninstall";
                                     primary: false;
                                     danger: true;
                                     size: "sm";
                                     clicked => { sk-confirming = true; }
                                 }
-                                if sk-confirming: NeothButton {
+                                if s.origin == "user" && sk-confirming: NeothButton {
                                     label: "Confirm";
                                     primary: false;
                                     danger: true;
                                     size: "sm";
                                     clicked => {
                                         sk-confirming = false;
-                                        root.skill-uninstall-clicked(s.id);
+                                        if s.origin == "user" {
+                                            root.skill-uninstall-clicked(s.operation-id);
+                                        }
                                     }
                                 }
-                                if sk-confirming: NeothButton {
+                                if s.origin == "user" && sk-confirming: NeothButton {
                                     label: "Cancel";
                                     primary: false;
                                     size: "sm";
@@ -2272,6 +2316,26 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                            if !s.is-header && s.origin != "": Text {
+                                text: "source: " + s.origin;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-tertiary;
+                            }
+                            if !s.is-header && s.broken: Text {
+                                text: "Reason: " + s.error;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.consent;
+                                wrap: word-wrap;
+                            }
+                            if !s.is-header && s.broken: Text {
+                                text: "Path: " + s.path;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                color: Theme.text-tertiary;
                                 wrap: word-wrap;
                             }
                             // GOLD-ADAPT-AOS-05 — WHY this skill activates:

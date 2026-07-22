@@ -55,7 +55,7 @@ use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 use tracing::{debug, info, warn};
 
-use super::load_all;
+use super::loader::{load_all, load_all_from_config_path, load_all_from_skills_config};
 use super::schema::Skill;
 
 /// Build the complete skill snapshot and validate every cross-skill mode id
@@ -63,6 +63,26 @@ use super::schema::Skill;
 /// load error, not a per-request routing error.
 pub(crate) async fn load_validated_skills(skills_dir: &Path) -> Result<Vec<Skill>> {
     let skills = load_all(skills_dir).await?;
+    validate_loaded_skills(skills)
+}
+
+async fn load_validated_skills_from_config_path(
+    skills_dir: &Path,
+    config_path: &Path,
+) -> Result<Vec<Skill>> {
+    let skills = load_all_from_config_path(skills_dir, config_path).await?;
+    validate_loaded_skills(skills)
+}
+
+async fn load_validated_skills_from_config(
+    skills_dir: &Path,
+    config: &crate::config::SkillsConfig,
+) -> Result<Vec<Skill>> {
+    let skills = load_all_from_skills_config(skills_dir, config).await?;
+    validate_loaded_skills(skills)
+}
+
+fn validate_loaded_skills(skills: Vec<Skill>) -> Result<Vec<Skill>> {
     super::mode_registry::ModeRegistry::from_skills(&skills)
         .context("validate unique mode ids in skill registry")?;
     Ok(skills)
@@ -107,6 +127,8 @@ pub fn global() -> Option<Arc<SkillRegistry>> {
 pub struct SkillRegistry {
     inner: ArcSwap<Vec<Skill>>,
     skills_dir: PathBuf,
+    config_path: PathBuf,
+    reload_controller: Option<Arc<crate::config::reload::ReloadController>>,
 }
 
 impl SkillRegistry {
@@ -115,17 +137,75 @@ impl SkillRegistry {
     /// explicitly optional missing paths resolve to an empty user layer.
     pub async fn load(skills_dir: impl AsRef<Path>) -> Result<Arc<Self>> {
         let skills_dir = skills_dir.as_ref().to_path_buf();
-        let initial = load_validated_skills(&skills_dir).await.with_context(|| {
-            format!("load initial skill registry from {}", skills_dir.display())
-        })?;
+        let config_path = skills_dir
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("freedom.yaml");
+        Self::load_from_config_path(skills_dir, config_path).await
+    }
+
+    /// Load a file-backed registry from one exact operator config path.
+    /// Long-lived daemons should prefer [`Self::load_with_reload_controller`]
+    /// so rejected config candidates can never affect live skill routing.
+    pub async fn load_from_config_path(
+        skills_dir: impl AsRef<Path>,
+        config_path: impl AsRef<Path>,
+    ) -> Result<Arc<Self>> {
+        let skills_dir = skills_dir.as_ref().to_path_buf();
+        let config_path = config_path.as_ref().to_path_buf();
+        let initial = load_validated_skills_from_config_path(&skills_dir, &config_path)
+            .await
+            .with_context(|| {
+                format!(
+                    "load initial skill registry from {} with policy {}",
+                    skills_dir.display(),
+                    config_path.display()
+                )
+            })?;
         info!(
             count = initial.len(),
             dir = %skills_dir.display(),
+            config = %config_path.display(),
             "skill registry primed"
         );
         Ok(Arc::new(Self {
             inner: ArcSwap::new(Arc::new(initial)),
             skills_dir,
+            config_path,
+            reload_controller: None,
+        }))
+    }
+
+    /// Load a daemon registry from the exact already-accepted config
+    /// generation and subscribe to every successful reload generation.
+    pub async fn load_with_reload_controller(
+        skills_dir: impl AsRef<Path>,
+        reload_controller: Arc<crate::config::reload::ReloadController>,
+    ) -> Result<Arc<Self>> {
+        let skills_dir = skills_dir.as_ref().to_path_buf();
+        let config_path = reload_controller.source_path().to_path_buf();
+        let config = reload_controller.latest();
+        let initial = load_validated_skills_from_config(&skills_dir, &config.skills)
+            .await
+            .with_context(|| {
+                format!(
+                    "load initial skill registry from {} with active policy {}",
+                    skills_dir.display(),
+                    config_path.display()
+                )
+            })?;
+        info!(
+            count = initial.len(),
+            dir = %skills_dir.display(),
+            config = %config_path.display(),
+            reload_bound = true,
+            "skill registry primed"
+        );
+        Ok(Arc::new(Self {
+            inner: ArcSwap::new(Arc::new(initial)),
+            skills_dir,
+            config_path,
+            reload_controller: Some(reload_controller),
         }))
     }
 
@@ -150,13 +230,31 @@ impl SkillRegistry {
         &self.skills_dir
     }
 
+    /// Exact active config path that owns this registry's policy.
+    pub fn config_path(&self) -> &Path {
+        &self.config_path
+    }
+
     /// Manually trigger a reload from disk. Returns (previous_count,
     /// new_count). Useful for operator-driven reload (`neoth skills
     /// reload`) without waiting for the watcher debounce.
     pub async fn reload_now(&self) -> Result<(usize, usize)> {
-        let new = load_validated_skills(&self.skills_dir)
-            .await
-            .with_context(|| format!("reload skill registry from {}", self.skills_dir.display()))?;
+        let new = match &self.reload_controller {
+            Some(reload_controller) => {
+                let config = reload_controller.latest();
+                load_validated_skills_from_config(&self.skills_dir, &config.skills).await
+            }
+            None => {
+                load_validated_skills_from_config_path(&self.skills_dir, &self.config_path).await
+            }
+        }
+        .with_context(|| {
+            format!(
+                "reload skill registry from {} with active policy {}",
+                self.skills_dir.display(),
+                self.config_path.display()
+            )
+        })?;
         let new_count = new.len();
         let prev = self.inner.load().len();
         self.inner.store(Arc::new(new));
@@ -213,6 +311,17 @@ mod watcher {
     pub fn spawn(registry: Arc<SkillRegistry>) -> Result<WatcherHandle> {
         let (event_tx, mut event_rx) = mpsc::unbounded_channel::<Event>();
         let (cancel_tx, mut cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut config_generation = registry
+            .reload_controller
+            .as_ref()
+            .map(|controller| controller.subscribe_generation());
+        // A reload-bound daemon only accepts config policy through the
+        // ReloadController generation. A raw file edit may later be rejected
+        // and must not leak into the routing ArcSwap through notify.
+        let watched_config_path = registry
+            .reload_controller
+            .is_none()
+            .then_some(registry.config_path.as_path());
 
         // `notify` callbacks run on the watcher's own thread — bounce
         // each event onto the tokio runtime via unbounded mpsc so the
@@ -226,14 +335,18 @@ mod watcher {
             })
             .context("construct skill filesystem watcher")?;
         let mut active_watches = BTreeMap::new();
-        reconcile_watches(&mut watcher, &registry.skills_dir, &mut active_watches).with_context(
-            || {
-                format!(
-                    "register skill filesystem watcher for {}",
-                    registry.skills_dir.display()
-                )
-            },
-        )?;
+        reconcile_watches(
+            &mut watcher,
+            &registry.skills_dir,
+            watched_config_path,
+            &mut active_watches,
+        )
+        .with_context(|| {
+            format!(
+                "register skill filesystem watcher for {}",
+                registry.skills_dir.display()
+            )
+        })?;
         let watcher = Arc::new(std::sync::Mutex::new(watcher));
 
         info!(
@@ -258,7 +371,15 @@ mod watcher {
                     maybe_ev = event_rx.recv() => {
                         match maybe_ev {
                             Some(ev) => {
-                                if event_is_skill_relevant(&ev, &registry.skills_dir) {
+                                let watched_config_path = registry
+                                    .reload_controller
+                                    .is_none()
+                                    .then_some(registry.config_path.as_path());
+                                if event_is_skill_relevant(
+                                    &ev,
+                                    &registry.skills_dir,
+                                    watched_config_path,
+                                ) {
                                     pending = Some(tokio::time::Instant::now() + DEBOUNCE);
                                 }
                             }
@@ -277,6 +398,10 @@ mod watcher {
                             reconcile_watches(
                                 &mut watcher,
                                 &registry.skills_dir,
+                                registry
+                                    .reload_controller
+                                    .is_none()
+                                    .then_some(registry.config_path.as_path()),
                                 &mut active_watches,
                             )
                         };
@@ -298,6 +423,26 @@ mod watcher {
                             Err(e) => warn!(error = %e, "skills hot-reload failed"),
                         }
                     }
+                    generation_changed = wait_for_generation(&mut config_generation) => {
+                        if !generation_changed {
+                            debug!("skill config-generation sender dropped; watcher remains file-bound");
+                            config_generation = None;
+                            continue;
+                        }
+                        match registry.reload_now().await {
+                            Ok((prev, new)) => info!(
+                                prev_count = prev,
+                                new_count = new,
+                                config = %registry.config_path.display(),
+                                "skill policy hot-reloaded from accepted config generation"
+                            ),
+                            Err(e) => warn!(
+                                error = %e,
+                                config = %registry.config_path.display(),
+                                "accepted config generation could not rebuild skill registry; retaining prior snapshot"
+                            ),
+                        }
+                    }
                 }
             }
         });
@@ -311,9 +456,10 @@ mod watcher {
     fn reconcile_watches(
         watcher: &mut notify::RecommendedWatcher,
         skills_dir: &Path,
+        config_path: Option<&Path>,
         active: &mut BTreeMap<PathBuf, WatchDepth>,
     ) -> Result<()> {
-        let desired = desired_watches(skills_dir)?;
+        let desired = desired_watches(skills_dir, config_path)?;
 
         // Add the replacement watch before dropping an obsolete ancestor so
         // directory creation/removal never opens an observation gap.
@@ -350,7 +496,10 @@ mod watcher {
         Ok(())
     }
 
-    fn desired_watches(skills_dir: &Path) -> Result<BTreeMap<PathBuf, WatchDepth>> {
+    fn desired_watches(
+        skills_dir: &Path,
+        config_path: Option<&Path>,
+    ) -> Result<BTreeMap<PathBuf, WatchDepth>> {
         let mut desired = BTreeMap::new();
         match std::fs::metadata(skills_dir) {
             Ok(metadata) => {
@@ -408,7 +557,7 @@ mod watcher {
                         parent.display()
                     );
                 }
-                // GR-049: this parent watch also observes freedom.yaml.
+                // Keep observing deletion/recreation of the whole skills tree.
                 desired.insert(parent.to_path_buf(), WatchDepth::NonRecursive);
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -427,6 +576,15 @@ mod watcher {
                 return Err(error)
                     .with_context(|| format!("inspect skill watch path {}", skills_dir.display()));
             }
+        }
+        if let Some(config_path) = config_path {
+            let config_parent = config_path.parent().ok_or_else(|| {
+                anyhow::anyhow!("skill config path has no parent: {}", config_path.display())
+            })?;
+            desired.insert(
+                nearest_existing_directory(config_parent)?,
+                WatchDepth::NonRecursive,
+            );
         }
         Ok(desired)
     }
@@ -460,13 +618,14 @@ mod watcher {
     }
 
     /// Filter — we care about `skill.yaml` create/modify/remove, a `skill`
-    /// folder create/remove, and (GR-049) a `freedom.yaml` change (its
-    /// `skills.*` settings are re-read by `load_all`). Permission changes etc.
-    /// are noise. `skills_dir` scopes the directory match so the freedom.yaml
-    /// parent-dir watch never fires on unrelated home-dir directories (`wal/`,
-    /// `archive/`, …) — a Modify on `~/.neoth/wal` would otherwise spuriously
-    /// reload on every WAL write.
-    fn event_is_skill_relevant(ev: &Event, skills_dir: &std::path::Path) -> bool {
+    /// folder create/remove, and an exact file-backed config change. A daemon
+    /// bound to ReloadController passes no config path here: only an accepted
+    /// generation bump may publish config policy into its ArcSwap.
+    fn event_is_skill_relevant(
+        ev: &Event,
+        skills_dir: &std::path::Path,
+        config_path: Option<&Path>,
+    ) -> bool {
         let kind_matches = matches!(
             ev.kind,
             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
@@ -475,18 +634,15 @@ mod watcher {
             return false;
         }
         let relevant_for = |skills_dir: &std::path::Path| {
-            let freedom_path = skills_dir
-                .parent()
-                .map(|parent| parent.join("freedom.yaml"));
             ev.paths.iter().any(|path| {
-                if freedom_path.as_ref() == Some(path) {
+                if config_path == Some(path.as_path()) {
                     return true;
                 }
                 // Either side of this prefix relation can be relevant while a
                 // missing parent chain is being created or the skills tree is being
                 // removed. This does not rely on `is_dir()`, which is false after a
                 // remove/rename event on every platform.
-                if path == skills_dir || skills_dir.starts_with(path) {
+                if path == skills_dir || (!skills_dir.exists() && skills_dir.starts_with(path)) {
                     return true;
                 }
                 path.starts_with(skills_dir)
@@ -523,6 +679,13 @@ mod watcher {
             None => std::future::pending::<()>().await,
         }
     }
+
+    async fn wait_for_generation(receiver: &mut Option<tokio::sync::watch::Receiver<u64>>) -> bool {
+        match receiver {
+            Some(receiver) => receiver.changed().await.is_ok(),
+            None => std::future::pending::<bool>().await,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -548,6 +711,24 @@ mod tests {
         })
         .await
         .unwrap_or_else(|_| panic!("skill `{id}` did not reach present={present}"));
+    }
+
+    async fn wait_for_skill_enabled(registry: &SkillRegistry, id: &str, enabled: bool) {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                let current = registry
+                    .snapshot()
+                    .iter()
+                    .find(|skill| skill.id() == id)
+                    .map(|skill| skill.is_enabled());
+                if current == Some(enabled) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("skill `{id}` did not reach enabled={enabled}"));
     }
 
     fn skill_with_mode(id: &str, mode_id: &str) -> String {
@@ -687,6 +868,97 @@ system_prompt: "ok"
         let live = reg.snapshot();
         assert_eq!(live.len(), pinned_count + 1);
         assert!(live.iter().any(|s| s.id() == "hot-reload-test"));
+    }
+
+    #[tokio::test]
+    async fn accepted_custom_config_generation_rebuilds_the_routing_snapshot() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        tokio::fs::create_dir_all(&skills_dir).await.unwrap();
+        let custom_config = home.path().join("operator-instance.yaml");
+        let initial = crate::config::FreedomConfig::default();
+        std::fs::write(&custom_config, serde_yaml::to_string(&initial).unwrap()).unwrap();
+
+        // A conflicting adjacent default must never own this instance.
+        let mut wrong_adjacent = initial.clone();
+        wrong_adjacent.skills.disabled = vec!["systematic_debugging".to_string()];
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&wrong_adjacent).unwrap(),
+        )
+        .unwrap();
+
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            custom_config.clone(),
+        ));
+        let registry =
+            SkillRegistry::load_with_reload_controller(&skills_dir, Arc::clone(&controller))
+                .await
+                .unwrap();
+        assert_eq!(registry.config_path(), custom_config);
+        assert!(
+            registry
+                .snapshot()
+                .iter()
+                .find(|skill| skill.id() == "systematic_debugging")
+                .unwrap()
+                .is_enabled(),
+            "initial routing policy must come from the controller snapshot"
+        );
+        let _watcher = registry.watch().unwrap();
+
+        let mut accepted = initial;
+        accepted.skills.disabled = vec!["systematic_debugging".to_string()];
+        std::fs::write(&custom_config, serde_yaml::to_string(&accepted).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        wait_for_skill_enabled(&registry, "systematic_debugging", false).await;
+    }
+
+    #[tokio::test]
+    async fn rejected_config_candidate_cannot_change_skill_routing() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        tokio::fs::create_dir_all(&skills_dir).await.unwrap();
+        let custom_config = home.path().join("operator-instance.yaml");
+        let initial = crate::config::FreedomConfig::default();
+        std::fs::write(&custom_config, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            custom_config.clone(),
+        ));
+        let registry =
+            SkillRegistry::load_with_reload_controller(&skills_dir, Arc::clone(&controller))
+                .await
+                .unwrap();
+        let pinned = registry.snapshot_owned();
+        let _watcher = registry.watch().unwrap();
+
+        let mut rejected = initial;
+        rejected.operator_id = Some("different-operator".to_string());
+        rejected.skills.disabled = vec!["systematic_debugging".to_string()];
+        std::fs::write(&custom_config, serde_yaml::to_string(&rejected).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Rejected { .. }
+        ));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
+        assert!(
+            Arc::ptr_eq(&pinned, &registry.snapshot_owned()),
+            "a rejected config file edit must retain the exact routing snapshot"
+        );
+        assert!(
+            registry
+                .snapshot()
+                .iter()
+                .find(|skill| skill.id() == "systematic_debugging")
+                .unwrap()
+                .is_enabled()
+        );
     }
 
     #[tokio::test]

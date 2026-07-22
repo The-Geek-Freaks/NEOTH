@@ -389,6 +389,33 @@ struct ApprovedCompiledPlugin {
     module: Arc<Module>,
     approval: PluginApproval,
     execution_limits: PluginExecutionLimits,
+    integrity_policy: Option<PluginIntegrityPolicyFingerprint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PluginIntegrityPolicyFingerprint {
+    pinned_hash: Option<String>,
+    require_all_pinned: bool,
+    author_pubkey: Option<String>,
+    require_signature: bool,
+}
+
+impl PluginIntegrityPolicyFingerprint {
+    fn capture(plugin_id: &str, config: &crate::config::WasmPluginsConfig) -> Self {
+        Self {
+            pinned_hash: config
+                .pinned_hashes
+                .get(plugin_id)
+                .map(|hash| hash.to_ascii_lowercase()),
+            require_all_pinned: config.require_all_pinned,
+            author_pubkey: config.author_pubkey.clone(),
+            require_signature: config.require_signature,
+        }
+    }
+
+    fn matches(&self, plugin_id: &str, config: &crate::config::WasmPluginsConfig) -> bool {
+        self == &Self::capture(plugin_id, config)
+    }
 }
 
 impl CompiledPluginInvoker {
@@ -423,6 +450,7 @@ impl CompiledPluginInvoker {
                         module: module.clone(),
                         approval,
                         execution_limits: *execution_limits,
+                        integrity_policy: None,
                     },
                 );
             }
@@ -453,16 +481,30 @@ impl CompiledPluginInvoker {
         self
     }
 
-    /// Attach the daemon's live-config handle so every invoke re-checks both
-    /// `plugins.wasm.revoked_ids` and the complete approval record. Revocation,
-    /// disable, legacy activation, digest drift, and permission changes all
-    /// take effect fail-closed without rebuilding the global invoker.
+    /// Attach the daemon's live-config handle so every invoke re-checks the
+    /// host switch, revocations, complete approval record, and immutable
+    /// bootstrap integrity-policy fingerprint. Authority removal takes effect
+    /// immediately; artifact-admission policy drift refuses execution until a
+    /// restart can revalidate the compiled generation.
     #[must_use]
     pub fn with_reload_controller(
         mut self,
         controller: Arc<crate::config::reload::ReloadController>,
     ) -> Self {
         self.reload_controller = Some(controller);
+        self
+    }
+
+    /// Bind each compiled plugin to the exact integrity posture that admitted
+    /// it at bootstrap. A live reload may revoke/disable a plugin, but a pin,
+    /// require-all, author-key, or signature-policy change requires restart so
+    /// the artifact can be verified again before another invocation.
+    #[must_use]
+    pub fn with_integrity_policy(mut self, config: &crate::config::WasmPluginsConfig) -> Self {
+        for (plugin_id, plugin) in &mut self.plugins {
+            plugin.integrity_policy =
+                Some(PluginIntegrityPolicyFingerprint::capture(plugin_id, config));
+        }
         self
     }
 
@@ -494,6 +536,11 @@ impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
         // ArcSwap load; revoked_ids is expected to remain a short operator list.
         if let Some(ctrl) = &self.reload_controller {
             let cfg = ctrl.latest();
+            if !cfg.plugins.wasm.enabled {
+                anyhow::bail!(
+                    "plugin {plugin_id:?} host is disabled in live config — refusing invoke"
+                );
+            }
             if cfg
                 .plugins
                 .wasm
@@ -517,7 +564,19 @@ impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
             {
                 anyhow::bail!(
                     "plugin {plugin_id:?} activation approval changed after bootstrap — \
-                     refusing invoke; explicitly re-enable and restart the daemon"
+                    refusing invoke; explicitly re-enable and restart the daemon"
+                );
+            }
+            let integrity_policy = plugin.integrity_policy.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "plugin {plugin_id:?} has no bootstrap integrity-policy binding — \
+                     refusing live-config invoke"
+                )
+            })?;
+            if !integrity_policy.matches(plugin_id, &cfg.plugins.wasm) {
+                anyhow::bail!(
+                    "plugin {plugin_id:?} integrity policy changed after bootstrap — \
+                     refusing invoke; restart the daemon to revalidate the artifact"
                 );
             }
         }
@@ -571,6 +630,60 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    fn active_plugin_config() -> crate::config::FreedomConfig {
+        let mut config = crate::config::FreedomConfig::default();
+        config.plugins.wasm.activations.insert(
+            "alpha".to_string(),
+            crate::wasm_plugin::discovery::PluginActivationRecord {
+                state: crate::wasm_plugin::discovery::PluginActivation::Active,
+                approval: Some(PluginApproval {
+                    approved_permission: RequestedPermission::None,
+                    manifest_sha256: "manifest-at-bootstrap".to_string(),
+                    wasm_sha256: "wasm-at-bootstrap".to_string(),
+                }),
+            },
+        );
+        config
+    }
+
+    fn live_config_invoker(
+        initial: &crate::config::FreedomConfig,
+        config_path: PathBuf,
+    ) -> (
+        CompiledPluginInvoker,
+        Arc<crate::config::reload::ReloadController>,
+    ) {
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            initial.clone(),
+            config_path,
+        ));
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "alpha".into(),
+            module: Arc::new(module),
+            execution_limits: PluginExecutionLimits::default(),
+        }];
+        let approval = initial.plugins.wasm.activations["alpha"]
+            .approval
+            .clone()
+            .expect("active fixture approval");
+        let invoker = CompiledPluginInvoker::from_compile_outcomes(
+            engine,
+            &outcomes,
+            linker,
+            HashMap::from([("alpha".to_string(), approval)]),
+        )
+        .expect("approved invoker")
+        .with_integrity_policy(&initial.plugins.wasm)
+        .with_reload_controller(controller.clone());
+        (invoker, controller)
     }
 
     /// A complete WASM module that:
@@ -1737,6 +1850,7 @@ mod tests {
         let inv =
             CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, approvals)
                 .expect("approved invoker")
+                .with_integrity_policy(&initial.plugins.wasm)
                 .with_reload_controller(ctrl.clone());
 
         // Pre-swap: the gate passes (revoked_ids empty) and the invoke
@@ -1803,6 +1917,7 @@ mod tests {
         let inv =
             CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, approvals)
                 .expect("approved invoker")
+                .with_integrity_policy(&initial.plugins.wasm)
                 .with_reload_controller(ctrl.clone());
 
         let err = inv.invoke("alpha").unwrap_err().to_string();
@@ -1833,6 +1948,73 @@ mod tests {
             err.contains("approval changed"),
             "post-swap invoke must reject the changed approval: {err}"
         );
+    }
+
+    #[test]
+    fn compiled_invoker_refuses_live_plugin_host_disable() {
+        use crate::config::reload::ReloadResult;
+        use crate::hooks::dispatcher::PluginInvoker;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let initial = active_plugin_config();
+        let (invoker, controller) = live_config_invoker(&initial, config_path.clone());
+
+        let mut disabled = initial;
+        disabled.plugins.wasm.enabled = false;
+        std::fs::write(&config_path, serde_yaml::to_string(&disabled).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().expect("reload must succeed"),
+            ReloadResult::Reloaded { .. }
+        ));
+
+        let error = invoker.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            error.contains("host is disabled"),
+            "live host disable must fail before module invocation: {error}"
+        );
+    }
+
+    #[test]
+    fn compiled_invoker_refuses_integrity_policy_tightening_until_restart() {
+        use crate::config::reload::ReloadResult;
+        use crate::hooks::dispatcher::PluginInvoker;
+
+        let cases: [(&str, fn(&mut crate::config::WasmPluginsConfig)); 3] = [
+            ("pin", |config| {
+                config
+                    .pinned_hashes
+                    .insert("alpha".to_string(), "0".repeat(64));
+            }),
+            ("require_all_pinned", |config| {
+                config.require_all_pinned = true;
+            }),
+            ("signature", |config| {
+                config.author_pubkey =
+                    Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3".to_string());
+                config.require_signature = true;
+            }),
+        ];
+
+        for (case, tighten) in cases {
+            let dir = tempfile::tempdir().unwrap();
+            let config_path = dir.path().join("freedom.yaml");
+            let initial = active_plugin_config();
+            let (invoker, controller) = live_config_invoker(&initial, config_path.clone());
+            let mut tightened = initial;
+            tighten(&mut tightened.plugins.wasm);
+            std::fs::write(&config_path, serde_yaml::to_string(&tightened).unwrap()).unwrap();
+            assert!(matches!(
+                controller.try_reload().expect("reload must succeed"),
+                ReloadResult::Reloaded { .. }
+            ));
+
+            let error = invoker.invoke("alpha").unwrap_err().to_string();
+            assert!(
+                error.contains("integrity policy changed"),
+                "{case} tightening must fail before module invocation: {error}"
+            );
+        }
     }
 
     #[test]

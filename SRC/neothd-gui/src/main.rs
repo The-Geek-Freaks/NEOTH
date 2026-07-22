@@ -3491,7 +3491,7 @@ fn main() -> Result<()> {
                 apply_profile_presets(&w, profile_presets);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
-                apply_skills(&w, skills);
+                let _ = apply_skills(&w, skills);
                 apply_plugins(&w, plugins);
                 apply_memory(&w, memory);
                 apply_channels(&w, channels);
@@ -8144,11 +8144,21 @@ fn main() -> Result<()> {
             let skills = fetch_skills();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
-                    apply_skills(&w, skills);
+                    let refresh = apply_skills(&w, skills);
                     let verb = if enabled { "enabled" } else { "disabled" };
-                    w.set_status_line(match outcome {
-                        Ok(()) => format!("Skill {id} {verb}.").into(),
-                        Err(error) => format!("Skill {verb} failed for {id}: {error}").into(),
+                    w.set_status_line(match (outcome, refresh) {
+                        (Ok(()), Ok(())) => format!("Skill {id} {verb}.").into(),
+                        (Ok(()), Err(error)) => format!(
+                            "Skill {id} {verb}, but inventory refresh failed: {error}. The previous list is still shown."
+                        )
+                        .into(),
+                        (Err(error), Ok(())) => {
+                            format!("Skill {verb} failed for {id}: {error}").into()
+                        }
+                        (Err(error), Err(refresh_error)) => format!(
+                            "Skill {verb} failed for {id}: {error}. Inventory refresh also failed: {refresh_error}."
+                        )
+                        .into(),
                     });
                 }
             });
@@ -8201,34 +8211,113 @@ fn main() -> Result<()> {
                     .pick_folder();
                 let Some(dir) = picked else { return };
                 let dir_str = dir.to_string_lossy().to_string();
-                // Typed receipt: the GUI cannot predict the id (the CLI derives
-                // it from skill.yaml), so it reads the acknowledged install
-                // directory back off disk before reporting success.
-                let result = run_neothd_json_action::<gui_action::SkillInstallAck>(
-                    &["skills", "--install", dir_str.as_str()],
-                    "Skill install",
-                )
-                .and_then(|ack| {
-                    ack.verify_and_read_back()
-                        .map(|(id, replaced)| (id.to_string(), replaced))
-                });
+                let preflight = match inspect_skill_install_from_gui(&dir) {
+                    Ok(preflight) => preflight,
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Skill validation failed", &error);
+                        return;
+                    }
+                };
+                let replacement_authorized = if preflight.replacing_existing {
+                        let confirmed = rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_title("Replace installed skill?")
+                            .set_description(format!(
+                                "Skill `{}` is already installed. Replacing it removes the prior directory only after the new copy and its manifest generation are verified.",
+                                preflight.id
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNo)
+                            .show()
+                            == rfd::MessageDialogResult::Yes;
+                        if !confirmed {
+                            push_toast(
+                                &weak,
+                                "info",
+                                "Skill unchanged",
+                                "Replacement was cancelled; the installed skill was kept.",
+                            );
+                            return;
+                        }
+                        true
+                    } else {
+                        false
+                };
+                let result = install_skill_from_gui(
+                    &dir_str,
+                    &preflight,
+                    replacement_authorized,
+                );
                 match &result {
-                    Ok((id, replaced)) => push_toast(
-                        &weak,
-                        "success",
-                        if *replaced {
-                            "Skill replaced"
-                        } else {
-                            "Skill installed"
-                        },
-                        id,
-                    ),
+                    Ok(installed) => match installed.warning_detail() {
+                        Some(warning) => push_toast(
+                            &weak,
+                            "warn",
+                            if installed.replaced_existing {
+                                "Skill replaced with warning"
+                            } else {
+                                "Skill installed with warning"
+                            },
+                            &format!("{} — {warning}", installed.id),
+                        ),
+                        None => push_toast(
+                            &weak,
+                            "success",
+                            if installed.replaced_existing {
+                                "Skill replaced"
+                            } else {
+                                "Skill installed"
+                            },
+                            &installed.id,
+                        ),
+                    },
                     Err(error) => push_toast(&weak, "warn", "Skill install failed", error),
                 }
                 let skills = fetch_skills();
+                if let Err(error) = &skills {
+                    push_toast(
+                        &weak,
+                        "warn",
+                        "Skill list refresh failed",
+                        &format!("{error}. The previous verified list is still shown."),
+                    );
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        apply_skills(&w, skills);
+                        let refresh = apply_skills(&w, skills);
+                        let status = match (result, refresh) {
+                            (Ok(installed), Ok(())) => {
+                                let verb = if installed.replaced_existing {
+                                    "replaced"
+                                } else {
+                                    "installed"
+                                };
+                                match installed.warning_detail() {
+                                    Some(warning) => format!(
+                                        "Skill {} {verb} successfully. Warning: {warning}",
+                                        installed.id
+                                    ),
+                                    None => {
+                                        format!("Skill {} {verb} successfully.", installed.id)
+                                    }
+                                }
+                            }
+                            (Ok(installed), Err(error)) => {
+                                let verb = if installed.replaced_existing {
+                                    "replaced"
+                                } else {
+                                    "installed"
+                                };
+                                format!(
+                                    "Skill {} {verb}, but inventory refresh failed: {error}. The previous list is still shown.",
+                                    installed.id
+                                )
+                            }
+                            (Err(error), Ok(())) => format!("Skill install failed: {error}"),
+                            (Err(error), Err(refresh_error)) => format!(
+                                "Skill install failed: {error}. Inventory refresh also failed: {refresh_error}."
+                            ),
+                        };
+                        w.set_status_line(status.into());
                     }
                 });
             });
@@ -8243,23 +8332,116 @@ fn main() -> Result<()> {
             let weak = weak_su.clone();
             let id = id.to_string();
             std::thread::spawn(move || {
-                // Typed receipt: require the daemon to acknowledge the exact id
-                // and that a skill was actually removed (`removed: true`) before
-                // reporting success — a no-op or bare exit is no longer trusted.
-                let outcome = run_neothd_json_action::<gui_action::SkillUninstallAck>(
-                    &["skills", "--uninstall", id.as_str()],
-                    "Skill uninstall",
-                )
-                .and_then(|ack| ack.verify(&id));
+                // The callback is gated again against the verified inventory:
+                // bundled rows never reach the destructive CLI path even if a
+                // malformed/stale UI event fabricates their id.
+                let mutation_outcome = verified_skill_uninstall_target_in_cache(&id)
+                    .and_then(|()| inspect_skill_target_from_gui(&id))
+                    .and_then(|preflight| {
+                        let generation = preflight.target_generation_sha256.ok_or_else(|| {
+                            format!(
+                                "skill `{id}` disappeared before confirmation; refresh the inventory"
+                            )
+                        })?;
+                        let confirmed = rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_title("Confirm current skill removal")
+                            .set_description(format!(
+                                "Remove the currently verified generation of `{id}`? A changed replacement will be preserved automatically."
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNo)
+                            .show()
+                            == rfd::MessageDialogResult::Yes;
+                        if !confirmed {
+                            return Err("skill removal was cancelled; no files were changed".to_string());
+                        }
+                        let args = skill_uninstall_cli_args(&id, &generation);
+                        let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+                        run_neothd_json_action::<gui_action::SkillUninstallAck>(
+                            &args,
+                            "Skill uninstall",
+                        )
+                        .and_then(|ack| ack.verify(&id, &generation))
+                    });
+                let skills = fetch_skills();
+                let outcome = mutation_outcome.and_then(|verified| match &skills {
+                    Ok(fresh) => {
+                        verify_skill_absent_after_uninstall(fresh, &id)?;
+                        Ok(verified)
+                    }
+                    Err(error) => Err(format!(
+                        "skill uninstall returned a valid receipt, but its end state could not be verified: {error}"
+                    )),
+                });
                 match &outcome {
-                    Ok(true) => push_toast(&weak, "success", "Skill uninstalled", &id),
-                    Ok(false) => push_toast(&weak, "success", "Skill was already removed", &id),
+                    Ok(verified) if verified.warning_detail().is_some() => push_toast(
+                        &weak,
+                        "warn",
+                        if verified.removed {
+                            "Skill removed with warning"
+                        } else {
+                            "Skill already absent with warning"
+                        },
+                        &format!(
+                            "{} — {}",
+                            id,
+                            verified.warning_detail().unwrap_or_default()
+                        ),
+                    ),
+                    Ok(verified) if verified.removed => {
+                        push_toast(&weak, "success", "Skill uninstalled", &id)
+                    }
+                    Ok(_) => push_toast(&weak, "success", "Skill was already removed", &id),
                     Err(error) => push_toast(&weak, "warn", "Skill uninstall failed", error),
                 }
-                let skills = fetch_skills();
+                if let Err(error) = &skills {
+                    push_toast(
+                        &weak,
+                        "warn",
+                        "Skill list refresh failed",
+                        &format!("{error}. The previous verified list is still shown."),
+                    );
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        apply_skills(&w, skills);
+                        let refresh = apply_skills(&w, skills);
+                        let status = match (outcome, refresh) {
+                            (Ok(verified), Ok(())) if verified.removed => {
+                                match verified.warning_detail() {
+                                    Some(warning) => format!(
+                                        "Skill {id} uninstalled. Warning: {warning}"
+                                    ),
+                                    None => format!("Skill {id} uninstalled."),
+                                }
+                            }
+                            (Ok(verified), Ok(())) => match verified.warning_detail() {
+                                Some(warning) => format!(
+                                    "Skill {id} was already removed. Warning: {warning}"
+                                ),
+                                None => format!("Skill {id} was already removed."),
+                            },
+                            (Ok(verified), Err(error)) => {
+                                let state = if verified.removed {
+                                    "is removed"
+                                } else {
+                                    "was already absent"
+                                };
+                                let warning = verified
+                                    .warning_detail()
+                                    .map(|warning| format!(" Warning: {warning}."))
+                                    .unwrap_or_default();
+                                format!(
+                                    "Skill {id} {state}, but inventory refresh failed: {error}. The previous list is still shown.{warning}"
+                                )
+                            }
+                            (Err(error), Ok(())) => {
+                                format!("Skill uninstall failed for {id}: {error}")
+                            }
+                            (Err(error), Err(refresh_error)) => format!(
+                                "Skill uninstall failed for {id}: {error}. Inventory refresh also failed: {refresh_error}."
+                            ),
+                        };
+                        w.set_status_line(status.into());
                     }
                 });
             });
@@ -8279,34 +8461,171 @@ fn main() -> Result<()> {
             let keywords = keywords.to_string();
             let prompt = prompt.to_string();
             std::thread::spawn(move || {
-                let mut args: Vec<&str> = vec![
-                    "skills",
-                    "--create",
-                    "--non-interactive",
-                    "--create-id",
-                    id.as_str(),
-                    "--create-description",
-                    desc.as_str(),
-                    "--create-system-prompt",
-                    prompt.as_str(),
-                ];
-                if !keywords.is_empty() {
-                    args.push("--create-keywords");
-                    args.push(keywords.as_str());
-                }
-                // Typed receipt: confirm the acknowledged id matches the request
-                // and the new skill is on disk before reporting success.
-                let result =
+                let target_preflight = match inspect_skill_target_from_gui(&id) {
+                    Ok(preflight) => preflight,
+                    Err(error) => {
+                        push_toast(&weak, "warn", "Skill preflight failed", &error);
+                        return;
+                    }
+                };
+                // A replacement remains gated by the last verified inventory,
+                // then confirmed against the exact post-click generation.
+                let force = match target_preflight.target_generation_sha256.as_ref() {
+                    Some(_) => match verified_skill_exists_in_cache(&id) {
+                        Ok(true) => {
+                        let confirmed = rfd::MessageDialog::new()
+                            .set_level(rfd::MessageLevel::Warning)
+                            .set_title("Replace existing skill?")
+                            .set_description(format!(
+                                "Skill `{id}` exists in the verified inventory. Replace its skill.yaml? Existing sibling assets are preserved."
+                            ))
+                            .set_buttons(rfd::MessageButtons::YesNo)
+                            .show()
+                            == rfd::MessageDialogResult::Yes;
+                        if !confirmed {
+                            push_toast(
+                                &weak,
+                                "info",
+                                "Skill unchanged",
+                                "Replacement was cancelled; the existing skill was kept.",
+                            );
+                            return;
+                        }
+                        true
+                        }
+                        Ok(false) => {
+                            push_toast(
+                                &weak,
+                                "warn",
+                                "Skill inventory changed",
+                                "The target exists but was not present in the verified inventory. Refresh before replacing it.",
+                            );
+                            return;
+                        }
+                        Err(error) => {
+                            push_toast(&weak, "warn", "Skill replacement unavailable", &error);
+                            return;
+                        }
+                    },
+                    None => false,
+                };
+                let args = skill_create_cli_args(
+                    &id,
+                    &desc,
+                    &keywords,
+                    &prompt,
+                    &target_preflight,
+                    force,
+                );
+                let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+                let expected_generation = neothd::skills::creator::build_manifest(
+                    &neothd::skills::creator::CreateParams {
+                        id: id.clone(),
+                        description: desc.clone(),
+                        keywords: keywords
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|keyword| !keyword.is_empty())
+                            .map(ToOwned::to_owned)
+                            .collect(),
+                        system_prompt: prompt.clone(),
+                    },
+                )
+                .map(|(_, yaml)| gui_action::sha256_hex(yaml.as_bytes()))
+                .map_err(|error| format!("could not bind requested skill manifest: {error:#}"));
+                let expected_manifest_path = neothd::config::FreedomConfig::default_neoth_home()
+                    .join("skills")
+                    .join(&id)
+                    .join("skill.yaml");
+                // Typed receipt: verify id/path/on-disk manifest plus the
+                // replacement bit. A no-force request cannot acknowledge a
+                // replacement even if inventory changed concurrently.
+                let result = expected_generation.and_then(|expected_generation| {
                     run_neothd_json_action::<gui_action::SkillCreateAck>(&args, "Skill create")
-                        .and_then(|ack| ack.verify_and_read_back(&id).map(|path| path.to_string()));
+                        .and_then(|ack| {
+                            ack.verify_and_read_back(
+                                &id,
+                                &expected_generation,
+                                &expected_manifest_path,
+                                target_preflight.target_generation_sha256.as_deref(),
+                            )
+                        })
+                });
                 match &result {
-                    Ok(_) => push_toast(&weak, "success", "Skill created", &id),
+                    Ok(created) => match created.warning_detail() {
+                        Some(warning) => push_toast(
+                            &weak,
+                            "warn",
+                            if created.replaced_existing {
+                                "Skill replaced with warning"
+                            } else {
+                                "Skill created with warning"
+                            },
+                            &format!("{} — {warning}", created.id),
+                        ),
+                        None => push_toast(
+                            &weak,
+                            "success",
+                            if created.replaced_existing {
+                                "Skill replaced"
+                            } else {
+                                "Skill created"
+                            },
+                            &created.id,
+                        ),
+                    },
                     Err(error) => push_toast(&weak, "warn", "Skill create failed", error),
                 }
                 let skills = fetch_skills();
+                if let Err(error) = &skills {
+                    push_toast(
+                        &weak,
+                        "warn",
+                        "Skill list refresh failed",
+                        &format!("{error}. The previous verified list is still shown."),
+                    );
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
-                        apply_skills(&w, skills);
+                        let refresh = apply_skills(&w, skills);
+                        let status = match (result, refresh) {
+                            (Ok(created), Ok(())) => {
+                                let verb = if created.replaced_existing {
+                                    "replaced"
+                                } else {
+                                    "created"
+                                };
+                                match created.warning_detail() {
+                                    Some(warning) => format!(
+                                        "Skill {} {verb}. Warning: {warning}",
+                                        created.id
+                                    ),
+                                    None => format!("Skill {} {verb}.", created.id),
+                                }
+                            }
+                            (Ok(created), Err(error)) => {
+                                let verb = if created.replaced_existing {
+                                    "replaced"
+                                } else {
+                                    "created"
+                                };
+                                let warning = created
+                                    .warning_detail()
+                                    .map(|warning| format!(" Warning: {warning}."))
+                                    .unwrap_or_default();
+                                format!(
+                                    "Skill {} was {verb}, but inventory refresh failed: {error}. The previous list is still shown.{warning}",
+                                    created.id
+                                )
+                            }
+                            (Err(error), Ok(())) => {
+                                format!("Skill create failed for {id}: {error}")
+                            }
+                            (Err(error), Err(refresh_error)) => format!(
+                                "Skill create failed for {id}: {error}. Inventory refresh also failed: {refresh_error}."
+                            ),
+                        };
+                        w.set_status_line(status.into());
                     }
                 });
             });
@@ -12955,6 +13274,140 @@ where
     gui_action::run_json_receipt(&mut command, action)
 }
 
+/// Install or explicitly replace a skill through the typed CLI receipt. The
+/// caller owns the human confirmation before setting `force`; no GUI path may
+/// silently turn an ordinary install into destructive replacement.
+fn inspect_skill_install_from_gui(
+    source: &std::path::Path,
+) -> std::result::Result<gui_action::VerifiedSkillInstallPreflight, String> {
+    let source_text = source.to_string_lossy();
+    let target_skills_dir = neothd::skills::installer::default_skills_dir();
+    run_neothd_json_action::<gui_action::SkillInstallPreflightAck>(
+        &["skills", "--inspect-install", source_text.as_ref()],
+        "Skill install preflight",
+    )
+    .and_then(|ack| ack.verify_source(source, &target_skills_dir))
+}
+
+fn inspect_skill_target_from_gui(
+    id: &str,
+) -> std::result::Result<gui_action::VerifiedSkillTargetPreflight, String> {
+    let target_skills_dir = neothd::skills::installer::default_skills_dir();
+    run_neothd_json_action::<gui_action::SkillTargetPreflightAck>(
+        &["skills", "--inspect-target", id],
+        "Skill target preflight",
+    )
+    .and_then(|ack| ack.verify_target(&target_skills_dir, id))
+}
+
+fn skill_uninstall_cli_args(id: &str, generation_sha256: &str) -> Vec<String> {
+    vec![
+        "skills".to_string(),
+        "--uninstall".to_string(),
+        id.to_string(),
+        "--expected-uninstall-id".to_string(),
+        id.to_string(),
+        "--expected-uninstall-generation-sha256".to_string(),
+        generation_sha256.to_string(),
+    ]
+}
+
+fn skill_create_cli_args(
+    id: &str,
+    description: &str,
+    keywords: &str,
+    system_prompt: &str,
+    preflight: &gui_action::VerifiedSkillTargetPreflight,
+    replacement_authorized: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "skills".to_string(),
+        "--create".to_string(),
+        "--non-interactive".to_string(),
+        "--create-id".to_string(),
+        id.to_string(),
+        "--create-description".to_string(),
+        description.to_string(),
+        "--create-system-prompt".to_string(),
+        system_prompt.to_string(),
+        "--expected-create-id".to_string(),
+        preflight.id.clone(),
+        "--expected-create-target-generation-sha256".to_string(),
+        preflight
+            .target_generation_sha256
+            .clone()
+            .unwrap_or_else(|| "absent".to_string()),
+    ];
+    if replacement_authorized {
+        args.push("--force".to_string());
+    }
+    if !keywords.is_empty() {
+        args.push("--create-keywords".to_string());
+        args.push(keywords.to_string());
+    }
+    args
+}
+
+fn skill_install_cli_args(
+    source: &str,
+    preflight: &gui_action::VerifiedSkillInstallPreflight,
+    replacement_authorized: bool,
+) -> std::result::Result<Vec<String>, String> {
+    if preflight.replacing_existing != replacement_authorized {
+        return Err(if preflight.replacing_existing {
+            format!(
+                "skill `{}` requires explicit replacement confirmation",
+                preflight.id
+            )
+        } else {
+            format!(
+                "skill `{}` was not a replacement during preflight; refusing an unbound --force",
+                preflight.id
+            )
+        });
+    }
+    let mut args = vec![
+        "skills".to_string(),
+        "--install".to_string(),
+        source.to_string(),
+        "--expected-id".to_string(),
+        preflight.id.clone(),
+        "--expected-generation-sha256".to_string(),
+        preflight.source_generation_sha256.clone(),
+        "--expected-target-generation-sha256".to_string(),
+        preflight
+            .target_generation_sha256
+            .clone()
+            .unwrap_or_else(|| "absent".to_string()),
+    ];
+    if replacement_authorized {
+        args.push("--force".to_string());
+    }
+    Ok(args)
+}
+
+fn install_skill_from_gui(
+    source: &str,
+    preflight: &gui_action::VerifiedSkillInstallPreflight,
+    replacement_authorized: bool,
+) -> std::result::Result<gui_action::VerifiedSkillInstall, String> {
+    let args = skill_install_cli_args(source, preflight, replacement_authorized)?;
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    run_neothd_json_action::<gui_action::SkillInstallAck>(&args, "Skill install").and_then(|ack| {
+        let expected_install_dir = neothd::config::FreedomConfig::default_neoth_home()
+            .join("skills")
+            .join(&preflight.id);
+        ack.verify_and_read_back(
+            &preflight.id,
+            &preflight.source_manifest_sha256,
+            &preflight.source_generation_sha256,
+            preflight.target_generation_sha256.as_deref(),
+            &expected_install_dir,
+            replacement_authorized,
+        )
+    })
+}
+
 /// Tolerant `autonomy show --output json` snapshot for post-mutation readback.
 /// A query surface may grow fields, so this deliberately skips
 /// `deny_unknown_fields`; the mutation acks stay exact.
@@ -13523,40 +13976,283 @@ fn apply_hemispheres(window: &MainWindow, snap: panel_logic::HemispheresSnapshot
     window.set_hemispheres_mode(snap.mode.into());
 }
 
-/// GU-01 — fetch installed skills via `neoth skills --list --output json`.
-/// Empty on missing binary / failure. PARSE is the unit-tested
-/// `panel_logic::parse_skills`.
-fn fetch_skills() -> Vec<panel_logic::SkillSummary> {
-    let Some(bin) = which_neothd() else {
-        return Vec::new();
+/// Map the tagged CLI diagnostic inventory into GUI rows. A malformed or
+/// duplicate row invalidates the complete snapshot so the UI never presents a
+/// partial list as authoritative.
+fn skill_summaries_from_inventory(
+    inventory: Vec<neothd::skills::loader::SkillInventoryRow>,
+) -> std::result::Result<Vec<panel_logic::SkillSummary>, String> {
+    skill_summaries_from_inventory_at(inventory, &neothd::skills::installer::default_skills_dir())
+}
+
+fn skill_summaries_from_inventory_at(
+    inventory: Vec<neothd::skills::loader::SkillInventoryRow>,
+    skills_dir: &std::path::Path,
+) -> std::result::Result<Vec<panel_logic::SkillSummary>, String> {
+    let mut ids = std::collections::BTreeSet::new();
+    inventory
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let summary = match row {
+                neothd::skills::loader::SkillInventoryRow::Healthy {
+                    manifest,
+                    origin,
+                    path,
+                } => {
+                    let id = manifest.id.trim();
+                    if !valid_skill_gui_id(id) {
+                        return Err(format!(
+                            "skill inventory row {} has an invalid id",
+                            index + 1
+                        ));
+                    }
+                    if manifest.description.trim().is_empty() {
+                        return Err(format!(
+                            "skill inventory row `{id}` has an empty description"
+                        ));
+                    }
+                    let (origin, path) = match (origin, path) {
+                        (neothd::skills::loader::SkillInventoryOrigin::Bundled, None) => {
+                            ("bundled".to_string(), String::new())
+                        }
+                        (neothd::skills::loader::SkillInventoryOrigin::User, Some(path))
+                            if skill_inventory_path_matches(&path, skills_dir, id) =>
+                        {
+                            (
+                                "user".to_string(),
+                                diagnostic_skill_display_text(&path.display().to_string(), 512),
+                            )
+                        }
+                        _ => {
+                            return Err(format!(
+                                "skill inventory row `{id}` has an invalid origin/path binding"
+                            ));
+                        }
+                    };
+                    panel_logic::SkillSummary {
+                        id: manifest.id.clone(),
+                        operation_id: manifest.id,
+                        description: manifest.description,
+                        enabled: manifest.enabled,
+                        keywords: manifest.trigger_keywords.join(", "),
+                        tags: manifest.tags,
+                        broken: false,
+                        error: String::new(),
+                        path,
+                        origin,
+                        repairable: false,
+                    }
+                }
+                neothd::skills::loader::SkillInventoryRow::Broken {
+                    id,
+                    error,
+                    path,
+                    repairability,
+                } => {
+                    if id.is_empty()
+                        || error.trim().is_empty()
+                        || !skill_inventory_path_matches(&path, skills_dir, &id)
+                    {
+                        return Err(format!(
+                            "broken skill inventory row {} is incomplete",
+                            index + 1
+                        ));
+                    }
+                    panel_logic::SkillSummary {
+                        id: diagnostic_skill_display_id(&id),
+                        operation_id: id.clone(),
+                        description: String::new(),
+                        enabled: false,
+                        keywords: String::new(),
+                        tags: Vec::new(),
+                        broken: true,
+                        error: diagnostic_skill_display_text(&error, 512),
+                        path: diagnostic_skill_display_text(&path.display().to_string(), 512),
+                        origin: "user".to_string(),
+                        repairable: valid_skill_gui_id(&id)
+                            && repairability
+                                == neothd::skills::installer::SkillRepairability::ManifestReplaceable,
+                    }
+                }
+            };
+            if !ids.insert(summary.operation_id.to_lowercase()) {
+                return Err(format!(
+                    "skill inventory contains duplicate id `{}`",
+                    summary.id
+                ));
+            }
+            Ok(summary)
+        })
+        .collect()
+}
+
+fn skill_inventory_path_matches(
+    actual: &std::path::Path,
+    skills_dir: &std::path::Path,
+    id: &str,
+) -> bool {
+    if !valid_skill_uninstall_id(id) {
+        return false;
+    }
+    let Ok(actual) = std::path::absolute(actual) else {
+        return false;
     };
-    match spawn_neothd_plain(&bin)
-        .arg("skills")
-        .arg("--list")
-        .arg("--output")
-        .arg("json")
-        .output()
+    let Ok(expected) = std::path::absolute(skills_dir.join(id)) else {
+        return false;
+    };
+    #[cfg(windows)]
     {
-        Ok(o) if o.status.success() => {
-            panel_logic::parse_skills(&String::from_utf8_lossy(&o.stdout))
-        }
-        _ => Vec::new(),
+        actual
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&expected.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        actual == expected
     }
 }
 
-/// GOLD-ADAPT-AOS-01 — full skill list cache so the search box can
-/// re-group without a subprocess round-trip per keystroke.
-static SKILLS_CACHE: std::sync::Mutex<Vec<panel_logic::SkillSummary>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// GU-01 — push the installed-skill list onto the MainWindow. UI-thread only.
-/// AOS-01: caches the full list + renders the grouped/filtered index.
-fn apply_skills(window: &MainWindow, skills: Vec<panel_logic::SkillSummary>) {
-    window.set_skills_total(skills.len() as i32);
-    if let Ok(mut c) = SKILLS_CACHE.lock() {
-        *c = skills;
+fn valid_skill_uninstall_id(id: &str) -> bool {
+    if id.is_empty() || id.contains(['\0', '/', '\\', ':']) || matches!(id, "." | "..") {
+        return false;
     }
+    let mut components = std::path::Path::new(id).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+fn valid_skill_gui_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+}
+
+fn diagnostic_skill_display_id(id: &str) -> String {
+    diagnostic_skill_display_text(id, 128)
+}
+
+fn diagnostic_skill_display_text(value: &str, max_chars: usize) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { '�' } else { ch })
+        .take(max_chars)
+        .collect()
+}
+
+/// Fetch installed skills through the same typed subprocess boundary as GUI
+/// mutations. Missing binaries, non-zero exits, malformed JSON, and corrupt
+/// rows are errors; a valid `[]` is the only state rendered as no skills.
+fn fetch_skills() -> std::result::Result<Vec<panel_logic::SkillSummary>, String> {
+    let inventory = run_neothd_json_action::<Vec<neothd::skills::loader::SkillInventoryRow>>(
+        &["skills", "--list"],
+        "Skill inventory",
+    )?;
+    skill_summaries_from_inventory(inventory)
+}
+
+/// GOLD-ADAPT-AOS-01 — full verified skill list cache so search and
+/// replacement confirmation do not infer state from CLI error strings.
+/// `None` is distinct from a verified empty inventory.
+static SKILLS_CACHE: std::sync::Mutex<Option<Vec<panel_logic::SkillSummary>>> =
+    std::sync::Mutex::new(None);
+
+fn skill_exists_in_inventory(skills: &[panel_logic::SkillSummary], id: &str) -> bool {
+    skills.iter().any(|skill| skill.operation_id == id)
+}
+
+fn verify_skill_absent_after_uninstall(
+    skills: &[panel_logic::SkillSummary],
+    id: &str,
+) -> std::result::Result<(), String> {
+    if skill_exists_in_inventory(skills, id) {
+        Err(format!(
+            "skill `{id}` is still present after the uninstall acknowledgement"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn verified_skill_exists_in_cache(id: &str) -> std::result::Result<bool, String> {
+    let cache = SKILLS_CACHE
+        .lock()
+        .map_err(|_| "skill inventory cache is unavailable".to_string())?;
+    let skills = cache.as_ref().ok_or_else(|| {
+        "skill inventory has not completed a verified refresh; replacement is unavailable"
+            .to_string()
+    })?;
+    Ok(skill_exists_in_inventory(skills, id))
+}
+
+fn verify_skill_uninstall_target(
+    skills: &[panel_logic::SkillSummary],
+    id: &str,
+) -> std::result::Result<(), String> {
+    let skill = skills
+        .iter()
+        .find(|skill| skill.operation_id == id)
+        .ok_or_else(|| format!("skill `{id}` is not present in the verified inventory"))?;
+    if skill.origin != "user" {
+        return Err(format!(
+            "skill `{id}` is bundled and has no removable user installation"
+        ));
+    }
+    if skill.path.is_empty() {
+        return Err(format!(
+            "skill `{id}` has no verified user installation path"
+        ));
+    }
+    Ok(())
+}
+
+fn verified_skill_uninstall_target_in_cache(id: &str) -> std::result::Result<(), String> {
+    let cache = SKILLS_CACHE
+        .lock()
+        .map_err(|_| "skill inventory cache is unavailable".to_string())?;
+    let skills = cache.as_ref().ok_or_else(|| {
+        "skill inventory has not completed a verified refresh; uninstall is unavailable".to_string()
+    })?;
+    verify_skill_uninstall_target(skills, id)
+}
+
+/// GU-01 — push a verified installed-skill list onto the MainWindow. UI-thread
+/// only. Failed refreshes preserve the previous model and cache, and remain
+/// operator-visible instead of masquerading as a successful empty inventory.
+fn apply_skills(
+    window: &MainWindow,
+    skills: std::result::Result<Vec<panel_logic::SkillSummary>, String>,
+) -> std::result::Result<(), String> {
+    let skills = match skills {
+        Ok(skills) => skills,
+        Err(error) => {
+            window.set_status_line(
+                format!(
+                    "Skill inventory unavailable: {error}. Keeping the previous verified list."
+                )
+                .into(),
+            );
+            return Err(error);
+        }
+    };
+    let total = skills.len() as i32;
+    let mut cache = match SKILLS_CACHE.lock() {
+        Ok(cache) => cache,
+        Err(_) => {
+            let error = "skill inventory cache is unavailable".to_string();
+            window.set_status_line(
+                "Skill inventory cache is unavailable. Keeping the previous visible list.".into(),
+            );
+            return Err(error);
+        }
+    };
+    *cache = Some(skills);
+    drop(cache);
+    window.set_skills_total(total);
     render_skill_index(window);
+    Ok(())
 }
 
 /// AOS-01 — regroup the cached skills under the current filter and push
@@ -13566,16 +14262,30 @@ fn render_skill_index(window: &MainWindow) {
     let filter = window.get_skills_filter().to_string();
     // Clone out of the lock immediately — holding it across the grouping
     // would stall any future off-thread cache writer.
-    let skills = SKILLS_CACHE.lock().map(|c| c.clone()).unwrap_or_default();
+    let skills = match SKILLS_CACHE.lock() {
+        Ok(cache) => cache.as_ref().cloned().unwrap_or_default(),
+        Err(_) => {
+            window.set_status_line(
+                "Skill inventory cache is unavailable. Keeping the previous visible list.".into(),
+            );
+            return;
+        }
+    };
     let rows: Vec<SkillRow> = panel_logic::group_skill_rows(&skills, &filter)
         .into_iter()
         .map(|s| SkillRow {
             id: s.id.into(),
+            operation_id: s.operation_id.into(),
             description: s.description.into(),
             enabled: s.enabled,
             keywords: s.keywords.into(),
             tags: s.tags.into(),
             is_header: s.is_header,
+            broken: s.broken,
+            error: s.error.into(),
+            path: s.path.into(),
+            origin: s.origin.into(),
+            repairable: s.repairable,
         })
         .collect();
     window.set_skills(ModelRc::new(VecModel::from(rows)));
@@ -19468,6 +20178,238 @@ fn init_tracing() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    fn test_skill_manifest(id: &str, description: &str) -> neothd::skills::schema::SkillManifest {
+        serde_yaml::from_str(&format!(
+            "id: {id}\ndescription: {description}\ntrigger_keywords: [one, two]\ntags: [tools]\n"
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn skill_inventory_maps_the_canonical_manifest_without_losing_gui_fields() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let mut manifest = test_skill_manifest("alpha", "Alpha skill");
+        manifest.enabled = false;
+        let inventory = vec![neothd::skills::loader::SkillInventoryRow::Healthy {
+            manifest: Box::new(manifest),
+            origin: neothd::skills::loader::SkillInventoryOrigin::User,
+            path: Some(skills_dir.join("alpha")),
+        }];
+
+        let summaries = skill_summaries_from_inventory_at(inventory, &skills_dir).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "alpha");
+        assert_eq!(summaries[0].operation_id, "alpha");
+        assert_eq!(summaries[0].description, "Alpha skill");
+        assert!(!summaries[0].enabled);
+        assert_eq!(summaries[0].keywords, "one, two");
+        assert_eq!(summaries[0].tags, vec!["tools".to_string()]);
+        assert_eq!(summaries[0].origin, "user");
+        assert!(!summaries[0].broken);
+        assert!(!summaries[0].repairable);
+    }
+
+    #[test]
+    fn skill_inventory_rejects_partial_or_ambiguous_snapshots() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let duplicate = vec![
+            neothd::skills::loader::SkillInventoryRow::Healthy {
+                manifest: Box::new(test_skill_manifest("alpha", "one")),
+                origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
+                path: None,
+            },
+            neothd::skills::loader::SkillInventoryRow::Healthy {
+                manifest: Box::new(test_skill_manifest("alpha", "two")),
+                origin: neothd::skills::loader::SkillInventoryOrigin::User,
+                path: Some(skills_dir.join("alpha")),
+            },
+        ];
+        assert!(
+            skill_summaries_from_inventory_at(duplicate, &skills_dir)
+                .unwrap_err()
+                .contains("duplicate id")
+        );
+
+        let mut empty_manifest = test_skill_manifest("alpha", "placeholder");
+        empty_manifest.description = "  ".to_string();
+        let empty_description = vec![neothd::skills::loader::SkillInventoryRow::Healthy {
+            manifest: Box::new(empty_manifest),
+            origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
+            path: None,
+        }];
+        assert!(
+            skill_summaries_from_inventory_at(empty_description, &skills_dir)
+                .unwrap_err()
+                .contains("empty description")
+        );
+
+        let wrong_path = vec![neothd::skills::loader::SkillInventoryRow::Healthy {
+            manifest: Box::new(test_skill_manifest("alpha", "Alpha skill")),
+            origin: neothd::skills::loader::SkillInventoryOrigin::User,
+            path: Some(skills_dir.join("other")),
+        }];
+        assert!(
+            skill_summaries_from_inventory_at(wrong_path, &skills_dir)
+                .unwrap_err()
+                .contains("invalid origin/path binding")
+        );
+    }
+
+    #[test]
+    fn broken_inventory_supports_repair_and_remove_while_bundled_uninstall_is_blocked() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let inventory = vec![
+            neothd::skills::loader::SkillInventoryRow::Healthy {
+                manifest: Box::new(test_skill_manifest("bundled", "Bundled skill")),
+                origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
+                path: None,
+            },
+            neothd::skills::loader::SkillInventoryRow::Broken {
+                id: "broken-skill".to_string(),
+                error: "missing skill.yaml".to_string(),
+                path: skills_dir.join("broken-skill"),
+                repairability: neothd::skills::installer::SkillRepairability::ManifestReplaceable,
+            },
+            neothd::skills::loader::SkillInventoryRow::Broken {
+                id: "broken\nskill".to_string(),
+                error: "bad\nmanifest".to_string(),
+                path: skills_dir.join("broken\nskill"),
+                repairability: neothd::skills::installer::SkillRepairability::RemoveOnly,
+            },
+        ];
+        let summaries = skill_summaries_from_inventory_at(inventory, &skills_dir).unwrap();
+
+        let repairable = summaries
+            .iter()
+            .find(|skill| skill.operation_id == "broken-skill")
+            .unwrap();
+        assert!(repairable.broken);
+        assert!(repairable.repairable);
+        assert_eq!(repairable.origin, "user");
+        assert!(skill_exists_in_inventory(&summaries, "broken-skill"));
+        assert!(verify_skill_uninstall_target(&summaries, "broken-skill").is_ok());
+
+        let diagnostic = summaries
+            .iter()
+            .find(|skill| skill.operation_id == "broken\nskill")
+            .unwrap();
+        assert_eq!(diagnostic.id, "broken�skill");
+        assert_eq!(diagnostic.error, "bad�manifest");
+        assert!(!diagnostic.repairable);
+        assert!(verify_skill_uninstall_target(&summaries, "broken\nskill").is_ok());
+
+        assert!(verify_skill_uninstall_target(&summaries, "bundled").is_err());
+        assert!(verify_skill_uninstall_target(&summaries, "missing").is_err());
+    }
+
+    #[test]
+    fn uninstall_success_requires_a_fresh_inventory_without_the_exact_id() {
+        let inventory = vec![panel_logic::SkillSummary {
+            id: "alpha".to_string(),
+            operation_id: "alpha".to_string(),
+            description: "Alpha skill".to_string(),
+            enabled: true,
+            keywords: String::new(),
+            tags: Vec::new(),
+            origin: "user".to_string(),
+            broken: false,
+            repairable: false,
+            error: String::new(),
+            path: String::new(),
+        }];
+
+        let error = verify_skill_absent_after_uninstall(&inventory, "alpha").unwrap_err();
+        assert!(error.contains("still present"));
+        assert!(verify_skill_absent_after_uninstall(&inventory, "other").is_ok());
+        assert!(verify_skill_absent_after_uninstall(&[], "alpha").is_ok());
+    }
+
+    #[test]
+    fn skill_install_force_is_bound_to_typed_preflight_replacement_state() {
+        let mut preflight = gui_action::VerifiedSkillInstallPreflight {
+            id: "alpha".to_string(),
+            source_manifest_sha256: "a".repeat(64),
+            source_generation_sha256: "b".repeat(64),
+            replacing_existing: false,
+            target_generation_sha256: None,
+        };
+        let create = skill_install_cli_args("source", &preflight, false).unwrap();
+        assert!(!create.iter().any(|argument| argument == "--force"));
+        assert!(skill_install_cli_args("source", &preflight, true).is_err());
+
+        preflight.replacing_existing = true;
+        preflight.target_generation_sha256 = Some("c".repeat(64));
+        assert!(skill_install_cli_args("source", &preflight, false).is_err());
+        let replace = skill_install_cli_args("source", &preflight, true).unwrap();
+        assert!(replace.iter().any(|argument| argument == "--force"));
+        assert_eq!(
+            replace
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-generation-sha256")
+                .map(|pair| pair[1].as_str()),
+            Some(preflight.source_generation_sha256.as_str())
+        );
+        assert_eq!(
+            replace
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-target-generation-sha256")
+                .map(|pair| pair[1].as_str()),
+            preflight.target_generation_sha256.as_deref()
+        );
+    }
+
+    #[test]
+    fn skill_create_and_uninstall_cli_args_always_bind_exact_target_generation() {
+        let absent = gui_action::VerifiedSkillTargetPreflight {
+            id: "alpha".to_string(),
+            target_generation_sha256: None,
+        };
+        let create = skill_create_cli_args(
+            "alpha",
+            "Alpha skill",
+            "alpha,test",
+            "Use Alpha.",
+            &absent,
+            false,
+        );
+        assert_eq!(
+            create
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-create-target-generation-sha256")
+                .map(|pair| pair[1].as_str()),
+            Some("absent")
+        );
+        assert!(!create.iter().any(|argument| argument == "--force"));
+
+        let generation = "a".repeat(64);
+        let existing = gui_action::VerifiedSkillTargetPreflight {
+            id: "alpha".to_string(),
+            target_generation_sha256: Some(generation.clone()),
+        };
+        let replace =
+            skill_create_cli_args("alpha", "Alpha skill", "", "Use Alpha.", &existing, true);
+        assert!(replace.iter().any(|argument| argument == "--force"));
+        assert_eq!(
+            replace
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-create-target-generation-sha256")
+                .map(|pair| pair[1].as_str()),
+            Some(generation.as_str())
+        );
+
+        let uninstall = skill_uninstall_cli_args("alpha", &generation);
+        assert_eq!(
+            uninstall
+                .windows(2)
+                .find(|pair| pair[0] == "--expected-uninstall-generation-sha256")
+                .map(|pair| pair[1].as_str()),
+            Some(generation.as_str())
+        );
+    }
 
     #[test]
     fn cluster_multiline_lists_preserve_exact_values_and_dedupe_stably() {

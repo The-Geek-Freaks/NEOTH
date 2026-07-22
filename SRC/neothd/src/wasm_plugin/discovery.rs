@@ -17,10 +17,16 @@
 //! compile the bytes. Helps a slim-build operator decide whether to
 //! rebuild with the feature.
 
+use std::ffi::OsStr;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::manifest::{ManifestError, PluginManifest, RequestedPermission, parse_manifest};
+use crate::skills::store::{
+    BoundDirectory, cap_metadata_is_link_like, open_bound_directory, open_real_child_dir,
+    read_regular_file_bounded,
+};
 
 /// `plugin.toml` is declarative metadata, not a payload. 256 KiB leaves ample
 /// room for descriptions, hook declarations, and future fields while bounding
@@ -33,6 +39,13 @@ pub(crate) const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
 /// memory budget while still bounding the per-plugin startup read.
 pub(crate) const MAX_WASM_BYTES: u64 = 128 * 1024 * 1024;
 
+/// Maximum aggregate `plugin.wasm` payload retained by one daemon discovery
+/// pass. Per-plugin limits alone are insufficient: thousands of individually
+/// valid pending/disabled plugins would otherwise be read and retained before
+/// activation policy is applied. Keep the startup snapshot bounded even when
+/// the plugin namespace is controlled by a hostile same-user writer.
+pub(crate) const MAX_DISCOVERED_WASM_BYTES: u64 = 256 * 1024 * 1024;
+
 /// SC-03 — a minisign detached signature is tiny (~300 bytes); cap the
 /// read so a HOSTILE multi-GB `plugin.wasm.minisig` can't OOM the daemon
 /// at discovery (the plugin dir is attacker-controlled — that IS SC-03's
@@ -40,11 +53,13 @@ pub(crate) const MAX_WASM_BYTES: u64 = 128 * 1024 * 1024;
 /// manifest/activation filter).
 pub(crate) const MAX_MINISIG_BYTES: u64 = 4096;
 
-/// Read a `plugin.wasm.minisig` companion, capped at [`MAX_MINISIG_BYTES`].
-/// `None` when the file is absent OR unreadable; `Some(Err(..))` shape is
-/// avoided — an over-size file is reported by the caller (`load_one` /
-/// `run_verify`) so the operator sees WHY it was refused rather than a
-/// silently-dropped signature that would degrade to "unsigned".
+/// Bound startup/probe work even when a same-user writer floods the plugin
+/// namespace. The per-artifact byte limits below remain independently active.
+pub(crate) const MAX_PLUGIN_DIRECTORIES: usize = 4096;
+
+/// Test helper for the legacy ambient-path reader. Production discovery uses
+/// [`read_bound_minisig`] so the directory handle remains authoritative.
+#[cfg(test)]
 pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
     use std::io::Read;
     if !path.exists() {
@@ -59,6 +74,9 @@ pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
     let Ok(meta) = file.metadata() else {
         return Ok(None);
     };
+    if !meta.file_type().is_file() || metadata_is_link_like(&meta) {
+        return Ok(None);
+    }
     if meta.len() > MAX_MINISIG_BYTES {
         return Err(()); // over the cap — caller refuses the plugin
     }
@@ -80,6 +98,7 @@ pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
 /// rather than reading the link target. On non-Unix platforms (where creating a
 /// symlink needs privilege) it falls back to a plain open — the `symlink_metadata`
 /// loop in `discover_one` is the guard there.
+#[cfg(test)]
 fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
     #[cfg(unix)]
     {
@@ -91,13 +110,46 @@ fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
     }
     #[cfg(not(unix))]
     {
-        fs::File::open(path)
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            // Open the reparse point itself. `read_no_follow` rejects the
+            // resulting handle from its metadata, so a leaf swap cannot turn
+            // a plugin read into a traversal through a symlink or junction.
+            const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+            fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+        }
+        #[cfg(not(windows))]
+        {
+            fs::File::open(path)
+        }
     }
 }
 
+#[cfg(test)]
+fn metadata_is_link_like(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[cfg(test)]
 #[derive(Debug)]
 enum ReadNoFollowError {
-    Io(std::io::Error),
+    Io,
     NotRegular,
     TooLarge { observed_bytes: u64 },
 }
@@ -106,12 +158,13 @@ enum ReadNoFollowError {
 /// `max_bytes`. Metadata comes from the same open handle used for the read, so
 /// a path swap cannot substitute a special file between stat and read. The
 /// `max + 1` read limit also catches a regular file that grows after metadata.
+#[cfg(test)]
 fn read_no_follow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ReadNoFollowError> {
     use std::io::Read;
 
-    let file = open_no_follow(path).map_err(ReadNoFollowError::Io)?;
-    let metadata = file.metadata().map_err(ReadNoFollowError::Io)?;
-    if !metadata.file_type().is_file() {
+    let file = open_no_follow(path).map_err(|_| ReadNoFollowError::Io)?;
+    let metadata = file.metadata().map_err(|_| ReadNoFollowError::Io)?;
+    if !metadata.file_type().is_file() || metadata_is_link_like(&metadata) {
         return Err(ReadNoFollowError::NotRegular);
     }
     if metadata.len() > max_bytes {
@@ -123,7 +176,7 @@ fn read_no_follow(path: &Path, max_bytes: u64) -> Result<Vec<u8>, ReadNoFollowEr
     let mut buf = Vec::with_capacity(metadata.len() as usize);
     file.take(max_bytes + 1)
         .read_to_end(&mut buf)
-        .map_err(ReadNoFollowError::Io)?;
+        .map_err(|_| ReadNoFollowError::Io)?;
     if buf.len() as u64 > max_bytes {
         return Err(ReadNoFollowError::TooLarge {
             observed_bytes: buf.len() as u64,
@@ -342,6 +395,24 @@ pub enum PluginApprovalError {
 /// the WAL `PLUGIN_REJECTED` (0xC3) frame carries the same shape.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub enum DiscoveryError {
+    #[error("plugin store {root:?} exceeds the {max_entries}-entry discovery limit")]
+    StoreEntryLimit { root: PathBuf, max_entries: usize },
+    #[error(
+        "plugin {dir:?}: retaining its {candidate_bytes}-byte plugin.wasm would exceed the aggregate discovery budget ({retained_bytes} bytes already retained, {max_bytes} bytes maximum)"
+    )]
+    AggregateWasmBudgetExceeded {
+        dir: PathBuf,
+        retained_bytes: u64,
+        candidate_bytes: u64,
+        max_bytes: u64,
+    },
+    #[error("plugin directory {dir:?}: io error: {kind:?}")]
+    PluginDirIo {
+        dir: PathBuf,
+        kind: std::io::ErrorKind,
+    },
+    #[error("plugin path {dir:?} is not a real directory")]
+    PluginPathNotDirectory { dir: PathBuf },
     #[error("plugin dir {dir:?} missing plugin.toml")]
     MissingManifest { dir: PathBuf },
     #[error("plugin dir {dir:?} missing plugin.wasm")]
@@ -457,31 +528,78 @@ impl DiscoveryReport {
 /// Walk `plugins_root` (typically `~/.neoth/plugins/`). For every
 /// immediate subdirectory, attempt to load `<dir>/plugin.toml` +
 /// `<dir>/plugin.wasm`. Returns a report — never errors at the
-/// top level (a missing `plugins_root` simply yields an empty report).
+/// top level (a missing `plugins_root` simply yields an empty report). Store
+/// open/enumeration/read failures are rejected diagnostics rather than being
+/// indistinguishable from a legitimately empty store.
 pub fn discover(plugins_root: &Path) -> DiscoveryReport {
+    discover_with_wasm_budget(plugins_root, MAX_DISCOVERED_WASM_BYTES)
+}
+
+fn discover_with_wasm_budget(plugins_root: &Path, max_wasm_bytes: u64) -> DiscoveryReport {
     let mut report = DiscoveryReport::default();
-    let Ok(entries) = fs::read_dir(plugins_root) else {
-        return report; // No plugin dir → no plugins; not an error.
+    let root = match open_bound_directory(plugins_root, false, "plugins root") {
+        Ok(Some(root)) => root,
+        Ok(None) => return report,
+        Err(error) => {
+            report.rejected.push(DiscoveryError::PluginDirIo {
+                dir: plugins_root.to_path_buf(),
+                kind: anyhow_io_kind(&error),
+            });
+            return report;
+        }
     };
-    for entry in entries.flatten() {
-        let dir = entry.path();
-        // SC-03 — refuse symlinks in the plugin root. `is_dir()` follows
-        // symlinks, so without this an attacker who can write the plugin
-        // root could alias `<id>/` to an arbitrary path (its `plugin.wasm`
-        // bytes + the giant-`.minisig` OOM vector would come from the
-        // symlink target, and the dir-name the id-locality check keys on
-        // would be attacker-chosen). The operator places REAL dirs here.
-        if dir.is_symlink() {
-            report
-                .rejected
-                .push(DiscoveryError::SymlinkRejected { dir });
+    let entries = match root.dir.entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            report.rejected.push(DiscoveryError::PluginDirIo {
+                dir: root.display_path.clone(),
+                kind: error.kind(),
+            });
+            return report;
+        }
+    };
+    let mut observed_entries = 0usize;
+    let mut retained_wasm_bytes = 0u64;
+    for entry in entries {
+        observed_entries = observed_entries.checked_add(1).unwrap_or(usize::MAX);
+        if observed_entries > MAX_PLUGIN_DIRECTORIES {
+            report.rejected.push(DiscoveryError::StoreEntryLimit {
+                root: root.display_path.clone(),
+                max_entries: MAX_PLUGIN_DIRECTORIES,
+            });
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report.rejected.push(DiscoveryError::PluginDirIo {
+                    dir: root.display_path.clone(),
+                    kind: error.kind(),
+                });
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let metadata = match root.dir.symlink_metadata(&name) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                report.rejected.push(DiscoveryError::PluginDirIo {
+                    dir: root.display_path.join(&name),
+                    kind: error.kind(),
+                });
+                continue;
+            }
+        };
+        if !metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
             continue;
         }
-        if !dir.is_dir() {
-            continue;
-        }
-        match load_one(&dir) {
-            Ok(plugin) => report.loaded.push(plugin),
+        match discover_one_in_root(&root, &name, Some((retained_wasm_bytes, max_wasm_bytes))) {
+            Ok(plugin) => retain_discovered_plugin(
+                &mut report,
+                plugin,
+                &mut retained_wasm_bytes,
+                max_wasm_bytes,
+            ),
             Err(e) => report.rejected.push(e),
         }
     }
@@ -492,70 +610,130 @@ pub fn discover(plugins_root: &Path) -> DiscoveryReport {
     report
 }
 
-fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
-    let toml_path = dir.join("plugin.toml");
-    let wasm_path = dir.join("plugin.wasm");
-    if !toml_path.exists() {
-        return Err(DiscoveryError::MissingManifest {
-            dir: dir.to_path_buf(),
-        });
-    }
-    if !wasm_path.exists() {
-        return Err(DiscoveryError::MissingWasm {
-            dir: dir.to_path_buf(),
-        });
-    }
-    // GOLD-SEC-20 / A-56: refuse symlinked plugin files. The top-level dir is
-    // already symlink-checked by `discover`, but the files INSIDE were read
-    // via `fs::read` with no check — a symlinked plugin.wasm would make the
-    // SHA-256 / signature cover the symlink target rather than the declared
-    // file. `symlink_metadata` does NOT follow the link.
-    let minisig_path = dir.join("plugin.wasm.minisig");
-    for (p, name) in [
-        (&toml_path, "plugin.toml"),
-        (&wasm_path, "plugin.wasm"),
-        // GOLD-SEC-20 — the minisig was read (read_capped_minisig) with NO
-        // symlink check, so a symlinked `plugin.wasm.minisig` could point the
-        // signature at an arbitrary file. A missing minisig makes
-        // `symlink_metadata` error → `unwrap_or(false)` lets it through to the
-        // optional read; only a real symlink is refused.
-        (&minisig_path, "plugin.wasm.minisig"),
-    ] {
-        if std::fs::symlink_metadata(p)
-            .map(|m| m.file_type().is_symlink())
-            .unwrap_or(false)
-        {
-            return Err(DiscoveryError::PathIsSymlink {
-                dir: dir.to_path_buf(),
-                file: name,
-            });
-        }
-    }
-    // GR-089 — read via O_NOFOLLOW (open_no_follow) so even a post-check symlink
-    // swap can't redirect the read: the check above + the open here are no longer
-    // a check-then-read TOCTOU on Unix (the open itself refuses a symlink).
-    let toml_bytes = match read_no_follow(&toml_path, MAX_MANIFEST_BYTES) {
-        Ok(bytes) => bytes,
-        Err(ReadNoFollowError::Io(e)) => {
-            return Err(DiscoveryError::TomlIo {
-                dir: dir.to_path_buf(),
-                kind: e.kind(),
-            });
-        }
-        Err(ReadNoFollowError::NotRegular) => {
-            return Err(DiscoveryError::PathNotRegular {
-                dir: dir.to_path_buf(),
-                file: "plugin.toml",
-            });
-        }
-        Err(ReadNoFollowError::TooLarge { observed_bytes }) => {
-            return Err(DiscoveryError::ManifestTooLarge {
-                dir: dir.to_path_buf(),
-                observed_bytes,
-                max_bytes: MAX_MANIFEST_BYTES,
-            });
+fn retain_discovered_plugin(
+    report: &mut DiscoveryReport,
+    plugin: DiscoveredPlugin,
+    retained_wasm_bytes: &mut u64,
+    max_wasm_bytes: u64,
+) {
+    let candidate_bytes = u64::try_from(plugin.wasm_bytes.len()).unwrap_or(u64::MAX);
+    let next_total = match retained_wasm_bytes.checked_add(candidate_bytes) {
+        Some(total) if total <= max_wasm_bytes => total,
+        _ => {
+            report
+                .rejected
+                .push(DiscoveryError::AggregateWasmBudgetExceeded {
+                    dir: plugin.dir,
+                    retained_bytes: *retained_wasm_bytes,
+                    candidate_bytes,
+                    max_bytes: max_wasm_bytes,
+                });
+            return;
         }
     };
+    *retained_wasm_bytes = next_total;
+    report.loaded.push(plugin);
+}
+
+/// Load one plugin directory through the same bounded, no-follow discovery
+/// path used by daemon bootstrap. Updater probes call this exact entry point
+/// again at their resolver sink so approval applies to the bytes about to
+/// trigger egress, not to an earlier manifest-only scan.
+#[cfg(test)]
+pub(crate) fn discover_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
+    let Some(parent) = dir.parent() else {
+        return Err(DiscoveryError::PluginDirIo {
+            dir: dir.to_path_buf(),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    };
+    let Some(name) = dir.file_name() else {
+        return Err(DiscoveryError::PluginDirIo {
+            dir: dir.to_path_buf(),
+            kind: std::io::ErrorKind::InvalidInput,
+        });
+    };
+    discover_one_bound(parent, name)
+}
+
+/// Inspect an arbitrary plugin bundle directory without requiring its
+/// filesystem name to equal the manifest id. This is the capability-bound
+/// pre-install/verification entry point for checkouts and private staging
+/// directories whose names are intentionally unrelated to the plugin id.
+pub(crate) fn inspect_bundle(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
+    let bundle = open_bound_directory(dir, false, "plugin bundle")
+        .map_err(|error| DiscoveryError::PluginDirIo {
+            dir: dir.to_path_buf(),
+            kind: anyhow_io_kind(&error),
+        })?
+        .ok_or_else(|| DiscoveryError::PluginDirIo {
+            dir: dir.to_path_buf(),
+            kind: std::io::ErrorKind::NotFound,
+        })?;
+    load_one_bound(&bundle.dir, &bundle.display_path, None, None)
+}
+
+/// Discover one exact child below an already-selected plugin root. The root
+/// ambient path is opened once; the component directory and every artifact
+/// leaf are then resolved through stable directory capabilities.
+pub(crate) fn discover_one_bound(
+    plugins_root: &Path,
+    name: &OsStr,
+) -> Result<DiscoveredPlugin, DiscoveryError> {
+    let root = open_bound_directory(plugins_root, false, "plugins root")
+        .map_err(|error| DiscoveryError::PluginDirIo {
+            dir: plugins_root.join(name),
+            kind: anyhow_io_kind(&error),
+        })?
+        .ok_or_else(|| DiscoveryError::PluginDirIo {
+            dir: plugins_root.join(name),
+            kind: std::io::ErrorKind::NotFound,
+        })?;
+    discover_one_in_root(&root, name, None)
+}
+
+fn discover_one_in_root(
+    root: &BoundDirectory,
+    name: &OsStr,
+    aggregate_wasm_budget: Option<(u64, u64)>,
+) -> Result<DiscoveredPlugin, DiscoveryError> {
+    let dir = root.display_path.join(name);
+    let metadata =
+        root.dir
+            .symlink_metadata(name)
+            .map_err(|error| DiscoveryError::PluginDirIo {
+                dir: dir.clone(),
+                kind: error.kind(),
+            })?;
+    if cap_metadata_is_link_like(&metadata) {
+        return Err(DiscoveryError::SymlinkRejected { dir });
+    }
+    if !metadata.is_dir() {
+        return Err(DiscoveryError::PluginPathNotDirectory { dir });
+    }
+    let plugin_dir = open_real_child_dir(&root.dir, name, &dir).map_err(|error| {
+        DiscoveryError::PluginDirIo {
+            dir: dir.clone(),
+            kind: anyhow_io_kind(&error),
+        }
+    })?;
+    load_one_bound(&plugin_dir, &dir, Some(name), aggregate_wasm_budget)
+}
+
+fn load_one_bound(
+    plugin_dir: &cap_std::fs::Dir,
+    dir: &Path,
+    expected_directory_name: Option<&OsStr>,
+    aggregate_wasm_budget: Option<(u64, u64)>,
+) -> Result<DiscoveredPlugin, DiscoveryError> {
+    let toml_bytes = read_bound_required_plugin_file(
+        plugin_dir,
+        dir,
+        "plugin.toml",
+        MAX_MANIFEST_BYTES,
+        PluginArtifact::Manifest,
+        None,
+    )?;
     let manifest = parse_manifest(&toml_bytes).map_err(|e| DiscoveryError::ManifestInvalid {
         dir: dir.to_path_buf(),
         source: e,
@@ -565,50 +743,30 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // is a reliable lookup key. Without this, two plugins with the
     // same manifest id but different directory names would silently
     // collide in `plugins list`.
-    let dir_name = dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
-    if manifest.id != dir_name {
-        return Err(DiscoveryError::IdDirectoryMismatch {
-            dir: dir.to_path_buf(),
-            got: manifest.id,
-            expected: dir_name,
-        });
+    if let Some(directory_name) = expected_directory_name {
+        let dir_name = directory_name.to_str().unwrap_or("").to_string();
+        if manifest.id != dir_name {
+            return Err(DiscoveryError::IdDirectoryMismatch {
+                dir: dir.to_path_buf(),
+                got: manifest.id,
+                expected: dir_name,
+            });
+        }
     }
-    let wasm_bytes = match read_no_follow(&wasm_path, MAX_WASM_BYTES) {
-        Ok(bytes) => bytes,
-        Err(ReadNoFollowError::Io(e)) => {
-            return Err(DiscoveryError::WasmIo {
-                dir: dir.to_path_buf(),
-                kind: e.kind(),
-            });
-        }
-        Err(ReadNoFollowError::NotRegular) => {
-            return Err(DiscoveryError::PathNotRegular {
-                dir: dir.to_path_buf(),
-                file: "plugin.wasm",
-            });
-        }
-        Err(ReadNoFollowError::TooLarge { observed_bytes }) => {
-            return Err(DiscoveryError::WasmTooLarge {
-                dir: dir.to_path_buf(),
-                observed_bytes,
-                max_bytes: MAX_WASM_BYTES,
-            });
-        }
-    };
+    let wasm_bytes = read_bound_required_plugin_file(
+        plugin_dir,
+        dir,
+        "plugin.wasm",
+        MAX_WASM_BYTES,
+        PluginArtifact::Wasm,
+        aggregate_wasm_budget,
+    )?;
     let content_hash = sha256_hex(&wasm_bytes);
     // SC-03 — optional minisign detached signature. minisign's `-Sm
     // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
     // signature gate is opt-in via freedom.yaml::plugins.wasm.author_pubkey).
     // Capped read — a hostile over-size companion is refused, not OOM'd.
-    let signature =
-        read_capped_minisig(&minisig_path).map_err(|()| DiscoveryError::SignatureInvalid {
-            dir: dir.to_path_buf(),
-            reason: format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing"),
-        })?;
+    let signature = read_bound_minisig(plugin_dir, dir)?;
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,
@@ -617,6 +775,201 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         content_hash,
         signature,
     })
+}
+
+#[derive(Clone, Copy)]
+enum PluginArtifact {
+    Manifest,
+    Wasm,
+}
+
+fn read_bound_required_plugin_file(
+    plugin_dir: &cap_std::fs::Dir,
+    dir: &Path,
+    file_name: &'static str,
+    max_bytes: u64,
+    artifact: PluginArtifact,
+    aggregate_wasm_budget: Option<(u64, u64)>,
+) -> Result<Vec<u8>, DiscoveryError> {
+    let display = dir.join(file_name);
+    let metadata = match plugin_dir.symlink_metadata(file_name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(match artifact {
+                PluginArtifact::Manifest => DiscoveryError::MissingManifest {
+                    dir: dir.to_path_buf(),
+                },
+                PluginArtifact::Wasm => DiscoveryError::MissingWasm {
+                    dir: dir.to_path_buf(),
+                },
+            });
+        }
+        Err(error) => {
+            return Err(plugin_artifact_io_error(artifact, dir, error.kind()));
+        }
+    };
+    if cap_metadata_is_link_like(&metadata) {
+        return Err(DiscoveryError::PathIsSymlink {
+            dir: dir.to_path_buf(),
+            file: file_name,
+        });
+    }
+    if !metadata.is_file() {
+        return Err(DiscoveryError::PathNotRegular {
+            dir: dir.to_path_buf(),
+            file: file_name,
+        });
+    }
+    if metadata.len() > max_bytes {
+        return Err(plugin_artifact_too_large(
+            artifact,
+            dir,
+            metadata.len(),
+            max_bytes,
+        ));
+    }
+    let aggregate_remaining = match (artifact, aggregate_wasm_budget) {
+        (PluginArtifact::Wasm, Some((retained_bytes, aggregate_max_bytes))) => {
+            let remaining = aggregate_max_bytes.checked_sub(retained_bytes).unwrap_or(0);
+            if metadata.len() > remaining {
+                return Err(DiscoveryError::AggregateWasmBudgetExceeded {
+                    dir: dir.to_path_buf(),
+                    retained_bytes,
+                    candidate_bytes: metadata.len(),
+                    max_bytes: aggregate_max_bytes,
+                });
+            }
+            Some((retained_bytes, aggregate_max_bytes, remaining))
+        }
+        _ => None,
+    };
+    let read_max_bytes = aggregate_remaining
+        .map(|(_, _, remaining)| remaining.min(max_bytes))
+        .unwrap_or(max_bytes);
+    read_regular_file_bounded(
+        plugin_dir,
+        OsStr::new(file_name),
+        &display,
+        usize::try_from(read_max_bytes).unwrap_or(usize::MAX),
+    )
+    .map_err(|error| {
+        if anyhow_io_kind(&error) == std::io::ErrorKind::InvalidData {
+            if let Some((retained_bytes, aggregate_max_bytes, remaining)) = aggregate_remaining
+                && remaining < max_bytes
+            {
+                DiscoveryError::AggregateWasmBudgetExceeded {
+                    dir: dir.to_path_buf(),
+                    retained_bytes,
+                    candidate_bytes: remaining.saturating_add(1),
+                    max_bytes: aggregate_max_bytes,
+                }
+            } else {
+                plugin_artifact_too_large(artifact, dir, max_bytes.saturating_add(1), max_bytes)
+            }
+        } else {
+            plugin_artifact_io_error(artifact, dir, anyhow_io_kind(&error))
+        }
+    })
+}
+
+fn read_bound_minisig(
+    plugin_dir: &cap_std::fs::Dir,
+    dir: &Path,
+) -> Result<Option<String>, DiscoveryError> {
+    const NAME: &str = "plugin.wasm.minisig";
+    let display = dir.join(NAME);
+    let metadata = match plugin_dir.symlink_metadata(NAME) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(DiscoveryError::SignatureInvalid {
+                dir: dir.to_path_buf(),
+                reason: format!("cannot inspect signature companion: {:?}", error.kind()),
+            });
+        }
+    };
+    if cap_metadata_is_link_like(&metadata) {
+        return Err(DiscoveryError::PathIsSymlink {
+            dir: dir.to_path_buf(),
+            file: NAME,
+        });
+    }
+    if !metadata.is_file() {
+        return Err(DiscoveryError::PathNotRegular {
+            dir: dir.to_path_buf(),
+            file: NAME,
+        });
+    }
+    if metadata.len() > MAX_MINISIG_BYTES {
+        return Err(DiscoveryError::SignatureInvalid {
+            dir: dir.to_path_buf(),
+            reason: format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing"),
+        });
+    }
+    let bytes = read_regular_file_bounded(
+        plugin_dir,
+        OsStr::new(NAME),
+        &display,
+        MAX_MINISIG_BYTES as usize,
+    )
+    .map_err(|error| DiscoveryError::SignatureInvalid {
+        dir: dir.to_path_buf(),
+        reason: if anyhow_io_kind(&error) == std::io::ErrorKind::InvalidData {
+            format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing")
+        } else {
+            "cannot read signature companion".to_string()
+        },
+    })?;
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| DiscoveryError::SignatureInvalid {
+            dir: dir.to_path_buf(),
+            reason: "plugin.wasm.minisig is not UTF-8".to_string(),
+        })
+}
+
+fn plugin_artifact_io_error(
+    artifact: PluginArtifact,
+    dir: &Path,
+    kind: std::io::ErrorKind,
+) -> DiscoveryError {
+    match artifact {
+        PluginArtifact::Manifest => DiscoveryError::TomlIo {
+            dir: dir.to_path_buf(),
+            kind,
+        },
+        PluginArtifact::Wasm => DiscoveryError::WasmIo {
+            dir: dir.to_path_buf(),
+            kind,
+        },
+    }
+}
+
+fn plugin_artifact_too_large(
+    artifact: PluginArtifact,
+    dir: &Path,
+    observed_bytes: u64,
+    max_bytes: u64,
+) -> DiscoveryError {
+    match artifact {
+        PluginArtifact::Manifest => DiscoveryError::ManifestTooLarge {
+            dir: dir.to_path_buf(),
+            observed_bytes,
+            max_bytes,
+        },
+        PluginArtifact::Wasm => DiscoveryError::WasmTooLarge {
+            dir: dir.to_path_buf(),
+            observed_bytes,
+            max_bytes,
+        },
+    }
+}
+
+fn anyhow_io_kind(error: &anyhow::Error) -> std::io::ErrorKind {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .map_or(std::io::ErrorKind::Other, std::io::Error::kind)
 }
 
 /// Stable digest of the parsed manifest rather than its raw TOML bytes.
@@ -669,6 +1022,55 @@ pub struct IntegrityPolicy<'a> {
     /// scan is fine: revocation lists are a handful of ids. Borrowed to
     /// keep `Copy`.
     pub revoked: &'a [String],
+}
+
+impl<'a> IntegrityPolicy<'a> {
+    /// Project the operator's WASM config into the exact integrity policy used
+    /// by runtime admission. Keeping this mapping here prevents updater and
+    /// bootstrap callers from accidentally omitting a newly-added gate.
+    pub fn from_config(config: &'a crate::config::WasmPluginsConfig) -> Self {
+        Self {
+            pinned: &config.pinned_hashes,
+            require_all_pinned: config.require_all_pinned,
+            author_pubkey: config.author_pubkey.as_deref(),
+            require_signature: config.require_signature,
+            revoked: &config.revoked_ids,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
+pub enum RuntimePluginAdmissionError {
+    #[error("plugin host is disabled")]
+    HostDisabled,
+    #[error("plugin activation approval rejected: {0}")]
+    Approval(#[from] PluginApprovalError),
+    #[error("plugin integrity policy rejected artifact: {0}")]
+    Integrity(DiscoveryError),
+}
+
+/// Apply daemon runtime admission to one exact discovered generation: host
+/// switch, active approval binding (permission + manifest + WASM digests),
+/// revocation, pins, and author signature policy. The approved grant is
+/// returned only after every gate passes.
+pub fn validate_runtime_admission(
+    plugin: &DiscoveredPlugin,
+    config: &crate::config::WasmPluginsConfig,
+) -> Result<PluginApproval, RuntimePluginAdmissionError> {
+    if !config.enabled {
+        return Err(RuntimePluginAdmissionError::HostDisabled);
+    }
+    let record = config
+        .activations
+        .get(&plugin.manifest.id)
+        .cloned()
+        .unwrap_or_default();
+    record.validate_for(plugin)?;
+    verify_integrity(plugin, &IntegrityPolicy::from_config(config))
+        .map_err(RuntimePluginAdmissionError::Integrity)?;
+    record.approval.ok_or(RuntimePluginAdmissionError::Approval(
+        PluginApprovalError::MissingApproval,
+    ))
 }
 
 /// SC-03 — verify one discovered plugin against the operator's integrity
@@ -896,6 +1298,21 @@ mod tests {
     }
 
     #[test]
+    fn unreadable_store_root_is_not_reported_as_empty() {
+        let dir = tempdir().unwrap();
+        let root = dir.path().join("not_a_directory");
+        fs::write(&root, b"not a plugin store").unwrap();
+
+        let report = discover(&root);
+
+        assert!(report.loaded.is_empty());
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [DiscoveryError::PluginDirIo { dir, .. }] if dir == &root
+        ));
+    }
+
+    #[test]
     fn well_formed_plugin_loads() {
         let dir = tempdir().unwrap();
         write_plugin(
@@ -978,6 +1395,21 @@ mod tests {
     }
 
     #[test]
+    fn inspect_bundle_allows_arbitrary_checkout_directory_name() {
+        let root = tempdir().unwrap();
+        write_plugin(
+            root.path(),
+            "arbitrary_checkout_name",
+            "id = \"verified_plugin\"\nname = \"Verified\"\nversion = \"0.1.0\"\n",
+            MINIMAL_WASM,
+        );
+
+        let plugin = inspect_bundle(&root.path().join("arbitrary_checkout_name")).unwrap();
+        assert_eq!(plugin.manifest.id, "verified_plugin");
+        assert_eq!(plugin.wasm_bytes, MINIMAL_WASM);
+    }
+
+    #[test]
     fn discovery_sorts_loaded_by_id_for_stable_ordering() {
         let dir = tempdir().unwrap();
         for id in ["z_last", "a_first", "m_middle"] {
@@ -1046,6 +1478,57 @@ mod tests {
         );
         let mut r = discover(dir.path());
         r.loaded.pop().expect("one loaded plugin")
+    }
+
+    #[test]
+    fn aggregate_wasm_budget_rejects_before_retaining_every_plugin() {
+        let root = tempdir().unwrap();
+        for id in ["first", "second"] {
+            write_plugin(
+                root.path(),
+                id,
+                &format!("id = \"{id}\"\nname = \"x\"\nversion = \"0.1.0\"\n"),
+                MINIMAL_WASM,
+            );
+        }
+
+        let report = discover_with_wasm_budget(root.path(), MINIMAL_WASM.len() as u64);
+
+        assert_eq!(report.loaded.len(), 1);
+        assert_eq!(report.loaded[0].wasm_bytes.len(), MINIMAL_WASM.len());
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [DiscoveryError::AggregateWasmBudgetExceeded {
+                retained_bytes,
+                candidate_bytes,
+                max_bytes,
+                ..
+            }] if *retained_bytes == MINIMAL_WASM.len() as u64
+                && *candidate_bytes == MINIMAL_WASM.len() as u64
+                && *max_bytes == MINIMAL_WASM.len() as u64
+        ));
+    }
+
+    #[test]
+    fn aggregate_wasm_accounting_rejects_integer_overflow() {
+        let plugin = discovered("overflow", MINIMAL_WASM);
+        let plugin_dir = plugin.dir.clone();
+        let mut report = DiscoveryReport::default();
+        let mut retained_bytes = u64::MAX;
+
+        retain_discovered_plugin(&mut report, plugin, &mut retained_bytes, u64::MAX);
+
+        assert!(report.loaded.is_empty());
+        assert_eq!(retained_bytes, u64::MAX);
+        assert!(matches!(
+            report.rejected.as_slice(),
+            [DiscoveryError::AggregateWasmBudgetExceeded {
+                dir,
+                retained_bytes: u64::MAX,
+                candidate_bytes,
+                max_bytes: u64::MAX,
+            }] if dir == &plugin_dir && *candidate_bytes == MINIMAL_WASM.len() as u64
+        ));
     }
 
     #[test]
@@ -1323,7 +1806,7 @@ mod tests {
         ));
         assert!(matches!(
             read_no_follow(&dir.path().join("absent"), TEST_LIMIT),
-            Err(ReadNoFollowError::Io(_))
+            Err(ReadNoFollowError::Io)
         ));
     }
 

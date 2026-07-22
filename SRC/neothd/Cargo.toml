@@ -361,6 +361,14 @@ ciborium = "0.2"
 # Windows keeps that stage across the detached target-binary PID handoff.
 tempfile = "3"
 
+# QM-11 / GOLD-SEC-03 — capability-bound skill installation.  All recursive
+# copy/remove operations stay relative to an already-open directory handle, so
+# a concurrent symlink/junction or namespace swap cannot redirect them outside
+# the selected skills root. `cap-fs-ext` supplies the cross-platform
+# open-directory-without-following-links primitive missing from std/cap-std.
+cap-std    = "=4.0.2"
+cap-fs-ext = "=4.0.2"
+
 # Cluster auto-discovery Phase 2 (R-2 SPEC):
 # mDNS service announcer + listener. Pure-Rust, no system zeroconf
 # daemon required. Cross-platform (Windows / macOS / Linux).
@@ -673,6 +681,7 @@ matrix-sdk = { version = "0.18", features = ["e2e-encryption", "sqlite"], option
 # crate for any future syscall.
 [target.'cfg(unix)'.dependencies]
 libc        = "0.2"
+rustix      = { version = "=1.1.4", features = ["fs"] }
 
 # Windows DACL restriction is implemented via icacls.exe subprocess in
 # src/wal/win_acl.rs. icacls ships with every Windows install since XP and

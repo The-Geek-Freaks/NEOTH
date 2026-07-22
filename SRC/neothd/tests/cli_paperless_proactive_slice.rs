@@ -232,7 +232,7 @@ fn cli_proactive_reject_then_list_all() {
     assert_eq!(loaded.status, ProposalStatus::Rejected);
 
     // Rejected proposals stay on disk (audit log).
-    let all = list_proposals(home.path(), None);
+    let all = list_proposals(home.path(), None).unwrap();
     assert!(all.iter().any(|p| p.id == id));
 }
 

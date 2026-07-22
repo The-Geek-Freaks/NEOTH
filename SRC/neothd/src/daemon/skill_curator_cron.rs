@@ -22,14 +22,23 @@ use crate::proactive::action_staging::{
 /// `draft_yaml`. `adopt_approved_skill` parses the real `SkillManifest`,
 /// validates its id, and writes `<home>/skills/<id>/skill.yaml` atomically.
 pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
+    let home = home.to_path_buf();
+    let cfg = *cfg;
+    tokio::task::spawn_blocking(move || run_skill_curator_tick_blocking(&home, &cfg))
+        .await
+        .map_err(|error| anyhow::anyhow!("skill curator filesystem worker failed: {error}"))?
+}
+
+fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
     if !cfg.enabled {
         return Ok(());
     }
 
     let now_unix = crate::time::now_unix_i64();
     let min_age_secs = cfg.min_age_days.saturating_mul(86_400) as i64;
-    let proposals = list_proposals(home, Some(ProposalStatus::Approved));
+    let proposals = list_proposals(home, Some(ProposalStatus::Approved))?;
     let mut promoted = 0usize;
+    let mut promoted_with_warnings = 0usize;
 
     for proposal in proposals {
         if proposal.kind != ProposalKind::Skill {
@@ -47,11 +56,24 @@ pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> an
         }
 
         match adopt_approved_skill(home, &proposal) {
-            Ok(dest) => {
+            Ok(report) => {
                 promoted += 1;
+                let warning_count = report.warnings.len();
+                if warning_count > 0 {
+                    promoted_with_warnings += 1;
+                    for warning in &report.warnings {
+                        warn!(
+                            proposal_id = %proposal.id,
+                            skill_id = %report.id,
+                            %warning,
+                            "skill_curator: reconciled approved skill with durability warning"
+                        );
+                    }
+                }
                 info!(
                     proposal_id = %proposal.id,
-                    dest = %dest.display(),
+                    dest = %report.path.display(),
+                    warning_count,
                     "skill_curator: reconciled approved skill"
                 );
             }
@@ -66,7 +88,10 @@ pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> an
     }
 
     if promoted > 0 {
-        info!(promoted, "skill_curator: tick complete");
+        info!(
+            promoted,
+            promoted_with_warnings, "skill_curator: tick complete"
+        );
     } else {
         debug!("skill_curator: no proposals reconciled this tick");
     }

@@ -2,37 +2,34 @@
 //!
 //! Wraps the pure-fn primitives in [`crate::updater::pipeline`] for
 //! the daemon's recurring updater pass. Mirrors the EL-01 doctor-
-//! cron pattern: a tokio interval loop runs `run_updater_pass` per
+//! cron pattern: a reload-aware Tokio supervisor runs `run_updater_pass` per
 //! tick, emits `0x44 UPDATER_TASK_FIRED` before the pass + `0x45
 //! UPDATER_TASK_RESULT` after, and short-circuits cleanly when the
 //! operator disabled updates in `freedom.yaml::updater`.
 //!
 //! ## What's wired today
 //!
-//! - [`spawn_updater_cron_loop`] — boxed `Fn() -> Vec<ComponentSpec>`
-//!   builder so callers plug in per-task version-probe logic (e.g.
-//!   GitHub Releases for `neoth`, `claude --version` for the CLI
-//!   lane). The builder runs ON each tick so a transient network
-//!   failure produces a Failed outcome instead of a panic.
-//! - [`run_updater_tick`] — pure-fn over the builder, emits WAL +
-//!   returns the [`UpdaterTaskResultPayload`] for the caller's
-//!   audit trail.
+//! - [`spawn_updater_cron_loop`] — live-reload-aware supervisor. It resolves
+//!   the accepted updater/autonomy policy on every tick and passes that exact
+//!   snapshot + a policy-derived gate into the task builder.
 //!
 //! ## What ships in follow-ups
 //!
-//! - Real version-probe builders for `neoth_self` / `skill_plugin` /
-//!   `cli_version` lanes (U-01 / U-02 / U-03). The shapes already
-//!   exist as `pipeline::neoth_self_specs` / `skill_plugin_specs` /
-//!   `cli_version_specs` — the missing piece is the operator-config
-//!   driven "where does latest_version come from" probe.
+//! - Request-bound permit consumption at the concrete GitHub, npm-registry,
+//!   and `git ls-remote` transport leaves. Only after each leaf writes its own
+//!   intent and terminal result may the daemon replace the explicit denied gate
+//!   with the live operator decision.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::updater::pipeline::{ComponentSpec, run_updater_pass};
 use crate::wal::events::{EVENT_TYPE_UPDATER_TASK_FIRED, EVENT_TYPE_UPDATER_TASK_RESULT};
-use crate::wal::payloads_u04::{UpdaterTaskKind, UpdaterTaskResultPayload};
+use crate::wal::payloads_u04::UpdaterTaskKind;
+#[cfg(test)]
+use crate::wal::payloads_u04::UpdaterTaskResultPayload;
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 
@@ -41,6 +38,12 @@ use crate::wal::{EventFlags, HeaderBuilder};
 /// real upstream releases within the same day" against "don't
 /// hammer GitHub API with daemon-driven version checks".
 pub const DEFAULT_UPDATER_INTERVAL_SECS: u64 = 6 * 3600;
+
+/// Recurring updater probes are network operations, not update application.
+/// Until the GitHub/npm/git transports accept a request-bound permit and emit
+/// matching intent/result frames themselves, the daemon path must not call
+/// them. Manual, operator-initiated updater commands are unaffected.
+pub const UNAUDITED_RECURRING_EGRESS_DENIED: &str = "recurring updater network probe blocked: request-bound autonomy and mandatory intent/result WAL are not wired at the concrete transport leaf";
 
 /// Per-task operator config — one entry per UpdaterTaskKind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,21 +68,50 @@ impl UpdaterCronConfig {
     }
 }
 
+/// Resolve the accepted config generation for one updater lane. Unlike the old
+/// startup snapshot, this function is called again after every reload wake and
+/// immediately before each pass. Strict and fail-closed Custom never execute a
+/// standing cron.
+fn live_cron_config(
+    task_kind: UpdaterTaskKind,
+    config: &crate::config::FreedomConfig,
+) -> UpdaterCronConfig {
+    let scheduler_allowed = crate::cron::scheduler::autonomy_allows_scheduler(config.autonomy);
+    match task_kind {
+        UpdaterTaskKind::NeothSelf => UpdaterCronConfig {
+            enabled: scheduler_allowed
+                && config.updater.enabled
+                && config.auto_update.enabled
+                && config.auto_update.check_interval_secs != 0,
+            interval_secs: config.auto_update.check_interval_secs,
+        },
+        UpdaterTaskKind::SkillPlugin | UpdaterTaskKind::CliVersions => UpdaterCronConfig {
+            enabled: scheduler_allowed && config.updater.enabled,
+            interval_secs: config.updater.interval_secs,
+        },
+    }
+}
+
+fn recurring_egress_gate() -> crate::updater::pipeline::GateDecision {
+    crate::updater::pipeline::GateDecision::Deny {
+        reason: UNAUDITED_RECURRING_EGRESS_DENIED.to_string(),
+    }
+}
+
 /// One tick of the updater cron pass.
 ///
 /// Sequence:
-///   1. Builder runs → produces the per-component spec list. A
-///      panic in the builder is caught by the spawn-loop wrapper
-///      (so a transient network error doesn't crash the daemon).
-///   2. Emit `0x44 UPDATER_TASK_FIRED` with the task_kind tag so
+///   1. Emit `0x44 UPDATER_TASK_FIRED` with the task_kind tag so
 ///      auditors see "the cron started" even when the result frame
 ///      never lands (e.g. daemon killed mid-pass).
+///   2. Builder runs → produces the per-component spec list.
 ///   3. `run_updater_pass` computes outcomes from the specs.
 ///   4. Emit `0x45 UPDATER_TASK_RESULT` with the full payload.
 ///
 /// Returns the payload so callers (tests, `neoth updater status`)
 /// can inspect outcomes without re-running the pass.
-pub async fn run_updater_tick<F>(
+#[cfg(test)]
+async fn run_updater_tick<F>(
     task_kind: UpdaterTaskKind,
     builder: F,
     writer: &WalWriterHandle,
@@ -117,40 +149,106 @@ where
     Ok(result)
 }
 
-/// Spawn the periodic updater cron loop. Returns `None` when
-/// `config.enabled == false` so the daemon doesn't accumulate idle
-/// tokio tasks for opt-out operators.
+/// Spawn the periodic updater cron loop.
 ///
-/// The `builder` closure is boxed + cloned each tick (cheap — it's
-/// a `Box<dyn Fn>`, not the spec vec). Builders must be `Send +
-/// Sync + 'static` since the loop runs on a tokio worker.
+/// The small supervisor exists even while the lane is disabled so a successful
+/// hot reload can enable it without restarting the daemon. Disabled lanes wait
+/// for a reload-generation bump and perform no builder work or WAL emission.
+/// Enabled lanes run once immediately, then sleep for the live interval; a
+/// reload interrupts that sleep so cadence/enable/autonomy changes take effect
+/// before another pass.
+///
+/// The builder receives the exact accepted config snapshot used for the pass
+/// plus a gate decision. Today that decision is deliberately fail-closed until
+/// every concrete recurring network transport consumes a request-bound permit.
+/// This ensures no GitHub/npm/git egress can happen before its mandatory intent
+/// WAL. The builder runs on a blocking worker because local package scans and
+/// version commands are synchronous.
 pub fn spawn_updater_cron_loop(
-    config: UpdaterCronConfig,
     task_kind: UpdaterTaskKind,
-    builder: std::sync::Arc<dyn Fn() -> Vec<ComponentSpec> + Send + Sync + 'static>,
+    builder: Arc<
+        dyn Fn(
+                Arc<crate::config::FreedomConfig>,
+                crate::updater::pipeline::GateDecision,
+            ) -> Vec<ComponentSpec>
+            + Send
+            + Sync
+            + 'static,
+    >,
+    reload_controller: Arc<crate::config::reload::ReloadController>,
     writer: WalWriterHandle,
-) -> Option<tokio::task::JoinHandle<()>> {
-    if !config.enabled {
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut generation = reload_controller.subscribe_generation();
+        let mut run_immediately = true;
         tracing::info!(
             task_kind = task_kind.as_str(),
-            "updater cron disabled in config; skipping loop spawn"
-        );
-        return None;
-    }
-    let interval = config.interval_duration();
-    Some(tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        tracing::info!(
-            task_kind = task_kind.as_str(),
-            interval_secs = interval.as_secs(),
-            "updater cron loop online (U-04)",
+            "live updater cron supervisor online (network probes fail closed until leaf audit wiring lands)",
         );
         loop {
-            ticker.tick().await;
+            let config = reload_controller.latest();
+            let live = live_cron_config(task_kind, &config);
+            if !live.enabled {
+                tracing::debug!(
+                    task_kind = task_kind.as_str(),
+                    autonomy = config.autonomy.as_str(),
+                    "updater cron lane disabled by accepted live policy",
+                );
+                if generation.changed().await.is_err() {
+                    return;
+                }
+                run_immediately = true;
+                continue;
+            }
+
+            if !run_immediately {
+                tokio::select! {
+                    _ = tokio::time::sleep(live.interval_duration()) => {}
+                    changed = generation.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                }
+            }
+            run_immediately = false;
+
+            // Re-read immediately before the pass. A reload that disabled the
+            // lane or dropped autonomy while the timer was asleep wins without
+            // any builder work, WAL intent, or network attempt.
+            let config = reload_controller.latest();
+            if !live_cron_config(task_kind, &config).enabled {
+                continue;
+            }
+
+            // 0x44 precedes every builder action. The builder is constrained by
+            // `recurring_egress_gate()` to pure/local work; when the transport
+            // permit contract lands, its own request intent must still be the
+            // final operation before each concrete egress leaf.
+            let fired_payload = serde_json::json!({
+                "task_kind": task_kind.as_str(),
+                "ts_unix": crate::time::now_unix_secs(),
+            });
+            let fired_body = match serde_json::to_vec(&fired_payload) {
+                Ok(body) => body,
+                Err(error) => {
+                    tracing::error!(error = %error, "serialise fired payload");
+                    continue;
+                }
+            };
+            let fired_header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_FIRED, &fired_body)
+                .flags(EventFlags::SYNTHETIC)
+                .build();
+            if let Err(error) = writer.append(fired_header, fired_body).await {
+                tracing::warn!(error = %error, "wal append fired (updater tick)");
+                continue;
+            }
+
             let b = builder.clone();
+            let gate = recurring_egress_gate();
             // Catch panics from the builder so a transient
-            // network failure doesn't abort the daemon. Spawn
+            // local probe failure doesn't abort the daemon. Spawn
             // the build on a blocking thread so the panic
             // boundary applies via spawn_blocking's join. We
             // know our trait-object builders are unwind-safe
@@ -158,7 +256,7 @@ pub fn spawn_updater_cron_loop(
             // mutability state across the boundary — they
             // just call probe fns and return a fresh Vec).
             let spec_result = tokio::task::spawn_blocking(move || {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b()))
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b(config, gate)))
             })
             .await;
             let specs = match spec_result {
@@ -175,28 +273,6 @@ pub fn spawn_updater_cron_loop(
                     continue;
                 }
             };
-
-            // Inline the WAL emit half so the closure-passing
-            // pattern stays clean (run_updater_tick takes the
-            // builder, not pre-built specs).
-            let fired_payload = serde_json::json!({
-                "task_kind": task_kind.as_str(),
-                "ts_unix": crate::time::now_unix_secs(),
-            });
-            let fired_body = match serde_json::to_vec(&fired_payload) {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::error!(error = %e, "serialise fired payload");
-                    continue;
-                }
-            };
-            let fired_header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_FIRED, &fired_body)
-                .flags(EventFlags::SYNTHETIC)
-                .build();
-            if let Err(e) = writer.append(fired_header, fired_body).await {
-                tracing::warn!(error = %e, "wal append fired (updater tick)");
-                continue;
-            }
             let result = run_updater_pass(task_kind, specs);
             let result_body = match serde_json::to_vec(&result) {
                 Ok(b) => b,
@@ -219,7 +295,7 @@ pub fn spawn_updater_cron_loop(
                 "updater tick complete",
             );
         }
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -283,31 +359,71 @@ mod tests {
         assert!(meta.len() > 0);
     }
 
-    #[tokio::test]
-    async fn spawn_loop_returns_none_when_disabled() {
-        let wal_dir = tempfile::tempdir().unwrap();
-        let seg = wal_dir.path().join("updater.wal");
-        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
-        let cfg = UpdaterCronConfig {
-            enabled: false,
-            interval_secs: DEFAULT_UPDATER_INTERVAL_SECS,
-        };
-        let builder: std::sync::Arc<dyn Fn() -> Vec<ComponentSpec> + Send + Sync + 'static> =
-            std::sync::Arc::new(Vec::new);
-        let handle = spawn_updater_cron_loop(cfg, UpdaterTaskKind::NeothSelf, builder, writer);
-        assert!(handle.is_none());
+    #[test]
+    fn live_config_honours_disable_autonomy_and_lane_interval() {
+        use crate::permissions::AutonomyLevel;
+
+        let mut config = crate::config::FreedomConfig::default();
+        config.autonomy = AutonomyLevel::Standard;
+        config.updater.enabled = true;
+        config.updater.interval_secs = 12_345;
+        config.auto_update.enabled = true;
+        config.auto_update.check_interval_secs = 54_321;
+
+        let cli = live_cron_config(UpdaterTaskKind::CliVersions, &config);
+        assert!(cli.enabled);
+        assert_eq!(cli.interval_secs, 12_345);
+        let own = live_cron_config(UpdaterTaskKind::NeothSelf, &config);
+        assert!(own.enabled);
+        assert_eq!(own.interval_secs, 54_321);
+
+        config.autonomy = AutonomyLevel::Custom;
+        assert!(!live_cron_config(UpdaterTaskKind::CliVersions, &config).enabled);
+        config.autonomy = AutonomyLevel::Strict;
+        assert!(!live_cron_config(UpdaterTaskKind::SkillPlugin, &config).enabled);
+        config.autonomy = AutonomyLevel::Standard;
+        config.updater.enabled = false;
+        assert!(!live_cron_config(UpdaterTaskKind::CliVersions, &config).enabled);
+        config.updater.enabled = true;
+        config.auto_update.enabled = false;
+        assert!(!live_cron_config(UpdaterTaskKind::NeothSelf, &config).enabled);
+    }
+
+    #[test]
+    fn recurring_network_gate_is_explicitly_fail_closed() {
+        match recurring_egress_gate() {
+            GateDecision::Deny { reason } => {
+                assert_eq!(reason, UNAUDITED_RECURRING_EGRESS_DENIED);
+                assert!(reason.contains("intent/result WAL"));
+            }
+            GateDecision::Allow => panic!("recurring cron must not fabricate egress authority"),
+        }
     }
 
     #[tokio::test]
-    async fn spawn_loop_returns_some_when_enabled() {
+    async fn disabled_live_lane_spawns_inert_reload_supervisor() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
         let wal_dir = tempfile::tempdir().unwrap();
         let seg = wal_dir.path().join("updater.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
-        let cfg = UpdaterCronConfig::default();
-        let builder: std::sync::Arc<dyn Fn() -> Vec<ComponentSpec> + Send + Sync + 'static> =
-            std::sync::Arc::new(Vec::new);
-        let handle = spawn_updater_cron_loop(cfg, UpdaterTaskKind::NeothSelf, builder, writer)
-            .expect("expected join handle when enabled");
+        let mut config = crate::config::FreedomConfig::default();
+        config.updater.enabled = false;
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config,
+            wal_dir.path().join("freedom.yaml"),
+        ));
+        let called = Arc::new(AtomicBool::new(false));
+        let called_by_builder = Arc::clone(&called);
+        let builder = Arc::new(move |_config: Arc<crate::config::FreedomConfig>, _gate| {
+            called_by_builder.store(true, Ordering::SeqCst);
+            Vec::new()
+        });
+        let handle =
+            spawn_updater_cron_loop(UpdaterTaskKind::CliVersions, builder, controller, writer);
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        assert!(!called.load(Ordering::SeqCst));
         handle.abort();
     }
 }

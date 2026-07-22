@@ -160,7 +160,7 @@ fn paperless_doc_arrives_to_operator_approval_end_to_end() {
 
     // The queued item's dedup_key carries the proposal id so a
     // future duplicate stage is a no-op.
-    let pending = list_proposals(neoth_home.path(), Some(ProposalStatus::Pending));
+    let pending = list_proposals(neoth_home.path(), Some(ProposalStatus::Pending)).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].id, proposal_id);
 
@@ -194,7 +194,7 @@ fn paperless_doc_arrives_to_operator_approval_end_to_end() {
 
     // After approval, the proposal no longer shows in the Pending
     // filter — completes the operator-review loop.
-    let still_pending = list_proposals(neoth_home.path(), Some(ProposalStatus::Pending));
+    let still_pending = list_proposals(neoth_home.path(), Some(ProposalStatus::Pending)).unwrap();
     assert!(
         still_pending.iter().all(|p| p.id != proposal_id),
         "approved proposal must not show in Pending filter",

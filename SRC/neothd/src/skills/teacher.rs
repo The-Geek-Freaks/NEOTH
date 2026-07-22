@@ -21,7 +21,7 @@
 //! The write is best-effort; a disk error is logged and the corrected text
 //! is still returned to the caller.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tracing::info;
 
 use crate::wal::events::{
@@ -188,7 +188,7 @@ pub async fn try_teacher_escalation(
 
     // ── Write SKILL.md (best-effort) ───────────────────────────────────────
     let skill_id = format!("teacher_correction_{local_hash}");
-    if let Err(e) = write_skill_md(&skill_id, &corrected) {
+    if let Err(e) = write_skill_md_off_runtime(home, &skill_id, &corrected).await {
         tracing::warn!(
             error = %e,
             skill_id = &skill_id,
@@ -220,15 +220,34 @@ pub async fn try_teacher_escalation(
     Ok(Some(corrected))
 }
 
+/// Root creation, process/file locking, recovery, fsync, and rename are all
+/// blocking filesystem work. Keep the complete transaction off Tokio's async
+/// worker, including on a single-worker runtime.
+async fn write_skill_md_off_runtime(
+    home: &std::path::Path,
+    skill_id: &str,
+    corrected_text: &str,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let skill_id = skill_id.to_string();
+    let corrected_text = corrected_text.to_string();
+    run_skill_write_blocking(move || write_skill_md_at(&home, &skill_id, &corrected_text)).await
+}
+
+async fn run_skill_write_blocking<F>(write: F) -> Result<()>
+where
+    F: FnOnce() -> Result<()> + Send + 'static,
+{
+    tokio::task::spawn_blocking(write)
+        .await
+        .context("join teacher skill filesystem transaction")?
+}
+
 /// Write the teacher correction as a SKILL.md manifest to
 /// `~/.neoth/skills/<skill_id>/skill.yaml`.  Best-effort — the caller logs
 /// and continues on failure.
-fn write_skill_md(skill_id: &str, corrected_text: &str) -> Result<()> {
+fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &str) -> Result<()> {
     use crate::skills::schema::SkillManifest;
-
-    let neoth_home = crate::config::FreedomConfig::default_neoth_home();
-    let skill_dir = neoth_home.join("skills").join(skill_id);
-    std::fs::create_dir_all(&skill_dir)?;
 
     let manifest = SkillManifest {
         id: skill_id.to_string(),
@@ -253,7 +272,15 @@ fn write_skill_md(skill_id: &str, corrected_text: &str) -> Result<()> {
     };
 
     let yaml = serde_yaml::to_string(&manifest)?;
-    std::fs::write(skill_dir.join("skill.yaml"), yaml)?;
+    let report = crate::skills::creator::write_skill_yaml(
+        &home.join("skills"),
+        skill_id,
+        &yaml,
+        crate::skills::creator::ExistingSkillPolicy::Replace,
+    )?;
+    for warning in report.warnings {
+        tracing::warn!(skill_id, %warning, "teacher skill committed with durability warning");
+    }
     Ok(())
 }
 
@@ -306,5 +333,75 @@ mod tests {
         assert!(low_confidence_local("I'M NOT SURE about this."));
         assert!(low_confidence_local("I DON'T KNOW."));
         assert!(low_confidence_local("CANNOT DETERMINE."));
+    }
+
+    #[test]
+    fn teacher_skill_uses_active_home_and_shared_transactional_writer() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill_md_at(
+            home.path(),
+            "teacher_correction_deadbeef",
+            "Correct answer.",
+        )
+        .expect("write teacher skill");
+
+        let expected = home
+            .path()
+            .join("skills")
+            .join("teacher_correction_deadbeef")
+            .join("skill.yaml");
+        let body = std::fs::read_to_string(expected).unwrap();
+        let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(&body).unwrap();
+        assert_eq!(manifest.id, "teacher_correction_deadbeef");
+        assert_eq!(manifest.system_prompt, "Correct answer.");
+    }
+
+    #[test]
+    fn teacher_skill_explicitly_updates_its_deterministic_id() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "teacher_correction_deadbeef";
+        write_skill_md_at(home.path(), id, "First correction.").unwrap();
+        write_skill_md_at(home.path(), id, "Updated correction.").unwrap();
+
+        let body = std::fs::read_to_string(home.path().join("skills").join(id).join("skill.yaml"))
+            .unwrap();
+        let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(&body).unwrap();
+        assert_eq!(manifest.system_prompt, "Updated correction.");
+    }
+
+    #[test]
+    fn blocking_teacher_write_keeps_a_single_tokio_worker_responsive() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let root =
+            crate::skills::store::open_bound_directory(&skills_dir, true, "test skills root")
+                .unwrap()
+                .unwrap();
+        let mutation_guard = crate::skills::installer::lock_skill_mutations(&root).unwrap();
+        let write_home = home.path().to_path_buf();
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let write = tokio::spawn(run_skill_write_blocking(move || {
+                let _ = started_tx.send(());
+                write_skill_md_at(
+                    &write_home,
+                    "teacher_correction_contention",
+                    "Correction written after the held lock is released.",
+                )
+            }));
+
+            started_rx.await.unwrap();
+            let heartbeat = tokio::spawn(async {
+                tokio::task::yield_now().await;
+                "async worker remained responsive"
+            });
+            assert_eq!(heartbeat.await.unwrap(), "async worker remained responsive");
+            drop(mutation_guard);
+            write.await.unwrap().unwrap();
+        });
     }
 }

@@ -3,8 +3,7 @@
 //! `check_all` (npm CLI versions) probes into the
 //! `ComponentSpec` shape the U-04 cron loop consumes.
 //!
-//! The cron loop's builder signature is sync `Fn() -> Vec<ComponentSpec>`
-//! because it runs on `tokio::task::spawn_blocking`. Each probe
+//! The cron loop's builder runs on `tokio::task::spawn_blocking`. Each probe
 //! here exposes both async + sync wrappers:
 //!
 //!   - `*_specs_async()` for callers in async contexts (tests,
@@ -13,16 +12,28 @@
 //!     `tokio::runtime::Handle::current().block_on()` to drive
 //!     the async probe from the blocking thread.
 //!
-//! Failure modes are encoded in the `ComponentSpec.latest_version
+//! A denied gate short-circuits before repository validation, npm, DNS, or Git
+//! and yields auditable `SkippedByGate` rows. Failure modes are otherwise
+//! encoded in the `ComponentSpec.latest_version
 //! : Result<String, String>` field: a network error becomes
 //! `Err("github probe: <msg>")` which `compute_outcome` turns
 //! into `ComponentStatus::Failed`. The cron loop still emits the
 //! audit frame so operators see "yes, the cron ran; yes, it
 //! tried; here's why it didn't have a latest_version answer".
 
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+
 use crate::config::ReleaseChannel;
+use crate::skills::store::{open_bound_directory, open_real_child_dir, read_regular_file_bounded};
 use crate::updater::pipeline::{ComponentSpec, GateDecision, cli_version_specs, neoth_self_specs};
 use crate::updater::self_update::{check_for_update_channel, current_version};
+
+const MAX_UPDATE_MANIFEST_BYTES: usize = 1024 * 1024;
+const MAX_COMPONENT_DIRECTORY_LABEL_BYTES: usize = 96;
+const MAX_PROBE_COMPONENTS_PER_KIND: usize = 4096;
+const MAX_PROBE_MANIFEST_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+const MAX_PROBE_PLUGIN_WASM_TOTAL_BYTES: usize = 512 * 1024 * 1024;
 
 /// Canonical owner/repo for the public `neoth` binary lookup.
 pub const NEOTH_OWNER_REPO: &str = "The-Geek-Freaks/NEOTH";
@@ -43,6 +54,9 @@ pub async fn neoth_self_specs_async_for(
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     let current = current_version().to_string();
+    if matches!(&gate, GateDecision::Deny { .. }) {
+        return neoth_self_specs(current, Err(UPDATE_PROBE_DENIED_MSG.to_string()), gate);
+    }
     let latest = match check_for_update_channel(owner_repo, channel).await {
         Ok(c) => Ok(c.latest),
         Err(e) => Err(format!("github probe: {e}")),
@@ -73,10 +87,21 @@ pub fn neoth_self_specs_blocking_for(
 /// Probe every CLI we manage (`claude-cli`, `antigravity-cli`,
 /// `codex`) and project into a spec list for
 /// `run_updater_pass(UpdaterTaskKind::CliVersion, …)`. CLIs that
-/// aren't installed produce no spec entry (matches
-/// `pipeline::cli_version_specs`'s `Option`-skip contract).
+/// aren't installed produce no spec entry after an allowed local scan (matches
+/// `pipeline::cli_version_specs`'s `Option`-skip contract). A denied gate emits
+/// one `unknown` row per managed component without executing any subprocess so
+/// the audit result proves exactly which probes were suppressed.
 pub async fn cli_version_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
     use crate::updater::Component;
+    if matches!(&gate, GateDecision::Deny { .. }) {
+        let denied: Result<String, String> = Err(UPDATE_PROBE_DENIED_MSG.to_string());
+        return cli_version_specs(
+            Some(("unknown".to_string(), denied.clone())),
+            Some(("unknown".to_string(), denied.clone())),
+            Some(("unknown".to_string(), denied)),
+            &gate,
+        );
+    }
     let statuses = crate::updater::check_all().await;
     // Component doesn't derive Hash so a HashMap won't compile;
     // a 3-variant linear scan is cheap + keeps the lookup obvious.
@@ -133,42 +158,362 @@ pub struct InstalledSkillRow {
     /// `git+https://…` URL the operator declared in `skill.yaml`,
     /// or `None` when the skill opted out of auto-update probes.
     pub source: Option<String>,
+    /// Effective runtime state after manifest defaults plus every
+    /// `freedom.yaml::skills` override. Disabled skills never cause egress.
+    pub enabled: bool,
+    /// Canonical digest of every path, entry type and file byte in the exact
+    /// package generation observed during the preflight scan.
+    generation_sha256: String,
+    id: String,
+}
+
+#[derive(Debug)]
+struct ManifestScanFailure {
+    component: String,
+    error: String,
+}
+
+#[derive(Debug, Default)]
+struct InstalledSkillScan {
+    rows: Vec<InstalledSkillRow>,
+    failures: Vec<ManifestScanFailure>,
+}
+
+#[derive(Debug)]
+struct BoundManifest {
+    dir_name: String,
+    body: Vec<u8>,
+    generation_sha256: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct BoundManifestScan {
+    manifests: Vec<BoundManifest>,
+    failures: Vec<ManifestScanFailure>,
+}
+
+fn component_name(kind: &str, dir_name: &str) -> String {
+    if dir_name.len() <= MAX_COMPONENT_DIRECTORY_LABEL_BYTES
+        && dir_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return format!("{kind}:{dir_name}");
+    }
+    let digest = crate::wasm_plugin::discovery::sha256_hex(dir_name.as_bytes());
+    format!("{kind}:<unsafe-{}>", &digest[..32])
+}
+
+fn scan_bound_manifests(root_path: &Path, kind: &str, manifest_name: &str) -> BoundManifestScan {
+    scan_bound_manifests_with_limits(
+        root_path,
+        kind,
+        manifest_name,
+        MAX_PROBE_COMPONENTS_PER_KIND,
+        MAX_PROBE_MANIFEST_TOTAL_BYTES,
+    )
+}
+
+fn scan_bound_manifests_with_limits(
+    root_path: &Path,
+    kind: &str,
+    manifest_name: &str,
+    max_components: usize,
+    max_total_manifest_bytes: usize,
+) -> BoundManifestScan {
+    let mut scan = BoundManifestScan::default();
+    let root = match open_bound_directory(root_path, false, &format!("{kind}s root")) {
+        Ok(Some(root)) => root,
+        Ok(None) => return scan,
+        Err(error) => {
+            scan.failures.push(ManifestScanFailure {
+                component: format!("{kind}:<store>"),
+                error: format!("unsafe or unreadable {kind} store: {error:#}"),
+            });
+            return scan;
+        }
+    };
+    let _skill_mutation_guard = if kind == "skill" {
+        match crate::skills::installer::lock_skill_mutations(&root) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component: "skill:<store>".to_string(),
+                    error: format!("cannot lock skill store for updater snapshot: {error:#}"),
+                });
+                return scan;
+            }
+        }
+    } else {
+        None
+    };
+    if kind == "skill"
+        && let Err(error) = crate::skills::installer::recover_pending_transactions_locked(&root)
+    {
+        scan.failures.push(ManifestScanFailure {
+            component: "skill:<store>".to_string(),
+            error: format!("cannot recover interrupted skill transaction: {error:#}"),
+        });
+        return scan;
+    }
+    let entries = match root.dir.entries() {
+        Ok(entries) => entries,
+        Err(error) => {
+            scan.failures.push(ManifestScanFailure {
+                component: format!("{kind}:<store>"),
+                error: format!("cannot enumerate {}: {error}", root.display_path.display()),
+            });
+            return scan;
+        }
+    };
+
+    let mut observed_entries = 0usize;
+    let mut total_manifest_bytes = 0usize;
+    for entry in entries {
+        observed_entries = observed_entries.saturating_add(1);
+        if observed_entries > max_components {
+            scan.failures.push(ManifestScanFailure {
+                component: format!("{kind}:<store>"),
+                error: format!(
+                    "installed {kind} store exceeds the {max_components}-entry updater limit"
+                ),
+            });
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component: format!("{kind}:<unknown>"),
+                    error: format!("cannot enumerate {}: {error}", root.display_path.display()),
+                });
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let Some(dir_name) = name.to_str() else {
+            scan.failures.push(ManifestScanFailure {
+                component: format!("{kind}:<non-utf8>"),
+                error: "installed component directory name is not valid UTF-8".to_string(),
+            });
+            continue;
+        };
+        if dir_name.starts_with('.') {
+            continue;
+        }
+        let component = component_name(kind, dir_name);
+        let path = root.display_path.join(&name);
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component,
+                    error: format!("cannot inspect {}: {error}", path.display()),
+                });
+                continue;
+            }
+        };
+        if file_type.is_symlink() {
+            scan.failures.push(ManifestScanFailure {
+                component,
+                error: format!(
+                    "linked/reparse {kind} directories are not allowed: {}",
+                    path.display()
+                ),
+            });
+            continue;
+        }
+        if !file_type.is_dir() {
+            scan.failures.push(ManifestScanFailure {
+                component,
+                error: format!(
+                    "installed {kind} entry is not a real directory: {}",
+                    path.display()
+                ),
+            });
+            continue;
+        }
+        let component_dir = match open_real_child_dir(&root.dir, &name, &path) {
+            Ok(component_dir) => component_dir,
+            Err(error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component,
+                    error: format!("unsafe {kind} directory {}: {error:#}", path.display()),
+                });
+                continue;
+            }
+        };
+        let manifest_path = path.join(manifest_name);
+        let body = match read_regular_file_bounded(
+            &component_dir,
+            OsStr::new(manifest_name),
+            &manifest_path,
+            MAX_UPDATE_MANIFEST_BYTES,
+        ) {
+            Ok(body) => body,
+            Err(error) if error_is_not_found(&error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component,
+                    error: format!("no {manifest_name} in installed {kind} directory"),
+                });
+                continue;
+            }
+            Err(error) => {
+                scan.failures.push(ManifestScanFailure {
+                    component,
+                    error: format!("cannot read {}: {error:#}", manifest_path.display()),
+                });
+                continue;
+            }
+        };
+        total_manifest_bytes = match total_manifest_bytes.checked_add(body.len()) {
+            Some(total) if total <= max_total_manifest_bytes => total,
+            _ => {
+                scan.failures.push(ManifestScanFailure {
+                    component: format!("{kind}:<store>"),
+                    error: format!(
+                        "installed {kind} manifests exceed the {max_total_manifest_bytes}-byte aggregate updater limit"
+                    ),
+                });
+                break;
+            }
+        };
+        let generation_sha256 = if kind == "skill" {
+            match crate::skills::installer::skill_tree_generation_sha256(
+                &component_dir,
+                &path,
+                Some(&body),
+            ) {
+                Ok(generation) => Some(generation),
+                Err(error) => {
+                    scan.failures.push(ManifestScanFailure {
+                        component,
+                        error: format!("cannot bind installed skill package generation: {error:#}"),
+                    });
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        scan.manifests.push(BoundManifest {
+            dir_name: dir_name.to_string(),
+            body,
+            generation_sha256,
+        });
+    }
+    scan
+}
+
+fn scan_installed_skills_checked(home: &Path, config_path: &Path) -> InstalledSkillScan {
+    let policy = match crate::skills::loader::load_skill_policy_from_config_path(config_path) {
+        Ok(policy) => policy,
+        Err(error) => {
+            return InstalledSkillScan {
+                rows: Vec::new(),
+                failures: vec![ManifestScanFailure {
+                    component: "skill:<policy>".to_string(),
+                    error: format!("cannot establish effective skill policy: {error:#}"),
+                }],
+            };
+        }
+    };
+    let bound = scan_bound_manifests(&home.join("skills"), "skill", "skill.yaml");
+    let mut scan = InstalledSkillScan {
+        rows: Vec::new(),
+        failures: bound.failures,
+    };
+    for manifest in bound.manifests {
+        let parsed = std::str::from_utf8(&manifest.body)
+            .map_err(|error| format!("skill manifest is not UTF-8: {error}"))
+            .and_then(|body| {
+                serde_yaml::from_str::<crate::skills::schema::SkillManifest>(body)
+                    .map_err(|error| format!("skill manifest YAML is invalid: {error}"))
+            });
+        match parsed {
+            Ok(parsed) if crate::skills::creator::validate_skill_id(&parsed.id).is_err() => {
+                scan.failures.push(ManifestScanFailure {
+                    component: component_name("skill", &manifest.dir_name),
+                    error: "manifest id is not canonical lowercase [a-z0-9_-]".to_string(),
+                });
+            }
+            Ok(parsed) if parsed.id != manifest.dir_name => {
+                scan.failures.push(ManifestScanFailure {
+                    component: component_name("skill", &manifest.dir_name),
+                    error: format!(
+                        "manifest id `{}` does not match directory `{}`",
+                        parsed.id, manifest.dir_name
+                    ),
+                });
+            }
+            Ok(parsed) if parsed.description.trim().is_empty() => {
+                scan.failures.push(ManifestScanFailure {
+                    component: component_name("skill", &manifest.dir_name),
+                    error: "manifest description is empty".to_string(),
+                });
+            }
+            Ok(mut parsed) => {
+                let Some(generation_sha256) = manifest.generation_sha256 else {
+                    scan.failures.push(ManifestScanFailure {
+                        component: component_name("skill", &manifest.dir_name),
+                        error: "skill package scan did not produce a generation binding"
+                            .to_string(),
+                    });
+                    continue;
+                };
+                policy.apply_to_manifest(&mut parsed);
+                scan.rows.push(InstalledSkillRow {
+                    name: component_name("skill", &manifest.dir_name),
+                    version: parsed.version,
+                    source: parsed.source,
+                    enabled: parsed.enabled,
+                    generation_sha256,
+                    id: parsed.id,
+                });
+            }
+            Err(error) => scan.failures.push(ManifestScanFailure {
+                component: component_name("skill", &manifest.dir_name),
+                error,
+            }),
+        }
+    }
+    scan.rows.sort_by(|left, right| left.name.cmp(&right.name));
+    scan.failures
+        .sort_by(|left, right| left.component.cmp(&right.component));
+    scan
+}
+
+fn log_manifest_scan_failures(failures: &[ManifestScanFailure]) {
+    for failure in failures {
+        tracing::warn!(
+            component = %failure.component,
+            error = %failure.error,
+            "updater manifest probe rejected an unsafe or invalid installed component"
+        );
+    }
+}
+
+fn error_is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Scan `~/.neoth/skills/<id>/skill.yaml` files + return
-/// [`InstalledSkillRow`] per skill. Malformed YAMLs skip silently —
-/// the skill registry's own load path surfaces the error elsewhere;
-/// the updater probe stays observability-only.
-pub fn scan_installed_skills_rows(home: &std::path::Path) -> Vec<InstalledSkillRow> {
-    let dir = home.join("skills");
-    let Ok(read) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for entry in read.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let manifest_path = path.join("skill.yaml");
-        let Ok(body) = std::fs::read_to_string(&manifest_path) else {
-            continue;
-        };
-        if let Ok(m) = serde_yaml::from_str::<crate::skills::schema::SkillManifest>(&body) {
-            out.push(InstalledSkillRow {
-                name: format!("skill:{}", m.id),
-                version: m.version,
-                source: m.source,
-            });
-        }
-    }
-    out
+/// [`InstalledSkillRow`] per skill. Unsafe links/reparse points and malformed
+/// manifests are rejected without being read through and logged. The real
+/// cron path additionally turns each rejection into a failed component row.
+pub fn scan_installed_skills_rows(home: &Path) -> Vec<InstalledSkillRow> {
+    let scan = scan_installed_skills_checked(home, &home.join("freedom.yaml"));
+    log_manifest_scan_failures(&scan.failures);
+    scan.rows
 }
 
 /// Backwards-compatible alias: callers that don't need the source
 /// URL keep the `(name, version)` shape. New callers use
 /// [`scan_installed_skills_rows`] directly.
-pub fn scan_installed_skills(home: &std::path::Path) -> Vec<(String, String)> {
+pub fn scan_installed_skills(home: &Path) -> Vec<(String, String)> {
     scan_installed_skills_rows(home)
         .into_iter()
         .map(|r| (r.name, r.version))
@@ -187,43 +532,218 @@ pub struct InstalledPluginRow {
     /// `git+https://…` URL the operator declared in `plugin.toml`,
     /// or `None` when the plugin opted out of auto-update probes.
     pub source: Option<String>,
+    /// True only when the host is enabled and the exact manifest is covered
+    /// by a non-revoked, active, approval-bound operator activation.
+    pub enabled: bool,
+    /// Operator-readable reason for suppressing the network probe.
+    pub disabled_reason: Option<String>,
+    /// Exact runtime-discovered generation admitted during the scan. Kept
+    /// private so only this module can authorize a later resolver call.
+    generation: Option<PluginGeneration>,
+    id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PluginGeneration {
+    manifest_sha256: String,
+    wasm_sha256: String,
+}
+
+impl From<&crate::wasm_plugin::discovery::DiscoveredPlugin> for PluginGeneration {
+    fn from(plugin: &crate::wasm_plugin::discovery::DiscoveredPlugin) -> Self {
+        Self {
+            manifest_sha256: plugin.manifest_hash.clone(),
+            wasm_sha256: plugin.content_hash.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct InstalledPluginScan {
+    rows: Vec<InstalledPluginRow>,
+    failures: Vec<ManifestScanFailure>,
+}
+
+fn load_plugin_probe_policy(
+    config_path: &Path,
+) -> Result<crate::config::WasmPluginsConfig, String> {
+    crate::config::FreedomConfig::load_from_path_or_default(config_path)
+        .map(|config| config.plugins.wasm)
+        // Config errors can contain ambient paths or parser excerpts. The
+        // updater result is persistent/audited, so keep it bounded and opaque.
+        .map_err(|_| "cannot load current active plugin policy config".to_string())
+}
+
+fn safe_discovery_reason(error: &crate::wasm_plugin::discovery::DiscoveryError) -> String {
+    use crate::wasm_plugin::discovery::DiscoveryError;
+
+    match error {
+        DiscoveryError::StoreEntryLimit { .. } => {
+            "plugin store exceeds the runtime discovery entry limit"
+        }
+        DiscoveryError::PluginDirIo { .. } => "plugin directory is missing or unreadable",
+        DiscoveryError::PluginPathNotDirectory { .. } => "plugin path is not a real directory",
+        DiscoveryError::MissingManifest { .. } => "plugin.toml is missing",
+        DiscoveryError::MissingWasm { .. } => "plugin.wasm is missing",
+        DiscoveryError::TomlIo { .. } => "plugin.toml is unreadable",
+        DiscoveryError::WasmIo { .. } => "plugin.wasm is unreadable",
+        DiscoveryError::ManifestTooLarge { .. } => "plugin.toml exceeds the runtime size limit",
+        DiscoveryError::WasmTooLarge { .. } => "plugin.wasm exceeds the runtime size limit",
+        DiscoveryError::AggregateWasmBudgetExceeded { .. } => {
+            "aggregate plugin.wasm discovery budget exceeded"
+        }
+        DiscoveryError::PathNotRegular { file, .. } => {
+            return format!("{file} is not a real regular file");
+        }
+        DiscoveryError::PathIsSymlink { file, .. } => {
+            return format!("{file} is linked or a reparse point");
+        }
+        DiscoveryError::ManifestInvalid { .. } => "plugin.toml is invalid",
+        DiscoveryError::IdDirectoryMismatch { .. } => {
+            "plugin manifest id does not match its directory"
+        }
+        DiscoveryError::HashMismatch { .. } => "plugin.wasm does not match its configured pin",
+        DiscoveryError::HashUnpinned { .. } => {
+            "plugin has no pin while require_all_pinned is enabled"
+        }
+        DiscoveryError::Revoked { .. } => "plugin is revoked by current operator policy",
+        DiscoveryError::SignatureMissing { .. } => "plugin signature is required but missing",
+        DiscoveryError::SignatureInvalid { .. } => {
+            "plugin signature or configured author key is invalid"
+        }
+        DiscoveryError::AuthorKeyNotConfigured { .. } => {
+            "plugin signature is required but no author key is configured"
+        }
+        DiscoveryError::SymlinkRejected { .. } => "plugin directory is linked or a reparse point",
+    }
+    .to_string()
+}
+
+fn safe_admission_reason(
+    error: &crate::wasm_plugin::discovery::RuntimePluginAdmissionError,
+) -> String {
+    use crate::wasm_plugin::discovery::{PluginApprovalError, RuntimePluginAdmissionError};
+
+    match error {
+        RuntimePluginAdmissionError::HostDisabled => {
+            "plugin host is disabled by current operator policy".to_string()
+        }
+        RuntimePluginAdmissionError::Approval(PluginApprovalError::NotActive) => {
+            "plugin activation is not active".to_string()
+        }
+        RuntimePluginAdmissionError::Approval(PluginApprovalError::MissingApproval) => {
+            "plugin has no exact operator approval".to_string()
+        }
+        RuntimePluginAdmissionError::Approval(PluginApprovalError::PermissionChanged {
+            ..
+        }) => "plugin permission differs from its approval".to_string(),
+        RuntimePluginAdmissionError::Approval(PluginApprovalError::ManifestChanged) => {
+            "plugin manifest differs from its approval".to_string()
+        }
+        RuntimePluginAdmissionError::Approval(PluginApprovalError::WasmChanged) => {
+            "plugin.wasm differs from its approval".to_string()
+        }
+        RuntimePluginAdmissionError::Integrity(error) => safe_discovery_reason(error),
+    }
+}
+
+fn redact_plugin_manifest_scan_failure(mut failure: ManifestScanFailure) -> ManifestScanFailure {
+    failure.error = if failure.error.contains("no plugin.toml") {
+        "plugin.toml is missing".to_string()
+    } else if failure.error.contains("exceeds the") {
+        "plugin.toml exceeds the updater scan size limit".to_string()
+    } else if failure.error.contains("linked/reparse")
+        || failure.error.contains("unsafe plugin directory")
+    {
+        "plugin directory is linked, a reparse point, or otherwise unsafe".to_string()
+    } else {
+        "plugin directory or plugin.toml is unsafe or unreadable".to_string()
+    };
+    failure
+}
+
+fn scan_installed_plugins_checked(home: &Path, config_path: &Path) -> InstalledPluginScan {
+    let policy = match load_plugin_probe_policy(config_path) {
+        Ok(policy) => policy,
+        Err(error) => {
+            return InstalledPluginScan {
+                rows: Vec::new(),
+                failures: vec![ManifestScanFailure {
+                    component: "plugin:<policy>".to_string(),
+                    error: format!("cannot establish effective plugin policy: {error}"),
+                }],
+            };
+        }
+    };
+    let bound = scan_bound_manifests(&home.join("plugins"), "plugin", "plugin.toml");
+    let mut scan = InstalledPluginScan {
+        rows: Vec::new(),
+        failures: bound
+            .failures
+            .into_iter()
+            .map(redact_plugin_manifest_scan_failure)
+            .collect(),
+    };
+    let mut total_wasm_bytes = 0usize;
+    for manifest in bound.manifests {
+        let component = component_name("plugin", &manifest.dir_name);
+        match crate::wasm_plugin::discovery::discover_one_bound(
+            &home.join("plugins"),
+            OsStr::new(&manifest.dir_name),
+        ) {
+            Ok(plugin) => {
+                total_wasm_bytes = match total_wasm_bytes.checked_add(plugin.wasm_bytes.len()) {
+                    Some(total) if total <= MAX_PROBE_PLUGIN_WASM_TOTAL_BYTES => total,
+                    _ => {
+                        scan.failures.push(ManifestScanFailure {
+                            component: "plugin:<store>".to_string(),
+                            error: format!(
+                                "installed plugin artifacts exceed the {MAX_PROBE_PLUGIN_WASM_TOTAL_BYTES}-byte aggregate updater limit"
+                            ),
+                        });
+                        break;
+                    }
+                };
+                let admission =
+                    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy);
+                let disabled_reason = admission.as_ref().err().map(safe_admission_reason);
+                scan.rows.push(InstalledPluginRow {
+                    name: component,
+                    version: plugin.manifest.version.clone(),
+                    source: plugin.manifest.source.clone(),
+                    enabled: disabled_reason.is_none(),
+                    disabled_reason,
+                    generation: Some(PluginGeneration::from(&plugin)),
+                    id: plugin.manifest.id.clone(),
+                });
+            }
+            Err(error) => scan.failures.push(ManifestScanFailure {
+                component,
+                error: safe_discovery_reason(&error),
+            }),
+        }
+    }
+    scan.rows.sort_by(|left, right| left.name.cmp(&right.name));
+    scan.failures
+        .sort_by(|left, right| left.component.cmp(&right.component));
+    scan
 }
 
 /// Scan `~/.neoth/plugins/<id>/plugin.toml` files + return
-/// [`InstalledPluginRow`] per plugin. Malformed TOMLs skip silently —
-/// the plugin discovery's own load path surfaces the parse error
-/// elsewhere; the updater probe stays observability-only.
-pub fn scan_installed_plugins_rows(home: &std::path::Path) -> Vec<InstalledPluginRow> {
-    let dir = home.join("plugins");
-    let Ok(read) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for entry in read.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let manifest_path = path.join("plugin.toml");
-        let Ok(body) = std::fs::read_to_string(&manifest_path) else {
-            continue;
-        };
-        if let Ok(m) = toml::from_str::<crate::wasm_plugin::manifest::PluginManifest>(&body) {
-            out.push(InstalledPluginRow {
-                name: format!("plugin:{}", m.id),
-                version: m.version,
-                source: m.source,
-            });
-        }
-    }
-    out
+/// [`InstalledPluginRow`] per plugin. Unsafe links/reparse points and malformed
+/// manifests are rejected without being read through and logged. The real
+/// cron path additionally turns each rejection into a failed component row.
+pub fn scan_installed_plugins_rows(home: &Path, config_path: &Path) -> Vec<InstalledPluginRow> {
+    let scan = scan_installed_plugins_checked(home, config_path);
+    log_manifest_scan_failures(&scan.failures);
+    scan.rows
 }
 
 /// Backwards-compatible alias: callers that don't need the source
 /// URL keep the `(name, version)` shape. New callers use
 /// [`scan_installed_plugins_rows`] directly.
-pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
-    scan_installed_plugins_rows(home)
+pub fn scan_installed_plugins(home: &Path, config_path: &Path) -> Vec<(String, String)> {
+    scan_installed_plugins_rows(home, config_path)
         .into_iter()
         .map(|r| (r.name, r.version))
         .collect()
@@ -236,6 +756,251 @@ pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
 /// audited without false-promise of "we know what's latest".
 pub const NO_REGISTRY_RESOLVER_MSG: &str =
     "no upstream registry yet — U-02b will resolve latest_version via the registry concept";
+pub const DISABLED_SKILL_PROBE_MSG: &str = "upstream probe skipped without network: skill is disabled by effective manifest/operator policy";
+pub const UPDATE_PROBE_DENIED_MSG: &str =
+    "upstream probe skipped without network: updater gate denied this component";
+
+fn invalid_source_probe_status(source: &str) -> Option<String> {
+    crate::updater::skill_resolver::parse_git_source(source)
+        .err()
+        .map(|error| format!("upstream probe skipped before network: {error}"))
+}
+
+fn revalidate_skill_at_resolver_sink(
+    home: &Path,
+    config_path: &Path,
+    row: &InstalledSkillRow,
+) -> Result<String, String> {
+    if !row.enabled {
+        return Err(DISABLED_SKILL_PROBE_MSG.to_string());
+    }
+    let current = read_exact_skill_row_at_sink(home, config_path, &row.id)?;
+    if !current.enabled {
+        return Err(DISABLED_SKILL_PROBE_MSG.to_string());
+    }
+    if current.generation_sha256 != row.generation_sha256 {
+        return Err(
+            "upstream probe skipped without network: skill package generation changed after scan"
+                .to_string(),
+        );
+    }
+    let source = current.source.ok_or_else(|| {
+        "upstream probe skipped without network: skill source disappeared after scan".to_string()
+    })?;
+    if row.source.as_deref() != Some(source.as_str()) {
+        return Err(
+            "upstream probe skipped without network: skill source changed after scan".to_string(),
+        );
+    }
+    Ok(source)
+}
+
+/// Re-open only the exact skill about to authorize egress. The old sink called
+/// `scan_installed_skills_checked`, turning N source-bearing skills into N full
+/// capability walks and allowing unrelated broken entries to influence a
+/// single skill's decision. This keeps the exact config/policy and full package
+/// generation checks while making sink work O(1) per resolver call.
+fn read_exact_skill_row_at_sink(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+) -> Result<InstalledSkillRow, String> {
+    crate::skills::creator::validate_skill_id(id).map_err(|_| {
+        "upstream probe skipped without network: skill id is no longer valid".to_string()
+    })?;
+    let skills_root = home.join("skills");
+    let root = open_bound_directory(&skills_root, false, "skills root")
+        .map_err(|_| {
+            "upstream probe skipped without network: skill store is no longer valid".to_string()
+        })?
+        .ok_or_else(|| {
+            "upstream probe skipped without network: skill generation is no longer valid"
+                .to_string()
+        })?;
+    let _mutation_guard = crate::skills::installer::lock_skill_mutations(&root).map_err(|_| {
+        "upstream probe skipped without network: skill store cannot be locked".to_string()
+    })?;
+    crate::skills::installer::recover_pending_transactions_locked(&root).map_err(|_| {
+        "upstream probe skipped without network: skill transaction recovery failed".to_string()
+    })?;
+
+    let name = OsStr::new(id);
+    let path = root.display_path.join(name);
+    let skill_dir = open_real_child_dir(&root.dir, name, &path).map_err(|_| {
+        "upstream probe skipped without network: skill generation is no longer valid".to_string()
+    })?;
+    let manifest_path = path.join("skill.yaml");
+    let body = read_regular_file_bounded(
+        &skill_dir,
+        OsStr::new("skill.yaml"),
+        &manifest_path,
+        MAX_UPDATE_MANIFEST_BYTES,
+    )
+    .map_err(|_| {
+        "upstream probe skipped without network: skill manifest is no longer valid".to_string()
+    })?;
+    let generation_sha256 = crate::skills::installer::skill_tree_generation_sha256(
+        &skill_dir,
+        &path,
+        Some(&body),
+    )
+    .map_err(|_| {
+        "upstream probe skipped without network: skill package generation is no longer valid"
+            .to_string()
+    })?;
+    let body = std::str::from_utf8(&body).map_err(|_| {
+        "upstream probe skipped without network: skill manifest is not UTF-8".to_string()
+    })?;
+    let mut manifest =
+        serde_yaml::from_str::<crate::skills::schema::SkillManifest>(body).map_err(|_| {
+            "upstream probe skipped without network: skill manifest is invalid".to_string()
+        })?;
+    if manifest.id != id
+        || crate::skills::creator::validate_skill_id(&manifest.id).is_err()
+        || manifest.description.trim().is_empty()
+    {
+        return Err(
+            "upstream probe skipped without network: skill manifest identity is no longer valid"
+                .to_string(),
+        );
+    }
+
+    // Read the exact daemon-selected config after binding the artifact, as
+    // close as possible to the egress decision. Disabled/visibility-off wins.
+    let policy =
+        crate::skills::loader::load_skill_policy_from_config_path(config_path).map_err(|_| {
+            "upstream probe skipped without network: current skill policy is unavailable"
+                .to_string()
+        })?;
+    policy.apply_to_manifest(&mut manifest);
+    Ok(InstalledSkillRow {
+        name: component_name("skill", id),
+        version: manifest.version,
+        source: manifest.source,
+        enabled: manifest.enabled,
+        generation_sha256,
+        id: manifest.id,
+    })
+}
+
+async fn resolve_skill_latest_at_sink(
+    home: &Path,
+    config_path: &Path,
+    row: &InstalledSkillRow,
+) -> Result<String, String> {
+    resolve_skill_latest_at_sink_with_resolver(home, config_path, row, |source| async move {
+        crate::updater::skill_resolver::resolve_latest_version(&source).await
+    })
+    .await
+}
+
+async fn resolve_skill_latest_at_sink_with_resolver<R, Fut>(
+    home: &Path,
+    config_path: &Path,
+    row: &InstalledSkillRow,
+    resolver: R,
+) -> Result<String, String>
+where
+    R: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let home = home.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    let row = row.clone();
+    let source = tokio::task::spawn_blocking(move || {
+        revalidate_skill_at_resolver_sink(&home, &config_path, &row)
+    })
+    .await
+    .map_err(|_| {
+        "upstream probe skipped without network: skill revalidation worker failed".to_string()
+    })??;
+    if let Some(error) = invalid_source_probe_status(&source) {
+        return Err(error);
+    }
+    resolver(source).await
+}
+
+fn revalidate_plugin_at_resolver_sink(
+    home: &Path,
+    config_path: &Path,
+    row: &InstalledPluginRow,
+) -> Result<String, String> {
+    if !row.enabled {
+        return Err(format!(
+            "upstream probe skipped without network: {}",
+            row.disabled_reason
+                .as_deref()
+                .unwrap_or("plugin is not runtime-admitted")
+        ));
+    }
+    let expected = row.generation.as_ref().ok_or_else(|| {
+        "upstream probe skipped without network: plugin scan has no bound generation".to_string()
+    })?;
+    let plugin = crate::wasm_plugin::discovery::discover_one_bound(
+        &home.join("plugins"),
+        OsStr::new(&row.id),
+    )
+    .map_err(|error| {
+        format!(
+            "upstream probe skipped without network: {}",
+            safe_discovery_reason(&error)
+        )
+    })?;
+    let current = PluginGeneration::from(&plugin);
+    if &current != expected {
+        return Err(
+            "upstream probe skipped without network: plugin generation changed after scan"
+                .to_string(),
+        );
+    }
+    // Load policy after the bounded artifact read. This keeps revocation and
+    // approval as fresh as possible at the actual egress boundary.
+    let policy = load_plugin_probe_policy(config_path)
+        .map_err(|error| format!("upstream probe skipped without network: {error}"))?;
+    crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy).map_err(
+        |error| {
+            format!(
+                "upstream probe skipped without network: {}",
+                safe_admission_reason(&error)
+            )
+        },
+    )?;
+    let source = plugin.manifest.source.ok_or_else(|| {
+        "upstream probe skipped without network: plugin source disappeared after scan".to_string()
+    })?;
+    if row.source.as_deref() != Some(source.as_str()) {
+        return Err(
+            "upstream probe skipped without network: plugin source changed after scan".to_string(),
+        );
+    }
+    Ok(source)
+}
+
+async fn resolve_plugin_latest_at_sink<R, Fut>(
+    home: &Path,
+    config_path: &Path,
+    row: &InstalledPluginRow,
+    resolver: &R,
+) -> Result<String, String>
+where
+    R: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let home = home.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    let row = row.clone();
+    let source = tokio::task::spawn_blocking(move || {
+        revalidate_plugin_at_resolver_sink(&home, &config_path, &row)
+    })
+    .await
+    .map_err(|_| {
+        "upstream probe skipped without network: plugin revalidation worker failed".to_string()
+    })??;
+    if let Some(error) = invalid_source_probe_status(&source) {
+        return Err(error);
+    }
+    resolver(source).await
+}
 
 /// Compose installed skills + plugins into a single
 /// `skill_plugin_specs` list.
@@ -253,25 +1018,108 @@ pub const NO_REGISTRY_RESOLVER_MSG: &str =
 /// treatment as of Session 27 parity work: a `source` field on the
 /// `PluginManifest` routes through the resolver; plugins without
 /// the field keep the sentinel so the audit chain still
-/// distinguishes "operator hasn't opted in" from "resolver failed".
+/// distinguishes "operator hasn't opted in" from "resolver failed". The
+/// caller must pass the daemon's exact active `config_path`; both the initial
+/// scan and the final resolver sink re-read that path and never reconstruct a
+/// default `home/freedom.yaml` for plugin admission.
 pub async fn skill_plugin_specs_for_home_async(
-    home: std::path::PathBuf,
+    home: PathBuf,
+    config_path: PathBuf,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
+    skill_plugin_specs_for_home_async_with_plugin_resolver(
+        home,
+        config_path,
+        gate,
+        |source| async move {
+            crate::updater::skill_resolver::resolve_latest_version(&source).await
+        },
+    )
+    .await
+}
+
+async fn skill_plugin_specs_for_home_async_with_plugin_resolver<R, Fut>(
+    home: PathBuf,
+    config_path: PathBuf,
+    gate: GateDecision,
+    plugin_resolver: R,
+) -> Vec<ComponentSpec>
+where
+    R: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
     let mut installed: Vec<(String, String, Result<String, String>, GateDecision)> = Vec::new();
-    let skill_rows = scan_installed_skills_rows(&home);
-    for row in skill_rows {
-        let latest = match row.source.as_deref() {
-            Some(source) => crate::updater::skill_resolver::resolve_latest_version(source).await,
-            None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+    // The capability API is synchronous. Keep a large operator store off the
+    // Tokio worker before beginning the asynchronous network probes.
+    let scan_home = home.clone();
+    let scan_config_path = config_path.clone();
+    let (skill_scan, plugin_scan) = match tokio::task::spawn_blocking(move || {
+        (
+            scan_installed_skills_checked(&scan_home, &scan_config_path),
+            scan_installed_plugins_checked(&scan_home, &scan_config_path),
+        )
+    })
+    .await
+    {
+        Ok(scans) => scans,
+        Err(error) => {
+            installed.push((
+                "skill-plugin:<store>".to_string(),
+                "unknown".to_string(),
+                Err(format!("updater manifest scan worker failed: {error}")),
+                gate,
+            ));
+            return crate::updater::pipeline::skill_plugin_specs(installed);
+        }
+    };
+    log_manifest_scan_failures(&skill_scan.failures);
+    for failure in skill_scan.failures {
+        installed.push((
+            failure.component,
+            "unknown".to_string(),
+            Err(failure.error),
+            gate.clone(),
+        ));
+    }
+    for row in skill_scan.rows {
+        let latest = if matches!(&gate, GateDecision::Deny { .. }) {
+            Err(UPDATE_PROBE_DENIED_MSG.to_string())
+        } else if !row.enabled {
+            Err(DISABLED_SKILL_PROBE_MSG.to_string())
+        } else {
+            match row.source.as_deref() {
+                Some(_) => resolve_skill_latest_at_sink(&home, &config_path, &row).await,
+                None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            }
         };
         installed.push((row.name, row.version, latest, gate.clone()));
     }
-    let plugin_rows = scan_installed_plugins_rows(&home);
-    for row in plugin_rows {
-        let latest = match row.source.as_deref() {
-            Some(source) => crate::updater::skill_resolver::resolve_latest_version(source).await,
-            None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+    log_manifest_scan_failures(&plugin_scan.failures);
+    for failure in plugin_scan.failures {
+        installed.push((
+            failure.component,
+            "unknown".to_string(),
+            Err(failure.error),
+            gate.clone(),
+        ));
+    }
+    for row in plugin_scan.rows {
+        let latest = if matches!(&gate, GateDecision::Deny { .. }) {
+            Err(UPDATE_PROBE_DENIED_MSG.to_string())
+        } else if !row.enabled {
+            Err(format!(
+                "upstream probe skipped without network: {}",
+                row.disabled_reason
+                    .as_deref()
+                    .unwrap_or("plugin is not enabled by effective operator policy")
+            ))
+        } else {
+            match row.source.as_deref() {
+                Some(_) => {
+                    resolve_plugin_latest_at_sink(&home, &config_path, &row, &plugin_resolver).await
+                }
+                None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            }
         };
         installed.push((row.name, row.version, latest, gate.clone()));
     }
@@ -284,33 +1132,69 @@ pub async fn skill_plugin_specs_for_home_async(
 /// Callers in async contexts MUST switch to
 /// [`skill_plugin_specs_for_home_async`].
 pub fn skill_plugin_specs_for_home(
-    home: &std::path::Path,
+    home: &Path,
+    config_path: &Path,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     let mut installed: Vec<(String, String, Result<String, String>, GateDecision)> = Vec::new();
-    for row in scan_installed_skills_rows(home) {
+    let skill_scan = scan_installed_skills_checked(home, config_path);
+    log_manifest_scan_failures(&skill_scan.failures);
+    for failure in skill_scan.failures {
         installed.push((
-            row.name,
-            row.version,
-            Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            failure.component,
+            "unknown".to_string(),
+            Err(failure.error),
             gate.clone(),
         ));
     }
-    for row in scan_installed_plugins_rows(home) {
+    for row in skill_scan.rows {
+        let latest = if matches!(&gate, GateDecision::Deny { .. }) {
+            UPDATE_PROBE_DENIED_MSG.to_string()
+        } else if !row.enabled {
+            DISABLED_SKILL_PROBE_MSG.to_string()
+        } else if let Some(source) = row.source.as_deref() {
+            invalid_source_probe_status(source)
+                .unwrap_or_else(|| NO_REGISTRY_RESOLVER_MSG.to_string())
+        } else {
+            NO_REGISTRY_RESOLVER_MSG.to_string()
+        };
+        installed.push((row.name, row.version, Err(latest), gate.clone()));
+    }
+    let plugin_scan = scan_installed_plugins_checked(home, config_path);
+    log_manifest_scan_failures(&plugin_scan.failures);
+    for failure in plugin_scan.failures {
         installed.push((
-            row.name,
-            row.version,
-            Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            failure.component,
+            "unknown".to_string(),
+            Err(failure.error),
             gate.clone(),
         ));
+    }
+    for row in plugin_scan.rows {
+        let latest = if matches!(&gate, GateDecision::Deny { .. }) {
+            UPDATE_PROBE_DENIED_MSG.to_string()
+        } else if !row.enabled {
+            format!(
+                "upstream probe skipped without network: {}",
+                row.disabled_reason
+                    .as_deref()
+                    .unwrap_or("plugin is not enabled by effective operator policy")
+            )
+        } else if let Some(source) = row.source.as_deref() {
+            invalid_source_probe_status(source)
+                .unwrap_or_else(|| NO_REGISTRY_RESOLVER_MSG.to_string())
+        } else {
+            NO_REGISTRY_RESOLVER_MSG.to_string()
+        };
+        installed.push((row.name, row.version, Err(latest), gate.clone()));
     }
     crate::updater::pipeline::skill_plugin_specs(installed)
 }
 
-/// Sync builder for the U-04 cron-builder closure. The home path
-/// is captured by value so each tick re-reads disk (operator-
-/// added skills between ticks become visible without a daemon
-/// restart).
+/// Sync builder for the U-04 cron-builder closure. The home and exact active
+/// config paths are captured by value so each tick re-reads disk (operator-
+/// added skills and policy changes between ticks become visible without a
+/// daemon restart).
 ///
 /// U-02b: when invoked from the cron's `spawn_blocking` context the
 /// builder hands control to `skill_plugin_specs_for_home_async` via
@@ -319,12 +1203,13 @@ pub fn skill_plugin_specs_for_home(
 /// sync fallback emits the sentinel error for every skill — same
 /// shape the cron-audit chain saw before U-02b.
 pub fn skill_plugin_specs_blocking(
-    home: std::path::PathBuf,
+    home: PathBuf,
+    config_path: PathBuf,
     gate: GateDecision,
 ) -> Vec<ComponentSpec> {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_async(home, gate)),
-        Err(_) => skill_plugin_specs_for_home(&home, gate),
+        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_async(home, config_path, gate)),
+        Err(_) => skill_plugin_specs_for_home(&home, &config_path, gate),
     }
 }
 
@@ -332,6 +1217,131 @@ pub fn skill_plugin_specs_blocking(
 mod tests {
     use super::*;
     use crate::updater::pipeline::GateDecision;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const MINIMAL_WASM: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+
+    #[cfg(unix)]
+    fn try_symlink_dir(source: &Path, target: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(source, target)
+    }
+
+    #[cfg(windows)]
+    fn try_symlink_dir(source: &Path, target: &Path) -> std::io::Result<()> {
+        match std::os::windows::fs::symlink_dir(source, target) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let status = std::process::Command::new("cmd.exe")
+                    .args(["/D", "/C", "mklink", "/J"])
+                    .arg(target)
+                    .arg(source)
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?;
+                if status.success() {
+                    Ok(())
+                } else {
+                    Err(std::io::Error::other(format!(
+                        "mklink /J failed with {status}"
+                    )))
+                }
+            }
+        }
+    }
+
+    fn approve_plugin_with_policy(home: &Path, manifest_body: &str, extra_policy: &str) {
+        let manifest = crate::wasm_plugin::manifest::parse_manifest(manifest_body.as_bytes())
+            .expect("valid plugin fixture");
+        let plugin =
+            crate::wasm_plugin::discovery::discover_one(&home.join("plugins").join(&manifest.id))
+                .expect("complete plugin fixture");
+        std::fs::write(
+            home.join("freedom.yaml"),
+            format!(
+                "plugins:\n  wasm:\n    enabled: true\n    activations:\n      {}:\n        state: active\n        approval:\n          approved_permission: {}\n          manifest_sha256: \"{}\"\n          wasm_sha256: \"{}\"\n{}",
+                manifest.id,
+                manifest.requested_permissions.as_str(),
+                plugin.manifest_hash,
+                plugin.content_hash,
+                extra_policy,
+            ),
+        )
+        .unwrap();
+    }
+
+    fn approve_plugin(home: &Path, manifest_body: &str) {
+        approve_plugin_with_policy(home, manifest_body, "");
+    }
+
+    fn write_plugin(home: &Path, id: &str, manifest_body: &str) {
+        let installed = home.join("plugins").join(id);
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("plugin.toml"), manifest_body).unwrap();
+        std::fs::write(installed.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+    }
+
+    fn write_skill(home: &Path, id: &str, manifest_body: &str) {
+        let installed = home.join("skills").join(id);
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("skill.yaml"), manifest_body).unwrap();
+    }
+
+    fn config_path(home: &Path) -> PathBuf {
+        home.join("freedom.yaml")
+    }
+
+    fn denied_gate() -> GateDecision {
+        GateDecision::Deny {
+            reason: "recurring egress not authorised".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn denied_self_probe_short_circuits_before_repo_validation_or_network() {
+        let specs = neoth_self_specs_async_for(
+            "invalid repo that must never reach transport validation",
+            ReleaseChannel::Stable,
+            denied_gate(),
+        )
+        .await;
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            UPDATE_PROBE_DENIED_MSG
+        );
+        assert!(matches!(specs[0].gate_decision, GateDecision::Deny { .. }));
+    }
+
+    #[tokio::test]
+    async fn denied_cli_probe_returns_auditable_rows_without_npm_egress() {
+        let specs = cli_version_specs_async(denied_gate()).await;
+        assert_eq!(specs.len(), crate::updater::Component::ALL.len());
+        assert!(specs.iter().all(|spec| {
+            spec.latest_version.as_ref().err().map(String::as_str) == Some(UPDATE_PROBE_DENIED_MSG)
+                && matches!(spec.gate_decision, GateDecision::Deny { .. })
+        }));
+    }
+
+    #[test]
+    fn unsafe_directory_identifier_is_bounded_and_control_safe() {
+        let raw = format!("line\nbreak{}", "x".repeat(512));
+        let component = component_name("plugin", &raw);
+        assert!(component.len() < 64);
+        assert!(!component.chars().any(char::is_control));
+        assert!(component.starts_with("plugin:<unsafe-"));
+        assert!(!component.contains("line"));
+    }
+
+    fn counting_resolver(
+        calls: Arc<AtomicUsize>,
+    ) -> impl Fn(String) -> std::future::Ready<Result<String, String>> {
+        move |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Ok("v9.9.9".to_string()))
+        }
+    }
 
     #[tokio::test]
     async fn neoth_self_probe_returns_single_spec_with_current_version() {
@@ -415,18 +1425,178 @@ mod tests {
     }
 
     #[test]
-    fn scan_skills_skips_dirs_without_skill_yaml() {
+    fn scan_skills_reports_dirs_without_skill_yaml_as_failed_probe_rows() {
         let home = tempfile::tempdir().unwrap();
         let skills = home.path().join("skills");
         std::fs::create_dir_all(skills.join("orphan")).unwrap();
-        // No skill.yaml file present.
+        // Compatibility inventory helpers return only valid rows.
         assert!(scan_installed_skills(home.path()).is_empty());
+        // The actual updater/cron surface preserves the partial as an explicit
+        // failed component instead of silently pretending the store is empty.
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "skill:orphan");
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("no skill.yaml")
+        );
+    }
+
+    #[test]
+    fn scan_skills_reports_non_directory_entries_as_failed_probe_rows() {
+        let home = tempfile::tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        std::fs::write(skills.join("not-a-package"), b"not a skill directory").unwrap();
+
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "skill:not-a-package");
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("not a real directory")
+        );
+    }
+
+    #[test]
+    fn manifest_scan_stops_at_aggregate_component_budget() {
+        let home = tempfile::tempdir().unwrap();
+        let plugins = home.path().join("plugins");
+        for id in ["one", "two", "three"] {
+            let directory = plugins.join(id);
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(directory.join("plugin.toml"), b"id = 'placeholder'").unwrap();
+        }
+
+        let scan =
+            scan_bound_manifests_with_limits(&plugins, "plugin", "plugin.toml", 2, usize::MAX);
+        assert_eq!(scan.manifests.len(), 2);
+        assert_eq!(scan.failures.len(), 1);
+        assert!(scan.failures[0].error.contains("2-entry updater limit"));
+    }
+
+    #[test]
+    fn manifest_scan_stops_at_aggregate_manifest_byte_budget() {
+        let home = tempfile::tempdir().unwrap();
+        let plugin = home.path().join("plugins").join("oversized-total");
+        std::fs::create_dir_all(&plugin).unwrap();
+        std::fs::write(plugin.join("plugin.toml"), b"12345").unwrap();
+
+        let scan = scan_bound_manifests_with_limits(
+            &home.path().join("plugins"),
+            "plugin",
+            "plugin.toml",
+            10,
+            4,
+        );
+        assert!(scan.manifests.is_empty());
+        assert_eq!(scan.failures.len(), 1);
+        assert!(
+            scan.failures[0]
+                .error
+                .contains("4-byte aggregate updater limit")
+        );
+    }
+
+    #[test]
+    fn scan_skills_rejects_id_mismatch_as_failed_probe_row() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("expected");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            "id: different\ndescription: mismatch\nversion: 1.0.0\n",
+        )
+        .unwrap();
+
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "skill:expected");
+        assert_eq!(specs[0].current_version, "unknown");
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("does not match directory")
+        );
+    }
+
+    #[test]
+    fn scan_skills_rejects_linked_directory_without_reading_outside() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("skill.yaml"),
+            "id: linked\ndescription: outside\nversion: 9.9.9\n",
+        )
+        .unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(&skills).unwrap();
+        try_symlink_dir(outside.path(), &skills.join("linked"))
+            .expect("create linked skill fixture");
+
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "skill:linked");
+        assert_eq!(specs[0].current_version, "unknown");
+        let error = specs[0].latest_version.as_ref().unwrap_err();
+        assert!(error.contains("linked/reparse") || error.contains("unsafe skill directory"));
+        assert!(!error.contains("9.9.9"));
+    }
+
+    #[test]
+    fn scan_skills_rejects_oversized_manifest_as_failed_probe_row() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("oversized");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            vec![b'x'; MAX_UPDATE_MANIFEST_BYTES + 1],
+        )
+        .unwrap();
+
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
+        assert_eq!(specs.len(), 1);
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("exceeds the")
+        );
     }
 
     #[test]
     fn scan_plugins_returns_empty_when_dir_missing() {
         let home = tempfile::tempdir().unwrap();
-        assert!(scan_installed_plugins(home.path()).is_empty());
+        assert!(scan_installed_plugins(home.path(), &config_path(home.path())).is_empty());
     }
 
     #[test]
@@ -439,7 +1609,11 @@ mod tests {
             "id: alpha\ndescription: A\nversion: 0.7.0\n",
         )
         .unwrap();
-        let specs = skill_plugin_specs_for_home(home.path(), GateDecision::Allow);
+        let specs = skill_plugin_specs_for_home(
+            home.path(),
+            &config_path(home.path()),
+            GateDecision::Allow,
+        );
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].name, "skill:alpha");
         assert_eq!(specs[0].current_version, "0.7.0");
@@ -495,8 +1669,12 @@ mod tests {
             "id: legacy\ndescription: no source field\nversion: 0.1.0\n",
         )
         .unwrap();
-        let specs =
-            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+        )
+        .await;
         assert_eq!(specs.len(), 1);
         match &specs[0].latest_version {
             Err(msg) => assert!(
@@ -508,35 +1686,281 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn async_specs_attempts_resolver_for_skills_with_source() {
-        // RFC2606 `.invalid` host guarantees `git ls-remote` fails →
-        // resolver returns an Err containing "ls-remote" or "spawn".
-        // The point is to prove the resolver path FIRED, not to assert
-        // a specific upstream response.
+    async fn resolver_sink_calls_resolver_for_unchanged_enabled_skill() {
         let home = tempfile::tempdir().unwrap();
-        let skills = home.path().join("skills");
-        std::fs::create_dir_all(skills.join("with-src")).unwrap();
-        std::fs::write(
-            skills.join("with-src").join("skill.yaml"),
+        write_skill(
+            home.path(),
+            "with-src",
             "id: with-src\n\
              description: U-02b live-resolver wiring\n\
              version: 1.0.0\n\
-             source: git+https://nonexistent-host.invalid/owner/repo\n",
+             source: git+https://github.com/example/with-src\n",
+        );
+        let row = scan_installed_skills_checked(home.path(), &config_path(home.path()))
+            .rows
+            .pop()
+            .expect("enabled source-bound skill");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &config_path(home.path()),
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(result.as_deref(), Ok("v9.9.9"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn exact_custom_skill_policy_denial_wins_without_network() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill(
+            home.path(),
+            "custom-denied",
+            "id: custom-denied\ndescription: custom policy\nversion: 1.0.0\nsource: git+https://github.com/example/custom-denied\n",
+        );
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enabled: [custom-denied]\n",
         )
         .unwrap();
-        let specs =
-            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
-        assert_eq!(specs.len(), 1);
-        match &specs[0].latest_version {
-            Err(msg) => {
-                assert!(
-                    !msg.contains("no upstream registry"),
-                    "source-declaring skill must NOT surface the sentinel — \
-                     resolver must have been called"
-                );
-            }
-            Ok(_) => panic!("unreachable host must surface as Err"),
-        }
+        let custom_path = home.path().join("custom.yaml");
+        std::fs::write(&custom_path, "skills:\n  disabled: [custom-denied]\n").unwrap();
+        let row = scan_installed_skills_checked(home.path(), &custom_path)
+            .rows
+            .pop()
+            .expect("disabled row remains operator-visible");
+        assert!(!row.enabled);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &custom_path,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), DISABLED_SKILL_PROBE_MSG);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn skill_resolver_sink_reloads_policy_before_egress() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill(
+            home.path(),
+            "revoked-at-sink",
+            "id: revoked-at-sink\ndescription: policy drift\nversion: 1.0.0\nsource: git+https://github.com/example/revoked-at-sink\n",
+        );
+        let custom_path = home.path().join("custom.yaml");
+        std::fs::write(&custom_path, "skills:\n  enabled: [revoked-at-sink]\n").unwrap();
+        let row = scan_installed_skills_checked(home.path(), &custom_path)
+            .rows
+            .pop()
+            .expect("initially enabled skill generation");
+        std::fs::write(&custom_path, "skills:\n  disabled: [revoked-at-sink]\n").unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &custom_path,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(result.unwrap_err(), DISABLED_SKILL_PROBE_MSG);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn skill_resolver_sink_rejects_changed_package_generation() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill(
+            home.path(),
+            "mutated-at-sink",
+            "id: mutated-at-sink\ndescription: generation drift\nversion: 1.0.0\nsource: git+https://github.com/example/mutated-at-sink\n",
+        );
+        let row = scan_installed_skills_checked(home.path(), &config_path(home.path()))
+            .rows
+            .pop()
+            .expect("initial source-bound generation");
+        std::fs::write(
+            home.path()
+                .join("skills")
+                .join("mutated-at-sink")
+                .join("asset.txt"),
+            b"generation changed",
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &config_path(home.path()),
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(result.unwrap_err().contains("generation changed"));
+    }
+
+    #[tokio::test]
+    async fn disabled_skill_manifest_never_enters_source_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("disabled");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            "id: disabled\ndescription: disabled\nversion: 1.0.0\nenabled: false\nsource: git+https://127.0.0.1/hostile/repo\n",
+        )
+        .unwrap();
+
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+        )
+        .await;
+        let error = specs[0].latest_version.as_ref().unwrap_err();
+        assert_eq!(error, DISABLED_SKILL_PROBE_MSG);
+        assert!(!error.contains("approved public forge"));
+    }
+
+    #[tokio::test]
+    async fn freedom_disabled_skill_never_enters_source_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("blocked");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            "id: blocked\ndescription: blocked\nversion: 1.0.0\nsource: git+https://127.0.0.1/hostile/repo\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  disabled: [blocked]\n",
+        )
+        .unwrap();
+
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+        )
+        .await;
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            DISABLED_SKILL_PROBE_MSG
+        );
+    }
+
+    #[tokio::test]
+    async fn visibility_off_skill_never_enters_source_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("hidden");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            "id: hidden\ndescription: hidden\nversion: 1.0.0\nvisibility: off\nsource: git+https://127.0.0.1/hostile/repo\n",
+        )
+        .unwrap();
+
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+        )
+        .await;
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            DISABLED_SKILL_PROBE_MSG
+        );
+    }
+
+    #[tokio::test]
+    async fn denied_update_gate_never_enters_source_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("skills").join("denied");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("skill.yaml"),
+            "id: denied\ndescription: denied\nversion: 1.0.0\nsource: git+https://github.com/example/denied\n",
+        )
+        .unwrap();
+        let gate = GateDecision::Deny {
+            reason: "operator disabled updater".to_string(),
+        };
+
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            gate,
+        )
+        .await;
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            UPDATE_PROBE_DENIED_MSG
+        );
+        assert!(matches!(specs[0].gate_decision, GateDecision::Deny { .. }));
+    }
+
+    #[tokio::test]
+    async fn unapproved_plugin_never_enters_source_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        write_plugin(
+            home.path(),
+            "pending",
+            "id = \"pending\"\nname = \"Pending\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/pending\"\n",
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+        let error = specs[0].latest_version.as_ref().unwrap_err();
+        assert!(error.contains("activation is not active"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn plugin_probe_requires_host_active_approval_and_non_revocation() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"approved\"\nname = \"Approved\"\nversion = \"1.0.0\"\n";
+        write_plugin(home.path(), "approved", manifest);
+        let plugin = crate::wasm_plugin::discovery::discover_one(
+            &home.path().join("plugins").join("approved"),
+        )
+        .unwrap();
+        let mut policy = crate::config::WasmPluginsConfig::default();
+        policy.activations.insert(
+            plugin.manifest.id.clone(),
+            crate::wasm_plugin::discovery::PluginActivationRecord::active_for(&plugin),
+        );
+        assert!(
+            crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy).is_ok()
+        );
+
+        policy.enabled = false;
+        assert!(matches!(
+            crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy),
+            Err(crate::wasm_plugin::discovery::RuntimePluginAdmissionError::HostDisabled)
+        ));
+        policy.enabled = true;
+        policy.revoked_ids.push(plugin.manifest.id.clone());
+        assert!(matches!(
+            crate::wasm_plugin::discovery::validate_runtime_admission(&plugin, &policy),
+            Err(
+                crate::wasm_plugin::discovery::RuntimePluginAdmissionError::Integrity(
+                    crate::wasm_plugin::discovery::DiscoveryError::Revoked { .. }
+                )
+            )
+        ));
     }
 
     // ── Session 27 — U-02b plugin parity drift guards ─────────────────
@@ -549,23 +1973,20 @@ mod tests {
     #[test]
     fn scan_installed_plugins_rows_carries_source_when_present() {
         let home = tempfile::tempdir().unwrap();
-        let plugins = home.path().join("plugins");
-        std::fs::create_dir_all(plugins.join("with_source")).unwrap();
-        std::fs::write(
-            plugins.join("with_source").join("plugin.toml"),
+        write_plugin(
+            home.path(),
+            "with_source",
             "id = \"with_source\"\n\
              name = \"With Source\"\n\
              version = \"1.0.0\"\n\
              source = \"git+https://github.com/example/with-source\"\n",
-        )
-        .unwrap();
-        std::fs::create_dir_all(plugins.join("no_source")).unwrap();
-        std::fs::write(
-            plugins.join("no_source").join("plugin.toml"),
+        );
+        write_plugin(
+            home.path(),
+            "no_source",
             "id = \"no_source\"\nname = \"Legacy\"\nversion = \"0.1.0\"\n",
-        )
-        .unwrap();
-        let rows = scan_installed_plugins_rows(home.path());
+        );
+        let rows = scan_installed_plugins_rows(home.path(), &config_path(home.path()));
         assert_eq!(rows.len(), 2);
         let with = rows
             .iter()
@@ -585,15 +2006,15 @@ mod tests {
     #[tokio::test]
     async fn async_specs_returns_sentinel_for_plugins_without_source() {
         let home = tempfile::tempdir().unwrap();
-        let plugins = home.path().join("plugins");
-        std::fs::create_dir_all(plugins.join("legacy")).unwrap();
-        std::fs::write(
-            plugins.join("legacy").join("plugin.toml"),
-            "id = \"legacy\"\nname = \"Legacy\"\nversion = \"0.1.0\"\n",
+        let manifest = "id = \"legacy\"\nname = \"Legacy\"\nversion = \"0.1.0\"\n";
+        write_plugin(home.path(), "legacy", manifest);
+        approve_plugin(home.path(), manifest);
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
         )
-        .unwrap();
-        let specs =
-            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
+        .await;
         assert_eq!(specs.len(), 1);
         match &specs[0].latest_version {
             Err(msg) => assert!(
@@ -606,32 +2027,334 @@ mod tests {
 
     #[tokio::test]
     async fn async_specs_attempts_resolver_for_plugins_with_source() {
-        // Same `.invalid` RFC2606 trick as the skills test — proves
-        // the resolver path FIRED for plugins with a `source` field,
-        // independent of network state.
         let home = tempfile::tempdir().unwrap();
-        let plugins = home.path().join("plugins");
-        std::fs::create_dir_all(plugins.join("with_src")).unwrap();
+        let manifest = "id = \"with_src\"\n\
+                        name = \"With Src\"\n\
+                        version = \"1.0.0\"\n\
+                        source = \"git+https://github.com/example/with-src\"\n";
+        write_plugin(home.path(), "with_src", manifest);
+        approve_plugin(home.path(), manifest);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].latest_version.as_deref(), Ok("v9.9.9"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn custom_config_path_denial_wins_over_home_freedom_allow() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"custom_denied\"\nname = \"Custom Denied\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/custom-denied\"\n";
+        write_plugin(home.path(), "custom_denied", manifest);
+        approve_plugin(home.path(), manifest);
+        let allowed = std::fs::read_to_string(config_path(home.path())).unwrap();
+        let custom_path = home.path().join("custom.yaml");
         std::fs::write(
-            plugins.join("with_src").join("plugin.toml"),
-            "id = \"with_src\"\n\
-             name = \"With Src\"\n\
-             version = \"1.0.0\"\n\
-             source = \"git+https://nonexistent-host.invalid/owner/repo\"\n",
+            &custom_path,
+            allowed.replacen("enabled: true", "enabled: false", 1),
         )
         .unwrap();
-        let specs =
-            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            custom_path,
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("host is disabled")
+        );
+    }
+
+    #[tokio::test]
+    async fn custom_config_path_denial_is_rechecked_at_resolver_sink() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"sink_denied\"\nname = \"Sink Denied\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/sink-denied\"\n";
+        write_plugin(home.path(), "sink_denied", manifest);
+        approve_plugin(home.path(), manifest);
+        let allowed = std::fs::read_to_string(config_path(home.path())).unwrap();
+        let custom_path = home.path().join("custom.yaml");
+        std::fs::write(&custom_path, &allowed).unwrap();
+        let row = scan_installed_plugins_checked(home.path(), &custom_path)
+            .rows
+            .pop()
+            .expect("custom config initially admits the exact generation");
+
+        std::fs::write(
+            &custom_path,
+            allowed.replacen("enabled: true", "enabled: false", 1),
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_plugin_latest_at_sink(
+            home.path(),
+            &custom_path,
+            &row,
+            &counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(result.unwrap_err().contains("host is disabled"));
+    }
+
+    #[tokio::test]
+    async fn missing_wasm_never_reaches_plugin_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let installed = home.path().join("plugins").join("missing_wasm");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(
+            installed.join("plugin.toml"),
+            "id = \"missing_wasm\"\nname = \"Missing\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/missing\"\n",
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
         assert_eq!(specs.len(), 1);
-        match &specs[0].latest_version {
-            Err(msg) => {
-                assert!(
-                    !msg.contains("no upstream registry"),
-                    "source-declaring plugin must NOT surface the sentinel — \
-                     resolver must have been called, got: {msg}"
-                );
-            }
-            Ok(_) => panic!("unreachable host must surface as Err"),
-        }
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("plugin.wasm is missing")
+        );
+    }
+
+    #[tokio::test]
+    async fn linked_plugin_directory_never_reaches_plugin_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let manifest = "id = \"linked\"\nname = \"Linked\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/linked\"\n";
+        write_plugin(outside.path(), "linked", manifest);
+        let plugins = home.path().join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        try_symlink_dir(
+            &outside.path().join("plugins").join("linked"),
+            &plugins.join("linked"),
+        )
+        .expect("create linked plugin fixture");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(specs.len(), 1);
+        let error = specs[0].latest_version.as_ref().unwrap_err();
+        assert!(error.contains("linked") || error.contains("reparse"));
+        assert!(!error.contains(outside.path().to_string_lossy().as_ref()));
+    }
+
+    #[tokio::test]
+    async fn nonregular_and_oversize_wasm_never_reach_plugin_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let nonregular = home.path().join("plugins").join("nonregular");
+        std::fs::create_dir_all(nonregular.join("plugin.wasm")).unwrap();
+        std::fs::write(
+            nonregular.join("plugin.toml"),
+            "id = \"nonregular\"\nname = \"Nonregular\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/nonregular\"\n",
+        )
+        .unwrap();
+        let oversize = home.path().join("plugins").join("oversize");
+        std::fs::create_dir_all(&oversize).unwrap();
+        std::fs::write(
+            oversize.join("plugin.toml"),
+            "id = \"oversize\"\nname = \"Oversize\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/oversize\"\n",
+        )
+        .unwrap();
+        std::fs::File::create(oversize.join("plugin.wasm"))
+            .unwrap()
+            .set_len(crate::wasm_plugin::discovery::MAX_WASM_BYTES + 1)
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(specs.len(), 2);
+        let errors = specs
+            .iter()
+            .map(|spec| spec.latest_version.as_ref().unwrap_err().as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("not a real regular file")
+                    || error.contains("unreadable"))
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("runtime size limit"))
+        );
+    }
+
+    #[tokio::test]
+    async fn pin_and_signature_failures_never_reach_plugin_resolver_and_are_redacted() {
+        let pin_home = tempfile::tempdir().unwrap();
+        let pin_manifest = "id = \"bad_pin\"\nname = \"Bad Pin\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/bad-pin\"\n";
+        write_plugin(pin_home.path(), "bad_pin", pin_manifest);
+        approve_plugin_with_policy(
+            pin_home.path(),
+            pin_manifest,
+            "    pinned_hashes:\n      bad_pin: deadbeef\n",
+        );
+        let pin_calls = Arc::new(AtomicUsize::new(0));
+        let pin_specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            pin_home.path().to_path_buf(),
+            config_path(pin_home.path()),
+            GateDecision::Allow,
+            counting_resolver(pin_calls.clone()),
+        )
+        .await;
+        let pin_error = pin_specs[0].latest_version.as_ref().unwrap_err();
+        assert_eq!(pin_calls.load(Ordering::SeqCst), 0);
+        assert!(pin_error.contains("configured pin"));
+        assert!(!pin_error.contains("deadbeef"));
+        assert!(!pin_error.contains(pin_home.path().to_string_lossy().as_ref()));
+
+        let sig_home = tempfile::tempdir().unwrap();
+        let sig_manifest = "id = \"bad_sig\"\nname = \"Bad Sig\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/bad-sig\"\n";
+        write_plugin(sig_home.path(), "bad_sig", sig_manifest);
+        std::fs::write(
+            sig_home
+                .path()
+                .join("plugins")
+                .join("bad_sig")
+                .join("plugin.wasm.minisig"),
+            "not a signature",
+        )
+        .unwrap();
+        approve_plugin_with_policy(
+            sig_home.path(),
+            sig_manifest,
+            "    author_pubkey: not-a-valid-minisign-key\n    require_signature: true\n",
+        );
+        let sig_calls = Arc::new(AtomicUsize::new(0));
+        let sig_specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            sig_home.path().to_path_buf(),
+            config_path(sig_home.path()),
+            GateDecision::Allow,
+            counting_resolver(sig_calls.clone()),
+        )
+        .await;
+        let sig_error = sig_specs[0].latest_version.as_ref().unwrap_err();
+        assert_eq!(sig_calls.load(Ordering::SeqCst), 0);
+        assert!(sig_error.contains("signature") || sig_error.contains("author key"));
+        assert!(!sig_error.contains("not-a-valid-minisign-key"));
+    }
+
+    #[tokio::test]
+    async fn require_all_pinned_without_pin_never_reaches_plugin_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"unpinned\"\nname = \"Unpinned\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/unpinned\"\n";
+        write_plugin(home.path(), "unpinned", manifest);
+        approve_plugin_with_policy(home.path(), manifest, "    require_all_pinned: true\n");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let specs = skill_plugin_specs_for_home_async_with_plugin_resolver(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            specs[0]
+                .latest_version
+                .as_ref()
+                .unwrap_err()
+                .contains("require_all_pinned")
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_rejects_mutated_generation_without_calling_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"mutated\"\nname = \"Mutated\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/mutated\"\n";
+        write_plugin(home.path(), "mutated", manifest);
+        approve_plugin(home.path(), manifest);
+        let row = scan_installed_plugins_checked(home.path(), &config_path(home.path()))
+            .rows
+            .pop()
+            .expect("initial runtime-admitted generation");
+        std::fs::write(
+            home.path()
+                .join("plugins")
+                .join("mutated")
+                .join("plugin.wasm"),
+            b"changed generation",
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_plugin_latest_at_sink(
+            home.path(),
+            &config_path(home.path()),
+            &row,
+            &counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(result.unwrap_err().contains("generation changed"));
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_reloads_revocation_before_egress() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id = \"revoked_at_barrier\"\nname = \"Revoked\"\nversion = \"1.0.0\"\nsource = \"git+https://github.com/example/revoked\"\n";
+        write_plugin(home.path(), "revoked_at_barrier", manifest);
+        approve_plugin(home.path(), manifest);
+        let row = scan_installed_plugins_checked(home.path(), &config_path(home.path()))
+            .rows
+            .pop()
+            .expect("initial runtime-admitted generation");
+        approve_plugin_with_policy(
+            home.path(),
+            manifest,
+            "    revoked_ids: [revoked_at_barrier]\n",
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let result = resolve_plugin_latest_at_sink(
+            home.path(),
+            &config_path(home.path()),
+            &row,
+            &counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(result.unwrap_err().contains("revoked"));
     }
 }

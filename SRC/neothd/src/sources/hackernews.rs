@@ -24,12 +24,24 @@
 //! ontology matching so "covered" understands capability overlap, not just
 //! substrings.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use futures_util::StreamExt;
+use serde::de::DeserializeOwned;
 
 use crate::proactive::ProactiveItem;
+use crate::tools::external_http::{
+    ExternalHttpAuthorizer, ExternalHttpRequest, ExternalHttpSurface,
+};
 
 /// Public HN Firebase API base (ported verbatim from hackerpedia's `hnAPI.js`).
 pub const HN_BASE: &str = "https://hacker-news.firebaseio.com/v0/";
+
+/// The top-stories payload is normally only a few KiB. Keep a generous hard
+/// ceiling so a compromised endpoint cannot make the daemon buffer forever.
+const MAX_TOP_STORIES_BYTES: usize = 1024 * 1024;
+/// A story item is tiny in normal operation; 256 KiB leaves ample forward
+/// compatibility while bounding every per-item allocation.
+const MAX_ITEM_BYTES: usize = 256 * 1024;
 
 /// One Hacker News story (the subset NEOTH reflects on).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -45,41 +57,100 @@ pub struct HnStory {
 }
 
 /// Fetch the top `limit` HN stories (capped at 100 — one `topstories` page is
-/// ~500 ids and self-reflect only ever wants the head). Network. Per-item
-/// failures are logged + skipped so one dead id never sinks the whole pass.
-pub async fn top_stories(limit: usize) -> Result<Vec<HnStory>> {
+/// ~500 ids and self-reflect only ever wants the head). Network. Dead, deleted,
+/// and non-story items are represented as `Ok(None)` and skipped. Transport,
+/// policy, audit, status, body, and parse failures abort the pass so the cron
+/// cannot commit a partial refresh as a successful weekly run.
+pub async fn top_stories(
+    authorizer: &ExternalHttpAuthorizer,
+    limit: usize,
+) -> Result<Vec<HnStory>> {
+    top_stories_from_base(HN_BASE, authorizer, limit).await
+}
+
+async fn top_stories_from_base(
+    base: &str,
+    authorizer: &ExternalHttpAuthorizer,
+    limit: usize,
+) -> Result<Vec<HnStory>> {
     let limit = limit.min(100);
     let client = reqwest::Client::builder()
         .user_agent(concat!("neoth/", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let ids: Vec<i64> = client
-        .get(format!("{HN_BASE}topstories.json"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
+    let ids_url = format!("{base}topstories.json");
+    let ids_request = ExternalHttpRequest::get(ids_url.clone(), ExternalHttpSurface::HackerNews);
+    let ids: Vec<i64> = authorizer
+        .execute(ids_request.clone(), |permit| {
+            let client = client.clone();
+            let ids_request = ids_request.clone();
+            async move {
+                permit.require(&ids_request)?;
+                let response = client.get(ids_url).send().await?;
+                response_json_limited(response, MAX_TOP_STORIES_BYTES, "HN top stories").await
+            }
+        })
         .await?;
     let mut out = Vec::with_capacity(limit);
     for id in ids.into_iter().take(limit) {
-        match fetch_item(&client, id).await {
-            Ok(Some(s)) => out.push(s),
-            Ok(None) => {} // comment / poll / dead — not a story
-            Err(e) => tracing::warn!(error = %e, id, "hn: item fetch failed; skipping"),
+        if let Some(story) = fetch_item(base, &client, authorizer, id)
+            .await
+            .with_context(|| format!("fetch HN item {id}"))?
+        {
+            out.push(story);
         }
     }
     Ok(out)
 }
 
-async fn fetch_item(client: &reqwest::Client, id: i64) -> Result<Option<HnStory>> {
-    let v: serde_json::Value = client
-        .get(format!("{HN_BASE}item/{id}.json"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
+async fn fetch_item(
+    base: &str,
+    client: &reqwest::Client,
+    authorizer: &ExternalHttpAuthorizer,
+    id: i64,
+) -> Result<Option<HnStory>> {
+    let item_url = format!("{base}item/{id}.json");
+    let item_request = ExternalHttpRequest::get(item_url.clone(), ExternalHttpSurface::HackerNews);
+    let v: serde_json::Value = authorizer
+        .execute(item_request.clone(), |permit| {
+            let client = client.clone();
+            let item_request = item_request.clone();
+            async move {
+                permit.require(&item_request)?;
+                let response = client.get(item_url).send().await?;
+                response_json_limited(response, MAX_ITEM_BYTES, "HN item").await
+            }
+        })
         .await?;
     Ok(parse_item(&v))
+}
+
+async fn response_json_limited<T: DeserializeOwned>(
+    response: reqwest::Response,
+    max_bytes: usize,
+    context: &'static str,
+) -> Result<T> {
+    let response = response
+        .error_for_status()
+        .with_context(|| format!("{context} HTTP status"))?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > max_bytes as u64)
+    {
+        anyhow::bail!("{context} response exceeds {max_bytes}-byte limit");
+    }
+
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.with_context(|| format!("read {context} response body"))?;
+        if body.len().saturating_add(chunk.len()) > max_bytes {
+            anyhow::bail!("{context} response exceeds {max_bytes}-byte limit");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body).with_context(|| format!("parse {context} JSON"))
 }
 
 /// Parse a raw HN item JSON into an [`HnStory`]. `None` for anything that isn't
@@ -286,8 +357,210 @@ pub fn build_tech_currency_item(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
     use serde_json::json;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn mock_base(server: &MockServer) -> String {
+        format!("{}/v0/", server.uri())
+    }
+
+    #[tokio::test]
+    async fn fetches_top_list_and_each_concrete_item_through_authorizer() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![7]))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v0/item/7.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "type": "story", "id": 7, "title": "A bound HN request"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let stories = top_stories_from_base(
+            &mock_base(&server),
+            &ExternalHttpAuthorizer::test_allow(),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(stories.len(), 1);
+        assert_eq!(stories[0].id, 7);
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn item_transport_failure_aborts_the_refresh_instead_of_returning_partial_data() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(vec![7, 8]))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v0/item/7.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "type": "story", "id": 7, "title": "This result must not be committed alone"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v0/item/8.json"))
+            .respond_with(ResponseTemplate::new(503))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let error = top_stories_from_base(
+            &mock_base(&server),
+            &ExternalHttpAuthorizer::test_allow(),
+            2,
+        )
+        .await
+        .expect_err("one failed item must abort the whole cron input");
+
+        assert!(format!("{error:#}").contains("fetch HN item 8"));
+        server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn fail_closed_deny_never_reaches_hn_transport() {
+        use crate::permissions::{AutonomyLevel, AutonomyPolicySnapshot, ConfirmStrategy};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(Vec::<i64>::new()))
+            .mount(&server)
+            .await;
+        let authorizer = ExternalHttpAuthorizer::test_policy(
+            AutonomyPolicySnapshot::test_level(AutonomyLevel::Strict),
+            ConfirmStrategy::FailClosed,
+        );
+
+        assert!(
+            top_stories_from_base(&mock_base(&server), &authorizer, 1)
+                .await
+                .is_err()
+        );
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "FailClosed deny must stop before the HTTP transport"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_policy_reload_to_custom_deny_prevents_transport() {
+        use crate::config::reload::{ReloadController, ReloadResult};
+        use crate::permissions::{ActionKind, AutonomyLevel, ConfirmStrategy, CustomDecision};
+
+        let config_dir = tempfile::tempdir().unwrap();
+        let config_path = config_dir.path().join("freedom.yaml");
+        let initial = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        std::fs::write(&config_path, serde_yaml::to_string(&initial).unwrap()).unwrap();
+        let controller = Arc::new(ReloadController::new(initial.clone(), config_path.clone()));
+        let authorizer = ExternalHttpAuthorizer::test_reload(
+            Arc::clone(&controller),
+            ConfirmStrategy::FailClosed,
+        );
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(Vec::<i64>::new()))
+            .mount(&server)
+            .await;
+        let base = mock_base(&server);
+        top_stories_from_base(&base, &authorizer, 1)
+            .await
+            .expect("Full policy should reach the transport");
+        assert_eq!(server.received_requests().await.unwrap().len(), 1);
+
+        let mut denied = initial;
+        denied.autonomy = AutonomyLevel::Custom;
+        denied
+            .custom_autonomy
+            .overrides
+            .insert(ActionKind::ExternalHttpRequest, CustomDecision::Deny);
+        std::fs::write(&config_path, serde_yaml::to_string(&denied).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            ReloadResult::Reloaded { .. }
+        ));
+
+        let error = top_stories_from_base(&base, &authorizer, 1)
+            .await
+            .expect_err("the reloaded Custom deny must block HN");
+        assert!(format!("{error:#}").contains("autonomy gate denied"));
+        assert_eq!(
+            server.received_requests().await.unwrap().len(),
+            1,
+            "the denied request must not reach the transport"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirects_are_not_followed() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(ResponseTemplate::new(302).insert_header("Location", "/redirect-target"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/redirect-target"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(Vec::<i64>::new()))
+            .mount(&server)
+            .await;
+
+        assert!(
+            top_stories_from_base(
+                &mock_base(&server),
+                &ExternalHttpAuthorizer::test_allow(),
+                1,
+            )
+            .await
+            .is_err()
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(requests.len(), 1, "redirect target must never be requested");
+        assert_eq!(requests[0].url.path(), "/v0/topstories.json");
+    }
+
+    #[tokio::test]
+    async fn top_story_response_is_hard_bounded() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_bytes(vec![b'0'; MAX_TOP_STORIES_BYTES + 1]),
+            )
+            .mount(&server)
+            .await;
+
+        let error = top_stories_from_base(
+            &mock_base(&server),
+            &ExternalHttpAuthorizer::test_allow(),
+            1,
+        )
+        .await
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("response exceeds"));
+    }
 
     fn story(id: i64, title: &str) -> HnStory {
         HnStory {

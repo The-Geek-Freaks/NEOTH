@@ -54,7 +54,7 @@
 //! the subconscious "what have I been saying" state is auditable
 //! without inspecting raw JSONL.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -63,6 +63,38 @@ use tracing::{info, warn};
 
 /// Default tick interval — 24 hours in seconds.
 pub const DEFAULT_CRON_INTERVAL_SECS: u64 = 24 * 3600;
+const MAX_TICK_STATE_BYTES: usize = 64 * 1024;
+const MAX_MARKER_BYTES: usize = 256;
+
+fn read_bounded_state_file(
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| format!("{label} path has no parent: {}", path.display()))?;
+    let Some(name) = path.file_name() else {
+        return Err(format!("{label} path has no file name: {}", path.display()));
+    };
+    let Some(directory) = crate::skills::store::open_bound_directory(parent, false, label)
+        .map_err(|error| format!("open {label} parent {}: {error:#}", parent.display()))?
+    else {
+        return Ok(None);
+    };
+    match crate::skills::store::read_regular_file_bounded(&directory.dir, name, path, max_bytes) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            Ok(None)
+        }
+        Err(error) => Err(format!("read {label} {}: {error:#}", path.display())),
+    }
+}
 
 // ── GOLD-ADAPT-OH-07: SubconsciousTickState ──────────────────────────────────
 
@@ -90,17 +122,10 @@ fn tick_state_path(home: &std::path::Path) -> PathBuf {
 /// and must stop the anti-double-emit gate rather than resetting it.
 pub fn load_tick_state(home: &std::path::Path) -> Result<SubconsciousTickState, String> {
     let path = tick_state_path(home);
-    let bytes = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(SubconsciousTickState::default());
-        }
-        Err(error) => {
-            return Err(format!(
-                "read reflection tick state {}: {error}",
-                path.display()
-            ));
-        }
+    let bytes = match read_bounded_state_file(&path, MAX_TICK_STATE_BYTES, "reflection tick state")?
+    {
+        Some(bytes) => bytes,
+        None => return Ok(SubconsciousTickState::default()),
     };
     serde_json::from_slice(&bytes)
         .map_err(|error| format!("parse reflection tick state {}: {error}", path.display()))
@@ -118,6 +143,24 @@ pub fn save_tick_state(
         .expect("SubconsciousTickState contains only infallibly serializable fields");
     crate::util::atomic_write::atomic_write_private(&path, &bytes)
         .map_err(|error| format!("persist reflection tick state {}: {error}", path.display()))
+}
+
+/// Read a cadence marker. Only absence means "not committed"; every other
+/// read failure is surfaced so a broken marker cannot silently reopen work.
+fn marker_matches(path: &Path, expected: &str) -> Result<bool, String> {
+    let Some(bytes) = read_bounded_state_file(path, MAX_MARKER_BYTES, "reflection marker")? else {
+        return Ok(false);
+    };
+    let value = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("reflection marker is not UTF-8: {}", path.display()))?;
+    Ok(value.trim() == expected)
+}
+
+/// Atomically persist a cadence marker. Marker durability is part of the tick
+/// commit: callers must return this error so the next cron tick retries.
+fn persist_marker(path: &Path, value: &str) -> Result<(), String> {
+    crate::util::atomic_write::atomic_write_private(path, value.as_bytes())
+        .map_err(|error| format!("persist reflection marker {}: {error}", path.display()))
 }
 
 // ── GOLD-ADAPT-OH-07: ReflectionSitrep ──────────────────────────────────────
@@ -267,16 +310,16 @@ pub fn run_reflection_tick_once(
     })
     .map_err(|e| format!("queue load/save failed: {e}"))?;
 
-    // GOLD-ADAPT-OH-07: persist last_emitted_unix on successful enqueue so
-    // subsequent ticks within the window are suppressed even across restarts.
-    if enqueued {
-        save_tick_state(
-            home,
-            &SubconsciousTickState {
-                last_emitted_unix: now_unix,
-            },
-        )?;
-    }
+    // Queue persistence is the delivery commit. Persist the replay gate even
+    // when enqueue deduped: that is the recovery path after a crash/error
+    // between the prior queue save and tick-state save. Requiring a fresh
+    // insertion here would leave state missing forever and recompute every tick.
+    save_tick_state(
+        home,
+        &SubconsciousTickState {
+            last_emitted_unix: now_unix,
+        },
+    )?;
 
     // GOLD-ADAPT-OH-08 — stage the observation for the Intelligence view.
     // Written every time topics are present and the window gate passed, even
@@ -296,102 +339,120 @@ pub fn run_reflection_tick_once(
     Ok(enqueued)
 }
 
-/// Weekly tech-currency refresh (OPT-IN). Once per ISO week — gated by a marker
-/// file so the daily cron tick never refetches — it pulls trending Hacker News
-/// topics, computes the gap vs the operator's skills/memory + ignore/pin lists,
-/// and enqueues a reflection. OFF by default
-/// (`reflect_topics.yaml::weekly_refresh`, set via `neoth reflect weekly`) and
-/// refused under Strict autonomy. This is the ONLY network egress in the
-/// reflection cron; the offline G-01-mini weekly reflection stays free +
-/// quota-safe. Returns `Ok(true)` when a fresh item was enqueued.
-async fn run_tech_currency_tick_once(
-    home: &std::path::Path,
-    now_unix: i64,
-) -> Result<bool, String> {
-    use crate::cli::reflect::{ReflectTopics, collect_covered};
-    use crate::proactive::ProactiveQueue;
-    use crate::sources::hackernews::{
-        GapFilter, build_tech_currency_item, tech_currency_gaps, top_stories,
-    };
+#[derive(Debug)]
+struct TechCurrencyPreflight {
+    week: String,
+    marker: PathBuf,
+    ignore: Vec<String>,
+    pin: Vec<String>,
+}
 
-    let cfg = ReflectTopics::load(home);
+/// Blocking phase before network: load opt-in state and validate the durable
+/// marker. Network authority is deliberately not decided here: every concrete
+/// HN URL is gated immediately at its transport sink by ExternalHttpAuthorizer.
+/// `None` means clean no-op without opening a socket.
+fn tech_currency_preflight(
+    home: &Path,
+    now_unix: i64,
+) -> Result<Option<TechCurrencyPreflight>, String> {
+    let cfg = crate::cli::reflect::ReflectTopics::load(home);
     if !cfg.weekly_refresh {
-        return Ok(false); // opt-in; off by default (no network unless enabled)
+        return Ok(None);
     }
-    let autonomy =
-        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
-            .map_err(|error| format!("load freedom.yaml for tech-currency policy: {error:#}"))?
-            .autonomy;
-    if autonomy == crate::permissions::AutonomyLevel::Strict {
-        return Ok(false); // no external egress under Strict autonomy
-    }
-    // Once per ISO week: the marker makes the daily tick idempotent WITHOUT a
-    // redundant HN fetch (queue dedup is a second safety net).
+
     let week = iso_week_tag_from_unix(now_unix);
     let marker = home.join("reflections").join("tech-currency-week.txt");
-    if std::fs::read_to_string(&marker)
-        .ok()
-        .map(|s| s.trim() == week)
-        .unwrap_or(false)
-    {
+    if marker_matches(&marker, &week)? {
+        return Ok(None);
+    }
+
+    Ok(Some(TechCurrencyPreflight {
+        week,
+        marker,
+        ignore: cfg.ignore,
+        pin: cfg.pin,
+    }))
+}
+
+/// Blocking phase after fetch: derive gaps, persist queue mutation, then
+/// atomically commit the marker. The marker is checked again because another
+/// process may have completed the same week while the async fetch was in flight.
+fn commit_tech_currency_tick(
+    home: &Path,
+    now_unix: i64,
+    preflight: TechCurrencyPreflight,
+    stories: Vec<crate::sources::hackernews::HnStory>,
+) -> Result<bool, String> {
+    use crate::cli::reflect::collect_covered;
+    use crate::proactive::ProactiveQueue;
+    use crate::sources::hackernews::{GapFilter, build_tech_currency_item, tech_currency_gaps};
+
+    if marker_matches(&preflight.marker, &preflight.week)? {
         return Ok(false);
     }
 
-    let stories = top_stories(50)
-        .await
-        .map_err(|e| format!("HN fetch failed: {e}"))?;
     let filter = GapFilter {
         covered: collect_covered(home),
-        ignore: cfg.ignore,
-        pin: cfg.pin,
+        ignore: preflight.ignore,
+        pin: preflight.pin,
     };
     let gaps = tech_currency_gaps(&stories, &filter, 7);
-
-    if let Some(parent) = marker.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-
-    let item = match build_tech_currency_item(&week, &gaps, now_unix) {
-        Some(i) => i,
-        None => {
-            // No gaps → mark the week done (don't refetch HN nightly for an empty
-            // result). No queue op on this path, so marking here is safe.
-            let _ = std::fs::write(&marker, &week);
-            return Ok(false);
-        }
+    let Some(item) = build_tech_currency_item(&preflight.week, &gaps, now_unix) else {
+        persist_marker(&preflight.marker, &preflight.week)?;
+        return Ok(false);
     };
+
     let queue_path = home.join("proactive_queue.json");
-    // Always persist (dirty=true) — same as the old code which called save_to
-    // unconditionally regardless of dedup.
     let enqueued = ProactiveQueue::modify(&queue_path, |queue| {
         let inserted = queue.enqueue(item);
         (true, inserted)
     })
-    .map_err(|e| format!("queue load/save failed: {e}"))?;
-    // GR-fix: mark the week done ONLY after the queue save succeeds. The old order
-    // wrote the marker BEFORE the enqueue/save, so a queue-save failure still
-    // marked the week → the next tick's marker check skipped and the nudge was
-    // silently lost until the next ISO week.
-    let _ = std::fs::write(&marker, &week);
+    .map_err(|error| format!("queue load/save failed: {error}"))?;
+
+    // Queue must reach disk first. If marker persistence fails, return Err;
+    // queue dedup makes the retry safe and the marker then converges.
+    persist_marker(&preflight.marker, &preflight.week)?;
     Ok(enqueued)
 }
 
-/// Resolve the Obsidian sync target (`vault_root`, `subdir`) from freedom.yaml,
-/// or `None` when no vault is configured. Re-read each tick so toggling the
-/// vault doesn't need a daemon restart.
-fn obsidian_target(home: &std::path::Path) -> Result<Option<(PathBuf, String)>, String> {
-    let cfg = crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
-        .map_err(|error| {
-        format!("load freedom.yaml for Obsidian reflection target: {error:#}")
-    })?;
-    let Some(vault) = cfg.obsidian_vault.clone() else {
-        return Ok(None);
+/// Weekly tech-currency refresh (OPT-IN). Blocking filesystem/policy work is
+/// split from the async HN fetch and the blocking queue/marker commit. Returns
+/// `Ok(true)` only when a fresh queue item was inserted.
+async fn run_tech_currency_tick_once(
+    home: &Path,
+    now_unix: i64,
+    http: &crate::tools::external_http::ExternalHttpAuthorizer,
+) -> Result<bool, String> {
+    let preflight_home = home.to_path_buf();
+    let Some(preflight) =
+        tokio::task::spawn_blocking(move || tech_currency_preflight(&preflight_home, now_unix))
+            .await
+            .map_err(|error| format!("tech-currency preflight worker failed: {error}"))??
+    else {
+        return Ok(false);
     };
+
+    let stories = crate::sources::hackernews::top_stories(http, 50)
+        .await
+        .map_err(|error| format!("HN fetch failed: {error}"))?;
+
+    let commit_home = home.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        commit_tech_currency_tick(&commit_home, now_unix, preflight, stories)
+    })
+    .await
+    .map_err(|error| format!("tech-currency commit worker failed: {error}"))?
+}
+
+/// Resolve the Obsidian sync target (`vault_root`, `subdir`) from the exact
+/// immutable config generation obtained from the daemon ReloadController.
+fn obsidian_target(cfg: &crate::config::FreedomConfig) -> Option<(PathBuf, String)> {
+    let vault = cfg.obsidian_vault.clone()?;
     let subdir = cfg
         .obsidian_subdir
         .clone()
         .unwrap_or_else(|| "NEOTH".to_string());
-    Ok(Some((PathBuf::from(vault), subdir)))
+    Some((PathBuf::from(vault), subdir))
 }
 
 /// Generic offline daily/yearly reflection tick (OPT-IN). Composes a
@@ -420,11 +481,7 @@ fn run_period_reflection_tick_once(
         return Ok(false); // opt-in; off by default
     }
     let marker = home.join("reflections").join(marker_name);
-    if std::fs::read_to_string(&marker)
-        .ok()
-        .map(|s| s.trim() == tag)
-        .unwrap_or(false)
-    {
+    if marker_matches(&marker, tag)? {
         return Ok(false); // already done this period
     }
     let views_path = home.join("views.db");
@@ -437,20 +494,13 @@ fn run_period_reflection_tick_once(
     let topics = top_topics_in_days(&conn, now_ns, window_days, topic_n)
         .map_err(|e| format!("topic query failed: {e}"))?;
 
-    let write_marker = |marker: &std::path::Path, tag: &str| {
-        if let Some(p) = marker.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        let _ = std::fs::write(marker, tag);
-    };
-
     match periodic::build_reflection(kind, tag, &topics, now_unix) {
         Some(refl) => {
             // Archive FIRST — only mark the period done once it's persisted, so
             // a transient IO error retries next tick instead of silently
             // dropping the day's reflection.
             periodic::append(home, &refl).map_err(|e| format!("archive append failed: {e}"))?;
-            write_marker(&marker, tag);
+            persist_marker(&marker, tag)?;
             if let Some((vault, subdir)) = obsidian {
                 match periodic::sync_to_obsidian(home, vault, subdir, kind, tag) {
                     Ok(o) if o.written => info!(
@@ -469,10 +519,55 @@ fn run_period_reflection_tick_once(
         None => {
             // Empty period → no vacuous note, but still mark done so we don't
             // recompute the topic query every tick for the rest of the period.
-            write_marker(&marker, tag);
+            persist_marker(&marker, tag)?;
             Ok(false)
         }
     }
+}
+
+struct PeriodTickResults {
+    daily: Result<bool, String>,
+    yearly: Result<bool, String>,
+}
+
+/// Run both offline period cadences in one blocking worker. Configuration,
+/// SQLite, archive, marker, and optional Obsidian I/O all stay off Tokio's
+/// async scheduler; an individual cadence failure does not suppress the other.
+fn run_period_reflection_ticks_once(
+    home: &Path,
+    now_unix: i64,
+    config: &crate::config::FreedomConfig,
+) -> Result<PeriodTickResults, String> {
+    use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
+
+    let cfg = crate::cli::reflect::ReflectTopics::load(home);
+    let obsidian = obsidian_target(config);
+    let obs_ref = obsidian.as_ref().map(|(p, s)| (p.as_path(), s.as_str()));
+    let daily_tag = date_tag_from_unix(now_unix);
+    let daily = run_period_reflection_tick_once(
+        home,
+        now_unix,
+        PeriodKind::Daily,
+        cfg.daily_notes,
+        &daily_tag,
+        "daily-last.txt",
+        1,
+        5,
+        obs_ref,
+    );
+    let yearly_tag = year_tag_from_unix(now_unix);
+    let yearly = run_period_reflection_tick_once(
+        home,
+        now_unix,
+        PeriodKind::Yearly,
+        cfg.yearly_summary,
+        &yearly_tag,
+        "yearly-last.txt",
+        365,
+        10,
+        obs_ref,
+    );
+    Ok(PeriodTickResults { daily, yearly })
 }
 
 /// Spawn the reflection cron loop. Matches the doctor_cron /
@@ -483,7 +578,12 @@ fn run_period_reflection_tick_once(
 /// + log Ok/Err outcome. Per-tick failures NEVER abort the loop —
 /// transient views.db lock, queue rewrite race, etc. should heal on
 /// the next tick.
-pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHandle<()> {
+pub fn spawn_reflection_cron_loop(
+    home: PathBuf,
+    interval_secs: u64,
+    reload_controller: std::sync::Arc<crate::config::reload::ReloadController>,
+    http: std::sync::Arc<crate::tools::external_http::ExternalHttpAuthorizer>,
+) -> JoinHandle<()> {
     let interval = Duration::from_secs(interval_secs.max(60));
     tokio::spawn(async move {
         info!(
@@ -498,21 +598,30 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
         loop {
             ticker.tick().await;
             let now_unix = crate::time::utc_now().timestamp();
-            match run_reflection_tick_once(&home, now_unix, DEFAULT_CRON_INTERVAL_SECS) {
-                Ok(true) => info!(
+            let weekly_home = home.clone();
+            match tokio::task::spawn_blocking(move || {
+                run_reflection_tick_once(&weekly_home, now_unix, DEFAULT_CRON_INTERVAL_SECS)
+            })
+            .await
+            {
+                Ok(Ok(true)) => info!(
                     "reflection cron: new weekly item enqueued (ISO week {})",
                     iso_week_tag_from_unix(now_unix)
                 ),
-                Ok(false) => {
+                Ok(Ok(false)) => {
                     tracing::debug!("reflection cron: tick produced no new item (dedup or empty)")
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!(error = %e, "reflection cron tick failed; will retry next interval")
                 }
+                Err(e) => warn!(
+                    error = %e,
+                    "reflection cron filesystem worker failed; will retry next interval"
+                ),
             }
             // Opt-in weekly tech-currency refresh (network; idempotent per ISO
             // week). A failure here NEVER aborts the loop or the offline tick.
-            match run_tech_currency_tick_once(&home, now_unix).await {
+            match run_tech_currency_tick_once(&home, now_unix, http.as_ref()).await {
                 Ok(true) => info!(
                     "reflection cron: weekly tech-currency reflection enqueued (ISO week {})",
                     iso_week_tag_from_unix(now_unix)
@@ -522,48 +631,31 @@ pub fn spawn_reflection_cron_loop(home: PathBuf, interval_secs: u64) -> JoinHand
                     warn!(error = %e, "tech-currency tick failed; will retry next interval")
                 }
             }
-            // Opt-in offline daily + yearly self-reflections → archive + Obsidian
-            // notes. Read the opt-in flags + Obsidian target fresh each tick.
-            let cfg = crate::cli::reflect::ReflectTopics::load(&home);
-            let obsidian = match obsidian_target(&home) {
-                Ok(target) => target,
-                Err(error) => {
-                    warn!(
-                        error = %error,
-                        "reflection cron: config invalid; daily/yearly sync blocked fail-closed"
-                    );
-                    continue;
+            // Opt-in offline daily + yearly self-reflections. All config,
+            // SQLite, archive, marker, and Obsidian I/O runs off the Tokio loop.
+            let period_home = home.clone();
+            let period_config = reload_controller.latest();
+            match tokio::task::spawn_blocking(move || {
+                run_period_reflection_ticks_once(&period_home, now_unix, &period_config)
+            })
+            .await
+            {
+                Ok(Ok(results)) => {
+                    if let Err(e) = results.daily {
+                        warn!(error = %e, "daily reflection tick failed; will retry next interval");
+                    }
+                    if let Err(e) = results.yearly {
+                        warn!(error = %e, "yearly reflection tick failed; will retry next interval");
+                    }
                 }
-            };
-            let obs_ref = obsidian.as_ref().map(|(p, s)| (p.as_path(), s.as_str()));
-            use crate::reflection::periodic::{PeriodKind, date_tag_from_unix, year_tag_from_unix};
-            let daily_tag = date_tag_from_unix(now_unix);
-            if let Err(e) = run_period_reflection_tick_once(
-                &home,
-                now_unix,
-                PeriodKind::Daily,
-                cfg.daily_notes,
-                &daily_tag,
-                "daily-last.txt",
-                1,
-                5,
-                obs_ref,
-            ) {
-                warn!(error = %e, "daily reflection tick failed; will retry next interval");
-            }
-            let yearly_tag = year_tag_from_unix(now_unix);
-            if let Err(e) = run_period_reflection_tick_once(
-                &home,
-                now_unix,
-                PeriodKind::Yearly,
-                cfg.yearly_summary,
-                &yearly_tag,
-                "yearly-last.txt",
-                365,
-                10,
-                obs_ref,
-            ) {
-                warn!(error = %e, "yearly reflection tick failed; will retry next interval");
+                Ok(Err(e)) => warn!(
+                    error = %e,
+                    "reflection cron: config invalid; daily/yearly sync blocked fail-closed"
+                ),
+                Err(e) => warn!(
+                    error = %e,
+                    "period reflection filesystem worker failed; will retry next interval"
+                ),
             }
         }
     })
@@ -614,13 +706,47 @@ mod tests {
         // tick returns Ok(false) BEFORE any network call. Hermetic: no HN fetch,
         // no marker written.
         let tmp = TempDir::new().unwrap();
-        let r = run_tech_currency_tick_once(tmp.path(), 1_767_225_600).await;
+        let r = run_tech_currency_tick_once(
+            tmp.path(),
+            1_767_225_600,
+            &crate::tools::external_http::ExternalHttpAuthorizer::test_allow(),
+        )
+        .await;
         assert_eq!(r, Ok(false), "disabled weekly refresh is a clean no-op");
         assert!(
             !tmp.path()
                 .join("reflections/tech-currency-week.txt")
                 .exists(),
             "no marker is written when the feature is off"
+        );
+    }
+
+    #[test]
+    fn tech_currency_preflight_only_resolves_opt_in_and_marker() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("reflect_topics.yaml"),
+            "weekly_refresh: true\n",
+        )
+        .unwrap();
+
+        let preflight = tech_currency_preflight(tmp.path(), 1_767_225_600).unwrap();
+        assert!(
+            preflight.is_some(),
+            "permission is intentionally deferred to each exact HTTP sink"
+        );
+    }
+
+    #[test]
+    fn obsidian_target_uses_the_passed_active_config_snapshot() {
+        let config = crate::config::FreedomConfig {
+            obsidian_vault: Some("C:/active-vault".to_string()),
+            obsidian_subdir: Some("Active-NEOTH".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            obsidian_target(&config),
+            Some((PathBuf::from("C:/active-vault"), "Active-NEOTH".to_string()))
         );
     }
 
@@ -698,6 +824,91 @@ mod tests {
             !tmp.path().join("reflections/daily-last.txt").exists(),
             "no marker written when off"
         );
+    }
+
+    #[test]
+    fn reflection_markers_are_atomic_and_persistence_errors_surface() {
+        let tmp = TempDir::new().unwrap();
+        let marker = tmp.path().join("reflections").join("daily-last.txt");
+        persist_marker(&marker, "2026-07-21").unwrap();
+        persist_marker(&marker, "2026-07-22").unwrap();
+        assert!(marker_matches(&marker, "2026-07-22").unwrap());
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "2026-07-22");
+
+        let blocked = tmp.path().join("blocked-marker");
+        std::fs::create_dir(&blocked).unwrap();
+        let error = persist_marker(&blocked, "must-fail").unwrap_err();
+        assert!(error.contains("persist reflection marker"));
+    }
+
+    #[test]
+    fn marker_read_errors_do_not_reopen_completed_work() {
+        let tmp = TempDir::new().unwrap();
+        let marker = tmp.path().join("marker-as-directory");
+        std::fs::create_dir(&marker).unwrap();
+
+        let error = marker_matches(&marker, "2026-W30").unwrap_err();
+        assert!(error.contains("read reflection marker"));
+    }
+
+    #[test]
+    fn oversized_marker_is_rejected_instead_of_reading_unbounded_state() {
+        let tmp = TempDir::new().unwrap();
+        let marker = tmp.path().join("oversized-marker.txt");
+        std::fs::write(&marker, vec![b'x'; MAX_MARKER_BYTES + 1]).unwrap();
+
+        let error = marker_matches(&marker, "2026-W30").unwrap_err();
+        assert!(error.contains("read reflection marker"));
+        assert!(error.contains("exceeds"));
+    }
+
+    #[test]
+    fn tech_currency_queue_dedup_repairs_missing_marker_on_retry() {
+        use crate::sources::hackernews::HnStory;
+
+        let tmp = TempDir::new().unwrap();
+        let week = "2026-W30";
+        let marker = tmp
+            .path()
+            .join("reflections")
+            .join("tech-currency-week.txt");
+        let stories = vec![
+            HnStory {
+                id: 1,
+                title: "WebGPU rendering lands in production".to_string(),
+                url: None,
+                score: 100,
+                by: "a".to_string(),
+            },
+            HnStory {
+                id: 2,
+                title: "WebGPU rendering patterns explained".to_string(),
+                url: None,
+                score: 90,
+                by: "b".to_string(),
+            },
+        ];
+        let preflight = || TechCurrencyPreflight {
+            week: week.to_string(),
+            marker: marker.clone(),
+            ignore: Vec::new(),
+            pin: Vec::new(),
+        };
+
+        assert!(
+            commit_tech_currency_tick(tmp.path(), 1_700_000_000, preflight(), stories.clone())
+                .unwrap()
+        );
+        std::fs::remove_file(&marker).unwrap();
+        assert!(
+            !commit_tech_currency_tick(tmp.path(), 1_700_000_001, preflight(), stories).unwrap(),
+            "persisted queue item must dedup the retry"
+        );
+        assert!(marker_matches(&marker, week).unwrap());
+        let queue =
+            crate::proactive::ProactiveQueue::load_from(&tmp.path().join("proactive_queue.json"))
+                .unwrap();
+        assert_eq!(queue.len(), 1);
     }
 
     #[test]
@@ -799,6 +1010,61 @@ mod tests {
             b"",
             "invalid state must remain available as forensic evidence"
         );
+    }
+
+    #[test]
+    fn load_tick_state_rejects_oversized_existing_file() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("reflections");
+        std::fs::create_dir_all(&dir).unwrap();
+        let state_path = dir.join("subconscious_state.json");
+        std::fs::write(&state_path, vec![b' '; MAX_TICK_STATE_BYTES + 1]).unwrap();
+
+        let error = load_tick_state(tmp.path()).unwrap_err();
+        assert!(error.contains("read reflection tick state"));
+        assert!(error.contains("exceeds"));
+        assert_eq!(
+            std::fs::metadata(&state_path).unwrap().len(),
+            (MAX_TICK_STATE_BYTES + 1) as u64,
+            "oversized state must remain available as forensic evidence"
+        );
+    }
+
+    #[test]
+    fn queue_dedup_retry_repairs_missing_tick_state() {
+        let tmp = TempDir::new().unwrap();
+        let views = tmp.path().join("views.db");
+        let conn = crate::memory::store::open(&views).unwrap();
+        let now_unix = 1_700_000_000i64;
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                1i64,
+                crate::wal::events::EVENT_TYPE_RAW_TEXT as i64,
+                now_unix * 1_000_000_000 - 3_600_000_000_000i64,
+                "rust async runtime diagnostics",
+                "queue-state-retry",
+            ],
+        )
+        .unwrap();
+
+        assert!(run_reflection_tick_once(tmp.path(), now_unix, 0).unwrap());
+        std::fs::remove_file(tick_state_path(tmp.path())).unwrap();
+
+        assert!(
+            !run_reflection_tick_once(tmp.path(), now_unix + 1, 0).unwrap(),
+            "queue dedup must reject replay after state-loss window"
+        );
+        assert_eq!(
+            load_tick_state(tmp.path()).unwrap().last_emitted_unix,
+            now_unix + 1,
+            "dedup retry must converge the missing tick state"
+        );
+        let queue =
+            crate::proactive::ProactiveQueue::load_from(&tmp.path().join("proactive_queue.json"))
+                .unwrap();
+        assert_eq!(queue.len(), 1, "retry must not duplicate queue item");
     }
 
     // ── GOLD-ADAPT-OH-07: anti-double-emit window gate ───────────────────────

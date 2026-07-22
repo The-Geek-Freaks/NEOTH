@@ -18,13 +18,27 @@
 //! v0.1 ships the module + types + dispatcher; CLI subcommand
 //! `neoth skills test <skill_id>` wires in as the next follow-up.
 
-use std::path::Path;
+use std::ffi::{OsStr, OsString};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::providers::{Provider, Request};
 use crate::skills::schema::Skill;
+use crate::skills::store::{
+    cap_metadata_is_link_like, open_bound_directory, open_real_child_dir, read_regular_file_bounded,
+};
+
+const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
+const MAX_SCENARIO_FILES: usize = 128;
+const MAX_TEST_DIRECTORY_ENTRIES: usize = 256;
+const MAX_SCENARIO_FILE_BYTES: usize = 256 * 1024;
+const MAX_SCENARIO_TOTAL_BYTES: usize = 2 * 1024 * 1024;
+// The contract is intentionally flat: `<skill>/tests/<scenario>.yaml`.
+// Rejecting nested directories makes the traversal depth exactly one.
+const MAX_SCENARIO_DEPTH: usize = 1;
+const MAX_TEST_DISCOVERY_WORK: usize = 1 + MAX_TEST_DIRECTORY_ENTRIES + MAX_SCENARIO_FILES;
 
 /// One operator-authored test scenario for a skill.
 ///
@@ -54,14 +68,27 @@ pub struct TestScenario {
 }
 
 impl TestScenario {
-    /// Load a scenario from disk. Errors on parse failure.
+    /// Load one direct scenario file through a no-follow directory capability.
+    /// Errors on linked/special files, size overflow, invalid UTF-8, or YAML.
     pub fn load(path: &Path) -> Result<Self> {
-        let body = std::fs::read_to_string(path)
-            .with_context(|| format!("read scenario {}", path.display()))?;
-        let scen: TestScenario = serde_yaml::from_str(&body)
-            .with_context(|| format!("parse scenario YAML {}", path.display()))?;
-        Ok(scen)
+        let parent_path = path
+            .parent()
+            .context("scenario path has no parent directory")?;
+        let name = path.file_name().context("scenario path has no file name")?;
+        let parent = open_bound_directory(parent_path, false, "skill scenario directory")?
+            .with_context(|| {
+                format!("scenario directory disappeared: {}", parent_path.display())
+            })?;
+        let raw = read_regular_file_bounded(&parent.dir, name, path, MAX_SCENARIO_FILE_BYTES)?;
+        parse_scenario_yaml(&raw, path)
     }
+}
+
+fn parse_scenario_yaml(raw: &[u8], display_path: &Path) -> Result<TestScenario> {
+    let body = std::str::from_utf8(raw)
+        .with_context(|| format!("scenario is not UTF-8: {}", display_path.display()))?;
+    serde_yaml::from_str(body)
+        .with_context(|| format!("parse scenario YAML {}", display_path.display()))
 }
 
 /// Outcome of one scenario run.
@@ -147,33 +174,169 @@ pub async fn run_all_scenarios_for(
     provider: &dyn Provider,
     skill: &Skill,
 ) -> Result<Vec<ScenarioOutcome>> {
-    let mut tests_dir = skill.path.clone();
-    tests_dir.pop(); // strip "skill.yaml"
-    let tests_dir = tests_dir.join("tests");
-    if !tests_dir.exists() {
-        return Ok(vec![]);
-    }
-    let mut outcomes = Vec::new();
-    let entries = std::fs::read_dir(&tests_dir)
-        .with_context(|| format!("read tests dir {}", tests_dir.display()))?;
-    let mut paths: Vec<_> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| {
-            p.is_file()
-                && p.extension()
-                    .and_then(|s| s.to_str())
-                    .map(|s| s == "yaml" || s == "yml")
-                    .unwrap_or(false)
-        })
-        .collect();
-    paths.sort();
-    for p in paths {
-        let scenario = TestScenario::load(&p)?;
+    let scenarios = load_all_scenarios(skill)?;
+    let mut outcomes = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
         let outcome = run_scenario(provider, skill, &scenario).await?;
         outcomes.push(outcome);
     }
     Ok(outcomes)
+}
+
+/// Load and validate the complete scenario set before the first provider call.
+/// No traversal or parse error can therefore produce a partial paid run.
+fn load_all_scenarios(skill: &Skill) -> Result<Vec<TestScenario>> {
+    if skill.path.starts_with(Path::new("<bundled>")) {
+        return Ok(Vec::new());
+    }
+    if skill.path.file_name() != Some(OsStr::new("skill.yaml")) {
+        anyhow::bail!(
+            "skill test path must end in skill.yaml: {}",
+            skill.path.display()
+        );
+    }
+
+    let skill_dir_path = skill
+        .path
+        .parent()
+        .context("skill manifest path has no parent directory")?;
+    let skill_dir =
+        open_bound_directory(skill_dir_path, false, "skill test root")?.with_context(|| {
+            format!(
+                "loaded skill directory disappeared: {}",
+                skill_dir_path.display()
+            )
+        })?;
+
+    // Bind the opened namespace generation to the exact Skill that was loaded.
+    // A directory swap or manifest edit after load fails before any provider call.
+    let manifest_raw = read_regular_file_bounded(
+        &skill_dir.dir,
+        OsStr::new("skill.yaml"),
+        &skill.path,
+        MAX_SKILL_MANIFEST_BYTES,
+    )?;
+    let manifest_yaml = std::str::from_utf8(&manifest_raw)
+        .with_context(|| format!("skill manifest is not UTF-8: {}", skill.path.display()))?;
+    if !skill.content_hash.is_empty() {
+        let observed_hash =
+            crate::skills::versioning::skill_content_hash_hex(manifest_yaml, skill.system_prompt());
+        if observed_hash != skill.content_hash {
+            anyhow::bail!(
+                "loaded skill namespace changed before test discovery at {}",
+                skill.path.display()
+            );
+        }
+    }
+
+    let tests_display = skill_dir_path.join("tests");
+    let tests_dir = match open_real_child_dir(&skill_dir.dir, OsStr::new("tests"), &tests_display) {
+        Ok(directory) => directory,
+        Err(error) if error_is_not_found(&error) => return Ok(Vec::new()),
+        Err(error) => return Err(error).context("open skill tests directory"),
+    };
+
+    let mut entry_count = 0usize;
+    let mut scenario_count = 0usize;
+    let mut total_bytes = 0usize;
+    let mut work = 1usize; // opening/enumerating the direct tests directory
+    let mut scenario_files: Vec<(OsString, PathBuf)> = Vec::new();
+    let entries = tests_dir.entries().with_context(|| {
+        format!(
+            "enumerate skill tests directory {}",
+            tests_display.display()
+        )
+    })?;
+    for entry in entries {
+        entry_count = entry_count
+            .checked_add(1)
+            .context("skill test directory entry count overflow")?;
+        if entry_count > MAX_TEST_DIRECTORY_ENTRIES {
+            anyhow::bail!(
+                "skill test directory exceeds the {MAX_TEST_DIRECTORY_ENTRIES}-entry limit at {}",
+                tests_display.display()
+            );
+        }
+        work = charge_discovery_work(work, &tests_display)?;
+        let entry = entry
+            .with_context(|| format!("read skill tests directory {}", tests_display.display()))?;
+        let name = entry.file_name();
+        let display_path = tests_display.join(&name);
+        let metadata = tests_dir
+            .symlink_metadata(&name)
+            .with_context(|| format!("inspect skill test entry {}", display_path.display()))?;
+        if cap_metadata_is_link_like(&metadata) {
+            anyhow::bail!(
+                "skill test entry must not be a symlink or reparse point: {}",
+                display_path.display()
+            );
+        }
+        if !metadata.is_file() {
+            anyhow::bail!(
+                "skill test directory depth exceeds {MAX_SCENARIO_DEPTH} or contains a special entry: {}",
+                display_path.display()
+            );
+        }
+
+        let is_scenario = Path::new(&name)
+            .extension()
+            .and_then(OsStr::to_str)
+            .map(|extension| extension == "yaml" || extension == "yml")
+            .unwrap_or(false);
+        if !is_scenario {
+            continue;
+        }
+        scenario_count = scenario_count
+            .checked_add(1)
+            .context("skill scenario count overflow")?;
+        if scenario_count > MAX_SCENARIO_FILES {
+            anyhow::bail!(
+                "skill test suite exceeds the {MAX_SCENARIO_FILES}-scenario limit at {}",
+                tests_display.display()
+            );
+        }
+        scenario_files.push((name, display_path));
+    }
+
+    scenario_files.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut scenarios = Vec::with_capacity(scenario_files.len());
+    for (name, display_path) in scenario_files {
+        work = charge_discovery_work(work, &display_path)?;
+        let raw =
+            read_regular_file_bounded(&tests_dir, &name, &display_path, MAX_SCENARIO_FILE_BYTES)?;
+        total_bytes = total_bytes
+            .checked_add(raw.len())
+            .context("skill scenario aggregate byte count overflow")?;
+        if total_bytes > MAX_SCENARIO_TOTAL_BYTES {
+            anyhow::bail!(
+                "skill test suite exceeds the {MAX_SCENARIO_TOTAL_BYTES}-byte aggregate limit at {}",
+                display_path.display()
+            );
+        }
+        scenarios.push(parse_scenario_yaml(&raw, &display_path)?);
+    }
+    Ok(scenarios)
+}
+
+fn charge_discovery_work(current: usize, display_path: &Path) -> Result<usize> {
+    let next = current
+        .checked_add(1)
+        .context("skill test discovery work counter overflow")?;
+    if next > MAX_TEST_DISCOVERY_WORK {
+        anyhow::bail!(
+            "skill test discovery exceeds the {MAX_TEST_DISCOVERY_WORK}-unit work limit at {}",
+            display_path.display()
+        );
+    }
+    Ok(next)
+}
+
+fn error_is_not_found(error: &anyhow::Error) -> bool {
+    error.chain().any(|source| {
+        source
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io_error| io_error.kind() == std::io::ErrorKind::NotFound)
+    })
 }
 
 #[cfg(test)]
@@ -183,6 +346,8 @@ mod tests {
     use crate::skills::schema::{Skill, SkillManifest};
     use async_trait::async_trait;
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tempfile::tempdir;
 
     fn fixture_skill(system: &str) -> Skill {
@@ -242,6 +407,47 @@ mod tests {
                 cache_read_tokens: None,
             })
         }
+    }
+
+    struct CountingProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Provider for CountingProvider {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion {
+                text: "unexpected provider call".into(),
+                identity: Default::default(),
+                model: "counting".into(),
+                latency: std::time::Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    fn skill_at(path: PathBuf, system_prompt: &str) -> Skill {
+        let mut skill = fixture_skill(system_prompt);
+        skill.path = path;
+        skill
+    }
+
+    fn counting_provider() -> (CountingProvider, Arc<AtomicUsize>) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        (
+            CountingProvider {
+                calls: Arc::clone(&calls),
+            },
+            calls,
+        )
     }
 
     #[tokio::test]
@@ -399,5 +605,123 @@ mod tests {
         assert_eq!(outcomes[0].scenario_id, "a");
         assert_eq!(outcomes[1].scenario_id, "b");
         assert!(outcomes.iter().all(|o| o.passed()));
+    }
+
+    #[tokio::test]
+    async fn oversized_scenario_aborts_before_provider_dispatch() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("skill.yaml");
+        std::fs::write(&skill_path, "id: test-skill\n").unwrap();
+        let tests_dir = dir.path().join("tests");
+        std::fs::create_dir(&tests_dir).unwrap();
+        std::fs::write(
+            tests_dir.join("oversized.yaml"),
+            vec![b'x'; MAX_SCENARIO_FILE_BYTES + 1],
+        )
+        .unwrap();
+        let skill = skill_at(skill_path, "x");
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("exceeds the 262144-byte"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn too_many_scenarios_abort_before_provider_dispatch() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("skill.yaml");
+        std::fs::write(&skill_path, "id: test-skill\n").unwrap();
+        let tests_dir = dir.path().join("tests");
+        std::fs::create_dir(&tests_dir).unwrap();
+        for index in 0..=MAX_SCENARIO_FILES {
+            std::fs::write(
+                tests_dir.join(format!("scenario-{index:03}.yaml")),
+                format!("id: s-{index}\nprompt: p\n"),
+            )
+            .unwrap();
+        }
+        let skill = skill_at(skill_path, "x");
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("exceeds the 128-scenario limit"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn aggregate_scenario_bytes_abort_before_provider_dispatch() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("skill.yaml");
+        std::fs::write(&skill_path, "id: test-skill\n").unwrap();
+        let tests_dir = dir.path().join("tests");
+        std::fs::create_dir(&tests_dir).unwrap();
+        let prompt = "x".repeat(240 * 1024);
+        for index in 0..9 {
+            std::fs::write(
+                tests_dir.join(format!("scenario-{index}.yaml")),
+                format!("id: s-{index}\nprompt: {prompt}\n"),
+            )
+            .unwrap();
+        }
+        let skill = skill_at(skill_path, "x");
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("2097152-byte aggregate limit"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn changed_skill_namespace_aborts_before_provider_dispatch() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("skill.yaml");
+        let initial_manifest = "id: test-skill\nsystem_prompt: x\n";
+        std::fs::write(&skill_path, initial_manifest).unwrap();
+        let tests_dir = dir.path().join("tests");
+        std::fs::create_dir(&tests_dir).unwrap();
+        std::fs::write(tests_dir.join("scenario.yaml"), "id: s\nprompt: p\n").unwrap();
+        let mut skill = skill_at(skill_path, "x");
+        skill.content_hash = crate::skills::versioning::skill_content_hash_hex(
+            initial_manifest,
+            skill.system_prompt(),
+        );
+        std::fs::write(&skill.path, "id: replacement\nsystem_prompt: x\n").unwrap();
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("namespace changed"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn linked_scenario_aborts_before_provider_dispatch() {
+        let dir = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let skill_path = dir.path().join("skill.yaml");
+        std::fs::write(&skill_path, "id: test-skill\n").unwrap();
+        let tests_dir = dir.path().join("tests");
+        std::fs::create_dir(&tests_dir).unwrap();
+        let outside_scenario = outside.path().join("outside.yaml");
+        std::fs::write(&outside_scenario, "id: outside\nprompt: p\n").unwrap();
+        let linked_scenario = tests_dir.join("linked.yaml");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside_scenario, &linked_scenario).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(&outside_scenario, &linked_scenario).is_err() {
+            return;
+        }
+        let skill = skill_at(skill_path, "x");
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
+
+        assert!(format!("{error:#}").contains("symlink or reparse point"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(outside_scenario.is_file());
     }
 }

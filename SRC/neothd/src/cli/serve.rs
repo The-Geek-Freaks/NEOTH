@@ -293,8 +293,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Runtime-service priming follows the validated startup-hook boundary.
     // The SkillRegistry watcher handle remains bound for the daemon lifetime.
-    let _skill_watcher =
-        crate::cli::serve_tasks::prime_runtime_services(&config, &creds, &neoth_home).await?;
+    let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(
+        &config,
+        &creds,
+        &neoth_home,
+        std::sync::Arc::clone(&reload_controller),
+    )
+    .await?;
 
     // E-2 Phase 4 (Session 14 Pick #23) — log a depth-cost warning at
     // boot when the operator's freedom.yaml has
@@ -1398,28 +1403,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // 0x44 UPDATER_TASK_FIRED + 0x45 UPDATER_TASK_RESULT WAL frames
     // fire per tick — operators audit via `neoth updater status`.
     // `updater.enabled` remains the global probe master switch. The self-update
-    // lane additionally uses auto_update.{enabled,check_interval_secs,repo,channel}; this keeps its
-    // release policy identical to manual check/apply and unattended staging.
-    let updater_cron_cfg = crate::daemon::updater_cron::UpdaterCronConfig {
-        enabled: config.updater.enabled,
-        interval_secs: config.updater.interval_secs,
-    };
+    // lane additionally uses auto_update.{enabled,check_interval_secs,repo,channel}.
+    // All values and autonomy are resolved from the accepted ReloadController
+    // generation on every wake; no updater lane freezes this startup snapshot.
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let updater_self_task = crate::cli::serve_tasks::spawn_updater_self_cron(
-        updater_cron_cfg.clone(),
-        config.auto_update.clone(),
+        std::sync::Arc::clone(&reload_controller),
         writer.clone(),
     );
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_cli_task =
-        crate::cli::serve_tasks::spawn_updater_cli_cron(updater_cron_cfg.clone(), writer.clone());
+    let updater_cli_task = crate::cli::serve_tasks::spawn_updater_cli_cron(
+        std::sync::Arc::clone(&reload_controller),
+        writer.clone(),
+    );
 
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
     let updater_skill_task = crate::cli::serve_tasks::spawn_updater_skill_cron(
-        updater_cron_cfg.clone(),
         &neoth_home,
+        &config_path,
+        std::sync::Arc::clone(&reload_controller),
         writer.clone(),
     );
 
@@ -1635,7 +1639,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // want proactive reflections can drain the proactive_queue.json
     // before the consumer-side reads it.
     // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let reflection_cron_handle = crate::cli::serve_tasks::spawn_reflection_cron(&neoth_home);
+    let reflection_cron_handle =
+        crate::cli::serve_tasks::spawn_reflection_cron(&neoth_home, &reload_controller, &writer);
 
     // ── 5d-tris. Proactive drain cron — G-01 consumer half (Round-3 v0.4) ──
     //

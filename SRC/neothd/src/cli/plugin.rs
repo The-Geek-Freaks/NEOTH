@@ -283,11 +283,10 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
         );
     }
 
-    // Read manifest + wasm + optional signature DIRECTLY (like run_test),
-    // NOT via discovery::load_one — so `neoth plugin verify` works on an
-    // out-of-tree checkout whose directory name doesn't match the plugin
-    // id (CI clones into arbitrary dirs). The daemon's load path keeps the
-    // id==dirname locality check; this is a pre-install INTEGRITY gate.
+    // Inspect through a single bound directory capability. Unlike daemon
+    // discovery, this pre-install verifier deliberately does not require the
+    // checkout directory name to equal the manifest id (CI uses arbitrary
+    // clone directory names).
     let manifest_path = path.join("plugin.toml");
     let wasm_path = path.join("plugin.wasm");
     if !manifest_path.exists() {
@@ -296,30 +295,8 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     if !wasm_path.exists() {
         anyhow::bail!("missing `plugin.wasm` at {}", wasm_path.display());
     }
-    let manifest_bytes = std::fs::read(&manifest_path)
-        .with_context(|| format!("read {}", manifest_path.display()))?;
-    let manifest = crate::wasm_plugin::manifest::parse_manifest(&manifest_bytes)
-        .map_err(|e| anyhow::anyhow!("manifest invalid: {e}"))?;
-    let manifest_hash = crate::wasm_plugin::discovery::canonical_manifest_sha256(&manifest);
-    let wasm_bytes =
-        std::fs::read(&wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
-    let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
-    let signature =
-        crate::wasm_plugin::discovery::read_capped_minisig(&path.join("plugin.wasm.minisig"))
-            .map_err(|()| {
-                anyhow::anyhow!(
-                    "plugin.wasm.minisig exceeds {} bytes — refusing to parse",
-                    crate::wasm_plugin::discovery::MAX_MINISIG_BYTES
-                )
-            })?;
-    let plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
-        dir: path.to_path_buf(),
-        manifest,
-        manifest_hash,
-        wasm_bytes,
-        content_hash,
-        signature,
-    };
+    let plugin = crate::wasm_plugin::discovery::inspect_bundle(path)
+        .map_err(|error| anyhow::anyhow!("plugin bundle invalid: {error}"))?;
 
     // Apply the SAME freedom.yaml policy the daemon uses at load time. A
     // missing OR corrupt config is an error: silently substituting the open
@@ -1227,36 +1204,14 @@ fn install_into_plugins_root(
     // ── Staged integrity check (SC-03) ────────────────────────────────────
     // Re-read every installed artifact from staging. The source can change
     // while copying; only the exact bytes about to be activated may pass.
-    let installed_toml = std::fs::read(&toml_dst)
-        .with_context(|| format!("read staged `{}`", toml_dst.display()))?;
-    let installed_manifest = crate::wasm_plugin::manifest::parse_manifest(&installed_toml)
-        .map_err(|e| anyhow::anyhow!("staged manifest invalid: {e}"))?;
-    if installed_manifest.id != id {
+    let staged_plugin = crate::wasm_plugin::discovery::inspect_bundle(staging.path())
+        .map_err(|error| anyhow::anyhow!("staged plugin bundle invalid: {error}"))?;
+    if staged_plugin.manifest.id != id {
         anyhow::bail!(
             "plugin manifest changed while staging: expected id `{id}`, copied id `{}`",
-            installed_manifest.id
+            staged_plugin.manifest.id
         );
     }
-    let wasm_bytes = std::fs::read(&wasm_dst)
-        .with_context(|| format!("read staged `{}`", wasm_dst.display()))?;
-    let manifest_hash =
-        crate::wasm_plugin::discovery::canonical_manifest_sha256(&installed_manifest);
-    let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
-    let signature =
-        crate::wasm_plugin::discovery::read_capped_minisig(&minisig_dst).map_err(|()| {
-            anyhow::anyhow!(
-                "plugin.wasm.minisig exceeds {} bytes — refusing to install",
-                crate::wasm_plugin::discovery::MAX_MINISIG_BYTES
-            )
-        })?;
-    let staged_plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
-        dir: staging.path().to_path_buf(),
-        manifest: installed_manifest,
-        manifest_hash,
-        wasm_bytes,
-        content_hash,
-        signature,
-    };
     let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
         pinned: &wasm_policy.pinned_hashes,
         require_all_pinned: wasm_policy.require_all_pinned,

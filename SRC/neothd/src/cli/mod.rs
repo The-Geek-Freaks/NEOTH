@@ -1158,7 +1158,7 @@ pub enum ProviderAction {
     /// with their endpoint URL, default model, and doc link.
     Known,
     /// Show where a provider is wired into the hemispheres (live round-trip:
-    /// `neoth hemispheres test --role <r> --live`).
+    /// `neoth hemispheres test --role <r> --question "Reply with OK"`).
     Test { provider: String },
 }
 
@@ -1532,7 +1532,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             self_knowledge::run_self_knowledge(args, global_output)?;
         }
         Commands::SelfActivate(args) => {
-            self_activate::run_self_activate(args, global_output)?;
+            self_activate::run_self_activate(args, global_output).await?;
         }
         Commands::SelfEdit(args) => {
             self_edit::run_self_edit(args, global_output).await?;

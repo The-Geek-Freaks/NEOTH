@@ -214,10 +214,19 @@ fn status(
     // silently resetting to default and masking data corruption.
     let stored_opt =
         si::SelfImproveConfig::load_strict(home).context("self_improve.yaml is corrupt")?;
-    let (stored_enabled, stored_auto, shell_verify_enabled) = stored_opt
-        .as_ref()
-        .map(|s| (s.enabled, s.auto, s.allow_shell_verify))
-        .unwrap_or((false, false, false));
+    let (stored_enabled, stored_auto, shell_verify_master_enabled, approved_verifier_count) =
+        stored_opt
+            .as_ref()
+            .map(|s| {
+                (
+                    s.enabled,
+                    s.auto,
+                    s.allow_shell_verify,
+                    s.approved_verification_commands.len(),
+                )
+            })
+            .unwrap_or((false, false, false, 0));
+    let shell_verify_enabled = shell_verify_master_enabled && approved_verifier_count > 0;
     let cfg = si::effective_from_option(stored_opt, autonomy);
     // Full-auto turned it on implicitly (operator never set it explicitly).
     let implied = cfg.enabled && !stored_enabled;
@@ -231,6 +240,9 @@ fn status(
                 "stored_enabled": stored_enabled, "stored_auto": stored_auto,
                 "implied_by_full_auto": implied, "autonomy": autonomy.as_str(),
                 "shell_verify_enabled": shell_verify_enabled,
+                "shell_verify_master_enabled": shell_verify_master_enabled,
+                "approved_verification_command_count": approved_verifier_count,
+                "shell_verify_filesystem_isolated": false,
                 "shell_verify_network_isolated": false,
                 "skillopt_installed": installed, "last": last,
             })
@@ -266,11 +278,14 @@ fn status(
     println!(
         "  shell verify: {}",
         if shell_verify_enabled {
-            "OPTED IN — temp-filesystem + process-tree containment; NO OS-level network isolation"
+            "enabled for exact operator-approved commands — constrained temp workspace; host filesystem/network NOT isolated"
+        } else if shell_verify_master_enabled {
+            "blocked — master switch is on, but no exact operator-approved command exists"
         } else {
             "off (default-deny)"
         }
     );
+    println!("  approved verifier commands: {approved_verifier_count}");
     match last {
         Some(r) => println!(
             "  last      : {} — \"{}\" ({})",

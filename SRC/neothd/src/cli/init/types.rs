@@ -309,12 +309,19 @@ pub struct InitArgs {
     #[arg(long, value_name = "VERSION")]
     pub provider_api_version: Option<String>,
 
-    /// Enable release checks in the daemon (check-only; no auto-apply).
+    /// Arm the recurring release-check supervisor. The current v1 safety
+    /// boundary keeps unattended GitHub/npm/Git network probes
+    /// `SkippedByGate` until request-bound transport authorization and
+    /// mandatory intent/result WAL are wired. Manual `neoth update` remains
+    /// available.
     #[arg(long, conflicts_with_all = ["auto_update_apply", "no_auto_update"])]
     pub auto_update: bool,
 
-    /// Enable release checks and automatically stage verified updates.
-    /// Binary replacement remains an explicit `neoth update --self --apply`.
+    /// Arm the recurring update supervisor with apply intent. The current v1
+    /// safety boundary performs no unattended network probe, staging, or
+    /// replacement until the concrete transport authorization/audit contract
+    /// is complete. Binary replacement remains an explicit
+    /// `neoth update --self --apply`.
     #[arg(long, conflicts_with = "no_auto_update")]
     pub auto_update_apply: bool,
 
