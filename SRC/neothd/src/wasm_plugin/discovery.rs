@@ -57,6 +57,11 @@ pub(crate) const MAX_MINISIG_BYTES: u64 = 4096;
 /// namespace. The per-artifact byte limits below remain independently active.
 pub(crate) const MAX_PLUGIN_DIRECTORIES: usize = 4096;
 
+/// Bound enumeration of non-plugin clutter independently from the plugin
+/// directory limit. Exceeding this ceiling rejects the complete discovery
+/// pass, so filesystem enumeration order can never select a partial active set.
+const MAX_PLUGIN_STORE_ENTRIES: usize = MAX_PLUGIN_DIRECTORIES * 4;
+
 /// Test helper for the legacy ambient-path reader. Production discovery uses
 /// [`read_bound_minisig`] so the directory handle remains authoritative.
 #[cfg(test)]
@@ -559,15 +564,15 @@ fn discover_with_wasm_budget(plugins_root: &Path, max_wasm_bytes: u64) -> Discov
         }
     };
     let mut observed_entries = 0usize;
-    let mut retained_wasm_bytes = 0u64;
+    let mut candidates = Vec::new();
     for entry in entries {
         observed_entries = observed_entries.saturating_add(1);
-        if observed_entries > MAX_PLUGIN_DIRECTORIES {
+        if observed_entries > MAX_PLUGIN_STORE_ENTRIES {
             report.rejected.push(DiscoveryError::StoreEntryLimit {
                 root: root.display_path.clone(),
-                max_entries: MAX_PLUGIN_DIRECTORIES,
+                max_entries: MAX_PLUGIN_STORE_ENTRIES,
             });
-            break;
+            return report;
         }
         let entry = match entry {
             Ok(entry) => entry,
@@ -593,6 +598,21 @@ fn discover_with_wasm_budget(plugins_root: &Path, max_wasm_bytes: u64) -> Discov
         if !metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
             continue;
         }
+        if candidates.len() >= MAX_PLUGIN_DIRECTORIES {
+            report.rejected.push(DiscoveryError::StoreEntryLimit {
+                root: root.display_path.clone(),
+                max_entries: MAX_PLUGIN_DIRECTORIES,
+            });
+            return report;
+        }
+        candidates.push(name);
+    }
+
+    // Directory enumeration order is not a contract. Sort before admission so
+    // aggregate byte budgets select the same plugin set on every boot.
+    candidates.sort();
+    let mut retained_wasm_bytes = 0u64;
+    for name in candidates {
         match discover_one_in_root(&root, &name, Some((retained_wasm_bytes, max_wasm_bytes))) {
             Ok(plugin) => retain_discovered_plugin(
                 &mut report,
@@ -1507,6 +1527,42 @@ mod tests {
                 && *candidate_bytes == MINIMAL_WASM.len() as u64
                 && *max_bytes == MINIMAL_WASM.len() as u64
         ));
+    }
+
+    #[test]
+    fn aggregate_wasm_budget_is_independent_of_creation_order() {
+        let first_root = tempdir().unwrap();
+        let second_root = tempdir().unwrap();
+        for (root, ids) in [
+            (first_root.path(), ["z_last", "a_first"]),
+            (second_root.path(), ["a_first", "z_last"]),
+        ] {
+            for id in ids {
+                write_plugin(
+                    root,
+                    id,
+                    &format!("id = \"{id}\"\nname = \"x\"\nversion = \"0.1.0\"\n"),
+                    MINIMAL_WASM,
+                );
+            }
+        }
+
+        let first = discover_with_wasm_budget(first_root.path(), MINIMAL_WASM.len() as u64);
+        let second = discover_with_wasm_budget(second_root.path(), MINIMAL_WASM.len() as u64);
+
+        assert_eq!(first.loaded_ids(), vec!["a_first"]);
+        assert_eq!(second.loaded_ids(), first.loaded_ids());
+        let rejected_id = |report: &DiscoveryReport| {
+            report.rejected.iter().find_map(|error| match error {
+                DiscoveryError::AggregateWasmBudgetExceeded { dir, .. } => dir
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned),
+                _ => None,
+            })
+        };
+        assert_eq!(rejected_id(&first).as_deref(), Some("z_last"));
+        assert_eq!(rejected_id(&second), rejected_id(&first));
     }
 
     #[test]
