@@ -102,7 +102,24 @@
 > Ollama locality/cost classification and the stale `--live` help example are
 > corrected, but those are only two narrow R4-14 leaves. Counts remain
 > **WS-R3 18 total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13
-> open**. No local pass count or pushed-head verdict is claimed here.
+> open**.
+>
+> **Pushed verification checkpoint 2026-07-22 (source head `75273d6f`; no
+> broad box closed):** capability-bound lifecycle and concurrent Self-Improve
+> corrections have green focused evidence: Core **211/211**, GUI **514/514**,
+> installed Self-Improve **15/15**, Nostr **12/12**, Iroh **7/7** plus one
+> explicit real-network ignore, SSH **16/16**, and mDNS **15/15**. Strict
+> all-target Core/GUI Clippy, generated CLI docs **1/1**, formatting, diff
+> hygiene, locked metadata, exact release notices, zero cargo-audit
+> vulnerabilities, and full-workspace plus isolated-signer cargo-deny are green
+> locally. Exact checksum/VCS-bound notice snapshots cover the patched release
+> graph, and yanked packages are now a hard Security failure. Independent
+> post-fix Rust, security and wiring reviews report no remaining introduced
+> P0/P1/P2. GitHub CI, Security and CodeQL were started for the pushed source
+> head but remain an asynchronous, non-inherited verdict. R3-10, R3-17, the
+> broader R3-18 request-bound remote-leaf authority/WAL work and all unrelated
+> R3/R4/WS-LF tasks remain open; counts stay **WS-R3 9 done / 9 open** and
+> **WS-R4 1 done / 13 open**.
 >
 > **Current Windows/cross-platform CI correction (2026-07-18; R3-10 remains
 > open):** forensic logs for exact head `d73227ca` identified 20 Windows

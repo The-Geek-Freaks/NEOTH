@@ -281,6 +281,36 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   mandatory intent/result WAL. Manual operator-initiated update commands are
   unaffected. This is a safe R3-18 slice, not completion of R3-18.
 
+  **Pushed verification checkpoint 2026-07-22 (source head `75273d6f`; all
+  broad boxes and counts unchanged):** the post-implementation review found
+  and closed concurrent installed-document accept/rollback races without
+  weakening crash recovery: a typed pre-commit-only CAS failure removes only
+  its fresh journal, while durability, generation, proposal and ledger
+  uncertainty preserves recovery state. Real accept and rollback race flows
+  retain foreign bytes, leave metadata unchanged, clear the non-committed
+  journal and succeed on a clean retry. The hook proving that boundary is
+  test-thread-local and cannot be consumed by another parallel test. Release
+  dependency patching is now coupled to exact checksum/VCS-bound Rust license
+  snapshots and regenerated `THIRD_PARTY_LICENSES`; Security resolves the
+  virtual workspace with all features and a locked graph, and treats yanked
+  packages as errors for both the workspace and isolated signer.
+
+  Frozen-source local evidence is Skill lifecycle/self-improve/updater/plugin/
+  CLI **211/211**, GUI **514/514**, installed Self-Improve **15/15**, and the
+  dependency-sensitive optional paths Nostr **12/12**, Iroh **7/7** with its
+  explicit real-network loopback test still ignored, SSH **16/16**, and mDNS
+  **15/15**. Strict all-target Core and GUI Clippy, generated CLI docs **1/1**,
+  formatting, diff hygiene, locked metadata, exact release notices, cargo-audit
+  (**0 vulnerabilities; 2 policy-allowed unmaintained advisories**) and
+  cargo-deny for the complete release workspace plus isolated signer are green
+  locally. Independent Rust, security and wiring reviews found no remaining
+  introduced P0/P1/P2 after correction. GitHub CI, Security and CodeQL were
+  started for the pushed source head but are a separate asynchronous gate; this
+  paragraph does not inherit or predict their final result. **R3-17, the
+  broader R3-18 remote-leaf authority/WAL contract, R3-10 exact-head evidence,
+  and all unrelated R3/R4/WS-LF tasks remain open.** Counts remain **WS-R3 18
+  total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13 open**.
+
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 
 > **Research (2026-07-16):** grounded backlog for the open R4 rollups (R4-05 parity,
