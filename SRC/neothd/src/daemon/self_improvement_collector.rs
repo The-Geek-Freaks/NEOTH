@@ -1035,6 +1035,8 @@ mod tests {
         assert_eq!(
             std::fs::read_dir(dir.path().join("proposals"))
                 .unwrap()
+                .map(|entry| entry.expect("read proposal directory entry"))
+                .filter(|entry| { entry.path().extension() == Some(std::ffi::OsStr::new("json")) })
                 .count(),
             1
         );

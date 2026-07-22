@@ -19,7 +19,13 @@ use tracing::info;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::skills::loader::{SkillInventoryOrigin, SkillInventoryRow, diagnostic_inventory};
-use crate::skills::{installer, load_all, route};
+use crate::skills::{installer, load_all, operator_skill_warnings, route};
+
+fn print_operator_skill_warnings(warnings: &[String]) {
+    for warning in operator_skill_warnings(warnings) {
+        eprintln!("Warning: {warning}");
+    }
+}
 
 /// Stable machine-readable acknowledgement shared with the GUI. Keep this
 /// explicit rather than serialising `InstallReport` directly: the report owns
@@ -32,7 +38,7 @@ struct SkillInstallReceipt<'a> {
     source_manifest_sha256: &'a str,
     source_generation_sha256: &'a str,
     replaced_generation_sha256: Option<&'a str>,
-    warnings: &'a [String],
+    warnings: Vec<&'static str>,
 }
 
 fn skill_install_receipt(report: &installer::InstallReport) -> SkillInstallReceipt<'_> {
@@ -43,7 +49,7 @@ fn skill_install_receipt(report: &installer::InstallReport) -> SkillInstallRecei
         source_manifest_sha256: &report.source_manifest_sha256,
         source_generation_sha256: &report.source_generation_sha256,
         replaced_generation_sha256: report.replaced_generation_sha256.as_deref(),
-        warnings: &report.warnings,
+        warnings: operator_skill_warnings(&report.warnings),
     }
 }
 
@@ -88,7 +94,7 @@ struct SkillUninstallReceipt<'a> {
     id: &'a str,
     removed: bool,
     removed_generation_sha256: Option<&'a str>,
-    warnings: &'a [String],
+    warnings: Vec<&'static str>,
 }
 
 fn skill_uninstall_receipt(report: &installer::UninstallReport) -> SkillUninstallReceipt<'_> {
@@ -96,7 +102,7 @@ fn skill_uninstall_receipt(report: &installer::UninstallReport) -> SkillUninstal
         id: &report.id,
         removed: report.removed,
         removed_generation_sha256: report.removed_generation_sha256.as_deref(),
-        warnings: &report.warnings,
+        warnings: operator_skill_warnings(&report.warnings),
     }
 }
 
@@ -111,7 +117,7 @@ struct SkillCreateReceipt<'a> {
     target_generation_sha256: &'a str,
     replaced_generation_sha256: Option<&'a str>,
     replaced_existing: bool,
-    warnings: &'a [String],
+    warnings: Vec<&'static str>,
 }
 
 fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillCreateReceipt<'_> {
@@ -122,7 +128,7 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
         target_generation_sha256: &report.target_generation_sha256,
         replaced_generation_sha256: report.replaced_generation_sha256.as_deref(),
         replaced_existing: report.replaced_existing,
-        warnings: &report.warnings,
+        warnings: operator_skill_warnings(&report.warnings),
     }
 }
 
@@ -396,9 +402,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                     report.id,
                     report.installed_at.display()
                 );
-                for warning in &report.warnings {
-                    eprintln!("Warning: {warning}");
-                }
+                print_operator_skill_warnings(&report.warnings);
             }
         }
         return Ok(());
@@ -442,9 +446,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                         skills_dir.display()
                     );
                 }
-                for warning in &report.warnings {
-                    eprintln!("Warning: {warning}");
-                }
+                print_operator_skill_warnings(&report.warnings);
             }
         }
         return Ok(());
@@ -497,9 +499,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                     "Created"
                 };
                 println!("{verb} skill `{}` at {}", report.id, report.path.display());
-                for warning in &report.warnings {
-                    eprintln!("Warning: {warning}");
-                }
+                print_operator_skill_warnings(&report.warnings);
                 println!("Try it: neoth skills --test \"<a message that should trigger it>\"");
             }
         }
@@ -918,7 +918,11 @@ mod tests {
     }
 
     #[test]
-    fn install_receipt_keeps_warning_array_in_the_json_contract() {
+    fn install_receipt_redacts_private_warning_details_in_the_json_contract() {
+        let private_warning = format!(
+            "skill is installed, but cleanup of prior tree `C:\\Users\\alice\\.neoth\\skills\\.neoth-install-backup-{}` failed: access token secret",
+            "deadbeef".repeat(4)
+        );
         let report = installer::InstallReport {
             id: "my-skill".to_string(),
             installed_at: PathBuf::from("skills").join("my-skill"),
@@ -926,7 +930,7 @@ mod tests {
             source_manifest_sha256: "a".repeat(64),
             source_generation_sha256: "b".repeat(64),
             replaced_generation_sha256: Some("c".repeat(64)),
-            warnings: vec!["old backup could not be removed".to_string()],
+            warnings: vec![private_warning.clone()],
         };
 
         let value = serde_json::to_value(skill_install_receipt(&report)).unwrap();
@@ -941,8 +945,13 @@ mod tests {
         assert_eq!(value["replaced_generation_sha256"], "c".repeat(64));
         assert_eq!(
             value["warnings"],
-            serde_json::json!(["old backup could not be removed"])
+            serde_json::json!([crate::skills::WARNING_CLEANUP_PENDING])
         );
+        let encoded = value.to_string();
+        assert!(!encoded.contains("alice"));
+        assert!(!encoded.contains("access token secret"));
+        assert!(!encoded.contains(&"deadbeef".repeat(4)));
+        assert!(!encoded.contains(&private_warning));
         assert_eq!(value.as_object().unwrap().len(), 7);
     }
 
@@ -1054,7 +1063,7 @@ mod tests {
     }
 
     #[test]
-    fn uninstall_receipt_keeps_idempotence_and_warnings_exact() {
+    fn uninstall_receipt_keeps_idempotence_and_redacted_warning_class() {
         for removed in [false, true] {
             let report = installer::UninstallReport {
                 id: "my-skill".to_string(),
@@ -1069,7 +1078,7 @@ mod tests {
                     "id": "my-skill",
                     "removed": removed,
                     "removed_generation_sha256": removed.then(|| "b".repeat(64)),
-                    "warnings": ["private cleanup remains pending"],
+                    "warnings": [crate::skills::WARNING_CLEANUP_PENDING],
                 })
             );
             assert_eq!(value.as_object().unwrap().len(), 4);
@@ -1105,9 +1114,39 @@ mod tests {
             assert_eq!(value["replaced_existing"], replaced_existing);
             assert_eq!(
                 value["warnings"],
-                serde_json::json!(["directory sync warning"])
+                serde_json::json!([crate::skills::WARNING_DURABILITY_UNCONFIRMED])
             );
             assert_eq!(value.as_object().unwrap().len(), 7);
+        }
+    }
+
+    #[test]
+    fn operator_warning_redaction_preserves_count_and_recovery_classes() {
+        let raw = vec![
+            "prior generation `C:\\private\\.neoth-install-backup-secret` was retained for crash recovery".to_string(),
+            "private cleanup remains pending: bearer-token-secret".to_string(),
+            "namespace transition was not durably synced: /home/alice/private".to_string(),
+            "unexpected private detail: password-secret".to_string(),
+        ];
+
+        let redacted = operator_skill_warnings(&raw);
+        assert_eq!(
+            redacted,
+            vec![
+                crate::skills::WARNING_RECOVERY_RETAINED,
+                crate::skills::WARNING_CLEANUP_PENDING,
+                crate::skills::WARNING_DURABILITY_UNCONFIRMED,
+                crate::skills::WARNING_POST_COMMIT_REDACTED,
+            ]
+        );
+        let encoded = serde_json::to_string(&redacted).unwrap();
+        for secret in [
+            "private\\",
+            "bearer-token",
+            "/home/alice",
+            "password-secret",
+        ] {
+            assert!(!encoded.contains(secret));
         }
     }
 

@@ -49,3 +49,57 @@ pub mod versioning;
 pub use loader::load_all;
 pub use registry::SkillRegistry;
 pub use router::route;
+
+pub(crate) const WARNING_RECOVERY_RETAINED: &str =
+    "W_SKILL_RECOVERY_RETAINED: a private recovery artifact remains available";
+pub(crate) const WARNING_CLEANUP_PENDING: &str =
+    "W_SKILL_CLEANUP_PENDING: private transaction cleanup remains pending";
+pub(crate) const WARNING_DURABILITY_UNCONFIRMED: &str = "W_SKILL_DURABILITY_UNCONFIRMED: the state change committed, but durable storage was not confirmed";
+pub(crate) const WARNING_POST_COMMIT_REDACTED: &str =
+    "W_SKILL_POST_COMMIT: the state change committed with a redacted follow-up warning";
+
+/// Stable operator-facing class for a post-commit skill warning.
+///
+/// Raw warnings intentionally remain available to the transaction owner for
+/// recovery decisions, but they can contain private paths, transaction names,
+/// and chained OS errors. Every CLI, GUI, log, WAL, or propagated-error
+/// boundary must emit only this class's fixed message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OperatorSkillWarningClass {
+    RecoveryRetained,
+    CleanupPending,
+    DurabilityUnconfirmed,
+    PostCommit,
+}
+
+impl OperatorSkillWarningClass {
+    pub(crate) const fn message(self) -> &'static str {
+        match self {
+            Self::RecoveryRetained => WARNING_RECOVERY_RETAINED,
+            Self::CleanupPending => WARNING_CLEANUP_PENDING,
+            Self::DurabilityUnconfirmed => WARNING_DURABILITY_UNCONFIRMED,
+            Self::PostCommit => WARNING_POST_COMMIT_REDACTED,
+        }
+    }
+}
+
+pub(crate) fn classify_operator_skill_warning(warning: &str) -> OperatorSkillWarningClass {
+    if warning.contains("retained") || warning.contains("recoverable backup") {
+        OperatorSkillWarningClass::RecoveryRetained
+    } else if warning.contains("cleanup") {
+        OperatorSkillWarningClass::CleanupPending
+    } else if warning.contains("durab") || warning.contains("sync") {
+        OperatorSkillWarningClass::DurabilityUnconfirmed
+    } else {
+        OperatorSkillWarningClass::PostCommit
+    }
+}
+
+/// Reduce post-commit diagnostics to stable operator classes before they cross
+/// a process, log, error, GUI, receipt, or audit boundary.
+pub(crate) fn operator_skill_warnings(warnings: &[String]) -> Vec<&'static str> {
+    warnings
+        .iter()
+        .map(|warning| classify_operator_skill_warning(warning).message())
+        .collect()
+}

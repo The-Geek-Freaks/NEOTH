@@ -151,7 +151,7 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
                             "  skill written → {} (live on next `neoth reload` or hot-watch)",
                             report.path.display(),
                         );
-                        for warning in report.warnings {
+                        for warning in crate::skills::operator_skill_warnings(&report.warnings) {
                             eprintln!("  warning: {warning}");
                         }
                     }

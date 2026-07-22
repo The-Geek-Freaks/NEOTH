@@ -231,7 +231,11 @@ fn paperless_doc_arrives_to_operator_approval_end_to_end() {
     assert!(paperless_dir.exists());
     assert!(proposals_dir.exists());
     let paperless_count = std::fs::read_dir(&paperless_dir).unwrap().count();
-    let proposals_count = std::fs::read_dir(&proposals_dir).unwrap().count();
+    let proposals_count = std::fs::read_dir(&proposals_dir)
+        .unwrap()
+        .map(|entry| entry.expect("read proposal vault directory entry"))
+        .filter(|entry| entry.path().extension() == Some(std::ffi::OsStr::new("md")))
+        .count();
     assert_eq!(paperless_count, 1, "exactly one paperless note");
     assert_eq!(proposals_count, 1, "exactly one approved proposal note");
 }

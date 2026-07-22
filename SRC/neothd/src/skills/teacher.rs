@@ -278,7 +278,7 @@ fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &st
         &yaml,
         crate::skills::creator::ExistingSkillPolicy::Replace,
     )?;
-    for warning in report.warnings {
+    for warning in crate::skills::operator_skill_warnings(&report.warnings) {
         tracing::warn!(skill_id, %warning, "teacher skill committed with durability warning");
     }
     Ok(())

@@ -522,7 +522,7 @@ fn replace_proposal_file(
     let path = root.display_path.join(&name);
     let report = replace_existing_regular_file_report(&root.dir, &name, &path, body)
         .map_err(anyhow_to_io)?;
-    for warning in report.warnings {
+    for warning in crate::skills::operator_skill_warnings(&report.warnings) {
         tracing::warn!(path = %path.display(), %warning, "proposal replacement committed with warning");
     }
     Ok(())
@@ -769,7 +769,7 @@ pub fn sync_proposals_to_obsidian(
                     body.as_bytes(),
                 )
                 .map_err(anyhow_to_io)?;
-                for warning in report.warnings {
+                for warning in crate::skills::operator_skill_warnings(&report.warnings) {
                     tracing::warn!(
                         path = %final_path.display(),
                         %warning,

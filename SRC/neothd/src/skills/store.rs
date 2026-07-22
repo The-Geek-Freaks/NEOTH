@@ -661,7 +661,7 @@ pub(crate) fn replace_existing_regular_file(
     bytes: &[u8],
 ) -> Result<()> {
     let report = replace_existing_regular_file_report(parent, name, display_path, bytes)?;
-    for warning in report.warnings {
+    for warning in crate::skills::operator_skill_warnings(&report.warnings) {
         tracing::warn!(path = %display_path.display(), %warning, "file replacement committed with warning");
     }
     Ok(())
@@ -965,8 +965,9 @@ pub(crate) fn sync_parent_directory(parent: &Dir, display_path: &Path) -> Result
     }
     #[cfg(unix)]
     {
-        Dir::reopen_dir(parent)
-            .and_then(|dir| dir.into_std_file().sync_all())
+        parent
+            .open(".")
+            .and_then(|file| file.sync_all())
             .with_context(|| format!("sync directory {}", display_path.display()))?;
     }
     #[cfg(not(unix))]

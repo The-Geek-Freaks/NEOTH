@@ -61,7 +61,7 @@ fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> any
                 let warning_count = report.warnings.len();
                 if warning_count > 0 {
                     promoted_with_warnings += 1;
-                    for warning in &report.warnings {
+                    for warning in crate::skills::operator_skill_warnings(&report.warnings) {
                         warn!(
                             proposal_id = %proposal.id,
                             skill_id = %report.id,

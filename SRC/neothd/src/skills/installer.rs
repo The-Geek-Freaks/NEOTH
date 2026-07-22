@@ -1699,7 +1699,7 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
             )
         })?;
         let name = entry.file_name();
-        if parse_uuid_stage_name(&name, CREATOR_DIRECTORY_STAGE_PREFIX)?.is_some() {
+        if matches_private_stage_marker(&name, CREATOR_DIRECTORY_STAGE_PREFIX)? {
             let display_path = root.display_path.join(&name);
             drop(
                 open_real_child_dir(&root.dir, &name, &display_path).with_context(|| {
@@ -1846,21 +1846,28 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
     Ok(())
 }
 
-fn parse_uuid_stage_name(name: &OsStr, prefix: &str) -> Result<Option<()>> {
+/// Classify a private crash-recovery artifact by its fixed-shape marker.
+///
+/// The marker prevents transaction-name collisions; it is not a credential.
+/// Malformed names are nevertheless untrusted filesystem input and must not be
+/// copied into diagnostics that a caller may persist.
+fn matches_private_stage_marker(name: &OsStr, prefix: &str) -> Result<bool> {
     let Some(name) = name.to_str() else {
-        return Ok(None);
+        return Ok(false);
     };
     let Some(nonce) = name.strip_prefix(prefix) else {
-        return Ok(None);
+        return Ok(false);
     };
     if nonce.len() != 32
         || !nonce
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        anyhow::bail!("malformed private skill stage name `{name}`");
+        anyhow::bail!(
+            "malformed private skill stage marker (expected 32 lowercase hexadecimal characters)"
+        );
     }
-    Ok(Some(()))
+    Ok(true)
 }
 
 fn cleanup_private_file_stages(directory: &Dir, display_directory: &Path) -> Result<()> {
@@ -1889,8 +1896,8 @@ fn cleanup_private_file_stages(directory: &Dir, display_directory: &Path) -> Res
             )
         })?;
         let name = entry.file_name();
-        if parse_uuid_stage_name(&name, CREATOR_MANIFEST_STAGE_PREFIX)?.is_some()
-            || parse_uuid_stage_name(&name, FILE_REPLACEMENT_STAGE_PREFIX)?.is_some()
+        if matches_private_stage_marker(&name, CREATOR_MANIFEST_STAGE_PREFIX)?
+            || matches_private_stage_marker(&name, FILE_REPLACEMENT_STAGE_PREFIX)?
         {
             let metadata = directory.symlink_metadata(&name).with_context(|| {
                 format!(
@@ -1997,8 +2004,9 @@ fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
     })?;
     #[cfg(unix)]
     {
-        Dir::reopen_dir(directory)
-            .and_then(|dir| dir.into_std_file().sync_all())
+        directory
+            .open(".")
+            .and_then(|file| file.sync_all())
             .with_context(|| format!("sync skill directory {}", display_path.display()))?;
     }
     #[cfg(not(unix))]
@@ -3048,7 +3056,7 @@ mod tests {
         // Plain file
         std::fs::write(dest.path().join("loose.txt"), b"x").unwrap();
         let rows = list_installed(dest.path()).unwrap();
-        assert_eq!(rows.len(), 1, "expected one broken entry; got {rows:?}");
+        assert_eq!(rows.len(), 1, "expected exactly one public broken entry");
         assert_eq!(rows[0].dir_name, "loose.txt");
         assert_eq!(
             rows[0].error.as_deref(),
@@ -3145,8 +3153,15 @@ mod tests {
         std::fs::create_dir(&stage).unwrap();
 
         let error = list_installed(dest.path()).unwrap_err();
+        let rendered = format!("{error:#}");
 
-        assert!(format!("{error:#}").contains("malformed private skill stage name"));
+        assert!(rendered.contains(
+            "malformed private skill stage marker (expected 32 lowercase hexadecimal characters)"
+        ));
+        assert!(
+            !rendered.contains(uppercase),
+            "malformed marker diagnostics must not echo the untrusted name"
+        );
         assert!(stage.exists());
     }
 }

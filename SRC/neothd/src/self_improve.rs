@@ -1815,10 +1815,14 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
                             p.after.as_bytes(),
                         )?;
                         if !report.warnings.is_empty() {
+                            let public_skill =
+                                crate::security::redact::sanitize_tool_output(&p.skill);
+                            let warnings =
+                                crate::skills::operator_skill_warnings(&report.warnings).join("; ");
                             anyhow::bail!(
                                 "installed skill `{}` replacement is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                                p.skill,
-                                report.warnings.join("; ")
+                                public_skill,
+                                warnings
                             );
                         }
                         let actual = crate::skills::installer::skill_tree_generation_sha256(
@@ -1853,10 +1857,13 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
                         .replace_if_matches(current.as_bytes(), p.after.as_bytes())
                         .with_context(|| format!("write skill {}", path.display()))?;
                     if !report.warnings.is_empty() {
+                        let public_skill = crate::security::redact::sanitize_tool_output(&p.skill);
+                        let warnings =
+                            crate::skills::operator_skill_warnings(&report.warnings).join("; ");
                         anyhow::bail!(
                             "external skill `{}` replacement is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                            p.skill,
-                            report.warnings.join("; ")
+                            public_skill,
+                            warnings
                         );
                     }
                     Ok(())
@@ -2008,10 +2015,14 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
                             backup.as_bytes(),
                         )?;
                         if !report.warnings.is_empty() {
+                            let public_skill =
+                                crate::security::redact::sanitize_tool_output(&p.skill);
+                            let warnings =
+                                crate::skills::operator_skill_warnings(&report.warnings).join("; ");
                             anyhow::bail!(
                                 "installed skill `{}` rollback is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                                p.skill,
-                                report.warnings.join("; ")
+                                public_skill,
+                                warnings
                             );
                         }
                         let actual = crate::skills::installer::skill_tree_generation_sha256(
@@ -2054,10 +2065,14 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
                             .replace_if_matches(current.as_bytes(), backup.as_bytes())
                             .with_context(|| format!("restore skill {}", path.display()))?;
                         if !report.warnings.is_empty() {
+                            let public_skill =
+                                crate::security::redact::sanitize_tool_output(&p.skill);
+                            let warnings =
+                                crate::skills::operator_skill_warnings(&report.warnings).join("; ");
                             anyhow::bail!(
                                 "external skill `{}` rollback is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                                p.skill,
-                                report.warnings.join("; ")
+                                public_skill,
+                                warnings
                             );
                         }
                         Ok(())
@@ -3782,6 +3797,14 @@ mod tests {
         FixedQaAdvisor(crate::council::qa_verdict::QaVerdict::pass())
     }
 
+    fn execution_verdict_kind(verdict: &ExecutionVerdict) -> &'static str {
+        match verdict {
+            ExecutionVerdict::Approved => "approved",
+            ExecutionVerdict::Revise { .. } => "revise",
+            ExecutionVerdict::Blocked { .. } => "blocked",
+        }
+    }
+
     fn failing_advisor() -> FixedQaAdvisor {
         FixedQaAdvisor(crate::council::qa_verdict::QaVerdict::fail(vec![
             crate::council::qa_verdict::FailureItem {
@@ -4466,7 +4489,8 @@ mod tests {
 
         assert!(
             matches!(verdict, ExecutionVerdict::Blocked { .. }),
-            "expected Blocked when allow_shell_verify=false (default), got {verdict:?}"
+            "expected blocked when allow_shell_verify=false (default), got {}",
+            execution_verdict_kind(&verdict)
         );
         assert_eq!(
             revises, 0,
@@ -4528,9 +4552,15 @@ mod tests {
 
         match verdict {
             ExecutionVerdict::Blocked { reason } => {
-                assert!(reason.contains("exact operator-owned approval"), "{reason}");
+                assert!(
+                    reason.contains("exact operator-owned approval"),
+                    "blocked verdict omitted the exact-allowlist reason"
+                );
             }
-            other => panic!("expected exact-allowlist block, got {other:?}"),
+            other => panic!(
+                "expected exact-allowlist block, got {}",
+                execution_verdict_kind(&other)
+            ),
         }
         assert_eq!(revises, 0);
         assert!(!sentinel.exists(), "unapproved command reached the shell");
@@ -5183,9 +5213,12 @@ mod tests {
         };
         let id1 = stage_proposal(&tmp, mk()).unwrap();
         let id2 = stage_proposal(&tmp, mk()).unwrap();
-        assert_eq!(id1, "pSAME");
-        assert_ne!(id1, id2, "second proposal must get a distinct id: {id2}");
-        assert!(id2.starts_with("pSAME-"), "got: {id2}");
+        assert!(id1 == "pSAME", "first proposal must keep the requested id");
+        assert!(id1 != id2, "second proposal must get a distinct id");
+        assert!(
+            id2.starts_with("pSAME-"),
+            "collision suffix must retain the requested id prefix"
+        );
         let _ = std::fs::remove_file(proposals_path(&tmp));
     }
 
@@ -5925,10 +5958,19 @@ mod tests {
 
         match verdict {
             ExecutionVerdict::Blocked { reason } => {
-                assert!(reason.contains("stop gate"), "got: {reason}");
-                assert!(reason.contains("deploy complete"), "got: {reason}");
+                assert!(
+                    reason.contains("stop gate"),
+                    "blocked verdict omitted the stop-gate reason"
+                );
+                assert!(
+                    reason.contains("deploy complete"),
+                    "blocked verdict omitted the unmet done criterion"
+                );
             }
-            other => panic!("expected Blocked by stop gate, got {other:?}"),
+            other => panic!(
+                "expected blocked by stop gate, got {}",
+                execution_verdict_kind(&other)
+            ),
         }
         assert_eq!(revises, 2, "premature APPROVE must consume revise rounds");
 

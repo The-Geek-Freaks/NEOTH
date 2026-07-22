@@ -289,8 +289,8 @@ fn status(
     match last {
         Some(r) => println!(
             "  last      : {} — \"{}\" ({})",
-            r.skill,
-            r.summary,
+            public_status_text(&r.skill),
+            public_status_text(&r.summary),
             if r.accepted {
                 "improved ✓"
             } else {
@@ -300,6 +300,13 @@ fn status(
         None => println!("  last      : — (no runs yet)"),
     }
     Ok(())
+}
+
+/// Human-readable CLI status may include operator-, provider-, or file-derived
+/// text. Keep typed receipt identity/binding fields exact, but never echo
+/// secret-shaped free text or terminal controls into an operator status stream.
+fn public_status_text(input: &str) -> String {
+    crate::security::redact::sanitize_tool_output(input)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -486,9 +493,13 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         props.len()
     );
     for p in props.iter().rev().take(10) {
+        let public_id = public_status_text(&p.id);
         println!(
             "\n  [{}] {} — {:?} — {}",
-            p.id, p.skill, p.status, p.summary
+            public_id,
+            public_status_text(&p.skill),
+            p.status,
+            public_status_text(&p.summary)
         );
         if p.status == si::ProposalStatus::Pending {
             // The "why", not just the diff — the quality score block.
@@ -503,23 +514,33 @@ fn review(home: &std::path::Path, output: OutputFormat) -> Result<()> {
             // IMPR-01: render ProposalSpec fields when present.
             if let Some(spec) = &p.spec {
                 if let Some(vcmd) = &spec.verification_command {
-                    println!("    verify: {vcmd}");
+                    println!("    verify: {}", public_status_text(vcmd));
                 }
                 if let Some(done) = &spec.done_criteria {
-                    println!("    done  : {done}");
+                    println!("    done  : {}", public_status_text(done));
                 }
                 if !spec.stop_conditions.is_empty() {
-                    println!("    stops : {}", spec.stop_conditions.join(", "));
+                    println!(
+                        "    stops : {}",
+                        public_status_text(&spec.stop_conditions.join(", "))
+                    );
                 }
                 if let Some(sha) = &spec.drift_sha {
-                    println!("    staged: @{sha}");
+                    println!("    staged: @{}", public_status_text(sha));
                 }
             }
             let diff = si::line_diff(&p.before, &p.after);
-            for l in diff.lines().take(24) {
+            let public_diff = public_status_text(&diff);
+            let diff_was_redacted = public_diff != diff;
+            for l in public_diff.lines().take(24) {
                 println!("    {l}");
             }
-            println!("    → `neoth self-improve accept {}`", p.id);
+            if diff_was_redacted {
+                println!(
+                    "    [sensitive/control content redacted in table output; use protected JSON output for exact bytes]"
+                );
+            }
+            println!("    → `neoth self-improve accept {public_id}`");
         }
     }
     Ok(())
@@ -548,13 +569,13 @@ fn quality_lines(
         ));
     }
     if !heldout.is_empty() {
-        s.push_str(&format!("    eval  : {heldout}\n"));
+        s.push_str(&format!("    eval  : {}\n", public_status_text(heldout)));
     }
     if !why.is_empty() {
-        s.push_str(&format!("    why   : {why}\n"));
+        s.push_str(&format!("    why   : {}\n", public_status_text(why)));
     }
     if !risk.is_empty() {
-        s.push_str(&format!("    risk  : {risk}\n"));
+        s.push_str(&format!("    risk  : {}\n", public_status_text(risk)));
     }
     s
 }
@@ -564,6 +585,8 @@ fn quality_lines(
 /// running `pr`. Best-effort: a lookup miss just prints nothing.
 fn offer_upstream_pr_if_bundled(home: &std::path::Path, id: &str) -> Result<()> {
     if let Some(skill) = bundled_proposal_skill(home, id)? {
+        let skill = public_status_text(&skill);
+        let id = public_status_text(id);
         println!(
             "\n  ↑ `{skill}` is a BUNDLED skill — want to contribute this improvement back to NEOTH?\n    `neoth self-improve pr {id}`        (prepare the PR bundle for review)\n    `neoth self-improve pr {id} --submit` (open it now via your `gh`)"
         );
@@ -642,14 +665,15 @@ async fn execute(
     if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
         let (verdict_str, reason) = match &verdict {
             ExecutionVerdict::Approved => ("approved", String::new()),
-            ExecutionVerdict::Revise { reason } => ("revise", reason.clone()),
-            ExecutionVerdict::Blocked { reason } => ("blocked", reason.clone()),
+            ExecutionVerdict::Revise { reason } => ("revise", public_status_text(reason)),
+            ExecutionVerdict::Blocked { reason } => ("blocked", public_status_text(reason)),
         };
         println!(
             "{}",
             serde_json::json!({ "id": id, "verdict": verdict_str, "revises": revises, "reason": reason })
         );
     } else {
+        let id = public_status_text(id);
         match verdict {
             ExecutionVerdict::Approved => {
                 println!(
@@ -657,10 +681,13 @@ async fn execute(
                 );
             }
             ExecutionVerdict::Revise { reason } => {
-                println!("⚠  proposal {id} REVISE after {revises} rounds: {reason}");
+                println!(
+                    "⚠  proposal {id} REVISE after {revises} rounds: {}",
+                    public_status_text(&reason)
+                );
             }
             ExecutionVerdict::Blocked { reason } => {
-                println!("✗  proposal {id} BLOCKED: {reason}");
+                println!("✗  proposal {id} BLOCKED: {}", public_status_text(&reason));
             }
         }
     }
@@ -746,17 +773,29 @@ fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> R
             })
         );
     } else {
-        println!("PR bundle prepared for proposal {id}:");
-        println!("  dir    : {}", prepared.dir.display());
-        println!("  target : {} @ {}", si::NEOTH_REPO, prepared.asset_path);
-        println!("  branch : {}", prepared.branch);
-        println!("  title  : {}", prepared.title);
+        println!(
+            "PR bundle prepared for proposal {}:",
+            public_status_text(id)
+        );
+        println!(
+            "  dir    : {}",
+            public_status_text(&prepared.dir.display().to_string())
+        );
+        println!(
+            "  target : {} @ {}",
+            si::NEOTH_REPO,
+            public_status_text(&prepared.asset_path)
+        );
+        println!("  branch : {}", public_status_text(&prepared.branch));
+        println!("  title  : {}", public_status_text(&prepared.title));
     }
     if !submit {
         if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+            let public_id = public_status_text(id);
+            let public_pr_path =
+                public_status_text(&prepared.dir.join("PR.md").display().to_string());
             println!(
-                "\nReview {}, then submit: `neoth self-improve pr {id} --submit` (or run submit.sh).",
-                prepared.dir.join("PR.md").display()
+                "\nReview {public_pr_path}, then submit: `neoth self-improve pr {public_id} --submit` (or run submit.sh)."
             );
         }
         return Ok(());
@@ -765,7 +804,7 @@ fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> R
     if crate::tools::github::locate_gh().is_none() {
         anyhow::bail!(
             "`gh` not found — bundle is ready at {} (run submit.sh once gh is installed + authenticated)",
-            prepared.dir.display()
+            public_status_text(&prepared.dir.display().to_string())
         );
     }
     let script = prepared.dir.join("submit.sh");
@@ -773,11 +812,11 @@ fn pr(home: &std::path::Path, id: &str, submit: bool, output: OutputFormat) -> R
     let status = std::process::Command::new("bash")
         .arg(&script)
         .status()
-        .with_context(|| format!("run {}", script.display()))?;
+        .with_context(|| format!("run {}", public_status_text(&script.display().to_string())))?;
     if !status.success() {
         anyhow::bail!(
             "submit.sh exited with {status} — bundle preserved at {}",
-            prepared.dir.display()
+            public_status_text(&prepared.dir.display().to_string())
         );
     }
     println!("✓ PR opened against {}.", si::NEOTH_REPO);
@@ -799,10 +838,27 @@ fn log(home: &std::path::Path, output: OutputFormat) -> Result<()> {
         println!(
             "  [{}] {} — {} — \"{}\"",
             r.at_unix,
-            r.skill,
+            public_status_text(&r.skill),
             if r.accepted { "improved" } else { "no change" },
-            r.summary
+            public_status_text(&r.summary)
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::public_status_text;
+
+    #[test]
+    fn public_status_text_preserves_clean_receipts_and_redacts_unsafe_text() {
+        let clean = "proposal p42 passed verification";
+        assert_eq!(public_status_text(clean), clean);
+
+        let unsafe_text = "\u{1b}[31mtoken=abcdefghijklmnop\u{1b}[0m";
+        let rendered = public_status_text(unsafe_text);
+        assert!(!rendered.contains("abcdefghijklmnop"));
+        assert!(!rendered.contains('\u{1b}'));
+        assert!(rendered.contains("[REDACTED:env_assignment]"));
+    }
 }

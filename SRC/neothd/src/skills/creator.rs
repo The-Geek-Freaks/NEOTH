@@ -437,8 +437,9 @@ fn post_commit_sync_warnings(sync_result: Result<()>, context: &str) -> Vec<Stri
 fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
-        Dir::reopen_dir(directory)
-            .and_then(|dir| dir.into_std_file().sync_all())
+        directory
+            .open(".")
+            .and_then(|file| file.sync_all())
             .with_context(|| format!("sync skill directory {}", display_path.display()))?;
     }
     #[cfg(not(unix))]
