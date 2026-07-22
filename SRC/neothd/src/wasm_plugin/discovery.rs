@@ -561,7 +561,7 @@ fn discover_with_wasm_budget(plugins_root: &Path, max_wasm_bytes: u64) -> Discov
     let mut observed_entries = 0usize;
     let mut retained_wasm_bytes = 0u64;
     for entry in entries {
-        observed_entries = observed_entries.checked_add(1).unwrap_or(usize::MAX);
+        observed_entries = observed_entries.saturating_add(1);
         if observed_entries > MAX_PLUGIN_DIRECTORIES {
             report.rejected.push(DiscoveryError::StoreEntryLimit {
                 root: root.display_path.clone(),
@@ -830,7 +830,7 @@ fn read_bound_required_plugin_file(
     }
     let aggregate_remaining = match (artifact, aggregate_wasm_budget) {
         (PluginArtifact::Wasm, Some((retained_bytes, aggregate_max_bytes))) => {
-            let remaining = aggregate_max_bytes.checked_sub(retained_bytes).unwrap_or(0);
+            let remaining = aggregate_max_bytes.saturating_sub(retained_bytes);
             if metadata.len() > remaining {
                 return Err(DiscoveryError::AggregateWasmBudgetExceeded {
                     dir: dir.to_path_buf(),
