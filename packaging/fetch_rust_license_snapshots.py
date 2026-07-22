@@ -39,8 +39,10 @@ SPDX_REVISION = "d46e94e2c78ceede1cfc63cfa0396472d2798d4c"  # license-list-data 
 MANIFEST_GRANT_FALLBACKS = {
     ("adobe-cmap-parser", "0.4.1"): "MIT",
     ("anndists", "0.1.5"): "Apache-2.0",
-    ("bitcoin-io", "0.1.100"): "CC0-1.0",
-    ("bitcoin_hashes", "0.14.100"): "CC0-1.0",
+    ("bitcoin-consensus-encoding", "1.1.0"): "CC0-1.0",
+    ("bitcoin-internals", "0.6.0"): "CC0-1.0",
+    ("bitcoin-io", "0.1.101"): "CC0-1.0",
+    ("bitcoin_hashes", "0.14.101"): "CC0-1.0",
     ("crc32c", "0.6.8"): "Apache-2.0",
     ("dispatch", "0.2.0"): "MIT",
     ("drm-fourcc", "2.2.0"): "MIT",

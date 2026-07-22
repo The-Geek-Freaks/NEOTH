@@ -98,10 +98,10 @@ jobs:
       - name: Run cargo-deny
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
-          manifest-path: SRC/neothd/Cargo.toml
+          manifest-path: SRC/Cargo.toml
           command: check
-          arguments: --all-features
-          command-arguments: --deny yanked
+          arguments: --workspace --all-features --locked
+          command-arguments: --config SRC/deny.toml --deny yanked
           rust-version: '1.91'
 
       - name: Run cargo-deny for isolated release signer
@@ -109,12 +109,11 @@ jobs:
         with:
           manifest-path: .github/release-tools/neoth-release-signer/Cargo.toml
           command: check
-          # `--config` is a cargo-deny global option. The action places
-          # `arguments` before `check` and `command-arguments` after it, so
-          # putting this in command-arguments makes cargo-deny reject the
-          # otherwise valid shared policy as an unexpected check argument.
-          arguments: --all-features --config SRC/deny.toml
-          command-arguments: --deny yanked
+          # The action places `arguments` before `check` and
+          # `command-arguments` after it. cargo-deny 0.19 treats `--config`
+          # and lint overrides as check-command arguments.
+          arguments: --all-features --locked
+          command-arguments: --config SRC/deny.toml --deny yanked
           rust-version: '1.91'
 
   bridge-audit:

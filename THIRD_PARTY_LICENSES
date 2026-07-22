@@ -92,7 +92,7 @@ This product includes software developed by the Headroom Contributors.
 
 ## Rust distribution dependencies
 
-Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1149 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
+Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1163 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
 
 ### Exact package inventory
 
@@ -111,6 +111,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `aligned 0.4.3` - `MIT OR Apache-2.0` - https://github.com/rust-embedded-community/aligned - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `aligned-vec 0.6.4` - `MIT` - https://github.com/sarah-ek/aligned-vec/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `allocator-api2 0.2.21` - `MIT OR Apache-2.0` - https://github.com/zakarumych/allocator-api2 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `ambient-authority 0.0.2` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/ambient-authority - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `anndists 0.1.5` - `MIT/Apache-2.0` - https://github.com/jean-pierreBoth/anndists - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `annotate-snippets 0.12.16` - `MIT OR Apache-2.0` - https://github.com/rust-lang/annotate-snippets-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `anstream 1.0.0` - `MIT OR Apache-2.0` - https://github.com/rust-cli/anstyle.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -175,8 +176,10 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `bit-set 0.5.3` - `MIT/Apache-2.0` - https://github.com/contain-rs/bit-set - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bit-vec 0.6.3` - `MIT/Apache-2.0` - https://github.com/contain-rs/bit-vec - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bit_field 0.10.3` - `Apache-2.0/MIT` - https://github.com/phil-opp/rust-bit-field - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `bitcoin-io 0.1.100` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `bitcoin_hashes 0.14.100` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `bitcoin-consensus-encoding 1.1.0` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `bitcoin-internals 0.6.0` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin/ - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `bitcoin-io 0.1.101` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `bitcoin_hashes 0.14.101` - `CC0-1.0` - https://github.com/rust-bitcoin/rust-bitcoin - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bitflags 1.3.2` - `MIT/Apache-2.0` - https://github.com/bitflags/bitflags - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bitflags 2.11.1` - `MIT OR Apache-2.0` - https://github.com/bitflags/bitflags - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `bitmaps 3.2.1` - `MPL-2.0+` - https://github.com/bodil/bitmaps - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -208,6 +211,9 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `candle-core 0.8.4` - `MIT OR Apache-2.0` - https://github.com/huggingface/candle - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `candle-nn 0.8.4` - `MIT OR Apache-2.0` - https://github.com/huggingface/candle - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `candle-transformers 0.8.4` - `MIT OR Apache-2.0` - https://github.com/huggingface/candle - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `cap-fs-ext 4.0.2` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/cap-std - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `cap-primitives 4.0.2` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/cap-std - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `cap-std 4.0.2` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/cap-std - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cbc 0.1.2` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/block-modes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cc 1.2.62` - `MIT OR Apache-2.0` - https://github.com/rust-lang/cc-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cexpr 0.6.0` - `Apache-2.0/MIT` - https://github.com/jethrogb/rust-cexpr - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -410,6 +416,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `foreign-types-macros 0.2.3` - `MIT/Apache-2.0` - https://github.com/sfackler/foreign-types - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `foreign-types-shared 0.3.1` - `MIT/Apache-2.0` - https://github.com/sfackler/foreign-types - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `form_urlencoded 1.2.2` - `MIT OR Apache-2.0` - https://github.com/servo/rust-url - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `fs-set-times 0.20.3` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/fs-set-times - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `fs_extra 1.3.0` - `MIT` - https://github.com/webdesus/fs_extra - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `fsevent-sys 4.1.0` - `MIT` - https://github.com/octplane/fsevent-rust/tree/master/fsevent-sys - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `futures 0.3.32` - `MIT OR Apache-2.0` - https://github.com/rust-lang/futures-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -472,6 +479,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `heck 0.5.0` - `MIT OR Apache-2.0` - https://github.com/withoutboats/heck - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hex 0.4.3` - `MIT OR Apache-2.0` - https://github.com/KokaKiwi/rust-hex - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hex-conservative 0.2.2` - `CC0-1.0` - https://github.com/rust-bitcoin/hex-conservative - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `hex-conservative 1.2.0` - `CC0-1.0` - https://github.com/rust-bitcoin/hex-conservative - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hf-hub 0.5.0` - `Apache-2.0` - https://github.com/huggingface/hf-hub - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hickory-net 0.26.1` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `hickory-proto 0.26.1` - `MIT OR Apache-2.0` - https://github.com/hickory-dns/hickory-dns - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -538,7 +546,10 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `input 0.9.1` - `MIT` - https://github.com/Drakulix/input.rs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `input-sys 1.19.0` - `MIT` - https://github.com/Drakulix/input.rs/tree/master/input-sys - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `integer-sqrt 0.1.5` - `Apache-2.0/MIT` - https://github.com/derekdreery/integer-sqrt-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `io-extras 0.19.0` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/io-extras - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `io-lifetimes 1.0.11` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/io-lifetimes - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
+- `io-lifetimes 2.0.4` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/io-lifetimes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `io-lifetimes 3.0.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/io-lifetimes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `ipconfig 0.3.4` - `MIT/Apache-2.0` - https://github.com/liranringel/ipconfig - targets: aarch64-pc-windows-msvc, x86_64-pc-windows-msvc
 - `ipnet 2.12.0` - `MIT OR Apache-2.0` - https://github.com/krisprice/ipnet - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `irc 1.1.0` - `MPL-2.0` - https://github.com/aatxe/irc - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -618,6 +629,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `matrix-sdk-store-encryption 0.18.0` - `Apache-2.0` - https://github.com/matrix-org/matrix-rust-sdk - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `matrix_indexed_db_futures 0.7.0` - `MIT` - https://github.com/matrix-org/rust-indexed-db - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `matrix_indexed_db_futures_macros_internal 1.0.0` - `MIT` - https://github.com/matrix-org/rust-indexed-db - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `maybe-owned 0.3.4` - `MIT OR Apache-2.0` - https://github.com/rustonaut/maybe-owned - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `maybe-rayon 0.1.1` - `MIT` - https://github.com/shssoichiro/maybe-rayon - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `md-5 0.10.6` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/hashes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `mdns-sd 0.11.5` - `Apache-2.0 OR MIT` - https://github.com/keepsimple1/mdns-sd - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -871,6 +883,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `rustfft 6.4.1` - `MIT OR Apache-2.0` - https://github.com/ejmahler/RustFFT - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustix 0.38.44` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/rustix - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `rustix 1.1.4` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/bytecodealliance/rustix - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `rustix-linux-procfs 0.1.1` - `Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT` - https://github.com/sunfishcode/rustix-linux-procfs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls 0.23.40` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/rustls - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-native-certs 0.8.4` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/rustls-native-certs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `rustls-pemfile 2.2.0` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/pemfile - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -958,8 +971,8 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `softbuffer 0.4.8` - `MIT OR Apache-2.0` - https://github.com/rust-windowing/softbuffer - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `sorted-index-buffer 0.2.1` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `spez 0.1.2` - `BSD-2-Clause` - https://github.com/m-ou-se/spez - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `spin 0.10.0` - `MIT` - https://github.com/mvdnes/spin-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `spin 0.9.8` - `MIT` - https://github.com/mvdnes/spin-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `spin 0.10.1` - `MIT` - https://github.com/mvdnes/spin-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `spin 0.9.9` - `MIT` - https://github.com/mvdnes/spin-rs.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `spin_on 0.1.1` - `Apache-2.0 OR MIT` - https://crates.io/crates/spin_on/0.1.1 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `spki 0.7.3` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/formats/tree/master/spki - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `spki 0.8.0` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/formats - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -1188,6 +1201,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `winnow 0.5.40` - `MIT` - https://github.com/winnow-rs/winnow - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `winnow 0.7.15` - `MIT` - https://github.com/winnow-rs/winnow - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `winnow 1.0.2` - `MIT` - https://github.com/winnow-rs/winnow - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `winx 0.36.4` - `Apache-2.0 WITH LLVM-exception` - https://github.com/sunfishcode/winx - targets: aarch64-pc-windows-msvc, x86_64-pc-windows-msvc
 - `wl-clipboard-rs 0.9.3` - `MIT/Apache-2.0` - https://github.com/YaLTeR/wl-clipboard-rs - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `wmi 0.18.4` - `MIT OR Apache-2.0` - https://github.com/ohadravid/wmi-rs - targets: aarch64-pc-windows-msvc, x86_64-pc-windows-msvc
 - `write-fonts 0.45.0` - `MIT OR Apache-2.0` - https://github.com/googlefonts/fontations - targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -1386,8 +1400,10 @@ These upstreams publish a license expression but no standalone notice in the loc
 
 - `adobe-cmap-parser 0.4.1` - `MIT` - selected `MIT` - binding `ac107d55f0d31a9d47955082238ab9e4fb157cdb` - crate SHA-256 `ae8abfa9a4688de8fc9f42b3f013b6fffec18ed8a554f5f113577e0b9b3212a3` - https://github.com/jrmuizel/adobe-cmap-parser
 - `anndists 0.1.5` - `MIT/Apache-2.0` - selected `Apache-2.0` - binding `da78e0076c8d1a27488bb7702c8f0ef56e341e0a` - crate SHA-256 `9a8396b473aa0bceed68fb32462505387ea39fa47c7029417e0a49f10592b036` - https://github.com/jean-pierreboth/anndists
-- `bitcoin-io 0.1.100` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:11301df0b06f22dea7bb1916403fdd88a371031e495c49b8f96931b28189e175` - crate SHA-256 `11301df0b06f22dea7bb1916403fdd88a371031e495c49b8f96931b28189e175` - https://github.com/rust-bitcoin/rust-bitcoin
-- `bitcoin_hashes 0.14.100` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:0c9901a56e133a1fc86eeb1113e2591f45f4682451ca893bff494d2f88918e3f` - crate SHA-256 `0c9901a56e133a1fc86eeb1113e2591f45f4682451ca893bff494d2f88918e3f` - https://github.com/rust-bitcoin/rust-bitcoin
+- `bitcoin-consensus-encoding 1.1.0` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:207311705279250ba465076a1bac4b1ac982855fff73fc5f67e22158ac58cdc9` - crate SHA-256 `207311705279250ba465076a1bac4b1ac982855fff73fc5f67e22158ac58cdc9` - https://github.com/rust-bitcoin/rust-bitcoin
+- `bitcoin-internals 0.6.0` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:d573f4cf32996a8dce612e4348cece65a241f1882ed594047c9ba348e8869fa5` - crate SHA-256 `d573f4cf32996a8dce612e4348cece65a241f1882ed594047c9ba348e8869fa5` - https://github.com/rust-bitcoin/rust-bitcoin
+- `bitcoin-io 0.1.101` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:bb5de036369d1ac59d3c1819ebc4d850f89466f5401c571a285b6ed564a4cb78` - crate SHA-256 `bb5de036369d1ac59d3c1819ebc4d850f89466f5401c571a285b6ed564a4cb78` - https://github.com/rust-bitcoin/rust-bitcoin
+- `bitcoin_hashes 0.14.101` - `CC0-1.0` - selected `CC0-1.0` - binding `crate-sha256:bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2` - crate SHA-256 `bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2` - https://github.com/rust-bitcoin/rust-bitcoin
 - `crc32c 0.6.8` - `Apache-2.0/MIT` - selected `Apache-2.0` - binding `254a861f7cc71bfe455e86f0e1d86e3c83c33390` - crate SHA-256 `3a47af21622d091a8f0fb295b88bc886ac74efcc613efc19f5d0b21de5c89e47` - https://github.com/zowens/crc32c
 - `dispatch 0.2.0` - `MIT` - selected `MIT` - binding `82d6c7a5b75dc0c71c3f46f87bb6c16a476f7748` - crate SHA-256 `bd0c93bb4b0c6d9b77f4435b0ae98c24d17f1c45b2ff844c6151a07256ca923b` - https://github.com/ssheldon/rust-dispatch
 - `drm-fourcc 2.2.0` - `MIT` - selected `MIT` - binding `7b9f80060ffd4b35cd236437e65a17fb517d163c` - crate SHA-256 `0aafbcdb8afc29c1a7ee5fbe53b5d62f4565b35a042a662ca9fecd0b54dae6f4` - https://github.com/danielzfranklin/drm-fourcc-rs
@@ -2563,31 +2579,6 @@ Permission is granted to anyone to use this software for any purpose, including 
 2. Altered source versions must be plainly marked as such, and must not be misrepresented as being the original software.
 
 3. This notice may not be removed or altered from any source distribution.
------ END UPSTREAM LICENSE OR NOTICE -----
-
-#### SHA-256 `0a936d47e1b44e6692cbd6faae49fcc6d901b9419f80d74504ddd727b2736695`
-
-Applies to: `bitcoin_hashes 0.14.100`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-UPSTREAM PUBLISHED LICENSE GRANT RECORD
-
-Package: bitcoin_hashes 0.14.100
-Locked registry source: registry+https://github.com/rust-lang/crates.io-index
-Published crate SHA-256: 0c9901a56e133a1fc86eeb1113e2591f45f4682451ca893bff494d2f88918e3f
-Published license expression: CC0-1.0
-Selected compatible license text: CC0-1.0
-Repository: https://github.com/rust-bitcoin/rust-bitcoin
-Revision binding: crate-sha256:0c9901a56e133a1fc86eeb1113e2591f45f4682451ca893bff494d2f88918e3f
-Published authors:
-- Andrew Poelstra <apoelstra@wpsoftware.net>
-
-The exact published crate archive and, where available, its bound VCS revision
-contain no standalone license/notice file. This record preserves every license
-and author field the upstream publisher supplied. The full selected license text
-is reproduced from the pinned SPDX License List revision named in this snapshot.
-For MIT-only packages, the published author entries are retained as attribution;
-they are not recharacterized as an upstream copyright assertion.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `0ab4d106b6faac07fb6a051815fd1b4d862d730895e2d7d7358c2f13565e7a38`
@@ -4126,7 +4117,7 @@ Creator: Person: Daniel Thompson-Yvetot
 
 #### SHA-256 `143368af9701a24ebaf89fe5310ad8116ca71e8e99f17415c0dd893f6a256ae4`
 
-Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `anymap2 0.13.0`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.0`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cc 1.2.62`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-lifetimes 1.0.11`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `mime 0.3.17`, `muda 0.18.0`, `muda 0.19.3`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustls 0.23.40`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.26.2`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
+Applies to: `addr2line 0.25.1`, `ahash 0.8.12`, `aligned 0.4.3`, `ambient-authority 0.0.2`, `anymap2 0.13.0`, `arbitrary 1.4.2`, `arc-swap 1.9.1`, `arrayvec 0.7.6`, `as-slice 0.2.1`, `async-channel 2.5.0`, `async-compression 0.4.42`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `atomic-waker 1.1.2`, `autocfg 1.5.0`, `base64 0.13.1`, `base64 0.22.1`, `bitflags 1.3.2`, `bitflags 2.11.1`, `bitstream-io 4.10.0`, `blocking 1.6.2`, `bs58 0.5.1`, `bstr 1.12.1`, `bumpalo 3.20.2`, `by_address 1.2.1`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cc 1.2.62`, `cexpr 0.6.0`, `cff-parser 0.2.0`, `cfg-if 1.0.4`, `cgl 0.3.2`, `cmake 0.1.58`, `compression-codecs 0.4.38`, `compression-core 0.4.32`, `concurrent-queue 2.5.0`, `core-foundation 0.10.1`, `core-foundation 0.9.4`, `core-foundation-sys 0.8.7`, `core-graphics 0.23.2`, `core-graphics-types 0.1.3`, `countme 3.0.1`, `critical-section 1.2.0`, `crossbeam-channel 0.5.15`, `crossbeam-deque 0.8.6`, `crossbeam-epoch 0.9.20`, `crossbeam-utils 0.8.21`, `curve25519-dalek-derive 0.1.1`, `data-url 0.3.2`, `derivative 2.2.0`, `derive_arbitrary 1.4.2`, `displaydoc 0.2.5`, `either 1.15.0`, `embedded-io 0.4.0`, `embedded-io 0.6.1`, `equivalent 1.0.2`, `errno 0.3.14`, `euclid 0.20.14`, `euclid 0.22.14`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `filetime 0.2.29`, `find-msvc-tools 0.1.9`, `fixedbitset 0.5.7`, `flate2 1.1.9`, `fnv 1.0.7`, `fontique 0.8.0`, `form_urlencoded 1.2.2`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `gethostname 1.1.0`, `getopts 0.2.24`, `gif 0.14.2`, `gimli 0.32.3`, `glob 0.3.3`, `gloo-utils 0.2.0`, `glow 0.17.0`, `hashbrown 0.12.3`, `hashbrown 0.14.5`, `hashbrown 0.15.5`, `hashbrown 0.16.1`, `hashbrown 0.17.1`, `heck 0.5.0`, `html5ever 0.39.0`, `htmlparser 0.2.1`, `httparse 1.10.1`, `hyper-rustls 0.27.9`, `idna 1.1.0`, `idna_adapter 1.2.2`, `indexmap 1.9.3`, `indexmap 2.14.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `ipconfig 0.3.4`, `itertools 0.10.5`, `itertools 0.11.0`, `itertools 0.12.1`, `itertools 0.14.0`, `jobserver 0.1.34`, `js-sys 0.3.98`, `keyboard-types 0.7.0`, `lazy_static 1.5.0`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `lock_api 0.4.14`, `log 0.4.29`, `maplit 1.0.2`, `markup5ever 0.39.0`, `mime 0.3.17`, `muda 0.18.0`, `muda 0.19.3`, `num 0.4.3`, `num-bigint 0.4.6`, `num-complex 0.4.6`, `num-derive 0.4.2`, `num-integer 0.1.46`, `num-iter 0.1.45`, `num-rational 0.4.2`, `num-traits 0.2.19`, `num_cpus 1.17.0`, `oauth2 5.0.0`, `oauth2-reqwest 0.1.0-alpha.3`, `object 0.37.3`, `once_cell 1.21.4`, `openssl-probe 0.2.1`, `ordered-stream 0.2.0`, `parking 2.2.1`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `parlance 0.1.0`, `parley 0.8.0`, `parley_data 0.8.0`, `percent-encoding 2.3.2`, `petgraph 0.8.3`, `piper 0.2.5`, `pkg-config 0.3.33`, `png 0.17.16`, `png 0.18.1`, `polling 2.8.0`, `polling 3.11.0`, `pollster 0.4.0`, `postcard 1.1.3`, `postcard-derive 0.2.2`, `primal-check 0.3.4`, `profiling 1.0.18`, `profiling-procmacros 1.0.18`, `prost 0.14.4`, `prost-derive 0.14.4`, `rayon 1.12.0`, `rayon-cond 0.3.0`, `rayon-core 1.13.0`, `regex 1.13.0`, `regex-automata 0.4.14`, `regex-syntax 0.8.11`, `rowan 0.16.1`, `roxmltree 0.21.1`, `rustc-hash 1.1.0`, `rustc_version 0.4.1`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustls 0.23.40`, `rustls-native-certs 0.8.4`, `rustls-pemfile 2.2.0`, `scoped-tls 1.0.1`, `scoped-tls-hkt 0.1.5`, `scopeguard 1.2.0`, `sealed 0.6.0`, `secret-service 4.0.0`, `security-framework 3.7.0`, `security-framework-sys 2.17.0`, `selectors 0.38.0`, `serde_plain 1.0.2`, `serde_with 3.21.0`, `serde_with_macros 3.21.0`, `servo_arc 0.4.3`, `signal-hook-registry 1.4.8`, `simplecss 0.2.2`, `smallvec 1.15.1`, `smol_str 0.2.2`, `smol_str 0.3.6`, `socket2 0.5.10`, `socket2 0.6.3`, `spin_on 0.1.1`, `stable_deref_trait 1.2.1`, `stacker 0.1.24`, `string_cache 0.9.0`, `string_cache_codegen 0.6.1`, `svgtypes 0.16.1`, `swash 0.2.7`, `syn 1.0.109`, `system-configuration 0.7.0`, `system-configuration-sys 0.6.0`, `tar 0.4.46`, `tempfile 3.27.0`, `tendril 0.5.0`, `text-size 1.1.1`, `thread_local 1.1.9`, `toml_datetime 0.6.3`, `tray-icon 0.24.1`, `ttf-parser 0.25.1`, `tungstenite 0.24.0`, `tungstenite 0.26.2`, `ucd-trie 0.1.7`, `unicase 2.9.0`, `unicode-bidi 0.3.18`, `unicode-bidi-mirroring 0.4.0`, `unicode-ccc 0.4.0`, `unicode-normalization 0.1.25`, `unicode-normalization-alignments 0.1.12`, `unicode-properties 0.1.4`, `unicode-segmentation 1.13.2`, `unicode-vo 0.1.0`, `unicode-width 0.2.2`, `unicode-xid 0.2.6`, `url 2.5.8`, `uuid 1.23.5`, `vcpkg 0.2.15`, `version_check 0.9.5`, `wasm-bindgen 0.2.121`, `wasm-bindgen-futures 0.4.71`, `wasm-bindgen-macro 0.2.121`, `wasm-bindgen-macro-support 0.2.121`, `wasm-bindgen-shared 0.2.121`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `web-sys 0.3.98`, `web_atoms 0.2.4`, `weezl 0.1.12`, `wl-clipboard-rs 0.9.3`, `wmi 0.18.4`, `xattr 1.6.1`, `yazi 0.2.1`, `zeno 0.3.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -4464,6 +4455,214 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `15a9683b647225a614102c2a70e5c5b654e222647605ba7a4a88e230e774b630`
+
+Applies to: `maybe-owned 0.3.4`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Apache License
+                        Version 2.0, January 2004
+                     http://www.apache.org/licenses/
+
+TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+1. Definitions.
+
+   "License" shall mean the terms and conditions for use, reproduction,
+   and distribution as defined by Sections 1 through 9 of this document.
+
+   "Licensor" shall mean the copyright owner or entity authorized by
+   the copyright owner that is granting the License.
+
+   "Legal Entity" shall mean the union of the acting entity and all
+   other entities that control, are controlled by, or are under common
+   control with that entity. For the purposes of this definition,
+   "control" means (i) the power, direct or indirect, to cause the
+   direction or management of such entity, whether by contract or
+   otherwise, or (ii) ownership of fifty percent (50%) or more of the
+   outstanding shares, or (iii) beneficial ownership of such entity.
+
+   "You" (or "Your") shall mean an individual or Legal Entity
+   exercising permissions granted by this License.
+
+   "Source" form shall mean the preferred form for making modifications,
+   including but not limited to software source code, documentation
+   source, and configuration files.
+
+   "Object" form shall mean any form resulting from mechanical
+   transformation or translation of a Source form, including but
+   not limited to compiled object code, generated documentation,
+   and conversions to other media types.
+
+   "Work" shall mean the work of authorship, whether in Source or
+   Object form, made available under the License, as indicated by a
+   copyright notice that is included in or attached to the work
+   (an example is provided in the Appendix below).
+
+   "Derivative Works" shall mean any work, whether in Source or Object
+   form, that is based on (or derived from) the Work and for which the
+   editorial revisions, annotations, elaborations, or other modifications
+   represent, as a whole, an original work of authorship. For the purposes
+   of this License, Derivative Works shall not include works that remain
+   separable from, or merely link (or bind by name) to the interfaces of,
+   the Work and Derivative Works thereof.
+
+   "Contribution" shall mean any work of authorship, including
+   the original version of the Work and any modifications or additions
+   to that Work or Derivative Works thereof, that is intentionally
+   submitted to Licensor for inclusion in the Work by the copyright owner
+   or by an individual or Legal Entity authorized to submit on behalf of
+   the copyright owner. For the purposes of this definition, "submitted"
+   means any form of electronic, verbal, or written communication sent
+   to the Licensor or its representatives, including but not limited to
+   communication on electronic mailing lists, source code control systems,
+   and issue tracking systems that are managed by, or on behalf of, the
+   Licensor for the purpose of discussing and improving the Work, but
+   excluding communication that is conspicuously marked or otherwise
+   designated in writing by the copyright owner as "Not a Contribution."
+
+   "Contributor" shall mean Licensor and any individual or Legal Entity
+   on behalf of whom a Contribution has been received by Licensor and
+   subsequently incorporated within the Work.
+
+2. Grant of Copyright License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   copyright license to reproduce, prepare Derivative Works of,
+   publicly display, publicly perform, sublicense, and distribute the
+   Work and such Derivative Works in Source or Object form.
+
+3. Grant of Patent License. Subject to the terms and conditions of
+   this License, each Contributor hereby grants to You a perpetual,
+   worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+   (except as stated in this section) patent license to make, have made,
+   use, offer to sell, sell, import, and otherwise transfer the Work,
+   where such license applies only to those patent claims licensable
+   by such Contributor that are necessarily infringed by their
+   Contribution(s) alone or by combination of their Contribution(s)
+   with the Work to which such Contribution(s) was submitted. If You
+   institute patent litigation against any entity (including a
+   cross-claim or counterclaim in a lawsuit) alleging that the Work
+   or a Contribution incorporated within the Work constitutes direct
+   or contributory patent infringement, then any patent licenses
+   granted to You under this License for that Work shall terminate
+   as of the date such litigation is filed.
+
+4. Redistribution. You may reproduce and distribute copies of the
+   Work or Derivative Works thereof in any medium, with or without
+   modifications, and in Source or Object form, provided that You
+   meet the following conditions:
+
+   (a) You must give any other recipients of the Work or
+       Derivative Works a copy of this License; and
+
+   (b) You must cause any modified files to carry prominent notices
+       stating that You changed the files; and
+
+   (c) You must retain, in the Source form of any Derivative Works
+       that You distribute, all copyright, patent, trademark, and
+       attribution notices from the Source form of the Work,
+       excluding those notices that do not pertain to any part of
+       the Derivative Works; and
+
+   (d) If the Work includes a "NOTICE" text file as part of its
+       distribution, then any Derivative Works that You distribute must
+       include a readable copy of the attribution notices contained
+       within such NOTICE file, excluding those notices that do not
+       pertain to any part of the Derivative Works, in at least one
+       of the following places: within a NOTICE text file distributed
+       as part of the Derivative Works; within the Source form or
+       documentation, if provided along with the Derivative Works; or,
+       within a display generated by the Derivative Works, if and
+       wherever such third-party notices normally appear. The contents
+       of the NOTICE file are for informational purposes only and
+       do not modify the License. You may add Your own attribution
+       notices within Derivative Works that You distribute, alongside
+       or as an addendum to the NOTICE text from the Work, provided
+       that such additional attribution notices cannot be construed
+       as modifying the License.
+
+   You may add Your own copyright statement to Your modifications and
+   may provide additional or different license terms and conditions
+   for use, reproduction, or distribution of Your modifications, or
+   for any such Derivative Works as a whole, provided Your use,
+   reproduction, and distribution of the Work otherwise complies with
+   the conditions stated in this License.
+
+5. Submission of Contributions. Unless You explicitly state otherwise,
+   any Contribution intentionally submitted for inclusion in the Work
+   by You to the Licensor shall be under the terms and conditions of
+   this License, without any additional terms or conditions.
+   Notwithstanding the above, nothing herein shall supersede or modify
+   the terms of any separate license agreement you may have executed
+   with Licensor regarding such Contributions.
+
+6. Trademarks. This License does not grant permission to use the trade
+   names, trademarks, service marks, or product names of the Licensor,
+   except as required for reasonable and customary use in describing the
+   origin of the Work and reproducing the content of the NOTICE file.
+
+7. Disclaimer of Warranty. Unless required by applicable law or
+   agreed to in writing, Licensor provides the Work (and each
+   Contributor provides its Contributions) on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+   implied, including, without limitation, any warranties or conditions
+   of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+   PARTICULAR PURPOSE. You are solely responsible for determining the
+   appropriateness of using or redistributing the Work and assume any
+   risks associated with Your exercise of permissions under this License.
+
+8. Limitation of Liability. In no event and under no legal theory,
+   whether in tort (including negligence), contract, or otherwise,
+   unless required by applicable law (such as deliberate and grossly
+   negligent acts) or agreed to in writing, shall any Contributor be
+   liable to You for damages, including any direct, indirect, special,
+   incidental, or consequential damages of any character arising as a
+   result of this License or out of the use or inability to use the
+   Work (including but not limited to damages for loss of goodwill,
+   work stoppage, computer failure or malfunction, or any and all
+   other commercial damages or losses), even if such Contributor
+   has been advised of the possibility of such damages.
+
+9. Accepting Warranty or Additional Liability. While redistributing
+   the Work or Derivative Works thereof, You may choose to offer,
+   and charge a fee for, acceptance of support, warranty, indemnity,
+   or other liability obligations and/or rights consistent with this
+   License. However, in accepting such obligations, You may act only
+   on Your own behalf and on Your sole responsibility, not on behalf
+   of any other Contributor, and only if You agree to indemnify,
+   defend, and hold each Contributor harmless for any liability
+   incurred by, or claims asserted against, such Contributor by reason
+   of your accepting any such warranty or additional liability.
+
+END OF TERMS AND CONDITIONS
+
+APPENDIX: How to apply the Apache License to your work.
+
+   To apply the Apache License to your work, attach the following
+   boilerplate notice, with the fields enclosed by brackets "[]"
+   replaced with your own identifying information. (Don't include
+   the brackets!)  The text should be enclosed in the appropriate
+   comment syntax for the file format. We also recommend that a
+   file or class name and description of purpose be included on the
+   same "printed page" as the copyright notice for easier
+   identification within third-party archives.
+
+Copyright 2016 Philipp Korber
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `15af40d3405e83dc3274896a59a357cea8750f61ea3c41e62aac2216be7f5822`
@@ -5456,31 +5655,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
------ END UPSTREAM LICENSE OR NOTICE -----
-
-#### SHA-256 `1e4a3bdae99c91d2dc3602932aaefbc7e753199b32e3130d001131bd7d672b56`
-
-Applies to: `bitcoin-io 0.1.100`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-UPSTREAM PUBLISHED LICENSE GRANT RECORD
-
-Package: bitcoin-io 0.1.100
-Locked registry source: registry+https://github.com/rust-lang/crates.io-index
-Published crate SHA-256: 11301df0b06f22dea7bb1916403fdd88a371031e495c49b8f96931b28189e175
-Published license expression: CC0-1.0
-Selected compatible license text: CC0-1.0
-Repository: https://github.com/rust-bitcoin/rust-bitcoin
-Revision binding: crate-sha256:11301df0b06f22dea7bb1916403fdd88a371031e495c49b8f96931b28189e175
-Published authors:
-- Matt Corallo <birchneutea@mattcorallo.com>
-
-The exact published crate archive and, where available, its bound VCS revision
-contain no standalone license/notice file. This record preserves every license
-and author field the upstream publisher supplied. The full selected license text
-is reproduced from the pinned SPDX License List revision named in this snapshot.
-For MIT-only packages, the published author entries are retained as attribution;
-they are not recharacterized as an upstream copyright assertion.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `1e697ce8d21401fbf1bddd9b5c3fd4c4c79ae1e3bdf51f81761c85e11d5a89cd`
@@ -7623,7 +7797,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3`
 
-Applies to: `adler2 2.0.1`, `allocator-api2 0.2.21`, `anyhow 1.0.103`, `async-channel 2.5.0`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `async-trait 0.1.89`, `atomic-waker 1.1.2`, `auto_enums 0.8.8`, `blocking 1.6.2`, `borsh 1.6.1`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `concurrent-queue 2.5.0`, `countme 3.0.1`, `curve25519-dalek-derive 0.1.1`, `derive_utils 0.15.1`, `displaydoc 0.2.5`, `drm 0.14.1`, `drm-ffi 0.9.1`, `drm-sys 0.8.1`, `dtoa 1.0.11`, `dyn-clone 1.0.20`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `flume 0.11.1`, `futures-lite 2.6.1`, `glow 0.17.0`, `io-lifetimes 1.0.11`, `itoa 1.0.18`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `minimal-lexical 0.2.1`, `mmap-rs 0.7.0`, `monostate 0.1.18`, `monostate-impl 0.1.18`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.1.1`, `pastey 0.2.3`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `piper 0.2.5`, `polling 2.8.0`, `polling 3.11.0`, `portable-atomic 1.13.1`, `prettyplease 0.2.37`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `quote 1.0.45`, `ref-cast 1.0.25`, `ref-cast-impl 1.0.25`, `rowan 0.16.1`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustversion 1.0.22`, `sealed 0.6.0`, `selectors 0.38.0`, `semver 1.0.28`, `seq-macro 0.3.6`, `serde 1.0.228`, `serde_bytes 0.11.19`, `serde_core 1.0.228`, `serde_derive 1.0.228`, `serde_html_form 0.4.0`, `serde_json 1.0.150`, `serde_path_to_error 0.1.20`, `serde_repr 0.1.20`, `serde_yaml 0.9.34+deprecated`, `servo_arc 0.4.3`, `smol_str 0.2.2`, `smol_str 0.3.6`, `spin_on 0.1.1`, `syn 1.0.109`, `syn 2.0.117`, `text-size 1.1.1`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `ug 0.1.0`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wmi 0.18.4`, `x11-dl 2.21.0`, `xdg-home 1.3.0`, `zbus_names 3.0.0`, `zmij 1.0.21`, `zvariant_utils 2.1.0`, `zvariant_utils 3.3.1`
+Applies to: `adler2 2.0.1`, `allocator-api2 0.2.21`, `ambient-authority 0.0.2`, `anyhow 1.0.103`, `async-channel 2.5.0`, `async-executor 1.14.0`, `async-fs 2.2.0`, `async-io 2.6.0`, `async-lock 3.4.2`, `async-net 2.0.0`, `async-process 2.5.0`, `async-recursion 1.1.1`, `async-signal 0.2.14`, `async-task 4.7.1`, `async-trait 0.1.89`, `atomic-waker 1.1.2`, `auto_enums 0.8.8`, `blocking 1.6.2`, `borsh 1.6.1`, `candle-nn 0.8.4`, `candle-transformers 0.8.4`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `concurrent-queue 2.5.0`, `countme 3.0.1`, `curve25519-dalek-derive 0.1.1`, `derive_utils 0.15.1`, `displaydoc 0.2.5`, `drm 0.14.1`, `drm-ffi 0.9.1`, `drm-sys 0.8.1`, `dtoa 1.0.11`, `dyn-clone 1.0.20`, `endi 1.1.1`, `event-listener 5.4.1`, `event-listener-strategy 0.5.4`, `fastrand 2.4.1`, `flume 0.11.1`, `fs-set-times 0.20.3`, `futures-lite 2.6.1`, `glow 0.17.0`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `itoa 1.0.18`, `leb128fmt 0.1.0`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `minimal-lexical 0.2.1`, `mmap-rs 0.7.0`, `monostate 0.1.18`, `monostate-impl 0.1.18`, `num_enum 0.7.6`, `num_enum_derive 0.7.6`, `once_cell 1.21.4`, `ordered-stream 0.2.0`, `parking 2.2.1`, `paste 1.0.15`, `pastey 0.1.1`, `pastey 0.2.3`, `pin-project 1.1.12`, `pin-project-internal 1.1.12`, `pin-project-lite 0.2.17`, `piper 0.2.5`, `polling 2.8.0`, `polling 3.11.0`, `portable-atomic 1.13.1`, `prettyplease 0.2.37`, `proc-macro-crate 3.5.0`, `proc-macro2 1.0.106`, `quote 1.0.45`, `ref-cast 1.0.25`, `ref-cast-impl 1.0.25`, `rowan 0.16.1`, `rustc-hash 1.1.0`, `rustc-hash 2.1.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `rustversion 1.0.22`, `sealed 0.6.0`, `selectors 0.38.0`, `semver 1.0.28`, `seq-macro 0.3.6`, `serde 1.0.228`, `serde_bytes 0.11.19`, `serde_core 1.0.228`, `serde_derive 1.0.228`, `serde_html_form 0.4.0`, `serde_json 1.0.150`, `serde_path_to_error 0.1.20`, `serde_repr 0.1.20`, `serde_yaml 0.9.34+deprecated`, `servo_arc 0.4.3`, `smol_str 0.2.2`, `smol_str 0.3.6`, `spin_on 0.1.1`, `syn 1.0.109`, `syn 2.0.117`, `text-size 1.1.1`, `thiserror 1.0.69`, `thiserror 2.0.18`, `thiserror-impl 1.0.69`, `thiserror-impl 2.0.18`, `ug 0.1.0`, `unicode-ident 1.0.24`, `unsafe-libyaml 0.2.11`, `utf-8 0.7.6`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wmi 0.18.4`, `x11-dl 2.21.0`, `xdg-home 1.3.0`, `zbus_names 3.0.0`, `zmij 1.0.21`, `zvariant_utils 2.1.0`, `zvariant_utils 3.3.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Permission is hereby granted, free of charge, to any
@@ -12265,7 +12439,7 @@ Apache License
 
 #### SHA-256 `495c30b45120f8af07cfa26eb9cb1ebfe8324560dca2b3b1e76cad1b9b6b489a`
 
-Applies to: `io-lifetimes 1.0.11`
+Applies to: `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Short version for non-lawyers:
@@ -14458,7 +14632,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79`
 
-Applies to: `spin 0.10.0`, `spin 0.9.8`, `zip 1.1.4`
+Applies to: `spin 0.10.1`, `spin 0.9.9`, `zip 1.1.4`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 The MIT License (MIT)
@@ -14672,6 +14846,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `5b3d8a674979e158328c57f5c4cc12150df79d0bdf12c86eafc2e9c6006a2d4e`
+
+Applies to: `cap-fs-ext 4.0.2`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`cap-fs-ext` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `cap-fs-ext` project are retained by their contributors.
+No copyright assignment is required to contribute to the `cap-fs-ext`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `cap-fs-ext`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `5b698ca13897be3afdb7174256fa1574f8c6892b8bea1a66dd6469d3fe27885a`
@@ -17314,6 +17524,42 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `6b1691fdee3b03c3946696a7be125fcf50eff310b9486fac850c1b8aea91478b`
+
+Applies to: `cap-std 4.0.2`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`cap-std` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `cap-std` project are retained by their contributors.
+No copyright assignment is required to contribute to the `cap-std`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `cap-std`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `6b286a8c17b82bbcba94eeb9a0c883bcc9117790599a182d23b7ce666042fc38`
@@ -20021,6 +20267,31 @@ DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR
 PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS
 ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `7d121bd43ef616ccee71625ba95ceb47b45853f042f9788a42d9ab98052ca476`
+
+Applies to: `bitcoin_hashes 0.14.101`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+UPSTREAM PUBLISHED LICENSE GRANT RECORD
+
+Package: bitcoin_hashes 0.14.101
+Locked registry source: registry+https://github.com/rust-lang/crates.io-index
+Published crate SHA-256: bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2
+Published license expression: CC0-1.0
+Selected compatible license text: CC0-1.0
+Repository: https://github.com/rust-bitcoin/rust-bitcoin
+Revision binding: crate-sha256:bca4c7abb40c8817d77403c880988cfd484f23ab2365726afb2f798363e2c4a2
+Published authors:
+- Andrew Poelstra <apoelstra@wpsoftware.net>
+
+The exact published crate archive and, where available, its bound VCS revision
+contain no standalone license/notice file. This record preserves every license
+and author field the upstream publisher supplied. The full selected license text
+is reproduced from the pinned SPDX License List revision named in this snapshot.
+For MIT-only packages, the published author entries are retained as attribution;
+they are not recharacterized as an upstream copyright assertion.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `7d32c01e2f07bb71e7c355efe71bc6b30b1fee98f7b7ab85f2be762af4d1c1be`
@@ -24920,7 +25191,7 @@ Creative Commons may be contacted at creativecommons.org.
 
 #### SHA-256 `a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499`
 
-Applies to: `bip39 2.2.2`, `bitcoin-io 0.1.100`, `bitcoin_hashes 0.14.100`, `blake3 1.8.5`, `constant_time_eq 0.4.2`, `dunce 1.0.5`, `hex-conservative 0.2.2`, `imgref 1.12.1`, `secp256k1 0.29.1`, `secp256k1-sys 0.10.1`
+Applies to: `bip39 2.2.2`, `bitcoin-consensus-encoding 1.1.0`, `bitcoin-internals 0.6.0`, `bitcoin-io 0.1.101`, `bitcoin_hashes 0.14.101`, `blake3 1.8.5`, `constant_time_eq 0.4.2`, `dunce 1.0.5`, `hex-conservative 0.2.2`, `hex-conservative 1.2.0`, `imgref 1.12.1`, `secp256k1 0.29.1`, `secp256k1-sys 0.10.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Creative Commons Legal Code
@@ -25639,6 +25910,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `a8799c2a07dabcb8d52481f885c5ab7000acb8a4d3cd9503fbcb97c84d350e65`
+
+Applies to: `cap-primitives 4.0.2`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`cap-primitives` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `cap-primitives` project are retained by their contributors.
+No copyright assignment is required to contribute to the `cap-primitives`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `cap-primitives`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `a89137c40f91e102d1e3b6aa5061fbd84f6e39638e69f6bda124c104a6e1c83d`
@@ -27012,9 +27319,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `ae4b85e8c00922606937d62e5b3851dc0c0dfde9383c645131d9497822f3735e`
+
+Applies to: `bitcoin-consensus-encoding 1.1.0`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+UPSTREAM PUBLISHED LICENSE GRANT RECORD
+
+Package: bitcoin-consensus-encoding 1.1.0
+Locked registry source: registry+https://github.com/rust-lang/crates.io-index
+Published crate SHA-256: 207311705279250ba465076a1bac4b1ac982855fff73fc5f67e22158ac58cdc9
+Published license expression: CC0-1.0
+Selected compatible license text: CC0-1.0
+Repository: https://github.com/rust-bitcoin/rust-bitcoin
+Revision binding: crate-sha256:207311705279250ba465076a1bac4b1ac982855fff73fc5f67e22158ac58cdc9
+Published authors:
+- Andrew Poelstra <apoelstra@wpsoftware.net>
+- Nick Johnson <nick@yonson.dev>
+- Tobin C. Harding <me@tobin.cc>
+
+The exact published crate archive and, where available, its bound VCS revision
+contain no standalone license/notice file. This record preserves every license
+and author field the upstream publisher supplied. The full selected license text
+is reproduced from the pinned SPDX License List revision named in this snapshot.
+For MIT-only packages, the published author entries are retained as attribution;
+they are not recharacterized as an upstream copyright assertion.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `ae6e99144a735503e5b54b92e09cf8dec2e7f2e25706ec5c98af2f7d2242dc75`
 
-Applies to: `cranelift-assembler-x64 0.123.9`, `cranelift-assembler-x64-meta 0.123.9`, `cranelift-bforest 0.123.9`, `cranelift-bitset 0.123.9`, `cranelift-codegen 0.123.9`, `cranelift-codegen-meta 0.123.9`, `cranelift-codegen-shared 0.123.9`, `cranelift-control 0.123.9`, `cranelift-entity 0.123.9`, `cranelift-frontend 0.123.9`, `cranelift-isle 0.123.9`, `cranelift-native 0.123.9`, `cranelift-srcgen 0.123.9`, `io-lifetimes 1.0.11`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `pulley-interpreter 36.0.9`, `pulley-macros 36.0.9`, `regalloc2 0.12.2`, `rustix 0.38.44`, `rustix 1.1.4`, `target-lexicon 0.13.5`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wasmtime 36.0.9`, `wasmtime-environ 36.0.9`, `wasmtime-internal-asm-macros 36.0.9`, `wasmtime-internal-cranelift 36.0.9`, `wasmtime-internal-fiber 36.0.9`, `wasmtime-internal-jit-debug 36.0.9`, `wasmtime-internal-jit-icache-coherence 36.0.9`, `wasmtime-internal-math 36.0.9`, `wasmtime-internal-slab 36.0.9`, `wasmtime-internal-unwinder 36.0.9`, `wasmtime-internal-versioned-export-macros 36.0.9`
+Applies to: `ambient-authority 0.0.2`, `cap-fs-ext 4.0.2`, `cap-primitives 4.0.2`, `cap-std 4.0.2`, `cranelift-assembler-x64 0.123.9`, `cranelift-assembler-x64-meta 0.123.9`, `cranelift-bforest 0.123.9`, `cranelift-bitset 0.123.9`, `cranelift-codegen 0.123.9`, `cranelift-codegen-meta 0.123.9`, `cranelift-codegen-shared 0.123.9`, `cranelift-control 0.123.9`, `cranelift-entity 0.123.9`, `cranelift-frontend 0.123.9`, `cranelift-isle 0.123.9`, `cranelift-native 0.123.9`, `cranelift-srcgen 0.123.9`, `fs-set-times 0.20.3`, `io-extras 0.19.0`, `io-lifetimes 1.0.11`, `io-lifetimes 2.0.4`, `io-lifetimes 3.0.1`, `linux-raw-sys 0.12.1`, `linux-raw-sys 0.4.15`, `linux-raw-sys 0.9.4`, `pulley-interpreter 36.0.9`, `pulley-macros 36.0.9`, `regalloc2 0.12.2`, `rustix 0.38.44`, `rustix 1.1.4`, `rustix-linux-procfs 0.1.1`, `target-lexicon 0.13.5`, `wasm-encoder 0.236.1`, `wasmparser 0.236.1`, `wasmprinter 0.236.1`, `wasmtime 36.0.9`, `wasmtime-environ 36.0.9`, `wasmtime-internal-asm-macros 36.0.9`, `wasmtime-internal-cranelift 36.0.9`, `wasmtime-internal-fiber 36.0.9`, `wasmtime-internal-jit-debug 36.0.9`, `wasmtime-internal-jit-icache-coherence 36.0.9`, `wasmtime-internal-math 36.0.9`, `wasmtime-internal-slab 36.0.9`, `wasmtime-internal-unwinder 36.0.9`, `wasmtime-internal-versioned-export-macros 36.0.9`, `winx 0.36.4`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -31524,6 +31858,42 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `d00d6d48df2db6f91e4ca9c656e5e30782d5becf52bb3e5bfd0aff467bd37781`
+
+Applies to: `ambient-authority 0.0.2`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`ambient-authority` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `ambient-authority` project are retained by their contributors.
+No copyright assignment is required to contribute to the `ambient-authority`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `ambient-authority`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `d0235d2a1f657b6fd18fd4ce98988348969a9284d94281b6d117830aa259a07a`
 
 Applies to: `wl-clipboard-rs 0.9.3`
@@ -32066,6 +32436,42 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `d415a86ccfd794129666247cbbadebee7a6d0ac3ff701c76c07b0f9424f0307d`
+
+Applies to: `rustix-linux-procfs 0.1.1`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`rustix-linux-procfs` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `rustix-linux-procfs` project are retained by their contributors.
+No copyright assignment is required to contribute to the `rustix-linux-procfs`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `rustix-linux-procfs`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `d557539df68e771cc1eedcc91d13f70fca930e508d11eedcafa4b15db49e3744`
 
 Applies to: `const-field-offset-macro 0.2.0`
@@ -32287,6 +32693,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `d67749dec342c98815188ab227d8c1a63780c2ae57cfdada6b23edcde8bca0e9`
+
+Applies to: `bitcoin-io 0.1.101`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+UPSTREAM PUBLISHED LICENSE GRANT RECORD
+
+Package: bitcoin-io 0.1.101
+Locked registry source: registry+https://github.com/rust-lang/crates.io-index
+Published crate SHA-256: bb5de036369d1ac59d3c1819ebc4d850f89466f5401c571a285b6ed564a4cb78
+Published license expression: CC0-1.0
+Selected compatible license text: CC0-1.0
+Repository: https://github.com/rust-bitcoin/rust-bitcoin
+Revision binding: crate-sha256:bb5de036369d1ac59d3c1819ebc4d850f89466f5401c571a285b6ed564a4cb78
+Published authors:
+- Matt Corallo <birchneutea@mattcorallo.com>
+
+The exact published crate archive and, where available, its bound VCS revision
+contain no standalone license/notice file. This record preserves every license
+and author field the upstream publisher supplied. The full selected license text
+is reproduced from the pinned SPDX License List revision named in this snapshot.
+For MIT-only packages, the published author entries are retained as attribution;
+they are not recharacterized as an upstream copyright assertion.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `d69f24ad84ec2ade64c0b68bdb31b41170e997b158370342056918329cc9af1e`
@@ -33165,6 +33596,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `e196ffeb5ab101e9ec8bbe395c9f367c5380ee2d28c47e5c03371523798a9af7`
+
+Applies to: `fs-set-times 0.20.3`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`fs-set-times` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `fs-set-times` project are retained by their contributors.
+No copyright assignment is required to contribute to the `fs-set-times`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `fs-set-times`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `e1da6bc3092fe4be62352c00a7692cbc30bab30d9a89e8d6349b945b06904009`
@@ -34885,6 +35352,38 @@ Apache License
    limitations under the License.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
+#### SHA-256 `ef2b3bbd7b718a7881253226313f103e89b379e1279681a3c1ebcb65a27d209d`
+
+Applies to: `maybe-owned 0.3.4`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Copyright (c) 2016 Philipp Korber
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
 #### SHA-256 `f025ccfb7dfb6bdfedc75ca0f67acc69e6fb4998143d834f7c2f38a29989680f`
 
 Applies to: `ring 0.17.14`
@@ -34923,6 +35422,42 @@ INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
 OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
 TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
 THIS SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `f0c1d22de8bd3b776a40f2691f08b84e91c7bafc78b72a51150e231002b88db3`
+
+Applies to: `io-extras 0.19.0`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+Short version for non-lawyers:
+
+`io-extras` is triple-licensed under Apache 2.0 with the LLVM Exception,
+Apache 2.0, and MIT terms.
+
+
+Longer version:
+
+Copyrights in the `io-extras` project are retained by their contributors.
+No copyright assignment is required to contribute to the `io-extras`
+project.
+
+Some files include code derived from Rust's `libstd`; see the comments in
+the code for details.
+
+Except as otherwise noted (below and/or in individual files), `io-extras`
+is licensed under:
+
+ - the Apache License, Version 2.0, with the LLVM Exception
+   <LICENSE-Apache-2.0_WITH_LLVM-exception> or
+   <http://llvm.org/foundation/relicensing/LICENSE.txt>
+ - the Apache License, Version 2.0
+   <LICENSE-APACHE> or
+   <http://www.apache.org/licenses/LICENSE-2.0>,
+ - or the MIT license
+   <LICENSE-MIT> or
+   <http://opensource.org/licenses/MIT>,
+
+at your option.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `f0cf9b1c62bbe3bd3a69f5f79c7158f513f612b4940a0a812d1db39d605318bc`
@@ -35185,6 +35720,32 @@ THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+----- END UPSTREAM LICENSE OR NOTICE -----
+
+#### SHA-256 `f41857b3678495dfac752979371da2a7ae2bf8595e80c9806179743f61adfce3`
+
+Applies to: `bitcoin-internals 0.6.0`
+
+----- BEGIN UPSTREAM LICENSE OR NOTICE -----
+UPSTREAM PUBLISHED LICENSE GRANT RECORD
+
+Package: bitcoin-internals 0.6.0
+Locked registry source: registry+https://github.com/rust-lang/crates.io-index
+Published crate SHA-256: d573f4cf32996a8dce612e4348cece65a241f1882ed594047c9ba348e8869fa5
+Published license expression: CC0-1.0
+Selected compatible license text: CC0-1.0
+Repository: https://github.com/rust-bitcoin/rust-bitcoin
+Revision binding: crate-sha256:d573f4cf32996a8dce612e4348cece65a241f1882ed594047c9ba348e8869fa5
+Published authors:
+- Andrew Poelstra <apoelstra@wpsoftware.net>
+- The Rust Bitcoin developers
+
+The exact published crate archive and, where available, its bound VCS revision
+contain no standalone license/notice file. This record preserves every license
+and author field the upstream publisher supplied. The full selected license text
+is reproduced from the pinned SPDX License List revision named in this snapshot.
+For MIT-only packages, the published author entries are retained as attribution;
+they are not recharacterized as an upstream copyright assertion.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `f428305bbf2e70fbd807af0f3c7ac1b7acfb95311640f451e9d2e48db6d7e96b`
