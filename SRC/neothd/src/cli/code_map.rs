@@ -134,6 +134,12 @@ pub enum CodeMapAction {
         /// Max files to return. Default 5.
         #[arg(long, value_name = "N", default_value_t = 5)]
         max: usize,
+
+        /// Also report whether the persisted index is stale relative to the
+        /// files on disk. Re-scans the active root (reads + hashes files), so
+        /// it is opt-in and slower than a plain recall.
+        #[arg(long)]
+        check_stale: bool,
     },
 }
 
@@ -171,7 +177,11 @@ pub async fn run_code_map(args: CodeMapArgs) -> Result<()> {
         ),
         CodeMapAction::Load { path, full } => run_load(path, full, args.output),
         CodeMapAction::Search { name } => run_search(name, args.output),
-        CodeMapAction::Relevant { prompt, max } => run_relevant(prompt, max, args.output),
+        CodeMapAction::Relevant {
+            prompt,
+            max,
+            check_stale,
+        } => run_relevant(prompt, max, check_stale, args.output),
     }
 }
 
@@ -519,7 +529,7 @@ fn run_search(name: String, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> {
+fn run_relevant(prompt: String, max: usize, check_stale: bool, output: OutputFormat) -> Result<()> {
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
@@ -555,6 +565,13 @@ fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> 
     // detect a re-scan under it and invalidate a cached result.
     let index_generation =
         crate::code_map::persist::root_index_generation(&conn, &active_root).unwrap_or(None);
+    // GOLD-R3-13: opt-in staleness — re-scans the active root and reports
+    // whether the index predates on-disk edits. `None` unless requested.
+    let stale = if check_stale {
+        crate::code_map::persist::is_index_stale(&conn, &active_root).ok()
+    } else {
+        None
+    };
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -577,11 +594,18 @@ fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> 
                     "max": max,
                     "root": active_root,
                     "index_generation": index_generation,
+                    "stale": stale,
                     "hits": arr,
                 }))?
             );
         }
         OutputFormat::Table => {
+            if stale == Some(true) {
+                println!(
+                    "⚠ index is STALE for {active_root} — files changed on disk since the last \
+                     `neoth code-map persist`; results may be incomplete"
+                );
+            }
             if hits.is_empty() {
                 println!(
                     "no relevant files for prompt (try `neoth code-map persist --symbols` first)"
@@ -837,7 +861,7 @@ mod tests {
         with_temp_home(|| {
             // No persist beforehand — relevant must still Ok (returns
             // an empty hit list).
-            run_relevant("auth_middleware".into(), 5, OutputFormat::Json)
+            run_relevant("auth_middleware".into(), 5, false, OutputFormat::Json)
                 .expect("relevant on empty db must Ok");
         });
     }
@@ -867,6 +891,7 @@ mod tests {
             run_relevant(
                 "where is auth_middleware defined?".into(),
                 5,
+                true,
                 OutputFormat::Json,
             )
             .unwrap();

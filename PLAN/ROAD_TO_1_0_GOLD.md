@@ -292,9 +292,18 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     `code-map relevant --json` surfaces `root` + `index_generation` so a client
     (GUI / polling agent) can detect a re-index under it and invalidate a cached
     result. The v1→v2→v3 migration chain and the increment are pinned by tests.
-    STILL OPEN: automatic on-disk stale detection (walk the root and compare
-    file mtimes to the persisted scan so recall can WARN when the index predates
-    edits) and a Self-Improve recall consumer if one is added.
+    **Stale detection landed 2026-07-24:** `is_index_stale(conn, root)` re-scans
+    the root with the same ignore rules and compares content SHA-256 against the
+    stored rows — catching content edits (independent of mtime), additions and
+    removals; it re-reads files so it is opt-in via `code-map relevant
+    --check-stale` (surfaced as `"stale"` in JSON + a `⚠ index STALE` Table
+    warning), never the hot chat-context path. A real-tempdir regression pins
+    edit/add/remove/fresh/unknown-root. STILL OPEN: propagate `index_generation`
+    + the staleness signal into the OTHER recall consumers (chat repo-context,
+    Self-Improve, Graphify — today only the `code-map relevant` CLI carries
+    them), and the deeper "canonical root IDENTITY" point (the key is still the
+    path string, so a rename/move/mount/Windows-case change reads as a new root
+    rather than the same repo — would need a path + repo-fingerprint identity).
   - **R3-14 (decomposition/repair defanged 2026-07-24; rest still OPEN):**
     `wrap_untrusted` protects selected MCP/deep-research/teacher paths, and the
     coding decomposer/repair fences no longer interpolate untrusted data raw —

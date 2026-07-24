@@ -547,6 +547,7 @@ Phase 3b (Session 14 Pick #25) — given a free-text PROMPT, query the persisted
 
 - `<PROMPT>` — Free-text prompt to score against the persisted map
 - `--max <N>` — Max files to return. Default 5
+- `--check-stale` — Also report whether the persisted index is stale relative to the files on disk. Re-scans the active root (reads + hashes files), so it is opt-in and slower than a plain recall
 
 ### `neoth code-map scan`
 

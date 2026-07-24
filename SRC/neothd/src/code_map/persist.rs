@@ -767,6 +767,55 @@ pub fn root_index_generation(conn: &Connection, root: &str) -> Result<Option<i64
     .context("query code_map_roots index_generation")
 }
 
+/// GOLD-R3-13 — is the persisted snapshot for `root` stale relative to the
+/// files currently on disk? Re-scans the root (no symbol extraction) with the
+/// same ignore rules and compares content hashes against the stored rows: a
+/// stale index has an added, removed, or content-changed file. Returns `false`
+/// (fresh) when the root has no snapshot to compare against.
+///
+/// This re-reads the root's files to hash them, so it is an EXPLICIT, opt-in
+/// check (an operator command), never the hot chat-context path. A stored row
+/// with an empty hash (a pre-CBM-04 v1 row not yet re-scanned) is treated as
+/// unknown and does not by itself signal staleness. Ceiling: both sides use the
+/// same walker caps, so a stable tree yields equal counts; a truncated giant
+/// repo could compare unequal set sizes and read as stale.
+pub fn is_index_stale(conn: &Connection, root: &str) -> Result<bool> {
+    let stored: std::collections::HashMap<String, String> = {
+        let mut stmt = conn
+            .prepare("SELECT path, sha256 FROM code_map_files WHERE root = ?1")
+            .context("prepare staleness stored-hash query")?;
+        stmt.query_map(rusqlite::params![root], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .context("execute staleness stored-hash query")?
+        .collect::<rusqlite::Result<_>>()
+        .context("collect staleness stored-hash rows")?
+    };
+    if stored.is_empty() {
+        return Ok(false);
+    }
+    let scanned = super::walker::RepoMapBuilder::new(root)
+        .with_symbols(false)
+        .scan()
+        .with_context(|| format!("re-scan {root} for staleness check"))?;
+
+    // Added or removed files change the set size (both sides bounded by the
+    // same caps, so a stable tree yields equal counts).
+    if scanned.files.len() != stored.len() {
+        return Ok(true);
+    }
+    // Any on-disk file that is new, or whose content hash differs from the
+    // stored hash, means the index predates an edit. An empty stored hash is
+    // unknown and is not counted as a change.
+    for file in &scanned.files {
+        match stored.get(&file.path) {
+            Some(stored_sha) if stored_sha.is_empty() || *stored_sha == file.sha256 => {}
+            _ => return Ok(true),
+        }
+    }
+    Ok(false)
+}
+
 /// Find every persisted file whose symbol list contains a declaration
 /// matching `symbol_name` exactly. Ordered by `(root, path)` so a
 /// repo with many roots stays grouped. Result rows carry the bare
@@ -1632,6 +1681,67 @@ mod tests {
         persist_map(&mut conn, &other).unwrap();
         assert_eq!(root_index_generation(&conn, "/repo/y").unwrap(), Some(1));
         assert_eq!(root_index_generation(&conn, "/repo/x").unwrap(), Some(2));
+    }
+
+    #[test]
+    fn is_index_stale_detects_edit_add_and_remove() {
+        use crate::code_map::walker::RepoMapBuilder;
+
+        let repo = tempdir().unwrap();
+        std::fs::create_dir_all(repo.path().join("src")).unwrap();
+        std::fs::write(repo.path().join("src/a.rs"), "fn a() {}\n").unwrap();
+        std::fs::write(repo.path().join("src/b.rs"), "fn b() {}\n").unwrap();
+
+        let db = tempdir().unwrap();
+        let mut conn = open(&db.path().join("cm.db")).unwrap();
+        let map = RepoMapBuilder::new(repo.path())
+            .with_symbols(false)
+            .scan()
+            .unwrap();
+        let root = map.root.clone();
+        persist_map(&mut conn, &map).unwrap();
+
+        // Freshly persisted → not stale.
+        assert!(
+            !is_index_stale(&conn, &root).unwrap(),
+            "a freshly persisted index must not be stale"
+        );
+        // Unknown root → not stale (nothing to compare).
+        assert!(!is_index_stale(&conn, "/definitely/not/a/root").unwrap());
+
+        // Edit a file's CONTENT (sha256 changes) → stale.
+        std::fs::write(repo.path().join("src/a.rs"), "fn a() { let _ = 1; }\n").unwrap();
+        assert!(
+            is_index_stale(&conn, &root).unwrap(),
+            "a content edit must be detected via the hash"
+        );
+
+        // Re-persist → fresh again.
+        let map2 = RepoMapBuilder::new(repo.path())
+            .with_symbols(false)
+            .scan()
+            .unwrap();
+        persist_map(&mut conn, &map2).unwrap();
+        assert!(!is_index_stale(&conn, &root).unwrap());
+
+        // Add a file → stale (set size grows).
+        std::fs::write(repo.path().join("src/c.rs"), "fn c() {}\n").unwrap();
+        assert!(
+            is_index_stale(&conn, &root).unwrap(),
+            "a new file must be detected"
+        );
+
+        // Re-persist, then REMOVE a file → stale (set size shrinks).
+        let map3 = RepoMapBuilder::new(repo.path())
+            .with_symbols(false)
+            .scan()
+            .unwrap();
+        persist_map(&mut conn, &map3).unwrap();
+        std::fs::remove_file(repo.path().join("src/c.rs")).unwrap();
+        assert!(
+            is_index_stale(&conn, &root).unwrap(),
+            "a removed file must be detected"
+        );
     }
 
     #[test]
