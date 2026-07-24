@@ -127,24 +127,31 @@ const RECALL_CALLERS_PER_SYMBOL: usize = 3;
 /// matches, and the decomposer proceeds exactly as before.
 fn prompt_recall_context(prompt: &str) -> Option<String> {
     let conn = crate::code_map::persist::open(&crate::code_map::persist::default_path()).ok()?;
-    let root = std::env::current_dir().ok()?.to_string_lossy().to_string();
+    // GOLD-R3-13: resolve the persisted root that CONTAINS the working dir
+    // (canonical, sub-directory-aware) instead of comparing the raw CWD string.
+    // None → the CWD is not inside a persisted repo, so there is no context.
+    let cwd = std::env::current_dir().ok()?;
+    let root = crate::code_map::recall::resolve_active_root(&conn, &cwd)?;
     prompt_recall_context_from(&conn, &root, prompt)
 }
 
-/// Testable core (mirrors [`repo_map_context_from`]). Recall searches every
-/// persisted root, so the result is filtered to the working root — a prompt
-/// about Project A must never surface Project B's files. The callers section
-/// is independently best-effort — an edge-load failure never drops the file
-/// list.
+/// Testable core (mirrors [`repo_map_context_from`]). `root` is the canonical
+/// active repository; recall contains to it internally BEFORE ranking and
+/// truncation (GOLD-R3-13), so an unrelated persisted repo can never fill the
+/// top-k and hide the active repo's files. The callers section is
+/// independently best-effort — an edge-load failure never drops the file list.
 fn prompt_recall_context_from(
     conn: &rusqlite::Connection,
     root: &str,
     prompt: &str,
 ) -> Option<String> {
-    let files =
-        crate::code_map::recall::relevant_files_for_prompt(conn, prompt, RECALL_CONTEXT_MAX_FILES)
-            .ok()?;
-    let files: Vec<_> = files.into_iter().filter(|f| f.root == root).collect();
+    let files = crate::code_map::recall::relevant_files_for_prompt(
+        conn,
+        prompt,
+        root,
+        RECALL_CONTEXT_MAX_FILES,
+    )
+    .ok()?;
     if files.is_empty() {
         return None;
     }

@@ -1788,6 +1788,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 config_for_handler.as_ref(),
                 &sanitized_text,
                 &instance_paths,
+                &channel_cwd,
             );
             if let Some(findings) = crate::cli::chat::maybe_architecture_findings_for_skill(
                 used_skill_id.as_deref(),

@@ -36,7 +36,9 @@ pub use persist::{
     CODE_MAP_SCHEMA_VERSION, PersistStats, SymbolHit, load_map, persist_map, search_symbol,
 };
 #[allow(unused_imports)]
-pub use recall::{RelevantFile, relevant_files_for_prompt, render_context_block};
+pub use recall::{
+    RelevantFile, relevant_files_for_prompt, render_context_block, resolve_active_root,
+};
 #[allow(unused_imports)]
 pub use repo_map::{DEFAULT_TOKEN_BUDGET, RepoMapSummary, build_summary};
 #[allow(unused_imports)]

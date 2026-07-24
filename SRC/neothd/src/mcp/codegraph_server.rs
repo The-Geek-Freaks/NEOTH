@@ -318,7 +318,15 @@ fn relevant_files_inner(db_path: &Path, prompt: &str, limit: usize) -> Result<St
     }
     let conn = crate::code_map::persist::open(db_path)
         .with_context(|| format!("open {}", db_path.display()))?;
-    let files = crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, limit)?;
+    // GOLD-R3-13: scope to the persisted root that contains the server's
+    // working directory. An unmapped CWD returns an empty result rather than a
+    // cross-repo mix — the MCP client sees "0 files", never another repo's.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+        return Ok("[]".into());
+    };
+    let files =
+        crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, &active_root, limit)?;
     // Project the typed result down to the JSON shape MCP clients want.
     let payload: Vec<serde_json::Value> = files
         .iter()

@@ -37,6 +37,7 @@
 //!   surface. The CLI shows the root so the operator can disambiguate.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::OnceLock;
 
 use anyhow::Result;
@@ -156,17 +157,27 @@ pub fn path_keyword_overlap(path: &str, keywords: &[String]) -> u32 {
     keywords.iter().filter(|kw| p.contains(kw.as_str())).count() as u32
 }
 
-/// Top-level engine entry: given a prompt, return up to `max_files`
-/// relevant entries from the persisted code map.
+/// Top-level engine entry: given a prompt and the caller's canonical
+/// `active_root`, return up to `max_files` relevant entries from the
+/// persisted code map — scoped to that one repository.
+///
+/// GOLD-R3-13: containment is applied BEFORE ranking and truncation. Symbol
+/// hits and path scans from any other persisted root are dropped up front, so
+/// a large unrelated repository can never consume the global top-k (or the
+/// SQL scan cap) and hide the active repository's matches. Callers resolve the
+/// active root with [`resolve_active_root`] and must NOT fall back to another
+/// repository when the working directory is unmapped.
 ///
 /// Returns an empty Vec when:
+///   - `active_root` has no matching symbol/path hit in the prompt.
 ///   - The prompt contains no extractable identifiers AND no
-///     path-keywords match any persisted file.
+///     path-keywords match any file under `active_root`.
 ///   - The DB has no persisted snapshots (search returns empty).
 ///   - `max_files == 0` (defensive — caller asked for nothing).
 pub fn relevant_files_for_prompt(
     conn: &Connection,
     prompt: &str,
+    active_root: &str,
     max_files: usize,
 ) -> Result<Vec<RelevantFile>> {
     if max_files == 0 {
@@ -187,6 +198,12 @@ pub fn relevant_files_for_prompt(
         // case-sensitive is correct for now.
         let hits: Vec<SymbolHit> = super::persist::search_symbol(conn, ident)?;
         for hit in hits {
+            // GOLD-R3-13: contain to the active repository BEFORE aggregation,
+            // ranking and truncation — an unrelated persisted root must never
+            // consume the top-k and hide the active repo's matches.
+            if hit.root != active_root {
+                continue;
+            }
             let key = (hit.root.clone(), hit.path.clone());
             let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
                 root: hit.root.clone(),
@@ -215,7 +232,7 @@ pub fn relevant_files_for_prompt(
         // Walk every persisted file with at least one keyword in its
         // path. Bounded by the keyword set, not the DB size — SQL
         // wildcard scan over indexed `path`.
-        let path_hits = scan_paths_by_keywords(conn, &keywords)?;
+        let path_hits = scan_paths_by_keywords(conn, active_root, &keywords)?;
         for (root, path) in path_hits {
             let key = (root.clone(), path.clone());
             let entry = by_path.entry(key).or_insert_with(|| RelevantFile {
@@ -238,16 +255,52 @@ pub fn relevant_files_for_prompt(
         b.identifier_hits
             .cmp(&a.identifier_hits)
             .then_with(|| b.path_keyword_overlap.cmp(&a.path_keyword_overlap))
+            // GOLD-R3-13: root is part of the deterministic tie-break. Within a
+            // single active root it is constant, but keeping it here pins the
+            // order should the containment invariant ever be relaxed.
+            .then_with(|| a.root.cmp(&b.root))
             .then_with(|| a.path.cmp(&b.path))
     });
     ranked.truncate(max_files);
     Ok(ranked)
 }
 
+/// GOLD-R3-13 — resolve the persisted code-map root that contains
+/// `current_path`, the canonical active repository for a recall query.
+///
+/// Canonicalises the path, then returns the longest persisted root that is a
+/// path-prefix of it. This makes containment robust to:
+///   - **sub-directory prompts** — running from `<repo>/src/foo` still resolves
+///     `<repo>`, because the root is a prefix (longest-match wins over any
+///     shorter ancestor root).
+///   - **non-canonical CWD** — a symlinked `/var` (macOS `/var`→`/private/var`),
+///     an 8.3 Windows short name, or a `.` relative path all canonicalise to
+///     the same absolute form the walker persisted.
+///
+/// Returns `None` when the path cannot be canonicalised or no persisted root
+/// contains it. Callers MUST treat `None` as "no active repository" and refuse
+/// to fall back to another persisted root — that cross-repo fallback is exactly
+/// the leak this containment closes.
+pub fn resolve_active_root(conn: &Connection, current_path: &Path) -> Option<String> {
+    let canonical = std::fs::canonicalize(current_path).ok()?;
+    let mut stmt = conn
+        .prepare("SELECT root FROM code_map_roots ORDER BY root ASC")
+        .ok()?;
+    let roots = stmt.query_map([], |row| row.get::<_, String>(0)).ok()?;
+    roots
+        .filter_map(|row| row.ok())
+        .filter(|root| canonical.starts_with(Path::new(root)))
+        .max_by_key(|root| Path::new(root).components().count())
+}
+
 /// SQL helper — find every file whose `path` contains any of the
 /// supplied keywords. Returns `(root, path)` pairs. Skips when the
 /// keyword set is empty.
-fn scan_paths_by_keywords(conn: &Connection, keywords: &[String]) -> Result<Vec<(String, String)>> {
+fn scan_paths_by_keywords(
+    conn: &Connection,
+    active_root: &str,
+    keywords: &[String],
+) -> Result<Vec<(String, String)>> {
     if keywords.is_empty() {
         return Ok(Vec::new());
     }
@@ -260,15 +313,21 @@ fn scan_paths_by_keywords(conn: &Connection, keywords: &[String]) -> Result<Vec<
         .map(|p| format!("LOWER(path) LIKE {p}"))
         .collect::<Vec<_>>()
         .join(" OR ");
+    // GOLD-R3-13: the root filter is the LAST positional param and is ANDed
+    // outside the keyword OR-group so it bounds the row set BEFORE the LIMIT —
+    // an unrelated repo must not fill the 200-row scan cap and starve the
+    // active root's path-only matches.
+    let root_param = keywords.len() + 1;
     let sql = format!(
-        "SELECT root, path FROM code_map_files WHERE {where_clause} \
+        "SELECT root, path FROM code_map_files WHERE ({where_clause}) AND root = ?{root_param} \
          ORDER BY root ASC, path ASC LIMIT 200"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<rusqlite::types::Value> = keywords
+    let mut params: Vec<rusqlite::types::Value> = keywords
         .iter()
         .map(|kw| rusqlite::types::Value::from(format!("%{}%", kw.to_lowercase())))
         .collect();
+    params.push(rusqlite::types::Value::from(active_root.to_string()));
     let rows: Vec<(String, String)> = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -575,8 +634,13 @@ mod tests {
     #[test]
     fn relevant_files_returns_top_match_by_symbol_hit() {
         let (_dir, conn) = seed_db_with_two_files();
-        let hits =
-            relevant_files_for_prompt(&conn, "where is the auth_middleware function?", 5).unwrap();
+        let hits = relevant_files_for_prompt(
+            &conn,
+            "where is the auth_middleware function?",
+            "/repo/a",
+            5,
+        )
+        .unwrap();
         assert!(!hits.is_empty(), "should find at least one file");
         // src/auth/middleware.rs should rank first — symbol match +
         // path-keyword overlap on "auth".
@@ -595,7 +659,7 @@ mod tests {
     #[test]
     fn relevant_files_finds_camelcase_struct() {
         let (_dir, conn) = seed_db_with_two_files();
-        let hits = relevant_files_for_prompt(&conn, "what does Config do?", 5).unwrap();
+        let hits = relevant_files_for_prompt(&conn, "what does Config do?", "/repo/a", 5).unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].path, "src/config/loader.rs");
         assert!(hits[0].matched_symbols.contains(&"Config".to_string()));
@@ -606,7 +670,7 @@ mod tests {
         let (_dir, conn) = seed_db_with_two_files();
         // Prompt has no identifiers — just bare words. Path-keyword
         // overlap on "config" should surface src/config/loader.rs.
-        let hits = relevant_files_for_prompt(&conn, "load the config file", 5).unwrap();
+        let hits = relevant_files_for_prompt(&conn, "load the config file", "/repo/a", 5).unwrap();
         assert!(
             hits.iter().any(|f| f.path == "src/config/loader.rs"),
             "config path match must surface; got {hits:?}",
@@ -618,22 +682,115 @@ mod tests {
         let (_dir, conn) = seed_db_with_two_files();
         // Prompt that hits BOTH files via path keywords; max=1 must
         // still trim.
-        let hits = relevant_files_for_prompt(&conn, "auth config files", 1).unwrap();
+        let hits = relevant_files_for_prompt(&conn, "auth config files", "/repo/a", 1).unwrap();
         assert_eq!(hits.len(), 1);
     }
 
     #[test]
     fn relevant_files_max_zero_returns_empty() {
         let (_dir, conn) = seed_db_with_two_files();
-        let hits = relevant_files_for_prompt(&conn, "auth_middleware", 0).unwrap();
+        let hits = relevant_files_for_prompt(&conn, "auth_middleware", "/repo/a", 0).unwrap();
         assert!(hits.is_empty());
     }
 
     #[test]
     fn relevant_files_returns_empty_when_no_match() {
         let (_dir, conn) = seed_db_with_two_files();
-        let hits = relevant_files_for_prompt(&conn, "nonexistent_xyz_symbol", 5).unwrap();
+        let hits =
+            relevant_files_for_prompt(&conn, "nonexistent_xyz_symbol", "/repo/a", 5).unwrap();
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn active_root_containment_survives_a_larger_unrelated_repo() {
+        // GOLD-R3-13 regression. Two persisted repos share a symbol name. The
+        // UNRELATED repo /repo/big has 20 files that each match BOTH prompt
+        // identifiers (identifier_hits = 2); the ACTIVE repo /repo/a has one
+        // file matching a single identifier (identifier_hits = 1). A global
+        // rank+truncate lets /repo/big consume the whole top-k and HIDE
+        // /repo/a's file — the defect. With active-root containment applied
+        // before ranking, the active repo's file must still surface and no
+        // /repo/big row may leak.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("code_map.db");
+        let mut conn = open(&path).unwrap();
+
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/repo/a".into(),
+                files: vec![RepoFile {
+                    path: "src/auth/mod.rs".into(),
+                    language: Language::Rust,
+                    bytes: 100,
+                    loc: 10,
+                    sha256: String::new(),
+                    mtime_ns: 0,
+                    symbols: vec![Symbol {
+                        name: "auth_gateway".into(),
+                        kind: SymbolKind::Function,
+                        line: 1,
+                    }],
+                }],
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+
+        let big_files: Vec<RepoFile> = (0..20)
+            .map(|i| RepoFile {
+                path: format!("src/mod_{i:02}.rs"),
+                language: Language::Rust,
+                bytes: 100,
+                loc: 10,
+                sha256: String::new(),
+                mtime_ns: 0,
+                symbols: vec![
+                    Symbol {
+                        name: "auth_gateway".into(),
+                        kind: SymbolKind::Function,
+                        line: 1,
+                    },
+                    Symbol {
+                        name: "token_verify".into(),
+                        kind: SymbolKind::Function,
+                        line: 2,
+                    },
+                ],
+            })
+            .collect();
+        persist_map(
+            &mut conn,
+            &RepoMap {
+                root: "/repo/big".into(),
+                files: big_files,
+                report: ScanReport::default(),
+            },
+        )
+        .unwrap();
+
+        // Prompt names both identifiers; /repo/big files outrank on hits.
+        let prompt = "where is auth_gateway and token_verify";
+        let hits = relevant_files_for_prompt(&conn, prompt, "/repo/a", 3).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "active repo file must survive containment; got {hits:?}"
+        );
+        assert!(
+            hits.iter().all(|h| h.root == "/repo/a"),
+            "unrelated /repo/big leaked into active-root recall: {hits:?}"
+        );
+        assert!(
+            hits.iter().any(|h| h.path == "src/auth/mod.rs"),
+            "active repo's matched file missing: {hits:?}"
+        );
+
+        // Sanity: scoping to /repo/big returns only big's files, never a's.
+        let big = relevant_files_for_prompt(&conn, prompt, "/repo/big", 3).unwrap();
+        assert!(
+            !big.is_empty() && big.iter().all(|h| h.root == "/repo/big"),
+            "cross-root leak in the other direction: {big:?}"
+        );
     }
 
     #[test]
@@ -703,9 +860,13 @@ mod tests {
         // Both files mentioned by path-keyword, but auth_middleware
         // is also a SYMBOL hit on `src/auth/middleware.rs`. The
         // symbol hit must outrank the pure-path match.
-        let hits =
-            relevant_files_for_prompt(&conn, "fix auth_middleware in config and auth code", 5)
-                .unwrap();
+        let hits = relevant_files_for_prompt(
+            &conn,
+            "fix auth_middleware in config and auth code",
+            "/repo/a",
+            5,
+        )
+        .unwrap();
         assert!(!hits.is_empty());
         assert_eq!(hits[0].path, "src/auth/middleware.rs");
         assert!(hits[0].identifier_hits >= 1, "got: {:?}", hits[0]);
@@ -717,7 +878,7 @@ mod tests {
         // by path. Pin the determinism so a future hash-iteration
         // change doesn't shuffle operator-facing output.
         let (_dir, conn) = seed_db_with_two_files();
-        let hits = relevant_files_for_prompt(&conn, "auth config", 5).unwrap();
+        let hits = relevant_files_for_prompt(&conn, "auth config", "/repo/a", 5).unwrap();
         // Both candidates have 0 identifier_hits + 1 path_keyword_overlap.
         // Ascending path order → middleware.rs (src/auth/...) BEFORE
         // loader.rs (src/config/...) because "src/auth" < "src/config".

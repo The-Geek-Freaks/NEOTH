@@ -523,7 +523,34 @@ fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> 
     let db_path = crate::code_map::persist::default_path();
     let conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
-    let hits = crate::code_map::recall::relevant_files_for_prompt(&conn, &prompt, max)?;
+    // GOLD-R3-13: scope recall to the persisted root that contains the current
+    // directory. Refuse a cross-repo fallback — an unrelated repo must never
+    // hide (or masquerade as) the active repo's matches.
+    let cwd = std::env::current_dir().context("resolve current directory for code-map recall")?;
+    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, &cwd) else {
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "prompt": prompt,
+                        "max": max,
+                        "hits": [],
+                        "note": "current directory is not inside a persisted code-map root",
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!(
+                    "current directory is not inside a persisted code-map root \
+                     (run `neoth code-map persist` here first)"
+                );
+            }
+        }
+        return Ok(());
+    };
+    let hits =
+        crate::code_map::recall::relevant_files_for_prompt(&conn, &prompt, &active_root, max)?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {

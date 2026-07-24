@@ -1380,7 +1380,8 @@ async fn build_prompt_bundle(
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
     // Best-effort: any failure silently skips injection.
     let prompt_instance_paths = InstancePaths::for_home(&home);
-    let mut repo_context_block = maybe_repo_context_block(&config, &prompt, &prompt_instance_paths);
+    let mut repo_context_block =
+        maybe_repo_context_block(&config, &prompt, &prompt_instance_paths, &cwd);
     if let Some(findings) = maybe_architecture_findings_for_skill(
         used_skill_id.as_deref(),
         &prompt_instance_paths,
@@ -6680,25 +6681,60 @@ pub(crate) fn maybe_repo_context_block(
     config: &FreedomConfig,
     prompt: &str,
     paths: &InstancePaths,
+    current_path: &std::path::Path,
 ) -> Option<String> {
-    maybe_repo_context_block_at_paths(config, prompt, &paths.code_map, &paths.ccr)
+    if config.code_map.auto_context_max_files == 0 {
+        return None;
+    }
+    if !paths.code_map.exists() {
+        return None;
+    }
+    // GOLD-R3-13: resolve the active repository (the persisted root that
+    // contains the working dir) so recall cannot inject an unrelated repo's
+    // files into this chat turn. None → the CWD is not inside a persisted
+    // repo; inject nothing rather than fall back to another root.
+    let active_root = {
+        let conn = crate::code_map::persist::open(&paths.code_map).ok()?;
+        crate::code_map::recall::resolve_active_root(&conn, current_path)?
+    };
+    maybe_repo_context_block_at_paths(config, prompt, &paths.code_map, &paths.ccr, &active_root)
 }
 
 /// Test-friendly inner: resolve the code-map DB at an explicit path
 /// instead of through `HOME` / `USERPROFILE`. Same best-effort
 /// contract as [`maybe_repo_context_block`] — every failure path
-/// produces `None`, never an error.
+/// produces `None`, never an error. Fake persisted roots ("/repo/test")
+/// are not real directories, so the active root is taken as the sole
+/// persisted root recorded in the seeded DB rather than resolved from a CWD.
 #[cfg(test)]
 pub(crate) fn maybe_repo_context_block_at(
     config: &FreedomConfig,
     prompt: &str,
     db_path: &std::path::Path,
 ) -> Option<String> {
+    if config.code_map.auto_context_max_files == 0 {
+        return None;
+    }
     let ccr_dir = db_path
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("ccr");
-    maybe_repo_context_block_at_paths(config, prompt, db_path, &ccr_dir)
+    if !db_path.exists() {
+        return None;
+    }
+    let active_root = {
+        let conn = crate::code_map::persist::open(db_path).ok()?;
+        let mut stmt = conn
+            .prepare("SELECT root FROM code_map_roots ORDER BY root ASC")
+            .ok()?;
+        let root = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .ok()?
+            .filter_map(|r| r.ok())
+            .next();
+        root?
+    };
+    maybe_repo_context_block_at_paths(config, prompt, db_path, &ccr_dir, &active_root)
 }
 
 fn maybe_repo_context_block_at_paths(
@@ -6706,6 +6742,7 @@ fn maybe_repo_context_block_at_paths(
     prompt: &str,
     db_path: &std::path::Path,
     ccr_dir: &std::path::Path,
+    active_root: &str,
 ) -> Option<String> {
     let max = config.code_map.auto_context_max_files as usize;
     if max == 0 {
@@ -6718,10 +6755,13 @@ fn maybe_repo_context_block_at_paths(
         Ok(c) => c,
         Err(_) => return None,
     };
-    let hits = match crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, max) {
-        Ok(h) if !h.is_empty() => h,
-        _ => return None,
-    };
+    // GOLD-R3-13: recall is scoped to the caller's active repository so an
+    // unrelated persisted repo can never inject its files into this chat turn.
+    let hits =
+        match crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, active_root, max) {
+            Ok(h) if !h.is_empty() => h,
+            _ => return None,
+        };
     // The code-map DB may predate current write validation or have been
     // imported from another installation. Sanitise before compression so the
     // persistent CCR store can never receive the unsafe original bytes.
@@ -12041,8 +12081,9 @@ mod tests {
         cfg.compression.enabled = true;
         cfg.compression.min_block_bytes = 64;
         cfg.compression.bloat_threshold = 0.0;
-        let prompt_block = maybe_repo_context_block_at_paths(&cfg, "auth", &db, &ccr)
-            .expect("imported matching context must reach the prompt boundary");
+        let prompt_block =
+            maybe_repo_context_block_at_paths(&cfg, "auth", &db, &ccr, "/repo/imported")
+                .expect("imported matching context must reach the prompt boundary");
         assert!(!prompt_block.contains(secret), "{prompt_block}");
         assert!(!prompt_block.contains('\x1b'), "{prompt_block:?}");
 

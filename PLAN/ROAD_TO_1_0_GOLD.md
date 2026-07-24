@@ -255,11 +255,21 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     exists. Stage the marker from the existing same-volume transaction anchor,
     then exercise the actual bundle apply into an absent path with spaces/
     Unicode, collision, link/reparse and hard-crash cases.
-  - **R3-13:** recall still aggregates and truncates globally before the active
-    root is filtered. CLI code, normal Chat, code-map CLI and in-process
-    Codegraph therefore disagree; Self-Improve has no equivalent consumer.
-    Make canonical root plus index generation mandatory at query time, filter
-    before ranking/limiting, and include root in the deterministic tie-break.
+  - **R3-13 (containment landed 2026-07-24; index-generation binding still
+    OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
+    applies repo containment BEFORE ranking/truncation — symbol hits filter up
+    front and the path scan ANDs `root = ?` inside the SQL so the 200-row cap
+    and the top-k can no longer be starved by an unrelated repo. `resolve_active_root`
+    (canonical, sub-directory-aware, longest-prefix match; `None` refuses
+    cross-repo fallback) is wired into all four disagreeing consumers — cli::code
+    (which previously post-filtered AFTER the global truncate with a raw `==`
+    that broke on sub-dir/non-canonical CWDs), normal Chat + the channel serve
+    path, the `code-map relevant` CLI, and the codegraph MCP server — plus root
+    is now part of the deterministic tie-break. A regression proves a larger,
+    higher-ranked unrelated repo can no longer hide the active repo's file.
+    STILL OPEN: binding cache/index generation to canonical root IDENTITY and
+    stale-index detection (the DB has no per-root generation counter yet), and a
+    Self-Improve recall consumer if one is added.
   - **R3-14:** `wrap_untrusted` protects selected MCP/deep-research/teacher
     paths only. Coding decomposition/repair, enriched repo context, attachments,
     recall fragments, Council and sub-agent dispatch still interpolate raw
