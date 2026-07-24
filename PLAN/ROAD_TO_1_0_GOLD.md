@@ -237,12 +237,18 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
 
   - **R3-11:** the capability-bound installer/loader/inventory/uninstall core,
     bounded no-follow copy/delete, durable recovery and OS-visible mutation
-    lock are real. Two production readers still bypass it:
-    `self_improvement_collector::is_verified_deployed` follows an ambient
-    manifest path, while `dreaming_task` reads the installed baseline with raw
-    `read_to_string`. Migrate both to a locked, generation-bound store read and
-    add a real second-process mutation-lock regression; thread-only evidence is
-    insufficient for the Windows/macOS/Linux release claim. **Partial 2026-07-24:**
+    lock are real. **Partial 2026-07-24 (dreaming reader migrated):**
+    `dreaming_task` no longer reads the installed baseline with a raw ambient
+    `read_to_string` — `read_installed_baseline` now opens the skills root as a
+    bound directory, takes `lock_skill_mutations`, and reads `<persona>/skill.md`
+    through the handle-relative, no-follow, size-bounded store primitives
+    (absent root/persona/file → empty baseline; direct unit coverage added since
+    the old path sat behind the `auto && is_installed` gate and had none). STILL
+    OPEN: `self_improvement_collector::is_verified_deployed` still follows an
+    ambient manifest path (only its missing-`mtime` fail-open was closed), and a
+    real second-process mutation-lock regression is still needed; thread-only
+    evidence is insufficient for the Windows/macOS/Linux release claim.
+    **Partial 2026-07-24 (mtime):**
     the `is_verified_deployed` missing-`mtime` fail-open (unreadable mtime was
     treated as *deployed*, so `capability_evolver` silently skipped the proposal
     and the collector auto-emitted `PatchSkill`) is closed — the arm now fails

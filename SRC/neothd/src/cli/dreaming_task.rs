@@ -13,6 +13,7 @@
 //! The interval is operator-tunable (`dreaming.interval_secs`). Errors
 //! log + retry next tick; never crash the daemon.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -283,6 +284,59 @@ async fn self_improve_auto_pass(home: &Path) {
     }
 }
 
+/// Upper bound on the baseline `skill.md` read. The previous ambient
+/// `read_to_string` was unbounded; the capability-bound read caps it so a
+/// pathological installed file can never OOM the dreaming tick.
+const MAX_BASELINE_SKILL_BYTES: usize = 16 * 1024 * 1024;
+
+/// GOLD-R3-11 — read the installed baseline skill body through the
+/// capability-bound store instead of an ambient `read_to_string`.
+///
+/// Opens the skills root as a bound directory and takes the cross-process skill
+/// mutation lock so the read cannot observe a torn mid-replacement generation,
+/// then reads `<persona>/skill.md` through handle-relative, no-follow,
+/// size-bounded primitives. An absent skills root, persona directory, or
+/// `skill.md` all yield an empty baseline (the same "no baseline yet" contract
+/// as the previous NotFound arm); any other error propagates. The lock guard is
+/// released when this function returns, before the SkillOpt run.
+fn read_installed_baseline(skills_dir: &Path, persona: &str) -> Result<String> {
+    let Some(root) = crate::skills::store::open_bound_directory(skills_dir, false, "skills root")?
+    else {
+        return Ok(String::new());
+    };
+    let _guard = crate::skills::installer::lock_skill_mutations(&root)
+        .context("lock skill store for a consistent baseline read")?;
+    let persona_path = root.display_path.join(persona);
+    let persona_dir = match crate::skills::store::open_real_child_dir(
+        &root.dir,
+        OsStr::new(persona),
+        &persona_path,
+    ) {
+        Ok(dir) => dir,
+        Err(error) if baseline_error_is_not_found(&error) => return Ok(String::new()),
+        Err(error) => return Err(error),
+    };
+    let skill_md_path = persona_path.join("skill.md");
+    match crate::skills::store::read_regular_file_bounded(
+        &persona_dir,
+        OsStr::new("skill.md"),
+        &skill_md_path,
+        MAX_BASELINE_SKILL_BYTES,
+    ) {
+        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+        Err(error) if baseline_error_is_not_found(&error) => Ok(String::new()),
+        Err(error) => Err(error),
+    }
+}
+
+/// Downcast an anyhow chain to an io `NotFound` (mirrors `skills::loader`).
+fn baseline_error_is_not_found(error: &anyhow::Error) -> bool {
+    error
+        .root_cause()
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+}
+
 fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
     use crate::self_improve as si;
     let autonomy =
@@ -311,17 +365,13 @@ fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
     {
         return Ok(());
     }
-    let skill_path = crate::skills::installer::default_skills_dir()
-        .join(persona)
-        .join("skill.md");
-    let before = match std::fs::read_to_string(&skill_path) {
-        Ok(contents) => contents,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("read baseline skill {}", skill_path.display()));
-        }
-    };
+    let skills_dir = crate::skills::installer::default_skills_dir();
+    let skill_path = skills_dir.join(persona).join("skill.md");
+    // GOLD-R3-11: read the installed baseline THROUGH the capability-bound store
+    // under the skill mutation lock, not with an ambient `read_to_string` that
+    // follows symlinks, ignores the store lock and reads unbounded bytes.
+    let before = read_installed_baseline(&skills_dir, persona)
+        .with_context(|| format!("read baseline skill {}", skill_path.display()))?;
     // F13 — bounded run: a hung/runaway SkillOpt python process must not block
     // the dreaming tick (best-effort "any miss logs + skips" contract).
     let (after, quality, parsed_spec) = match si::run_skillopt_capped(persona, si::SKILLOPT_TIMEOUT)
@@ -637,6 +687,32 @@ mod tests {
     use super::*;
     use crate::providers::Provider;
     use tempfile::tempdir;
+
+    #[test]
+    fn read_installed_baseline_reads_through_capability_bound_store() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        std::fs::create_dir_all(skills.join("default")).unwrap();
+        std::fs::write(skills.join("default").join("skill.md"), b"BASELINE BODY").unwrap();
+        assert_eq!(
+            read_installed_baseline(&skills, "default").unwrap(),
+            "BASELINE BODY"
+        );
+    }
+
+    #[test]
+    fn read_installed_baseline_absent_paths_yield_empty() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        // 1) skills root absent entirely.
+        assert_eq!(read_installed_baseline(&skills, "default").unwrap(), "");
+        // 2) skills root present, persona directory absent.
+        std::fs::create_dir_all(&skills).unwrap();
+        assert_eq!(read_installed_baseline(&skills, "default").unwrap(), "");
+        // 3) persona directory present, skill.md absent.
+        std::fs::create_dir_all(skills.join("default")).unwrap();
+        assert_eq!(read_installed_baseline(&skills, "default").unwrap(), "");
+    }
 
     fn seed_views_db(home: &Path, rows: &[(i64, i64, &str)]) {
         let db = Connection::open(home.join("views.db")).unwrap();
