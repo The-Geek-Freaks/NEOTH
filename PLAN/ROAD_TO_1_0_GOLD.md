@@ -279,12 +279,18 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     STILL OPEN: binding cache/index generation to canonical root IDENTITY and
     stale-index detection (the DB has no per-root generation counter yet), and a
     Self-Improve recall consumer if one is added.
-  - **R3-14:** `wrap_untrusted` protects selected MCP/deep-research/teacher
-    paths only. Coding decomposition/repair, enriched repo context, attachments,
-    recall fragments, Council and sub-agent dispatch still interpolate raw
-    strings into imitable delimiters. Replace those parallel conventions with
-    one typed context-class/source-id/limit-aware encoding boundary and run the
-    same adversarial corpus through every consumer.
+  - **R3-14 (decomposition/repair defanged 2026-07-24; rest still OPEN):**
+    `wrap_untrusted` protects selected MCP/deep-research/teacher paths, and the
+    coding decomposer/repair fences no longer interpolate untrusted data raw —
+    `build_prompt` (project_context) and `build_repair_prompt` (malformed_output)
+    now run the untrusted body through `defang_prompt_delimiters`, so an imported
+    code map or manipulated model output can no longer forge a
+    `</project_context>` / `</malformed_output>` boundary and smuggle instructions
+    past the fence (adversarial regressions pin both). STILL OPEN: enriched repo
+    context (chat/serve compression path), attachments, recall fragments injected
+    into chat, Council and sub-agent dispatch still use parallel conventions;
+    they should converge on one typed context-class/source-id/limit-aware encoding
+    boundary with the same adversarial corpus run through every consumer.
   - **R3-15 (ordered/fail-closed core landed 2026-07-24 `d80fba62`; durable
     lifecycle still OPEN):** `remove_plugin_at` now clears the config trust
     references (activation + hash pin) BEFORE deleting bytes, propagates every
