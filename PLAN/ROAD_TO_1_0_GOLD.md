@@ -261,12 +261,21 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     strings into imitable delimiters. Replace those parallel conventions with
     one typed context-class/source-id/limit-aware encoding boundary and run the
     same adversarial corpus through every consumer.
-  - **R3-15:** `plugin remove` deletes bytes first, discards config mutation
-    failure, ignores pin/revocation/runtime edges and can report success before
-    inventory readback. A missing directory also returns before stale-reference
-    reconciliation. Build a durable removal journal/transaction with exact
-    config and runtime-generation postconditions; GUI success must follow that
-    typed readback, not precede refresh.
+  - **R3-15 (ordered/fail-closed core landed 2026-07-24 `d80fba62`; durable
+    lifecycle still OPEN):** `remove_plugin_at` now clears the config trust
+    references (activation + hash pin) BEFORE deleting bytes, propagates every
+    error (a config-write failure aborts before any deletion), preserves
+    revocations as a deny-list, reconciles a stale reference even when the
+    directory is already gone, and gates success on an inventory readback —
+    replacing the old bytes-first, error-swallowing path and its two fake
+    JSON-only tests with three that exercise the real removal. Exact-head
+    CI/Security/CodeQL green at `57cb553a`. STILL OPEN for closure: a durable
+    Removal Intent→ACK→Committed/Aborted WAL (blocked on extending the one-shot
+    audit emit + daemon audit-RPC to carry the EXTENDED `event_subtype`;
+    `ExtendedSubtype` 0x12/0x13 are free), a crash-recovery removal journal,
+    runtime-generation handle invalidation (the CLI readback proves filesystem
+    discovery, not that a live daemon dropped an older loaded instance), and
+    config↔byte atomicity.
   - **R3-16:** `PLAN/CRG_ADOPTION_2026_07_20.md` still has CRG-01..05 open and
     no authoritative disposition/evidence-owner matrix. CRG-01 is partial and
     inherits R3-13; native impact-radius, diff-hunk-to-symbol mapping,
