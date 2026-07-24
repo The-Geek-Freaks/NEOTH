@@ -159,8 +159,12 @@ pub fn is_verified_deployed(artifact_path: &Path, min_age_secs: u64) -> bool {
         return false;
     };
     let Ok(modified) = meta.modified() else {
-        // Platform does not report mtime (unusual but possible); treat as settled.
-        return true;
+        // Platform does not report mtime (unusual but possible): we cannot prove
+        // the artifact has settled, so fail closed (not-deployed) — consistent
+        // with the metadata/elapsed error arms above and below. Callers then
+        // surface the proposal for operator review / escalate instead of
+        // auto-patching or silently dropping it.
+        return false;
     };
     let Ok(elapsed) = modified.elapsed() else {
         return false;

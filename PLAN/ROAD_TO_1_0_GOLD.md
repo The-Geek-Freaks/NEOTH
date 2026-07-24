@@ -239,11 +239,16 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     bounded no-follow copy/delete, durable recovery and OS-visible mutation
     lock are real. Two production readers still bypass it:
     `self_improvement_collector::is_verified_deployed` follows an ambient
-    manifest path and can treat missing `mtime` as deployed, while
-    `dreaming_task` reads the installed baseline with raw
+    manifest path, while `dreaming_task` reads the installed baseline with raw
     `read_to_string`. Migrate both to a locked, generation-bound store read and
     add a real second-process mutation-lock regression; thread-only evidence is
-    insufficient for the Windows/macOS/Linux release claim.
+    insufficient for the Windows/macOS/Linux release claim. **Partial 2026-07-24:**
+    the `is_verified_deployed` missing-`mtime` fail-open (unreadable mtime was
+    treated as *deployed*, so `capability_evolver` silently skipped the proposal
+    and the collector auto-emitted `PatchSkill`) is closed — the arm now fails
+    closed like the sibling metadata/elapsed arms, so both callers surface the
+    proposal for operator review / `Escalate`. The ambient-path→store migration
+    and the multi-process lock regression remain OPEN.
   - **R3-12:** the generic `InstallTransaction` already supports a missing
     destination and has a child-crash fixture, but the real portable bundle
     path calls `tempdir_in(resolved_root)` for its marker before that root
