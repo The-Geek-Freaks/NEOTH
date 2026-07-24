@@ -1490,6 +1490,43 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn portable_bundle_rejects_symlinked_ancestor_on_absent_root() {
+        // GOLD-R3-12: a first install whose absent destination sits under a
+        // SYMLINKED ancestor must be rejected — the resolved-root ancestor walk
+        // requires a real, link-free chain, so a fresh install cannot be
+        // redirected through a symlink into a foreign volume/location.
+        let fixture = crate::test_env::canonical_tempdir().unwrap();
+        let bundle = fixture.path().join("bundle");
+        fs::create_dir_all(&bundle).unwrap();
+        exact_shape(&bundle, PortableBundleProfile::current());
+        fs::remove_dir_all(bundle.join(SELF_KNOWLEDGE)).unwrap();
+        crate::wiki::release_snapshot::write_test_snapshot(
+            &bundle.join(SELF_KNOWLEDGE),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+
+        let real_parent = fixture.path().join("real-parent");
+        fs::create_dir_all(&real_parent).unwrap();
+        let link_parent = fixture.path().join("link-parent");
+        std::os::unix::fs::symlink(&real_parent, &link_parent).unwrap();
+        // Absent leaf under the symlinked ancestor.
+        let install = link_parent.join("inst");
+        assert!(!install.exists());
+
+        let err = apply_portable_release_bundle(&bundle, &install, env!("CARGO_PKG_VERSION"))
+            .expect_err("install through a symlinked ancestor must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("ancestor"),
+            "expected a link-free-ancestor rejection, got: {msg}"
+        );
+        // Nothing was created through the link.
+        assert!(!real_parent.join("inst").exists());
+    }
+
     #[test]
     fn markerless_shared_root_preserves_generic_collisions_but_blocks_neoth_targets() {
         let fixture = tempfile::tempdir().unwrap();
