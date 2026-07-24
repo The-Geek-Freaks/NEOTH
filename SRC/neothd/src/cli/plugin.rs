@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 use serde_json::json;
+use sha2::Digest as _;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -159,7 +160,7 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         PluginAction::Verify { path } => run_verify(&path, args.output),
         PluginAction::Ledger { id } => run_ledger(id.as_deref(), args.output),
         PluginAction::Install { path, force } => run_install(&path, force, args.output),
-        PluginAction::Remove { id } => run_remove(&id, args.output),
+        PluginAction::Remove { id } => run_remove(&id, args.output).await,
         PluginAction::Events { id, last } => run_events_subcommand(&id, last, args.output),
     }
 }
@@ -1461,9 +1462,49 @@ fn remove_plugin_at(home: &std::path::Path, id: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
+async fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let removed = remove_plugin_at(&home, id)?;
+    let operation_id = uuid::Uuid::now_v7().to_string();
+    // Bindings observed BEFORE any mutation: the installed generation (plugin
+    // content hash) and the operator hash pin the intent authorizes.
+    let installed_generation = plugin_installed_generation(&home, id);
+    let expected_pin = plugin_pinned_hash(&home, id);
+
+    // 1. Removal INTENT — a durable WAL ACK must precede any config or byte
+    //    change (R3-15). If it is not durable, nothing is removed.
+    emit_plugin_removal_intent(
+        &home,
+        &operation_id,
+        id,
+        installed_generation.as_deref(),
+        expected_pin.as_deref(),
+    )
+    .await
+    .context("plugin removal intent was not durable; nothing was removed")?;
+
+    // 2. The ordered, fail-closed mutation.
+    let removed = match remove_plugin_at(&home, id) {
+        Ok(removed) => removed,
+        Err(error) => {
+            let error_sha = hex::encode(sha2::Sha256::digest(format!("{error:#}").as_bytes()));
+            let _ = emit_plugin_removal_result(
+                &home,
+                &operation_id,
+                id,
+                "aborted",
+                None,
+                Some(&error_sha),
+            )
+            .await;
+            return Err(error);
+        }
+    };
+
+    // 3. Removal COMMITTED — correlated terminal outcome bound by operation_id.
+    emit_plugin_removal_result(&home, &operation_id, id, "committed", Some(removed), None)
+        .await
+        .context("plugin was removed, but its committed audit failed")?;
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let obj = if removed {
@@ -1482,6 +1523,84 @@ fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The installed generation (plugin content hash) the removal intent binds,
+/// observed before any mutation. `None` when the id is not a loadable install.
+fn plugin_installed_generation(home: &std::path::Path, id: &str) -> Option<String> {
+    discover(&home.join("plugins"))
+        .loaded
+        .iter()
+        .find(|plugin| plugin.manifest.id == id)
+        .map(|plugin| plugin.content_hash.clone())
+}
+
+/// Best-effort read of the operator hash pin the removal intent records. A
+/// read-only parse is sufficient for audit metadata; the removal itself
+/// re-locks the config under the coherent update lock.
+fn plugin_pinned_hash(home: &std::path::Path, id: &str) -> Option<String> {
+    let body = std::fs::read_to_string(home.join("freedom.yaml")).ok()?;
+    let config: FreedomConfig = serde_yaml::from_str(&body).ok()?;
+    config.plugins.wasm.pinned_hashes.get(id).cloned()
+}
+
+/// Emit the mandatory `plugin remove` intent (EXTENDED `PluginRemovalIntent`).
+/// Required: a non-durable intent aborts the removal before any change.
+async fn emit_plugin_removal_intent(
+    home: &std::path::Path,
+    operation_id: &str,
+    plugin_id: &str,
+    installed_generation_sha256: Option<&str>,
+    expected_pinned_hash: Option<&str>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "plugin_id": plugin_id,
+        "installed_generation_sha256": installed_generation_sha256,
+        "expected_pinned_hash": expected_pinned_hash,
+        "phase": "intent",
+        "source": "cli",
+        "ts_unix": crate::time::now_unix_secs(),
+    }))?;
+    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        crate::wal::events::ExtendedSubtype::PluginRemovalIntent as u8,
+        payload,
+        "PLUGIN_REMOVAL_INTENT",
+        true,
+    )
+    .await
+}
+
+/// Emit the terminal `plugin remove` outcome (EXTENDED `PluginRemovalResult`)
+/// correlated to its intent by `operation_id`. Committed is required; an aborted
+/// outcome is best-effort (its call site keeps propagating the mutation error).
+async fn emit_plugin_removal_result(
+    home: &std::path::Path,
+    operation_id: &str,
+    plugin_id: &str,
+    status: &str,
+    removed: Option<bool>,
+    error_sha256: Option<&str>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "plugin_id": plugin_id,
+        "status": status,
+        "removed": removed,
+        "error_sha256": error_sha256,
+        "ts_unix": crate::time::now_unix_secs(),
+    }))?;
+    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        crate::wal::events::ExtendedSubtype::PluginRemovalResult as u8,
+        payload,
+        "PLUGIN_REMOVAL_RESULT",
+        status == "committed",
+    )
+    .await
 }
 
 fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool) -> Result<()> {
@@ -2876,12 +2995,59 @@ version = \"0.1.0\"\n\
             "has space",
             "Upper",
         ] {
-            let err =
-                run_remove(evil, OutputFormat::Table).expect_err("traversal id must be rejected");
+            let err = remove_plugin_at(std::path::Path::new("."), evil)
+                .expect_err("traversal id must be rejected");
             assert!(
                 err.to_string().contains("invalid plugin id"),
                 "unexpected error for {evil:?}: {err}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn plugin_removal_emits_correlated_intent_and_committed_wal() {
+        // R3-15: the removal leaves a durable, correlated intent→committed audit
+        // trail. No daemon here → the direct home-bound WAL writer (append mode),
+        // so both frames must persist in order.
+        let home = TempDir::new().unwrap();
+        let op = "op-abc";
+        super::emit_plugin_removal_intent(
+            home.path(),
+            op,
+            "wasm_hello",
+            Some("gen123"),
+            Some("pin456"),
+        )
+        .await
+        .unwrap();
+        super::emit_plugin_removal_result(
+            home.path(),
+            op,
+            "wasm_hello",
+            "committed",
+            Some(true),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let frames = super::decode_wal_frames(&home.path().join("wal").join("000001.wal"));
+        assert_eq!(frames.len(), 2, "intent + result frames must both persist");
+        // Both are EXTENDED (event_type 0x00); their identity is the subtype.
+        assert_eq!(frames[0]["event_type"], "0x00");
+        assert_eq!(frames[1]["event_type"], "0x00");
+        let intent = &frames[0]["payload"];
+        assert_eq!(intent["phase"], "intent");
+        assert_eq!(intent["operation_id"], op);
+        assert_eq!(intent["plugin_id"], "wasm_hello");
+        assert_eq!(intent["installed_generation_sha256"], "gen123");
+        assert_eq!(intent["expected_pinned_hash"], "pin456");
+        let result = &frames[1]["payload"];
+        assert_eq!(result["status"], "committed");
+        assert_eq!(
+            result["operation_id"], op,
+            "the terminal outcome must correlate to its intent"
+        );
+        assert_eq!(result["removed"], true);
     }
 }

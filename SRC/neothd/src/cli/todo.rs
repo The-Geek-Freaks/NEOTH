@@ -440,15 +440,34 @@ pub(crate) async fn emit_oneshot_audit_at(
     label: &'static str,
     required: bool,
 ) -> Result<()> {
+    emit_oneshot_audit_at_with_subtype(home, event_type, 0, payload, label, required).await
+}
+
+/// Subtype-aware variant of [`emit_oneshot_audit_at`]. EXTENDED frames
+/// (`event_type == 0x00`) carry their identity in `event_subtype`; both the
+/// daemon forwarder and the direct home-bound writer propagate it.
+pub(crate) async fn emit_oneshot_audit_at_with_subtype(
+    home: &std::path::Path,
+    event_type: u8,
+    event_subtype: u8,
+    payload: Vec<u8>,
+    label: &'static str,
+    required: bool,
+) -> Result<()> {
     let delivery: Result<()> = async {
         let daemon_live = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
             .context("inspect daemon ownership before audit delivery")?
             .is_some();
         if daemon_live {
-            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload)
-                .await
-                .map_err(anyhow::Error::new)
-                .with_context(|| format!("daemon did not durably ACK {label}"))?;
+            crate::daemon::audit_rpc::try_post_audit_frame_with_subtype(
+                home,
+                event_type,
+                event_subtype,
+                &payload,
+            )
+            .await
+            .map_err(anyhow::Error::new)
+            .with_context(|| format!("daemon did not durably ACK {label}"))?;
             return Ok(());
         }
 
@@ -459,7 +478,9 @@ pub(crate) async fn emit_oneshot_audit_at(
         }
         let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
             .with_context(|| format!("spawn home-bound writer for {label}"))?;
-        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+            .event_subtype(event_subtype)
+            .build();
         let append = writer
             .append(header, payload)
             .await

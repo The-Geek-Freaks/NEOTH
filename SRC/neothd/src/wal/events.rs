@@ -136,6 +136,16 @@ pub enum ExtendedSubtype {
     /// payload is metadata-only and records the action code plus revisions;
     /// it never contains the declaration label or free-form user content.
     CommunicationProfileControlled = 0x11,
+    /// R3-15 — mandatory pre-mutation intent for `neoth plugin remove`, bound to
+    /// its terminal `PluginRemovalResult` by `operation_id`. A durable ACK
+    /// precedes any config or byte change. Payload (JSON): `{operation_id,
+    /// plugin_id, installed_generation_sha256?, expected_pinned_hash?,
+    /// phase: "intent", ts_unix}`.
+    PluginRemovalIntent = 0x12,
+    /// R3-15 — mandatory terminal outcome bound to `PluginRemovalIntent`.
+    /// Payload (JSON): `{operation_id, plugin_id, status: "committed"|"aborted",
+    /// removed?, error_sha256?, ts_unix}`.
+    PluginRemovalResult = 0x13,
 }
 
 impl ExtendedSubtype {
@@ -159,6 +169,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::ExternalHttpResult => "external_http_result",
             ExtendedSubtype::CommunicationProfileUpdated => "communication_profile_updated",
             ExtendedSubtype::CommunicationProfileControlled => "communication_profile_controlled",
+            ExtendedSubtype::PluginRemovalIntent => "plugin_removal_intent",
+            ExtendedSubtype::PluginRemovalResult => "plugin_removal_result",
         }
     }
 
@@ -182,6 +194,8 @@ impl ExtendedSubtype {
             0x0F => Some(ExtendedSubtype::ExternalHttpResult),
             0x10 => Some(ExtendedSubtype::CommunicationProfileUpdated),
             0x11 => Some(ExtendedSubtype::CommunicationProfileControlled),
+            0x12 => Some(ExtendedSubtype::PluginRemovalIntent),
+            0x13 => Some(ExtendedSubtype::PluginRemovalResult),
             _ => None,
         }
     }
@@ -207,6 +221,8 @@ impl ExtendedSubtype {
             Self::ExternalHttpResult,
             Self::CommunicationProfileUpdated,
             Self::CommunicationProfileControlled,
+            Self::PluginRemovalIntent,
+            Self::PluginRemovalResult,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3551,6 +3567,9 @@ mod tests {
             // GOLD-R4-11
             ExtendedSubtype::CommunicationProfileUpdated,
             ExtendedSubtype::CommunicationProfileControlled,
+            // R3-15
+            ExtendedSubtype::PluginRemovalIntent,
+            ExtendedSubtype::PluginRemovalResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");
