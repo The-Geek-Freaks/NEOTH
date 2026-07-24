@@ -1387,16 +1387,25 @@ fn activate_staged_install(
 
 // ── `neoth plugin remove` ─────────────────────────────────────────────────
 
-/// Remove a plugin from `~/.neoth/plugins/<id>/`.
+/// R3-15 — transactional plugin removal at an explicit home (testable core of
+/// [`run_remove`]). Returns whether anything was removed (`false` = nothing was
+/// installed).
 ///
-/// Idempotent: a missing plugin directory is treated as success (non-error)
-/// with a "not found" note in table mode and `{"ok": false}` in JSON mode.
-/// The plugin's activation key in `freedom.yaml::plugins.wasm.activations` is
-/// also cleared so discovery won't see a stale entry on next boot. If
-/// `freedom.yaml` cannot be loaded or saved the removal still proceeds —
-/// discovery won't find the directory anymore anyway; the activation key
-/// becomes a stranded no-op that the operator can clean up manually.
-fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
+/// Ordering matters: the config trust references are cleared **before** the
+/// on-disk bytes are deleted, and every step propagates its error, so the
+/// observable state is never "bytes gone but config still active":
+/// - a config write failure aborts before any deletion → the plugin stays fully
+///   intact and consistent;
+/// - a byte-delete failure after the config is clean leaves a deactivated,
+///   unpinned directory that fail-closed discovery will not run — recoverable,
+///   and surfaced instead of swallowed.
+///
+/// Removal invalidates the operator's prior trust decision, so the activation
+/// AND the hash pin are cleared; a revocation is a deny-list and deliberately
+/// survives. A stale config reference is cleaned even when the directory is
+/// already gone, and success is only reported after an inventory readback
+/// proves the plugin is no longer a loadable install.
+fn remove_plugin_at(home: &std::path::Path, id: &str) -> Result<bool> {
     // GOLD-SEC — reject path-traversal ids before any filesystem join. An
     // installed plugin id is always a valid snake_case token (enforced at
     // install time via parse_manifest); anything else (`../`, absolute paths,
@@ -1409,51 +1418,67 @@ fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
              ([a-z0-9_], not starting with `_` or a digit)"
         );
     }
-    let home = FreedomConfig::default_neoth_home();
     let plugins_root = home.join("plugins");
     let target = plugins_root.join(id);
+    let freedom_path = home.join("freedom.yaml");
 
-    if !target.exists() {
-        match output {
-            OutputFormat::Json | OutputFormat::Jsonl => {
-                let obj = serde_json::json!({
-                    "ok": false,
-                    "id": id,
-                    "reason": "not found",
-                });
-                println!("{}", serde_json::to_string(&obj)?);
-            }
-            OutputFormat::Table => {
-                println!("plugin `{id}` not installed — no-op.");
-            }
-        }
-        return Ok(());
+    let bytes_present = target.exists();
+
+    // Clear the config trust references FIRST. A failure aborts before any byte
+    // deletion. The empty-config case creates nothing (guarded on existence).
+    let config_refs_cleared = if freedom_path.exists() {
+        FreedomConfig::update_at(&freedom_path, |config| {
+            let deactivated = config.plugins.wasm.activations.remove(id).is_some();
+            let unpinned = config.plugins.wasm.pinned_hashes.remove(id).is_some();
+            Ok(deactivated || unpinned)
+        })
+        .with_context(|| format!("clear config references for plugin `{id}`"))?
+    } else {
+        false
+    };
+
+    // Nothing installed: no bytes and no stale config reference.
+    if !bytes_present && !config_refs_cleared {
+        return Ok(false);
     }
 
-    std::fs::remove_dir_all(&target)
-        .with_context(|| format!("remove plugin directory `{}`", target.display()))?;
+    // Config is clean; delete the bytes.
+    if bytes_present {
+        std::fs::remove_dir_all(&target)
+            .with_context(|| format!("remove plugin directory `{}`", target.display()))?;
+    }
 
-    // Best-effort: remove the activation entry from freedom.yaml. If the
-    // config can't be loaded/saved the removal already succeeded; log nothing
-    // (the directory is gone — discovery is the authoritative source).
-    // Ignore a config failure — non-fatal, a stranded key is harmless and
-    // discovery remains authoritative. The locked RMW cannot overwrite a
-    // concurrent operator edit while performing this best-effort cleanup.
-    let _ = FreedomConfig::update_at(&home.join("freedom.yaml"), |config| {
-        config.plugins.wasm.activations.remove(id);
-        Ok(())
-    });
+    // Inventory readback: never report success before proving the plugin is no
+    // longer discoverable as a loadable install.
+    if discover(&plugins_root)
+        .loaded
+        .iter()
+        .any(|plugin| plugin.manifest.id == id)
+    {
+        anyhow::bail!("plugin `{id}` is still discovered after removal");
+    }
 
+    Ok(true)
+}
+
+fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let removed = remove_plugin_at(&home, id)?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let obj = serde_json::json!({
-                "ok": true,
-                "id": id,
-            });
+            let obj = if removed {
+                serde_json::json!({ "ok": true, "id": id })
+            } else {
+                serde_json::json!({ "ok": false, "id": id, "reason": "not found" })
+            };
             println!("{}", serde_json::to_string(&obj)?);
         }
         OutputFormat::Table => {
-            println!("removed plugin `{id}`.");
+            if removed {
+                println!("removed plugin `{id}`.");
+            } else {
+                println!("plugin `{id}` not installed — no-op.");
+            }
         }
     }
     Ok(())
@@ -2635,38 +2660,80 @@ version = \"0.1.0\"\n\
     }
 
     #[test]
-    fn remove_succeeds_when_dir_absent_idempotent() {
-        // A missing plugin directory → JSON ok=false + "not found", no error.
-        let dst_root = TempDir::new().unwrap();
-        // No directory created → absent.
-        let target = dst_root.path().join("ghost_plugin");
-        assert!(!target.exists());
+    fn remove_plugin_at_clears_activation_and_pin_keeps_revocation() {
+        // R3-15: a real transactional removal — config trust references cleared,
+        // bytes deleted, revocation preserved. (The prior tests only asserted a
+        // hand-built JSON shape and never exercised the removal path.)
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("plugins").join("my_plugin");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.toml"), b"x").unwrap();
+        std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
 
-        // Simulate the not-found branch (the actual run_remove would emit to
-        // stdout; we test the logic by checking that the absent branch produces
-        // the correct JSON shape).
-        let obj = serde_json::json!({
-            "ok": false,
-            "id": "ghost_plugin",
-            "reason": "not found",
-        });
-        assert_eq!(obj["ok"], serde_json::Value::Bool(false));
-        assert_eq!(obj["id"], "ghost_plugin");
-        assert_eq!(obj["reason"], "not found");
+        let mut cfg = super::FreedomConfig::default();
+        cfg.plugins.wasm.activations.insert(
+            "my_plugin".to_string(),
+            super::PluginActivationRecord::from_state(super::PluginActivation::Active),
+        );
+        cfg.plugins
+            .wasm
+            .pinned_hashes
+            .insert("my_plugin".to_string(), "a".repeat(64));
+        cfg.plugins.wasm.revoked_ids.push("blocked_one".to_string());
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(&freedom, serde_yaml::to_string(&cfg).unwrap()).unwrap();
+
+        let removed = super::remove_plugin_at(home.path(), "my_plugin").unwrap();
+        assert!(removed, "an installed plugin must report removed");
+        assert!(!dir.exists(), "bytes must be deleted");
+
+        let after: super::FreedomConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&freedom).unwrap()).unwrap();
+        assert!(
+            !after.plugins.wasm.activations.contains_key("my_plugin"),
+            "activation must be cleared"
+        );
+        assert!(
+            !after.plugins.wasm.pinned_hashes.contains_key("my_plugin"),
+            "hash pin must be cleared — removal invalidates the prior trust decision"
+        );
+        assert!(
+            after
+                .plugins
+                .wasm
+                .revoked_ids
+                .contains(&"blocked_one".to_string()),
+            "a revocation is a deny-list and must survive removal"
+        );
     }
 
     #[test]
-    fn remove_deletes_plugin_directory() {
-        let dst_root = TempDir::new().unwrap();
-        let target = dst_root.path().join("gone_plugin");
-        std::fs::create_dir_all(&target).unwrap();
-        std::fs::write(target.join("plugin.toml"), b"x").unwrap();
-        std::fs::write(target.join("plugin.wasm"), MINIMAL_WASM).unwrap();
-        assert!(target.exists(), "precondition: target exists");
+    fn remove_plugin_at_cleans_stale_config_when_dir_absent() {
+        // The directory is already gone but the config still references it: the
+        // removal must still clean the stale reference (old code returned early).
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("plugins")).unwrap();
+        let mut cfg = super::FreedomConfig::default();
+        cfg.plugins.wasm.activations.insert(
+            "ghost".to_string(),
+            super::PluginActivationRecord::from_state(super::PluginActivation::Active),
+        );
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(&freedom, serde_yaml::to_string(&cfg).unwrap()).unwrap();
 
-        // Simulate the remove step.
-        std::fs::remove_dir_all(&target).unwrap();
-        assert!(!target.exists(), "target must be deleted after remove");
+        let removed = super::remove_plugin_at(home.path(), "ghost").unwrap();
+        assert!(removed, "a stale config reference counts as a removal");
+        let after: super::FreedomConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&freedom).unwrap()).unwrap();
+        assert!(!after.plugins.wasm.activations.contains_key("ghost"));
+    }
+
+    #[test]
+    fn remove_plugin_at_reports_absent_when_nothing_installed() {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("plugins")).unwrap();
+        let removed = super::remove_plugin_at(home.path(), "nope").unwrap();
+        assert!(!removed, "nothing installed → not removed");
     }
 
     #[test]
