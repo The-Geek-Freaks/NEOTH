@@ -247,8 +247,12 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     treated as *deployed*, so `capability_evolver` silently skipped the proposal
     and the collector auto-emitted `PatchSkill`) is closed — the arm now fails
     closed like the sibling metadata/elapsed arms, so both callers surface the
-    proposal for operator review / `Escalate`. The ambient-path→store migration
-    and the multi-process lock regression remain OPEN.
+    proposal for operator review / `Escalate`. The decision logic is now split
+    into a pure `is_deployment_settled(modified, now, min_age)` under a
+    deterministic branch contract (missing-mtime, future-mtime, too-young,
+    exact-boundary, settled) so the fail-closed posture can't silently regress.
+    The ambient-path→store migration and the multi-process lock regression
+    remain OPEN.
   - **R3-12 (core landed 2026-07-24; broader edge matrix still OPEN):** the
     portable-marker staging no longer calls `tempdir_in(resolved_root)` before
     that root exists — `prepare_portable_marker` now stages in

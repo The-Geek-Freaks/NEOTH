@@ -153,23 +153,42 @@ pub struct CollectorReport {
 
 /// Returns `true` when the skill artifact at `artifact_path` exists AND its
 /// mtime is at least `min_age_secs` seconds in the past (i.e. a write has
-/// settled). Purely filesystem-based — no locks needed.
+/// settled). Purely filesystem-based — no locks needed. The decision logic is
+/// factored into [`is_deployment_settled`] so every branch is deterministically
+/// testable without a real filesystem.
 pub fn is_verified_deployed(artifact_path: &Path, min_age_secs: u64) -> bool {
     let Ok(meta) = std::fs::metadata(artifact_path) else {
         return false;
     };
-    let Ok(modified) = meta.modified() else {
-        // Platform does not report mtime (unusual but possible): we cannot prove
-        // the artifact has settled, so fail closed (not-deployed) — consistent
-        // with the metadata/elapsed error arms above and below. Callers then
-        // surface the proposal for operator review / escalate instead of
-        // auto-patching or silently dropping it.
+    is_deployment_settled(
+        meta.modified().ok(),
+        std::time::SystemTime::now(),
+        std::time::Duration::from_secs(min_age_secs),
+    )
+}
+
+/// Pure deployment-age decision, split from the filesystem calls so the
+/// GOLD-R3-11 regression contract can exercise every branch deterministically.
+///
+/// `modified` is `None` when the platform/filesystem does not report an mtime.
+/// All uncertainty fails CLOSED (not-deployed): a missing mtime, or a mtime in
+/// the future (clock skew / a just-touched file), both yield `false` so an
+/// unprovable "settled" state is escalated to the operator rather than treated
+/// as deployed. Only a real mtime at least `min_age` in the past returns `true`.
+fn is_deployment_settled(
+    modified: Option<std::time::SystemTime>,
+    now: std::time::SystemTime,
+    min_age: std::time::Duration,
+) -> bool {
+    let Some(modified) = modified else {
+        // mtime unavailable → cannot prove the write has settled.
         return false;
     };
-    let Ok(elapsed) = modified.elapsed() else {
-        return false;
-    };
-    elapsed.as_secs() >= min_age_secs
+    match now.duration_since(modified) {
+        Ok(elapsed) => elapsed >= min_age,
+        // `modified` is in the future relative to `now` → not settled.
+        Err(_) => false,
+    }
 }
 
 // ── HERMES-06 GAP-A: PromptEdit → staged skill proposals ────────────────────
@@ -1126,6 +1145,66 @@ mod tests {
         std::fs::write(&p, b"enabled: true").unwrap();
         // A just-written file won't have elapsed 999_999 seconds.
         assert!(!is_verified_deployed(&p, 999_999));
+    }
+
+    // ── is_deployment_settled — pure branch coverage (GOLD-R3-11) ────────────
+
+    #[test]
+    fn deployment_settled_missing_mtime_fails_closed() {
+        // Platform reports no mtime → cannot prove settled → NOT deployed.
+        assert!(!is_deployment_settled(
+            None,
+            std::time::SystemTime::UNIX_EPOCH,
+            std::time::Duration::ZERO,
+        ));
+    }
+
+    #[test]
+    fn deployment_settled_old_enough_is_deployed() {
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(10_000);
+        let modified = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        // 9_000s old, min_age 60s → settled.
+        assert!(is_deployment_settled(
+            Some(modified),
+            now,
+            std::time::Duration::from_secs(60),
+        ));
+    }
+
+    #[test]
+    fn deployment_settled_too_young_is_not_deployed() {
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_005);
+        let modified = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        // 5s old, min_age 60s → not yet settled.
+        assert!(!is_deployment_settled(
+            Some(modified),
+            now,
+            std::time::Duration::from_secs(60),
+        ));
+    }
+
+    #[test]
+    fn deployment_settled_future_mtime_fails_closed() {
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        let modified = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(2_000);
+        // mtime in the future (clock skew / just touched) → NOT settled.
+        assert!(!is_deployment_settled(
+            Some(modified),
+            now,
+            std::time::Duration::ZERO,
+        ));
+    }
+
+    #[test]
+    fn deployment_settled_exact_min_age_boundary_is_deployed() {
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_060);
+        let modified = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000);
+        // Exactly min_age (60s) old → `elapsed >= min_age` is inclusive.
+        assert!(is_deployment_settled(
+            Some(modified),
+            now,
+            std::time::Duration::from_secs(60),
+        ));
     }
 
     // ── sidecar written on tick ──────────────────────────────────────────────
