@@ -95,8 +95,7 @@ fn validate_loaded_skills(skills: Vec<Skill>) -> Result<Vec<Skill>> {
 /// routing generation to pinned readers.
 fn skill_snapshots_match(current: &[Skill], candidate: &[Skill]) -> Result<bool> {
     let current = serde_json::to_vec(current).context("serialize current skill snapshot")?;
-    let candidate =
-        serde_json::to_vec(candidate).context("serialize candidate skill snapshot")?;
+    let candidate = serde_json::to_vec(candidate).context("serialize candidate skill snapshot")?;
     Ok(current == candidate)
 }
 
