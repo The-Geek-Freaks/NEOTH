@@ -551,6 +551,10 @@ fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> 
     };
     let hits =
         crate::code_map::recall::relevant_files_for_prompt(&conn, &prompt, &active_root, max)?;
+    // GOLD-R3-13: surface the active root's index generation so a client can
+    // detect a re-scan under it and invalidate a cached result.
+    let index_generation =
+        crate::code_map::persist::root_index_generation(&conn, &active_root).unwrap_or(None);
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -571,6 +575,8 @@ fn run_relevant(prompt: String, max: usize, output: OutputFormat) -> Result<()> 
                 serde_json::to_string_pretty(&json!({
                     "prompt": prompt,
                     "max": max,
+                    "root": active_root,
+                    "index_generation": index_generation,
                     "hits": arr,
                 }))?
             );

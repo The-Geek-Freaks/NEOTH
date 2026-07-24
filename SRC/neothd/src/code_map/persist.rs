@@ -86,7 +86,10 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 
 /// Schema version. v2 adds `sha256` + `mtime_ns` columns to
 /// `code_map_files` for CBM-04 incremental re-index (skip-unchanged).
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 2;
+/// v3 adds a monotonic per-root `index_generation` counter to
+/// `code_map_roots` (GOLD-R3-13) so a recall consumer can tell that a root
+/// was re-scanned under it and invalidate a cached result.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 3;
 
 /// `~/.neoth/code_map.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -195,8 +198,22 @@ fn migrate_code_map(conn: &Connection, current_version: i64) -> Result<()> {
         v = 2;
     }
 
-    // Future migrations go here as:
-    //   if v < 3 { … v = 3; }
+    // v2 → v3: add a monotonic per-root index_generation counter (GOLD-R3-13).
+    // ADD COLUMN with a DEFAULT is a metadata-only change — no table rebuild.
+    // Existing roots start at generation 0; their next re-scan bumps them.
+    if v < 3 {
+        conn.execute_batch(
+            "ALTER TABLE code_map_roots \
+             ADD COLUMN index_generation INTEGER NOT NULL DEFAULT 0;",
+        )
+        .context("v2→v3: add index_generation to code_map_roots")?;
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')",
+            [],
+        )
+        .context("v2→v3: stamp schema_version=3")?;
+        v = 3;
+    }
 
     let _ = v; // suppress unused-variable warning when no further migrations exist
     Ok(())
@@ -217,7 +234,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             total_bytes      INTEGER NOT NULL,
             total_loc        INTEGER NOT NULL,
             oversize_skipped INTEGER NOT NULL,
-            truncated_at     INTEGER
+            truncated_at     INTEGER,
+            index_generation INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS code_map_files (
@@ -409,15 +427,17 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     // ON CONFLICT(root) DO UPDATE SET … updates in place with no DELETE.
     tx.execute(
         "INSERT INTO code_map_roots \
-         (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, truncated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+         (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, truncated_at, \
+          index_generation) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1) \
          ON CONFLICT(root) DO UPDATE SET \
              scanned_at       = excluded.scanned_at, \
              total_files      = excluded.total_files, \
              total_bytes      = excluded.total_bytes, \
              total_loc        = excluded.total_loc, \
              oversize_skipped = excluded.oversize_skipped, \
-             truncated_at     = excluded.truncated_at",
+             truncated_at     = excluded.truncated_at, \
+             index_generation = index_generation + 1",
         rusqlite::params![
             &map.root,
             now_unix,
@@ -731,6 +751,20 @@ pub fn load_map(conn: &Connection, root: &str) -> Result<Option<RepoMap>> {
             truncated_at: truncated_at.map(|n| n as u64),
         },
     }))
+}
+
+/// GOLD-R3-13 — the monotonic index generation of `root`, or `None` when the
+/// root has no persisted snapshot. Bumped by [`persist_map`] on every re-scan,
+/// so a recall consumer that remembers the generation it read can detect that
+/// the root was re-indexed under it and invalidate a cached result.
+pub fn root_index_generation(conn: &Connection, root: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT index_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .context("query code_map_roots index_generation")
 }
 
 /// Find every persisted file whose symbol list contains a declaration
@@ -1560,10 +1594,52 @@ mod tests {
     }
 
     #[test]
-    fn open_migrates_v1_to_v2_on_existing_db() {
+    fn index_generation_starts_at_one_and_bumps_on_rescan() {
+        use crate::code_map::walker::{RepoMap, ScanReport};
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gen.db");
+        let mut conn = open(&path).unwrap();
+
+        // Unknown root → None.
+        assert_eq!(root_index_generation(&conn, "/repo/x").unwrap(), None);
+
+        let map = RepoMap {
+            root: "/repo/x".into(),
+            files: Vec::new(),
+            report: ScanReport::default(),
+        };
+        persist_map(&mut conn, &map).unwrap();
+        assert_eq!(
+            root_index_generation(&conn, "/repo/x").unwrap(),
+            Some(1),
+            "first persist starts the generation at 1"
+        );
+
+        // Re-scan the same root → generation bumps in place (no reset).
+        persist_map(&mut conn, &map).unwrap();
+        assert_eq!(
+            root_index_generation(&conn, "/repo/x").unwrap(),
+            Some(2),
+            "a re-scan must bump the index generation"
+        );
+
+        // A different root keeps its own independent counter.
+        let other = RepoMap {
+            root: "/repo/y".into(),
+            files: Vec::new(),
+            report: ScanReport::default(),
+        };
+        persist_map(&mut conn, &other).unwrap();
+        assert_eq!(root_index_generation(&conn, "/repo/y").unwrap(), Some(1));
+        assert_eq!(root_index_generation(&conn, "/repo/x").unwrap(), Some(2));
+    }
+
+    #[test]
+    fn open_migrates_v1_to_v3_on_existing_db() {
         // Build a v1 DB manually (apply_schema with version stamped as 1,
         // without sha256/mtime_ns columns), then call open() and verify the
-        // migration fires: schema_version becomes "2" and both new columns exist.
+        // migration chain fires: schema_version advances to "3" (v1→v2→v3),
+        // the v2 file columns exist, and the v3 index_generation column exists.
         let dir = tempdir().unwrap();
         let path = dir.path().join("v1.db");
 
@@ -1644,7 +1720,7 @@ mod tests {
         // Open via the public API — should trigger v1→v2 migration.
         let conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "2".
+        // schema_version must now be "3" (v1→v2→v3 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -1653,8 +1729,27 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "2",
-            "schema_version must advance to 2 after migration"
+            version, "3",
+            "schema_version must advance to 3 after migration"
+        );
+
+        // v3 column: code_map_roots.index_generation exists, and the migrated
+        // legacy root defaulted to generation 0.
+        let root_cols: Vec<String> = {
+            let mut stmt = conn.prepare("PRAGMA table_info(code_map_roots)").unwrap();
+            stmt.query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert!(
+            root_cols.iter().any(|c| c == "index_generation"),
+            "v3 must add index_generation to code_map_roots; got {root_cols:?}"
+        );
+        assert_eq!(
+            root_index_generation(&conn, "/r").unwrap(),
+            Some(0),
+            "a migrated legacy root must default to generation 0"
         );
 
         // Both new columns must exist (PRAGMA table_info returns one row per column).

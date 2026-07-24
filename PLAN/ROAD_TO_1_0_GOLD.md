@@ -285,9 +285,16 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     path, the `code-map relevant` CLI, and the codegraph MCP server — plus root
     is now part of the deterministic tie-break. A regression proves a larger,
     higher-ranked unrelated repo can no longer hide the active repo's file.
-    STILL OPEN: binding cache/index generation to canonical root IDENTITY and
-    stale-index detection (the DB has no per-root generation counter yet), and a
-    Self-Improve recall consumer if one is added.
+    **Generation counter landed 2026-07-24 (schema v3):** `code_map_roots` now
+    carries a monotonic per-root `index_generation`, bumped in place by
+    `persist_map` on every re-scan (fresh root = 1; a migrated legacy root
+    defaults to 0 then bumps); `root_index_generation(conn, root)` reads it and
+    `code-map relevant --json` surfaces `root` + `index_generation` so a client
+    (GUI / polling agent) can detect a re-index under it and invalidate a cached
+    result. The v1→v2→v3 migration chain and the increment are pinned by tests.
+    STILL OPEN: automatic on-disk stale detection (walk the root and compare
+    file mtimes to the persisted scan so recall can WARN when the index predates
+    edits) and a Self-Improve recall consumer if one is added.
   - **R3-14 (decomposition/repair defanged 2026-07-24; rest still OPEN):**
     `wrap_untrusted` protects selected MCP/deep-research/teacher paths, and the
     coding decomposer/repair fences no longer interpolate untrusted data raw —
