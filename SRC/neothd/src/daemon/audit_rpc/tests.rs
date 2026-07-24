@@ -104,6 +104,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let communication_controlled =
         crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8;
     let self_edit_proposed = crate::wal::events::ExtendedSubtype::SelfEditProposed as u8;
+    let plugin_removal_intent = crate::wal::events::ExtendedSubtype::PluginRemovalIntent as u8;
+    let plugin_removal_result = crate::wal::events::ExtendedSubtype::PluginRemovalResult as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[
@@ -111,8 +113,12 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             http_intent,
             http_result,
             communication_controlled,
+            plugin_removal_intent,
+            plugin_removal_result,
         ]
     );
+    assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
+    assert!(is_allowed_client_event_pair(0x00, plugin_removal_result));
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(is_allowed_client_event_pair(0x00, communication_controlled));
     assert!(!is_allowed_client_event_pair(0x00, 0));

@@ -269,13 +269,19 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     directory is already gone, and gates success on an inventory readback —
     replacing the old bytes-first, error-swallowing path and its two fake
     JSON-only tests with three that exercise the real removal. Exact-head
-    CI/Security/CodeQL green at `57cb553a`. STILL OPEN for closure: a durable
-    Removal Intent→ACK→Committed/Aborted WAL (blocked on extending the one-shot
-    audit emit + daemon audit-RPC to carry the EXTENDED `event_subtype`;
-    `ExtendedSubtype` 0x12/0x13 are free), a crash-recovery removal journal,
-    runtime-generation handle invalidation (the CLI readback proves filesystem
-    discovery, not that a live daemon dropped an older loaded instance), and
-    config↔byte atomicity.
+    CI/Security/CodeQL green at `57cb553a`. The durable Removal
+    Intent→ACK→Committed/Aborted WAL then landed (2026-07-24 `894123fd`):
+    EXTENDED subtypes `PluginRemovalIntent` (0x12)/`PluginRemovalResult` (0x13),
+    a subtype-aware one-shot audit emit that carries `event_subtype` through both
+    the daemon forwarder and the direct home-bound writer, and an async
+    `run_remove` that gates the mutation on a required, correlated intent bound
+    to operation_id, plugin_id, the installed generation observed before any
+    change, and the operator hash pin (a WAL round-trip test proves both frames
+    persist with a shared operation_id). STILL OPEN for closure: a crash-recovery
+    removal journal, runtime-generation handle invalidation (the CLI readback
+    proves filesystem discovery, not that a live daemon dropped an older loaded
+    instance — genuinely daemon-side), config↔byte atomicity, and the
+    config_generation/runtime_generation intent bindings.
   - **R3-16:** `PLAN/CRG_ADOPTION_2026_07_20.md` still has CRG-01..05 open and
     no authoritative disposition/evidence-owner matrix. CRG-01 is partial and
     inherits R3-13; native impact-radius, diff-hunk-to-symbol mapping,
