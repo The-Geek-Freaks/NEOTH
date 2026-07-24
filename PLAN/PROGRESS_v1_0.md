@@ -81,6 +81,32 @@
 > visibly green. ROAD carries the per-blocker forensic detail. WS-R3 remains
 > **9 done / 9 open** (these are partials on already-open boxes).
 >
+> **Continuation wave 2026-07-24 (through head `93d08add`; counts unchanged):**
+> four more verified partials landed after `5e6b7c75`. **R3-14:** the coding
+> decomposer/repair fences no longer interpolate untrusted data raw —
+> `build_prompt` (project_context) and `build_repair_prompt` (malformed_output)
+> run the body through `defang_prompt_delimiters`, so an imported code map or a
+> manipulated prior model output can no longer forge a `</project_context>` /
+> `</malformed_output>` breakout (adversarial regressions pin both). **R3-11:**
+> the dreaming/self-improve installed-baseline read moved off an ambient
+> `read_to_string` onto the capability-bound store — `read_installed_baseline`
+> opens the skill root as a bound directory, takes the mutation lock, opens the
+> persona dir handle-relative + no-follow, reads `skill.md` size-bounded (16 MiB),
+> and now escalates invalid UTF-8 visibly instead of repairing it with
+> replacement characters. **R3-12:** a `cfg(unix)` regression proves a first
+> install whose absent destination sits under a symlinked ancestor is rejected
+> (link-free ancestor chain; nothing created through the link). **R3-13:**
+> code_map schema v3 adds a monotonic per-root `index_generation` (bumped in
+> place on each re-scan), read by `root_index_generation` and surfaced in
+> `code-map relevant --json` so a client can invalidate a cached recall; the
+> v1→v2→v3 migration chain and increment are pinned by tests. The exact-head
+> CI/Security/CodeQL verdict for `93d08add` (schema + migration + persist
+> semantics + dreaming store access + installer tests) is a fresh gate and does
+> not inherit an older green. WS-R3 stays **9 done / 9 open**; ROAD carries the
+> per-blocker detail and the remaining pieces (R3-11 collector reader +
+> multi-process lock proof, R3-12 collision/Windows-reparse/hard-crash, R3-13
+> automatic stale detection, R3-14 remaining context consumers).
+>
 > **Forensic resume 2026-07-22:** Claude's three-day delta was re-audited
 > against current `main`, not accepted from commit messages. Eight confirmed
 > release contracts are now explicit as GOLD-R3-11..18: the capability-bound

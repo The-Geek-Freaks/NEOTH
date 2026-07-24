@@ -323,7 +323,18 @@ fn read_installed_baseline(skills_dir: &Path, persona: &str) -> Result<String> {
         &skill_md_path,
         MAX_BASELINE_SKILL_BYTES,
     ) {
-        Ok(bytes) => Ok(String::from_utf8_lossy(&bytes).into_owned()),
+        // GOLD-R3-11: a generation-bound ground-truth baseline must fail VISIBLY
+        // on corruption rather than silently pass replacement characters through
+        // `from_utf8_lossy`. Invalid UTF-8 propagates as an error into the
+        // best-effort dreaming tick, which logs and skips the pass — "broken
+        // visible" instead of "broken repaired". The error carries only the path,
+        // never the raw bytes.
+        Ok(bytes) => String::from_utf8(bytes).with_context(|| {
+            format!(
+                "installed baseline {} is not valid UTF-8",
+                skill_md_path.display()
+            )
+        }),
         Err(error) if baseline_error_is_not_found(&error) => Ok(String::new()),
         Err(error) => Err(error),
     }
@@ -697,6 +708,21 @@ mod tests {
         assert_eq!(
             read_installed_baseline(&skills, "default").unwrap(),
             "BASELINE BODY"
+        );
+    }
+
+    #[test]
+    fn read_installed_baseline_rejects_invalid_utf8() {
+        // GOLD-R3-11: a corrupt (non-UTF-8) baseline must escalate visibly, not
+        // be silently repaired with replacement characters.
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        std::fs::create_dir_all(skills.join("default")).unwrap();
+        std::fs::write(skills.join("default").join("skill.md"), [0xff, 0xfe, 0x00]).unwrap();
+        let err = read_installed_baseline(&skills, "default").unwrap_err();
+        assert!(
+            format!("{err:#}").contains("not valid UTF-8"),
+            "expected a visible UTF-8 escalation, got: {err:#}"
         );
     }
 
