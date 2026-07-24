@@ -62,6 +62,25 @@
 > verdict; R3-10 remains open until the pushed head's required workflows finish
 > green and the remaining public-truth reconciliation is complete.
 >
+> **Gold R3 implementation wave 2026-07-24 (head `5e6b7c75`; counts unchanged —
+> no broad box closed):** four verified single-purpose fixes landed on the Codex
+> line, each gated (`cargo fmt --check` + `cargo check -p neoth --tests`) and
+> pushed. **R3-11 (partial):** `is_verified_deployed` no longer fails OPEN on an
+> unreadable mtime (it fell through to "deployed", so `capability_evolver`
+> silently skipped a proposal and the collector auto-emitted `PatchSkill`); the
+> arm now fails closed and the decision logic is a pure, fully branch-tested
+> `is_deployment_settled`. **R3-13 (containment landed):** `relevant_files_for_prompt`
+> takes a mandatory `active_root` and contains BEFORE rank/truncate (symbol loop
+> + path SQL), with a canonical sub-directory-aware `resolve_active_root` wired
+> into chat, the channel serve path, the `code-map relevant` CLI and the
+> codegraph MCP server — an unrelated repo can no longer hide or leak into the
+> active repo. **R3-12 (core landed):** the portable ownership marker stages in
+> `nearest_existing_path(resolved_root)` instead of `tempdir_in(resolved_root)`,
+> so a first install into an absent root succeeds. The exact-head CI/Security/
+> CodeQL verdict for `5e6b7c75` is still pending; R3-10 stays open until it is
+> visibly green. ROAD carries the per-blocker forensic detail. WS-R3 remains
+> **9 done / 9 open** (these are partials on already-open boxes).
+>
 > **Forensic resume 2026-07-22:** Claude's three-day delta was re-audited
 > against current `main`, not accepted from commit messages. Eight confirmed
 > release contracts are now explicit as GOLD-R3-11..18: the capability-bound
