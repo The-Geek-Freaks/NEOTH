@@ -988,7 +988,7 @@ fn default_transaction_anchor() -> Result<PathBuf> {
     Ok(PathBuf::from(anchor))
 }
 
-fn nearest_existing_path(mut path: &Path) -> Result<&Path> {
+pub(super) fn nearest_existing_path(mut path: &Path) -> Result<&Path> {
     loop {
         match fs::symlink_metadata(path) {
             Ok(_) => return Ok(path),

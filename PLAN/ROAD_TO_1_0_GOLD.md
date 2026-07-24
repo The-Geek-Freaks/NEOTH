@@ -249,12 +249,17 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     closed like the sibling metadata/elapsed arms, so both callers surface the
     proposal for operator review / `Escalate`. The ambient-path→store migration
     and the multi-process lock regression remain OPEN.
-  - **R3-12:** the generic `InstallTransaction` already supports a missing
-    destination and has a child-crash fixture, but the real portable bundle
-    path calls `tempdir_in(resolved_root)` for its marker before that root
-    exists. Stage the marker from the existing same-volume transaction anchor,
-    then exercise the actual bundle apply into an absent path with spaces/
-    Unicode, collision, link/reparse and hard-crash cases.
+  - **R3-12 (core landed 2026-07-24; broader edge matrix still OPEN):** the
+    portable-marker staging no longer calls `tempdir_in(resolved_root)` before
+    that root exists — `prepare_portable_marker` now stages in
+    `nearest_existing_path(resolved_root)`, the same link-free, canonical,
+    same-volume anchor the install transaction locks and journals in, so a first
+    install into an absent root succeeds (the transaction then creates the root
+    and commits the marker). A regression exercises the real bundle apply into
+    an absent root whose leaf carries a space + non-ASCII. STILL OPEN: absent-root
+    variants for collision, symlink/junction/reparse ancestor, and a hard child
+    crash mid-apply into the not-yet-created root (the generic transaction has a
+    crash fixture, but not through the portable first-install marker path).
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

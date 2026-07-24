@@ -621,14 +621,17 @@ fn prepare_portable_marker(
         profile: profile.as_str().to_string(),
         support_dir: PORTABLE_SUPPORT_DIR.to_string(),
     };
-    // Stage inside the resolved install root, not the global temp dir: macOS
-    // tempdirs sit under the `/var` -> `/private/var` symlink, which the
-    // install transaction's reparse-point guard rejects for member sources.
-    // The install root's ancestor chain is already link-free and validated,
-    // and staging on the same volume keeps the copy local to the installation.
+    // GOLD-R3-12: stage inside the nearest EXISTING ancestor of the resolved
+    // install root — the same link-free, same-volume anchor the install
+    // transaction locks and journals in — rather than inside the resolved root
+    // itself. On a first install the resolved root does not exist yet, so
+    // `tempdir_in(resolved_root)` fails with NotFound; its nearest existing
+    // ancestor is already canonical + validated by `resolved_install_root`,
+    // so it also avoids the macOS `/var` -> `/private/var` reparse rejection.
+    let stage_anchor = super::install_transaction::nearest_existing_path(&resolved_root)?;
     let stage = tempfile::Builder::new()
         .prefix(".neoth-portable-owner-")
-        .tempdir_in(&resolved_root)
+        .tempdir_in(stage_anchor)
         .context("create private portable-marker stage")?;
     let source = stage.path().join(PORTABLE_OWNERSHIP_MARKER);
     let mut file = fs::OpenOptions::new()
@@ -1439,6 +1442,52 @@ mod tests {
         );
         assert!(!install.join("README.md").exists());
         assert!(!install.join(SELF_KNOWLEDGE).exists());
+    }
+
+    #[test]
+    fn portable_bundle_installs_into_an_absent_root() {
+        // GOLD-R3-12: a first portable install must work when the final install
+        // root does not exist yet. The ownership marker stages in the nearest
+        // existing ancestor (not the absent root), and the transaction creates
+        // the root and commits every member. Space + non-ASCII in the missing
+        // leaf exercises path handling on the create path.
+        let fixture = crate::test_env::canonical_tempdir().unwrap();
+        let bundle = fixture.path().join("bundle");
+        let install = fixture.path().join("nëoth inst");
+        fs::create_dir_all(&bundle).unwrap();
+        exact_shape(&bundle, PortableBundleProfile::current());
+        fs::remove_dir_all(bundle.join(SELF_KNOWLEDGE)).unwrap();
+        crate::wiki::release_snapshot::write_test_snapshot(
+            &bundle.join(SELF_KNOWLEDGE),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+        assert!(
+            !install.exists(),
+            "precondition: install root must be absent"
+        );
+
+        let committed =
+            apply_portable_release_bundle(&bundle, &install, env!("CARGO_PKG_VERSION")).unwrap();
+        assert_eq!(
+            committed.receipt.members,
+            bundle_member_specs(PortableBundleProfile::current()).len() + 1
+        );
+        assert!(
+            install.is_dir(),
+            "the transaction must create the previously absent install root"
+        );
+        assert!(
+            install.join(PORTABLE_OWNERSHIP_MARKER).is_file(),
+            "ownership marker must be committed into the newly created root"
+        );
+        validate_existing_portable_marker(&install, PortableBundleProfile::current()).unwrap();
+        assert!(
+            install
+                .join(PORTABLE_SUPPORT_DIR)
+                .join(SELF_KNOWLEDGE)
+                .is_dir()
+        );
     }
 
     #[test]
