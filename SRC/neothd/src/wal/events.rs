@@ -157,6 +157,14 @@ pub enum ExtendedSubtype {
     /// Payload (JSON): `{operation_id, skill_id, status: "committed"|"aborted",
     /// replaced_existing?, installed_generation_sha256?, error_sha256?, ts_unix}`.
     SkillInstallResult = 0x15,
+    /// An operator discarded a self-improvement journal that recovery refused
+    /// to resolve. The journal governs skill-file accept/rollback — i.e. what
+    /// the agent's own instructions become — so an abandoned transaction must
+    /// leave a record naming WHAT was abandoned, not just that a file was
+    /// deleted. Emitted BEFORE the delete; a failed emit aborts it. Payload
+    /// (JSON): `{skill: sanitized, intended_status, journal_sha256,
+    /// proposal_id, source: "cli", ts_unix}`. No skill bytes are logged.
+    SelfImproveJournalDiscarded = 0x16,
 }
 
 impl ExtendedSubtype {
@@ -184,6 +192,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::PluginRemovalResult => "plugin_removal_result",
             ExtendedSubtype::SkillInstallIntent => "skill_install_intent",
             ExtendedSubtype::SkillInstallResult => "skill_install_result",
+            ExtendedSubtype::SelfImproveJournalDiscarded => "self_improve_journal_discarded",
         }
     }
 
@@ -211,6 +220,7 @@ impl ExtendedSubtype {
             0x13 => Some(ExtendedSubtype::PluginRemovalResult),
             0x14 => Some(ExtendedSubtype::SkillInstallIntent),
             0x15 => Some(ExtendedSubtype::SkillInstallResult),
+            0x16 => Some(ExtendedSubtype::SelfImproveJournalDiscarded),
             _ => None,
         }
     }
@@ -240,6 +250,7 @@ impl ExtendedSubtype {
             Self::PluginRemovalResult,
             Self::SkillInstallIntent,
             Self::SkillInstallResult,
+            Self::SelfImproveJournalDiscarded,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3590,6 +3601,7 @@ mod tests {
             // R3-17
             ExtendedSubtype::SkillInstallIntent,
             ExtendedSubtype::SkillInstallResult,
+            ExtendedSubtype::SelfImproveJournalDiscarded,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

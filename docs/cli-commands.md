@@ -3149,6 +3149,12 @@ Adopt a proposal into its skill file (backs up the replaced content)
 
 Turn self-improvement off (keeps the ledger)
 
+### `neoth self-improve discard-journal`
+
+Abandon a crash-recovery journal that recovery refuses to resolve
+
+- `--confirm` — Required. Without it the command only reports what it would abandon
+
 ### `neoth self-improve enable`
 
 Enable self-improvement. `--auto` also turns on the nightly sleep cycle
@@ -3160,6 +3166,10 @@ Enable self-improvement. `--auto` also turns on the nightly sleep cycle
 IMPR-03: run a pending proposal through the verification-gated execute workflow (verification_command + advisor diff-review loop, max 2 revises). Does NOT write the skill file — accept is still gated by the operator
 
 - `<ID>`
+
+### `neoth self-improve journal-status`
+
+Show the crash-recovery journal WITHOUT running recovery. Read-only, and the one self-improve command that still answers while an unresolvable journal is blocking every other one (including the daemon's startup)
 
 ### `neoth self-improve log`
 

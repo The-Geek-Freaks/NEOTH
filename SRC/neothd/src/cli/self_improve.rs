@@ -69,10 +69,37 @@ pub enum SelfImproveAction {
     /// workflow (verification_command + advisor diff-review loop, max 2 revises).
     /// Does NOT write the skill file — accept is still gated by the operator.
     Execute { id: String },
+    /// Show the crash-recovery journal WITHOUT running recovery. Read-only, and
+    /// the one self-improve command that still answers while an unresolvable
+    /// journal is blocking every other one (including the daemon's startup).
+    JournalStatus,
+    /// Abandon a crash-recovery journal that recovery refuses to resolve.
+    ///
+    /// DESTRUCTIVE: the interrupted accept/rollback is given up, not completed.
+    /// Refuses while a daemon is running, prints exactly what will be abandoned,
+    /// and records the abandonment durably BEFORE deleting anything — the
+    /// journal governs skill-file accept/rollback, so a silent `rm` leaves the
+    /// audit chain with an unaccountable gap.
+    DiscardJournal {
+        /// Required. Without it the command only reports what it would abandon.
+        #[arg(long)]
+        confirm: bool,
+    },
 }
 
 pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
+    // The journal commands must run BEFORE the recovery gate below: they exist
+    // precisely for the case where recovery refuses to resolve, which blocks
+    // every other subcommand (and the daemon). Routing them through the gate
+    // would make the escape hatch unreachable in the only situation it is for.
+    match &args.action {
+        SelfImproveAction::JournalStatus => return journal_status(&home, output),
+        SelfImproveAction::DiscardJournal { confirm } => {
+            return discard_journal(&home, *confirm, output).await;
+        }
+        _ => {}
+    }
     // B19: recover any partial accept/rollback from a previous crash before
     // dispatching any subcommand — startup recovery gate.
     si::recover_pending_journal(&home)?;
@@ -202,7 +229,115 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
         SelfImproveAction::Pr { id, submit } => pr(&home, &id, submit, output),
         SelfImproveAction::Log => log(&home, output),
         SelfImproveAction::Execute { id } => execute(&home, &id, autonomy, output).await,
+        // Both returned above, before the recovery gate.
+        SelfImproveAction::JournalStatus | SelfImproveAction::DiscardJournal { .. } => {
+            unreachable!("journal commands return before the recovery gate")
+        }
     }
+}
+
+/// Read-only view of the crash-recovery journal. Runs no recovery, so it still
+/// answers when recovery is what is blocking everything else.
+fn journal_status(home: &std::path::Path, output: OutputFormat) -> Result<()> {
+    let summary = si::describe_discardable_journal(home)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let body = match &summary {
+                Some(journal) => serde_json::json!({
+                    "pending": true,
+                    "proposal_id": journal.proposal_id,
+                    "skill": journal.skill,
+                    "intended_status": journal.intended_status,
+                    "journal_sha256": journal.journal_sha256,
+                }),
+                None => serde_json::json!({ "pending": false }),
+            };
+            println!("{}", serde_json::to_string(&body)?);
+        }
+        OutputFormat::Table => match &summary {
+            Some(journal) => {
+                println!("a self-improvement transaction is journalled:");
+                print_journal_summary(journal);
+                println!(
+                    "\nIf `neoth self-improve` and the daemon refuse to start because recovery \
+                     cannot resolve this, abandon it with:\n  \
+                     neoth self-improve discard-journal --confirm"
+                );
+            }
+            None => println!("no self-improvement journal pending."),
+        },
+    }
+    Ok(())
+}
+
+fn print_journal_summary(journal: &si::DiscardableJournal) {
+    println!("  proposal        : {}", journal.proposal_id);
+    println!("  skill           : {}", journal.skill);
+    println!("  intended status : {}", journal.intended_status);
+    println!("  journal sha256  : {}", journal.journal_sha256);
+}
+
+/// Abandon an unresolvable crash-recovery journal. Destructive: the interrupted
+/// accept/rollback is given up, not completed.
+async fn discard_journal(
+    home: &std::path::Path,
+    confirm: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    if !confirm {
+        // Never mutate on the strength of a typo. Show the exact consequence and
+        // make the operator ask again.
+        let summary = si::describe_discardable_journal(home)?;
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": false,
+                        "discarded": false,
+                        "reason": "confirmation required",
+                        "pending": summary.is_some(),
+                    })
+                );
+            }
+            OutputFormat::Table => match &summary {
+                Some(journal) => {
+                    println!("this would ABANDON the journalled transaction:");
+                    print_journal_summary(journal);
+                    println!(
+                        "\nThe interrupted operation is given up, NOT completed. The skill file \
+                         is left exactly as it is on disk.\nRe-run with --confirm to proceed."
+                    );
+                }
+                None => println!("no self-improvement journal pending — nothing to discard."),
+            },
+        }
+        return Ok(());
+    }
+
+    let discarded = si::discard_journal(home).await?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "discarded": true,
+                "proposal_id": discarded.proposal_id,
+                "skill": discarded.skill,
+                "intended_status": discarded.intended_status,
+                "journal_sha256": discarded.journal_sha256,
+            })
+        ),
+        OutputFormat::Table => {
+            println!("abandoned the journalled transaction (recorded in the WAL first):");
+            print_journal_summary(&discarded);
+            println!(
+                "\nRun `neoth self-improve review` to check the proposal's state, and \
+                 `neoth doctor` before restarting the daemon."
+            );
+        }
+    }
+    Ok(())
 }
 
 fn status(

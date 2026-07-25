@@ -1002,6 +1002,122 @@ pub fn journal_path(home: &Path) -> PathBuf {
     home.join("self_improve_journal.json")
 }
 
+/// What a `discard-journal` run would abandon. Content-free by construction:
+/// the skill NAME is sanitized and no skill bytes are carried, because this is
+/// printed to the operator and hashed into a durable audit frame.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscardableJournal {
+    pub proposal_id: String,
+    pub skill: String,
+    /// What the interrupted operation was trying to reach.
+    pub intended_status: String,
+    /// Identity of the exact bytes being discarded.
+    pub journal_sha256: String,
+}
+
+/// Read the accept journal WITHOUT running recovery.
+///
+/// Every normal read path goes through [`with_state_lock`], which runs recovery
+/// first — that is exactly what must not happen here: recovery would either
+/// resolve or refuse the very journal the operator is trying to inspect, and on
+/// the resolve path it would silently consume it. This reads raw bytes and
+/// tolerates a journal that no longer parses, because "it does not parse" is a
+/// state the operator specifically needs a way out of.
+pub fn describe_discardable_journal(home: &Path) -> Result<Option<DiscardableJournal>> {
+    let path = journal_path(home);
+    let Some(bytes) = read_optional_regular_file_bounded(
+        &path,
+        SELF_IMPROVE_ACCEPT_JOURNAL_MAX_BYTES,
+        "accept journal",
+    )?
+    else {
+        return Ok(None);
+    };
+    let journal_sha256 = sha256_hex(&String::from_utf8_lossy(&bytes));
+    let parsed: Option<AcceptJournal> = serde_json::from_slice(&bytes).ok();
+    Ok(Some(match parsed {
+        Some(journal) => DiscardableJournal {
+            proposal_id: crate::security::redact::sanitize_tool_output(&journal.proposal_id),
+            skill: crate::security::redact::sanitize_tool_output(
+                Path::new(&journal.skill_path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default()
+                    .as_str(),
+            ),
+            intended_status: format!("{:?}", journal.intended_status),
+            journal_sha256,
+        },
+        None => DiscardableJournal {
+            proposal_id: "<unparseable>".to_string(),
+            skill: "<unparseable>".to_string(),
+            intended_status: "<unparseable>".to_string(),
+            journal_sha256,
+        },
+    }))
+}
+
+/// Delete the accept journal after its abandonment has been durably recorded.
+///
+/// The operator's only escape from a journal recovery refuses to resolve used to
+/// be `rm` outside the product — which leaves the audit chain with an
+/// unaccountable gap, since this journal governs skill-file accept/rollback (what
+/// the agent's own instructions become).
+///
+/// Order is mandatory and enforced by the caller contract:
+/// 1. refuse while a daemon is live — it would run recovery on the next
+///    operation and race this;
+/// 2. take the in-process mutex, THEN the cross-process file lock (same order as
+///    [`with_state_lock`], so the two can never deadlock against each other);
+/// 3. record the abandonment — a failed record aborts and keeps the journal;
+/// 4. only then delete.
+pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
+    if let Some(pid) = crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid"))
+        .context("check for a running daemon before discarding the journal")?
+    {
+        anyhow::bail!(
+            "a NEOTH daemon is running (pid {pid}) — stop it with `neoth stop` first. \
+             Discarding the journal underneath a live daemon races its recovery pass."
+        );
+    }
+
+    let _guard = SELF_IMPROVE_STATE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _oslock = crate::util::locked_file::lock_file_blocking(
+        &state_lock_path(home),
+        "self-improvement state",
+    )?;
+
+    // NOTE: deliberately NOT `with_state_lock` — that runs recovery, which is
+    // the thing being bypassed.
+    let Some(summary) = describe_discardable_journal(home)? else {
+        anyhow::bail!("no self-improvement journal to discard");
+    };
+
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "proposal_id": summary.proposal_id,
+        "skill": summary.skill,
+        "intended_status": summary.intended_status,
+        "journal_sha256": summary.journal_sha256,
+        "source": "cli",
+        "ts_unix": crate::time::now_unix_secs(),
+    }))?;
+    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        crate::wal::events::ExtendedSubtype::SelfImproveJournalDiscarded as u8,
+        payload,
+        "SELF_IMPROVE_JOURNAL_DISCARDED",
+        true,
+    )
+    .await
+    .context("the discard was NOT recorded; the journal was left in place")?;
+
+    remove_journal(&journal_path(home))?;
+    Ok(summary)
+}
+
 fn remove_journal(path: &Path) -> Result<()> {
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -4308,6 +4424,96 @@ mod tests {
         assert_eq!(
             load_proposals_raw(home.path()).unwrap()[0].status,
             ProposalStatus::VerifiedApproved
+        );
+    }
+
+    fn write_discardable_journal(home: &Path) {
+        let journal = AcceptJournal {
+            proposal_id: "wedged-1".to_string(),
+            skill_path: home
+                .join("skills")
+                .join("pinned")
+                .join("skill.md")
+                .display()
+                .to_string(),
+            original_bytes: "live-v1".to_string(),
+            intended_status: ProposalStatus::Accepted,
+            base_sha256: Some(sha256_hex("live-v1")),
+            target_sha256: Some(sha256_hex("improved")),
+            base_generation_sha256: None,
+            target_generation_sha256: None,
+            base_hash: None,
+            target_hash: None,
+        };
+        std::fs::write(
+            journal_path(home),
+            serde_json::to_vec_pretty(&journal).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn discard_journal_records_the_abandonment_before_deleting() {
+        let home = tempfile::tempdir().unwrap();
+        write_discardable_journal(home.path());
+
+        let summary = describe_discardable_journal(home.path())
+            .unwrap()
+            .expect("the journal must be readable WITHOUT running recovery");
+        assert_eq!(summary.proposal_id, "wedged-1");
+        assert_eq!(summary.intended_status, "Accepted");
+
+        let discarded = discard_journal(home.path()).await.unwrap();
+        assert_eq!(discarded.journal_sha256, summary.journal_sha256);
+        assert!(
+            !journal_path(home.path()).exists(),
+            "the journal must be gone after a confirmed discard"
+        );
+        let segment = home.path().join("wal").join("000001.wal");
+        assert!(
+            segment.exists() && std::fs::metadata(&segment).unwrap().len() > 0,
+            "the abandonment must be durably recorded BEFORE the delete"
+        );
+    }
+
+    #[tokio::test]
+    async fn discard_journal_refuses_while_a_daemon_is_live() {
+        let home = tempfile::tempdir().unwrap();
+        write_discardable_journal(home.path());
+        // Our own pid is alive by construction.
+        std::fs::write(
+            home.path().join("neothd.pid"),
+            std::process::id().to_string(),
+        )
+        .unwrap();
+
+        let error = discard_journal(home.path())
+            .await
+            .expect_err("discarding underneath a live daemon races its recovery pass");
+        assert!(
+            format!("{error:#}").contains("daemon is running"),
+            "{error:#}"
+        );
+        assert!(
+            journal_path(home.path()).exists(),
+            "a refused discard must leave the journal in place"
+        );
+    }
+
+    #[test]
+    fn describe_discardable_journal_tolerates_unparseable_bytes() {
+        // "it does not parse" is exactly a state the operator needs a way out
+        // of, so the read-only view must still answer.
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(journal_path(home.path()), b"{ not json").unwrap();
+        let summary = describe_discardable_journal(home.path()).unwrap().unwrap();
+        assert_eq!(summary.proposal_id, "<unparseable>");
+        assert_eq!(summary.journal_sha256.len(), 64);
+        assert!(
+            describe_discardable_journal(tempfile::tempdir().unwrap().path())
+                .unwrap()
+                .is_none(),
+            "no journal → nothing to describe"
         );
     }
 
