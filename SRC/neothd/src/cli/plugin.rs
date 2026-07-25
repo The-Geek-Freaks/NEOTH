@@ -1390,7 +1390,8 @@ fn activate_staged_install(
 
 /// R3-15 — transactional plugin removal at an explicit home (testable core of
 /// [`run_remove`]). Returns whether anything was removed (`false` = nothing was
-/// installed).
+/// installed). Callers that need the reached-step detail use
+/// [`remove_plugin_at_tracked`].
 ///
 /// Ordering matters: the config trust references are cleared **before** the
 /// on-disk bytes are deleted, and every step propagates its error, so the
@@ -1399,7 +1400,7 @@ fn activate_staged_install(
 ///   intact and consistent;
 /// - a byte-delete failure after the config is clean leaves a deactivated,
 ///   unpinned directory that fail-closed discovery will not run — recoverable,
-///   and surfaced instead of swallowed.
+///   journalled, and surfaced instead of swallowed.
 ///
 /// Removal invalidates the operator's prior trust decision, so the activation
 /// AND the hash pin are cleared; a revocation is a deny-list and deliberately
@@ -1407,47 +1408,132 @@ fn activate_staged_install(
 /// already gone, and success is only reported after an inventory readback
 /// proves the plugin is no longer a loadable install.
 fn remove_plugin_at(home: &std::path::Path, id: &str) -> Result<bool> {
-    // GOLD-SEC — reject path-traversal ids before any filesystem join. An
-    // installed plugin id is always a valid snake_case token (enforced at
-    // install time via parse_manifest); anything else (`../`, absolute paths,
-    // separators) cannot name a real install and must never reach
-    // remove_dir_all. Without this guard `neoth plugin remove ../../foo`
-    // would delete an arbitrary directory the operator can write to.
+    let mut progress = RemovalProgress::default();
+    remove_plugin_at_tracked(home, id, &mut progress)
+}
+
+/// GOLD-SEC — reject path-traversal ids before any side effect. An installed
+/// plugin id is always a valid snake_case token (enforced at install time via
+/// parse_manifest); anything else (`../`, absolute paths, separators) cannot
+/// name a real install and must never reach `remove_dir_all`, must never name a
+/// journal file, and must never mint a durable removal intent for an operation
+/// that could not start.
+fn validate_plugin_id(id: &str) -> Result<()> {
     if !crate::wasm_plugin::manifest::is_snake_case_id(id) {
         anyhow::bail!(
             "invalid plugin id `{id}` — must be a snake_case token \
              ([a-z0-9_], not starting with `_` or a digit)"
         );
     }
+    Ok(())
+}
+
+/// R3-15 — which steps of a removal actually completed. Carried out of the
+/// mutation so the terminal WAL frame can tell "nothing happened" (`aborted`)
+/// apart from "the operator's trust decision is already revoked but the bytes
+/// are still on disk" (`partial`). An auditor replaying the log must be able to
+/// make that distinction; `aborted` for both is a false record.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RemovalProgress {
+    config_cleared: bool,
+    bytes_deleted: bool,
+}
+
+/// The durable pending-removal journal for one plugin (R3-15). Kept OUTSIDE
+/// `plugins/` so it can never be mistaken for a discoverable install.
+///
+/// `id` is validated snake_case before this is called, so the join is a single
+/// literal file name.
+fn removal_journal_path(home: &std::path::Path, id: &str) -> std::path::PathBuf {
+    home.join(".plugin-removals").join(format!("{id}.json"))
+}
+
+/// True when `freedom.yaml` still names the plugin — or cannot be read/parsed.
+///
+/// A malformed config deliberately reports `true`: the removal then runs the
+/// real coherent [`FreedomConfig::update_at`] and the parse error surfaces,
+/// instead of a broken config being silently reported as "nothing installed".
+fn plugin_config_refs_present(home: &std::path::Path, id: &str) -> bool {
+    let path = home.join("freedom.yaml");
+    if !path.exists() {
+        return false;
+    }
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return true;
+    };
+    let Ok(config) = serde_yaml::from_str::<FreedomConfig>(&body) else {
+        return true;
+    };
+    config.plugins.wasm.activations.contains_key(id)
+        || config.plugins.wasm.pinned_hashes.contains_key(id)
+}
+
+/// R3-15 — transactional plugin removal with a durable crash-recovery journal.
+///
+/// The journal is written (fsynced data + directory entry) BEFORE the first
+/// mutation and removed only after the inventory readback proves the plugin is
+/// gone. A crash anywhere in between therefore leaves an explicit record, and
+/// the next removal of the same id resumes it instead of returning the
+/// misleading "nothing installed — no-op". That closes the config↔byte gap: the
+/// only reachable crash state is "config already clean, bytes still present",
+/// which the resume finishes idempotently.
+///
+/// `progress` records the steps that completed even when this returns `Err`, so
+/// the caller can log the true terminal state.
+fn remove_plugin_at_tracked(
+    home: &std::path::Path,
+    id: &str,
+    progress: &mut RemovalProgress,
+) -> Result<bool> {
+    validate_plugin_id(id)?;
     let plugins_root = home.join("plugins");
     let target = plugins_root.join(id);
     let freedom_path = home.join("freedom.yaml");
+    let journal = removal_journal_path(home, id);
 
+    // A journal from a crashed removal means the operator already authorised
+    // this exact removal and the mutation began. Resume it even when nothing is
+    // left to observe, so the terminal state is reached and recorded.
+    let resuming = journal.exists();
     let bytes_present = target.exists();
+
+    // Nothing installed: no bytes, no stale config reference, no crash to
+    // finish. Reported as a no-op without minting a journal.
+    if !resuming && !bytes_present && !plugin_config_refs_present(home, id) {
+        return Ok(false);
+    }
+
+    if !resuming {
+        let record = serde_json::to_vec(&serde_json::json!({
+            "plugin_id": id,
+            "bytes_present": bytes_present,
+            "ts_unix": crate::time::now_unix_secs(),
+        }))?;
+        crate::util::atomic_write::atomic_write_private(&journal, &record).with_context(|| {
+            format!("write the pending-removal journal at {}", journal.display())
+        })?;
+    }
 
     // Clear the config trust references FIRST. A failure aborts before any byte
     // deletion. The empty-config case creates nothing (guarded on existence).
-    let config_refs_cleared = if freedom_path.exists() {
+    // Removal invalidates the operator's prior trust decision, so the activation
+    // AND the hash pin go; a revocation is a deny-list and deliberately stays.
+    if freedom_path.exists() {
         FreedomConfig::update_at(&freedom_path, |config| {
-            let deactivated = config.plugins.wasm.activations.remove(id).is_some();
-            let unpinned = config.plugins.wasm.pinned_hashes.remove(id).is_some();
-            Ok(deactivated || unpinned)
+            config.plugins.wasm.activations.remove(id);
+            config.plugins.wasm.pinned_hashes.remove(id);
+            Ok(())
         })
-        .with_context(|| format!("clear config references for plugin `{id}`"))?
-    } else {
-        false
-    };
-
-    // Nothing installed: no bytes and no stale config reference.
-    if !bytes_present && !config_refs_cleared {
-        return Ok(false);
+        .with_context(|| format!("clear config references for plugin `{id}`"))?;
     }
+    progress.config_cleared = true;
 
     // Config is clean; delete the bytes.
     if bytes_present {
         std::fs::remove_dir_all(&target)
             .with_context(|| format!("remove plugin directory `{}`", target.display()))?;
     }
+    progress.bytes_deleted = true;
 
     // Inventory readback: never report success before proving the plugin is no
     // longer discoverable as a loadable install.
@@ -1459,16 +1545,27 @@ fn remove_plugin_at(home: &std::path::Path, id: &str) -> Result<bool> {
         anyhow::bail!("plugin `{id}` is still discovered after removal");
     }
 
+    // Terminal state proven — retire the journal durably. A surviving journal
+    // would make the next removal replay a completed transaction.
+    crate::util::atomic_write::durable_remove_file(&journal)
+        .with_context(|| format!("clear the pending-removal journal at {}", journal.display()))?;
+
     Ok(true)
 }
 
 async fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
+    // An id that cannot name a real install must not mint a durable audit
+    // trail: without this the intent frame carries arbitrary, never-validated
+    // operator strings for an operation that could never start.
+    validate_plugin_id(id)?;
     let home = FreedomConfig::default_neoth_home();
     let operation_id = uuid::Uuid::now_v7().to_string();
     // Bindings observed BEFORE any mutation: the installed generation (plugin
-    // content hash) and the operator hash pin the intent authorizes.
+    // content hash), the operator hash pin the intent authorizes, and the config
+    // generation the daemon's reload controller identifies the same file by.
     let installed_generation = plugin_installed_generation(&home, id);
     let expected_pin = plugin_pinned_hash(&home, id);
+    let config_generation = plugin_config_generation(&home);
 
     // 1. Removal INTENT — a durable WAL ACK must precede any config or byte
     //    change (R3-15). If it is not durable, nothing is removed.
@@ -1478,37 +1575,56 @@ async fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
         id,
         installed_generation.as_deref(),
         expected_pin.as_deref(),
+        config_generation,
     )
     .await
     .context("plugin removal intent was not durable; nothing was removed")?;
 
     // 2. The ordered, fail-closed mutation.
-    let removed = match remove_plugin_at(&home, id) {
+    let mut progress = RemovalProgress::default();
+    let removed = match remove_plugin_at_tracked(&home, id, &mut progress) {
         Ok(removed) => removed,
         Err(error) => {
             let error_sha = hex::encode(sha2::Sha256::digest(format!("{error:#}").as_bytes()));
+            let status = removal_failure_status(progress);
             let _ = emit_plugin_removal_result(
                 &home,
                 &operation_id,
                 id,
-                "aborted",
+                status,
                 None,
                 Some(&error_sha),
+                progress,
             )
             .await;
+            if progress.config_cleared {
+                request_removal_reload(&home, id);
+            }
             return Err(error);
         }
     };
 
     // 3. Removal COMMITTED — correlated terminal outcome bound by operation_id.
-    emit_plugin_removal_result(&home, &operation_id, id, "committed", Some(removed), None)
-        .await
-        .context("plugin was removed, but its committed audit failed")?;
+    emit_plugin_removal_result(
+        &home,
+        &operation_id,
+        id,
+        "committed",
+        Some(removed),
+        None,
+        progress,
+    )
+    .await
+    .context("plugin was removed, but its committed audit failed")?;
+
+    // 4. Runtime-generation invalidation. Config bytes alone never reach a LIVE
+    //    daemon — see [`request_removal_reload`].
+    let reload_requested = !removed || request_removal_reload(&home, id);
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let obj = if removed {
-                serde_json::json!({ "ok": true, "id": id })
+                serde_json::json!({ "ok": true, "id": id, "reload_requested": reload_requested })
             } else {
                 serde_json::json!({ "ok": false, "id": id, "reason": "not found" })
             };
@@ -1517,12 +1633,66 @@ async fn run_remove(id: &str, output: OutputFormat) -> Result<()> {
         OutputFormat::Table => {
             if removed {
                 println!("removed plugin `{id}`.");
+                if !reload_requested {
+                    println!(
+                        "WARNING: the live-config reload could not be requested — a running \
+                         daemon keeps the loaded instance until `neoth reload`."
+                    );
+                }
             } else {
                 println!("plugin `{id}` not installed — no-op.");
             }
         }
     }
     Ok(())
+}
+
+/// The terminal status for a failed removal. A cleared config already revoked
+/// the operator's trust decision, so that is a `partial` removal — recording it
+/// as `aborted` would tell an auditor "nothing happened" while the plugin is
+/// already deactivated and unpinned with its bytes still on disk.
+fn removal_failure_status(progress: RemovalProgress) -> &'static str {
+    if progress.config_cleared || progress.bytes_deleted {
+        "partial"
+    } else {
+        "aborted"
+    }
+}
+
+/// R3-15 runtime-generation invalidation.
+///
+/// Writing `freedom.yaml` does not by itself reach a LIVE daemon: reload is
+/// sentinel-driven (`cli::serve::handle_reload_sentinel`), so without this a
+/// removed plugin's already-compiled instance keeps its bootstrap authority
+/// until the operator happens to type `neoth reload`. The live gate in
+/// [`crate::wasm_plugin::dispatch`] refuses every plugin whose activation is
+/// absent from the reloaded config — so requesting the reload IS the handle
+/// invalidation, and a stopped daemon applies it at its next start.
+///
+/// Best-effort by construction: the removal has already committed, so a sentinel
+/// failure cannot be made fail-closed. It is reported instead of swallowed.
+fn request_removal_reload(home: &std::path::Path, id: &str) -> bool {
+    match crate::cli::reload::request_reload_at(home) {
+        Ok(_) => true,
+        Err(error) => {
+            tracing::warn!(
+                plugin = %id,
+                error = %error,
+                "plugin removed, but the live-config reload sentinel could not be written — \
+                 a running daemon keeps the loaded instance until `neoth reload`"
+            );
+            false
+        }
+    }
+}
+
+/// The config generation the daemon's [`crate::config::reload::ReloadController`]
+/// identifies `freedom.yaml` by (`xxh3_64(path + mtime + size)`), observed before
+/// any mutation. Binding it into the intent lets an auditor tell which exact
+/// config state the removal authorised, and pairs with the post-commit reload
+/// that makes a live runtime converge on the successor generation.
+fn plugin_config_generation(home: &std::path::Path) -> Option<u64> {
+    crate::config::reload::compute_snapshot_hash(&home.join("freedom.yaml")).ok()
 }
 
 /// The installed generation (plugin content hash) the removal intent binds,
@@ -1552,12 +1722,14 @@ async fn emit_plugin_removal_intent(
     plugin_id: &str,
     installed_generation_sha256: Option<&str>,
     expected_pinned_hash: Option<&str>,
+    config_generation: Option<u64>,
 ) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "operation_id": operation_id,
         "plugin_id": plugin_id,
         "installed_generation_sha256": installed_generation_sha256,
         "expected_pinned_hash": expected_pinned_hash,
+        "config_generation": config_generation,
         "phase": "intent",
         "source": "cli",
         "ts_unix": crate::time::now_unix_secs(),
@@ -1575,7 +1747,12 @@ async fn emit_plugin_removal_intent(
 
 /// Emit the terminal `plugin remove` outcome (EXTENDED `PluginRemovalResult`)
 /// correlated to its intent by `operation_id`. Committed is required; an aborted
-/// outcome is best-effort (its call site keeps propagating the mutation error).
+/// or partial outcome is best-effort (its call site keeps propagating the
+/// mutation error).
+///
+/// `progress` carries the steps that actually completed, so `partial` is a
+/// readable state ("trust revoked, bytes still present") rather than an
+/// indistinguishable `aborted`.
 async fn emit_plugin_removal_result(
     home: &std::path::Path,
     operation_id: &str,
@@ -1583,12 +1760,15 @@ async fn emit_plugin_removal_result(
     status: &str,
     removed: Option<bool>,
     error_sha256: Option<&str>,
+    progress: RemovalProgress,
 ) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "operation_id": operation_id,
         "plugin_id": plugin_id,
         "status": status,
         "removed": removed,
+        "config_cleared": progress.config_cleared,
+        "bytes_deleted": progress.bytes_deleted,
         "error_sha256": error_sha256,
         "ts_unix": crate::time::now_unix_secs(),
     }))?;
@@ -1865,7 +2045,23 @@ fn apply_activation_at(
         Ok(())
     })
     .context("update freedom.yaml after plugin activation change")?;
-    Ok(change.expect("locked mutation always records an activation result"))
+    let change = change.expect("locked mutation always records an activation result");
+    // R3-15 — same runtime-generation invalidation as removal: a live daemon
+    // only re-reads freedom.yaml on the reload sentinel, so without this a
+    // `neoth plugin disable` leaves the already-compiled instance running with
+    // its bootstrap authority until the operator types `neoth reload`. The slash
+    // surface already requested the reload; the CLI did not.
+    if change.changed
+        && let Err(error) = crate::cli::reload::request_reload_at(home)
+    {
+        tracing::warn!(
+            plugin = %id,
+            error = %error,
+            "activation changed, but the live-config reload sentinel could not be written — \
+             a running daemon keeps the previous authority until `neoth reload`"
+        );
+    }
+    Ok(change)
 }
 
 /// Slash/GUI-facing activation path. Uses the same exact approval binding and
@@ -3017,6 +3213,7 @@ version = \"0.1.0\"\n\
             "wasm_hello",
             Some("gen123"),
             Some("pin456"),
+            Some(0xfeed_beef),
         )
         .await
         .unwrap();
@@ -3027,6 +3224,10 @@ version = \"0.1.0\"\n\
             "committed",
             Some(true),
             None,
+            super::RemovalProgress {
+                config_cleared: true,
+                bytes_deleted: true,
+            },
         )
         .await
         .unwrap();
@@ -3042,6 +3243,10 @@ version = \"0.1.0\"\n\
         assert_eq!(intent["plugin_id"], "wasm_hello");
         assert_eq!(intent["installed_generation_sha256"], "gen123");
         assert_eq!(intent["expected_pinned_hash"], "pin456");
+        assert_eq!(
+            intent["config_generation"], 0xfeed_beefu64,
+            "the intent must bind the config generation it authorised"
+        );
         let result = &frames[1]["payload"];
         assert_eq!(result["status"], "committed");
         assert_eq!(
@@ -3049,5 +3254,165 @@ version = \"0.1.0\"\n\
             "the terminal outcome must correlate to its intent"
         );
         assert_eq!(result["removed"], true);
+        assert_eq!(result["config_cleared"], true);
+        assert_eq!(result["bytes_deleted"], true);
+    }
+
+    #[test]
+    fn removal_journal_is_retired_only_after_the_readback() {
+        // R3-15: the pending-removal journal exists across the mutation and is
+        // gone once the plugin is proven absent.
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("plugins").join("journalled");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.toml"), b"x").unwrap();
+        std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+
+        let journal = super::removal_journal_path(home.path(), "journalled");
+        assert!(!journal.exists(), "no journal before the removal");
+        assert!(super::remove_plugin_at(home.path(), "journalled").unwrap());
+        assert!(
+            !journal.exists(),
+            "a completed removal must retire its journal"
+        );
+        assert!(
+            !journal
+                .parent()
+                .unwrap()
+                .starts_with(home.path().join("plugins")),
+            "the journal must live outside plugins/ so it is never discoverable"
+        );
+    }
+
+    #[test]
+    fn removal_resumes_a_crashed_transaction_from_its_journal() {
+        // Crash state: the config was already cleared, the bytes are still on
+        // disk, and the journal survived. Without the journal this looks exactly
+        // like "nothing installed" (no activation, no pin) and the old code
+        // reported a no-op, stranding the bytes. The resume must finish it.
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("plugins").join("half_gone");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.toml"), b"x").unwrap();
+        std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+        // Clean config — the trust references were already revoked pre-crash.
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&super::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        let journal = super::removal_journal_path(home.path(), "half_gone");
+        crate::util::atomic_write::atomic_write_private(&journal, b"{\"plugin_id\":\"half_gone\"}")
+            .unwrap();
+
+        let removed = super::remove_plugin_at(home.path(), "half_gone").unwrap();
+        assert!(
+            removed,
+            "a journalled crash must resume, not report a no-op"
+        );
+        assert!(!dir.exists(), "the resume must finish the byte deletion");
+        assert!(!journal.exists(), "the resume must retire the journal");
+    }
+
+    #[test]
+    fn absent_plugin_leaves_no_journal_behind() {
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("plugins")).unwrap();
+        assert!(!super::remove_plugin_at(home.path(), "nope").unwrap());
+        assert!(
+            !super::removal_journal_path(home.path(), "nope").exists(),
+            "a no-op must not mint a durable pending-removal record"
+        );
+    }
+
+    #[test]
+    fn failed_config_clear_is_aborted_and_a_reached_step_is_partial() {
+        // PR5-018: `aborted` must mean "nothing happened". A malformed config
+        // fails before any mutation, so nothing is reached...
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("plugins").join("broken_cfg");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.toml"), b"x").unwrap();
+        std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+        std::fs::write(home.path().join("freedom.yaml"), b"{{{ not yaml").unwrap();
+
+        let mut progress = super::RemovalProgress::default();
+        let err = super::remove_plugin_at_tracked(home.path(), "broken_cfg", &mut progress)
+            .expect_err("a malformed config must fail the removal");
+        assert!(
+            format!("{err:#}").contains("clear config references"),
+            "unexpected error: {err:#}"
+        );
+        assert_eq!(progress, super::RemovalProgress::default());
+        assert_eq!(super::removal_failure_status(progress), "aborted");
+        assert!(dir.exists(), "an aborted removal must not delete bytes");
+        assert!(
+            super::removal_journal_path(home.path(), "broken_cfg").exists(),
+            "the pending transaction must stay journalled for the retry"
+        );
+
+        // ...whereas a cleared config with the bytes still present is `partial`.
+        assert_eq!(
+            super::removal_failure_status(super::RemovalProgress {
+                config_cleared: true,
+                bytes_deleted: false,
+            }),
+            "partial",
+            "a revoked trust decision is not `nothing happened`"
+        );
+    }
+
+    #[test]
+    fn byte_delete_failure_after_the_config_clear_is_partial_and_stays_journalled() {
+        // Injected second-write failure: the config clear succeeds, the byte
+        // delete cannot. `remove_dir_all` on a non-directory fails on every
+        // platform, so this pins the partial state deterministically.
+        let home = TempDir::new().unwrap();
+        std::fs::create_dir_all(home.path().join("plugins")).unwrap();
+        let target = home.path().join("plugins").join("not_a_dir");
+        std::fs::write(&target, b"regular file").unwrap();
+
+        let mut cfg = super::FreedomConfig::default();
+        cfg.plugins.wasm.activations.insert(
+            "not_a_dir".to_string(),
+            super::PluginActivationRecord::from_state(super::PluginActivation::Active),
+        );
+        let freedom = home.path().join("freedom.yaml");
+        std::fs::write(&freedom, serde_yaml::to_string(&cfg).unwrap()).unwrap();
+
+        let mut progress = super::RemovalProgress::default();
+        let err = super::remove_plugin_at_tracked(home.path(), "not_a_dir", &mut progress)
+            .expect_err("an undeletable target must fail the removal");
+        assert!(
+            format!("{err:#}").contains("remove plugin directory"),
+            "unexpected error: {err:#}"
+        );
+        assert!(
+            progress.config_cleared && !progress.bytes_deleted,
+            "the trust decision is revoked but the bytes remain: {progress:?}"
+        );
+        assert_eq!(super::removal_failure_status(progress), "partial");
+
+        let after: super::FreedomConfig =
+            serde_yaml::from_str(&std::fs::read_to_string(&freedom).unwrap()).unwrap();
+        assert!(
+            !after.plugins.wasm.activations.contains_key("not_a_dir"),
+            "the config clear must have committed before the byte failure"
+        );
+        assert!(
+            super::removal_journal_path(home.path(), "not_a_dir").exists(),
+            "an unfinished removal must stay journalled so the retry resumes it"
+        );
+    }
+
+    #[test]
+    fn removal_intent_id_is_validated_before_any_side_effect() {
+        // PR5-040: the traversal guard sits in `validate_plugin_id`, which
+        // `run_remove` calls BEFORE minting the durable intent frame.
+        for evil in ["../../x", "..", "/etc/passwd", "a/b", "Upper"] {
+            let err = super::validate_plugin_id(evil).expect_err("must reject");
+            assert!(format!("{err:#}").contains("invalid plugin id"), "{err:#}");
+        }
+        super::validate_plugin_id("wasm_hello").expect("a real id must pass");
     }
 }

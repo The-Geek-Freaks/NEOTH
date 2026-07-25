@@ -218,7 +218,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   Council, channel, Buddy and sub-agent prompts; adversarial closing tags,
   control characters, Unicode confusables, truncation and nested payloads must
   remain data rather than instructions.
-- [ ] **GOLD-R3-15 Verified plugin removal transaction:** plugin removal may
+- [x] **GOLD-R3-15 Verified plugin removal transaction:** plugin removal may
   report success only after the plugin bytes, every config/reference edge and
   registry/runtime publication have completed or rolled back as one recoverable
   transaction. Discarded cleanup errors, partial DELETE-plus-save state and
@@ -419,11 +419,57 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     `run_remove` that gates the mutation on a required, correlated intent bound
     to operation_id, plugin_id, the installed generation observed before any
     change, and the operator hash pin (a WAL round-trip test proves both frames
-    persist with a shared operation_id). STILL OPEN for closure: a crash-recovery
-    removal journal, runtime-generation handle invalidation (the CLI readback
-    proves filesystem discovery, not that a live daemon dropped an older loaded
-    instance — genuinely daemon-side), config↔byte atomicity, and the
-    config_generation/runtime_generation intent bindings.
+    persist with a shared operation_id).
+
+    **Durable lifecycle landed 2026-07-25 (R3-15b):** the four remaining leaves
+    are closed in `cli/plugin.rs` + `wasm_plugin/dispatch.rs`:
+    - *crash-recovery journal / config↔byte atomicity* —
+      `remove_plugin_at_tracked` writes `<home>/.plugin-removals/<id>.json`
+      (fsynced bytes AND directory entry via `atomic_write_private`) BEFORE the
+      first mutation and retires it with `durable_remove_file` only after the
+      inventory readback. The journal lives outside `plugins/` so it is never
+      discoverable. A crash between the config clear and the byte delete used to
+      look exactly like "nothing installed" (activation and pin already gone) and
+      returned a no-op that stranded the bytes; the next removal now RESUMES from
+      the journal and finishes idempotently.
+    - *runtime-generation handle invalidation* — reload is sentinel-driven, so
+      writing `freedom.yaml` never reached a LIVE daemon: the compiled instance
+      kept its bootstrap authority until someone typed `neoth reload`. A
+      committed (or config-cleared partial) removal now requests the reload
+      sentinel, and `apply_activation_at` does the same for `plugin
+      enable/disable` (the slash surface already did; the CLI did not). The live
+      gate refuses any plugin whose activation is absent from the reloaded
+      config, so the reload IS the handle invalidation —
+      `compiled_invoker_drops_a_removed_plugin_after_the_reload` proves the
+      already-compiled instance is refused post-swap.
+    - *intent bindings* — the intent frame now also carries `config_generation`
+      (`xxh3_64(path+mtime+size)`, the same identity the daemon's
+      `ReloadController` uses), observed before any mutation.
+    - *truthful terminal state (external review PR5-018)* — a failure after the
+      config was cleared is recorded as `partial`, not `aborted`, and both frames
+      carry `config_cleared`/`bytes_deleted`, so an auditor can tell "nothing
+      happened" from "trust revoked, bytes still on disk".
+    - *(external review PR5-040)* — `validate_plugin_id` now runs BEFORE the
+      intent emission, so an unvalidated operator string can no longer mint a
+      durable intent for an operation that could not start.
+
+    Postcondition corpus now covers all five required cases: malformed config
+    (aborted, nothing touched), injected second-write failure (config committed,
+    `remove_dir_all` on a non-directory fails on every platform → `partial`,
+    journal retained), restart recovery (journalled crash resumes instead of
+    reporting a no-op), idempotent retry (a no-op mints no journal), and the
+    exact inventory readback.
+
+    Verified locally: `cli::plugin::` 50/50, `wasm_plugin::dispatch::`
+    (`--features wasm-plugin-host`) 42/42, targeted `rustfmt --check` clean.
+    Same run fixed `compiled_invoker_emits_cap_denied_frame_via_production_path`,
+    which failed on a clean `54be5c25` (verified by stashing the change): its
+    comment assumed the trait wrapper returns `Ok` on a non-zero guest status —
+    it propagates the failure. The test now pins BOTH halves of the contract (the
+    caller learns the plugin failed AND the 0xC7 denial is durably audited).
+    **NOTE:** that red test means CI does not exercise `--features
+    wasm-plugin-host` — the whole WASM host test surface is currently
+    unverified in CI. Tracked separately.
   - **R3-16:** `PLAN/CRG_ADOPTION_2026_07_20.md` still has CRG-01..05 open and
     no authoritative disposition/evidence-owner matrix. CRG-01 is partial and
     inherits R3-13; native impact-radius, diff-hunk-to-symbol mapping,

@@ -1170,9 +1170,19 @@ mod tests {
         .with_runtime_handles(Some(writer), None);
 
         // Invoke via the PRODUCTION trait path (not a direct store build).
-        // The denial is in-band (return code 7, not a trap), so invoke
-        // reaches Run and returns Ok.
-        inv.invoke("snoop").expect("invoke reaches Run");
+        // The denial is in-band (guest return code 7, not a trap), so the
+        // invocation reaches the Run stage — and the trait wrapper then
+        // surfaces that non-zero guest status as an error rather than
+        // swallowing it. Both halves are the contract: the caller learns the
+        // plugin failed AND the denial is durably audited.
+        let error = inv
+            .invoke("snoop")
+            .expect_err("a denied hostcall must surface as a failed invocation")
+            .to_string();
+        assert!(
+            error.contains("stage=Run") && error.contains("status 7"),
+            "the denial must be reported from the Run stage: {error}"
+        );
 
         // Flush: drop every writer clone (store clone already dropped
         // inside invoke; the invoker holds the last one) then join.
@@ -1972,6 +1982,44 @@ mod tests {
         assert!(
             error.contains("host is disabled"),
             "live host disable must fail before module invocation: {error}"
+        );
+    }
+
+    #[test]
+    fn compiled_invoker_drops_a_removed_plugin_after_the_reload() {
+        // R3-15 runtime-generation invalidation: `neoth plugin remove` clears
+        // the activation from freedom.yaml and requests the reload sentinel. The
+        // ALREADY-COMPILED instance in a live daemon must then refuse to run —
+        // filesystem absence alone never reaches an in-memory module.
+        use crate::config::reload::ReloadResult;
+        use crate::hooks::dispatcher::PluginInvoker;
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let initial = active_plugin_config();
+        let (invoker, controller) = live_config_invoker(&initial, config_path.clone());
+
+        // Pre-removal the gate passes and the invoke reaches the module.
+        let error = invoker.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            error.contains("neoth_run"),
+            "an active plugin must reach export lookup: {error}"
+        );
+
+        // Exactly what remove_plugin_at writes: activation AND pin gone.
+        let mut removed = initial;
+        removed.plugins.wasm.activations.remove("alpha");
+        removed.plugins.wasm.pinned_hashes.remove("alpha");
+        std::fs::write(&config_path, serde_yaml::to_string(&removed).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().expect("reload must succeed"),
+            ReloadResult::Reloaded { .. }
+        ));
+
+        let error = invoker.invoke("alpha").unwrap_err().to_string();
+        assert!(
+            error.contains("activation approval is missing"),
+            "a removed plugin must be refused by the live gate: {error}"
         );
     }
 
