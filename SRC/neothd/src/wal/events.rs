@@ -146,6 +146,17 @@ pub enum ExtendedSubtype {
     /// Payload (JSON): `{operation_id, plugin_id, status: "committed"|"aborted",
     /// removed?, error_sha256?, ts_unix}`.
     PluginRemovalResult = 0x13,
+    /// R3-17 — mandatory pre-mutation intent for `neoth skills --install`, bound
+    /// to its terminal `SkillInstallResult` by `operation_id`. A durable ACK
+    /// precedes any skill byte or replacement change (the skill set is the
+    /// agent's own capability surface). Payload (JSON): `{operation_id, skill_id,
+    /// source_generation_sha256, replacing_existing, target_generation_sha256?,
+    /// phase: "intent", source: "cli", ts_unix}`. No raw source path is logged.
+    SkillInstallIntent = 0x14,
+    /// R3-17 — mandatory terminal outcome bound to `SkillInstallIntent`.
+    /// Payload (JSON): `{operation_id, skill_id, status: "committed"|"aborted",
+    /// replaced_existing?, installed_generation_sha256?, error_sha256?, ts_unix}`.
+    SkillInstallResult = 0x15,
 }
 
 impl ExtendedSubtype {
@@ -171,6 +182,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::CommunicationProfileControlled => "communication_profile_controlled",
             ExtendedSubtype::PluginRemovalIntent => "plugin_removal_intent",
             ExtendedSubtype::PluginRemovalResult => "plugin_removal_result",
+            ExtendedSubtype::SkillInstallIntent => "skill_install_intent",
+            ExtendedSubtype::SkillInstallResult => "skill_install_result",
         }
     }
 
@@ -196,6 +209,8 @@ impl ExtendedSubtype {
             0x11 => Some(ExtendedSubtype::CommunicationProfileControlled),
             0x12 => Some(ExtendedSubtype::PluginRemovalIntent),
             0x13 => Some(ExtendedSubtype::PluginRemovalResult),
+            0x14 => Some(ExtendedSubtype::SkillInstallIntent),
+            0x15 => Some(ExtendedSubtype::SkillInstallResult),
             _ => None,
         }
     }
@@ -223,6 +238,8 @@ impl ExtendedSubtype {
             Self::CommunicationProfileControlled,
             Self::PluginRemovalIntent,
             Self::PluginRemovalResult,
+            Self::SkillInstallIntent,
+            Self::SkillInstallResult,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3570,6 +3587,9 @@ mod tests {
             // R3-15
             ExtendedSubtype::PluginRemovalIntent,
             ExtendedSubtype::PluginRemovalResult,
+            // R3-17
+            ExtendedSubtype::SkillInstallIntent,
+            ExtendedSubtype::SkillInstallResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

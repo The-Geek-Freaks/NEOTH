@@ -11,9 +11,10 @@ use std::path::PathBuf;
 
 use std::io::IsTerminal;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
+use sha2::Digest as _;
 use tracing::info;
 
 use crate::cli::OutputFormat;
@@ -307,7 +308,8 @@ pub(crate) async fn set_skill_enabled_at(
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
-    let skills_dir = FreedomConfig::default_neoth_home().join("skills");
+    let home = FreedomConfig::default_neoth_home();
+    let skills_dir = home.join("skills");
     if args.force && args.install.is_none() && !args.create {
         anyhow::bail!("--force requires --install or --create");
     }
@@ -378,12 +380,52 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 "--expected-id, --expected-generation-sha256, and --expected-target-generation-sha256 must be supplied together"
             ),
         };
-        let report = installer::install_from_local_with_expectation(
+        // R3-17: durable install intent → mutation → terminal result. The skill
+        // set is the agent's own capability surface, so a durable WAL ACK must
+        // precede any byte/replacement change (mirrors `plugin remove`, R3-15).
+        // The pre-mutation identity comes from a read-only preflight inspect so
+        // the intent binds the exact source generation the mutation will apply.
+        let operation_id = uuid::Uuid::now_v7().to_string();
+        let preflight = installer::inspect_local_install(source, &skills_dir)?;
+        emit_skill_install_intent(&home, &operation_id, &preflight)
+            .await
+            .context("skill install intent was not durable; nothing was installed")?;
+
+        let report = match installer::install_from_local_with_expectation(
             source,
             &skills_dir,
             args.force,
             expectation.as_ref(),
-        )?;
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                let error_sha = hex::encode(sha2::Sha256::digest(format!("{error:#}").as_bytes()));
+                let _ = emit_skill_install_result(
+                    &home,
+                    &operation_id,
+                    &preflight.id,
+                    "aborted",
+                    None,
+                    None,
+                    Some(&error_sha),
+                )
+                .await;
+                return Err(error);
+            }
+        };
+
+        emit_skill_install_result(
+            &home,
+            &operation_id,
+            &report.id,
+            "committed",
+            Some(report.replaced_existing),
+            Some(&report.source_generation_sha256),
+            None,
+        )
+        .await
+        .context("skill was installed, but its committed audit failed")?;
+
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!(
@@ -698,6 +740,69 @@ fn print_skill_inventory(
         }
     }
     Ok(())
+}
+
+/// Emit the mandatory `skills --install` intent (EXTENDED `SkillInstallIntent`).
+/// Required: a non-durable intent aborts the install before any change. The
+/// payload is metadata-only — skill id and generation hashes, never the raw
+/// source path (R3-17, mirrors `emit_plugin_removal_intent`).
+async fn emit_skill_install_intent(
+    home: &std::path::Path,
+    operation_id: &str,
+    preflight: &installer::InstallPreflight,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "skill_id": preflight.id,
+        "source_generation_sha256": preflight.source_generation_sha256,
+        "replacing_existing": preflight.replacing_existing,
+        "target_generation_sha256": preflight.target_generation_sha256,
+        "phase": "intent",
+        "source": "cli",
+        "ts_unix": crate::time::now_unix_secs(),
+    }))?;
+    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8,
+        payload,
+        "SKILL_INSTALL_INTENT",
+        true,
+    )
+    .await
+}
+
+/// Emit the terminal `skills --install` outcome (EXTENDED `SkillInstallResult`)
+/// correlated to its intent by `operation_id`. Committed is required; an aborted
+/// outcome is best-effort (its call site keeps propagating the mutation error).
+#[allow(clippy::too_many_arguments)]
+async fn emit_skill_install_result(
+    home: &std::path::Path,
+    operation_id: &str,
+    skill_id: &str,
+    status: &str,
+    replaced_existing: Option<bool>,
+    installed_generation_sha256: Option<&str>,
+    error_sha256: Option<&str>,
+) -> Result<()> {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "skill_id": skill_id,
+        "status": status,
+        "replaced_existing": replaced_existing,
+        "installed_generation_sha256": installed_generation_sha256,
+        "error_sha256": error_sha256,
+        "ts_unix": crate::time::now_unix_secs(),
+    }))?;
+    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
+        home,
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        crate::wal::events::ExtendedSubtype::SkillInstallResult as u8,
+        payload,
+        "SKILL_INSTALL_RESULT",
+        status == "committed",
+    )
+    .await
 }
 
 /// GOLD-ADOPT-14 — `neoth skill {--enable,--disable} <id>`: validate the id is a
@@ -1203,5 +1308,99 @@ mod tests {
             "mixed-case enable entry must be cleared"
         );
         assert_eq!(s.disabled, vec!["pm-retro".to_string()]);
+    }
+
+    /// Decode every frame in a raw WAL segment to `{event_type, payload}` JSON.
+    /// Mirrors the proven `cli::plugin` test decoder (same public `wal` APIs).
+    fn decode_wal_frames(segment: &std::path::Path) -> Vec<serde_json::Value> {
+        use crate::wal::compress::decompress_frames;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::parse_segment_header;
+
+        let Ok(bytes) = std::fs::read(segment) else {
+            return Vec::new();
+        };
+        let Ok(hdr) = parse_segment_header(&bytes) else {
+            return Vec::new();
+        };
+        let body = &bytes[hdr.header_len()..];
+        let frames = if hdr.is_compressed() {
+            match decompress_frames(body) {
+                Ok(f) => f,
+                Err(_) => return Vec::new(),
+            }
+        } else {
+            body.to_vec()
+        };
+        let mut out = Vec::new();
+        let mut cursor = 0usize;
+        while cursor < frames.len() {
+            let dec = match decode_frame(&frames[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
+            out.push(serde_json::json!({
+                "event_type": format!("0x{:02X}", dec.header.event_type),
+                "payload": payload,
+            }));
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn skill_install_emits_correlated_intent_and_committed_wal() {
+        // R3-17: a skill install leaves a durable, correlated intent→committed
+        // audit trail. No daemon here → the direct home-bound WAL writer (append
+        // mode), so both frames must persist in order with skill-specific keys.
+        let home = tempfile::TempDir::new().unwrap();
+        let op = "op-skill-1";
+        let preflight = installer::InstallPreflight {
+            id: "demo_skill".into(),
+            source_manifest_sha256: "man789".into(),
+            source_generation_sha256: "gen789".into(),
+            replacing_existing: true,
+            target_generation_sha256: Some("old111".into()),
+        };
+        super::emit_skill_install_intent(home.path(), op, &preflight)
+            .await
+            .unwrap();
+        super::emit_skill_install_result(
+            home.path(),
+            op,
+            "demo_skill",
+            "committed",
+            Some(true),
+            Some("gen789"),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let frames = decode_wal_frames(&home.path().join("wal").join("000001.wal"));
+        assert_eq!(frames.len(), 2, "intent + result frames must both persist");
+        assert_eq!(frames[0]["event_type"], "0x00");
+        assert_eq!(frames[1]["event_type"], "0x00");
+        let intent = &frames[0]["payload"];
+        assert_eq!(intent["phase"], "intent");
+        assert_eq!(intent["operation_id"], op);
+        assert_eq!(intent["skill_id"], "demo_skill");
+        assert_eq!(intent["source_generation_sha256"], "gen789");
+        assert_eq!(intent["replacing_existing"], true);
+        assert_eq!(intent["target_generation_sha256"], "old111");
+        let result = &frames[1]["payload"];
+        assert_eq!(result["status"], "committed");
+        assert_eq!(
+            result["operation_id"], op,
+            "the terminal outcome must correlate to its intent"
+        );
+        assert_eq!(result["skill_id"], "demo_skill");
+        assert_eq!(result["replaced_existing"], true);
+        assert_eq!(result["installed_generation_sha256"], "gen789");
     }
 }

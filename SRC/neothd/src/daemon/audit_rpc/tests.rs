@@ -106,6 +106,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let self_edit_proposed = crate::wal::events::ExtendedSubtype::SelfEditProposed as u8;
     let plugin_removal_intent = crate::wal::events::ExtendedSubtype::PluginRemovalIntent as u8;
     let plugin_removal_result = crate::wal::events::ExtendedSubtype::PluginRemovalResult as u8;
+    let skill_install_intent = crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8;
+    let skill_install_result = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[
@@ -115,10 +117,14 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             communication_controlled,
             plugin_removal_intent,
             plugin_removal_result,
+            skill_install_intent,
+            skill_install_result,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_result));
+    assert!(is_allowed_client_event_pair(0x00, skill_install_intent));
+    assert!(is_allowed_client_event_pair(0x00, skill_install_result));
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(is_allowed_client_event_pair(0x00, communication_controlled));
     assert!(!is_allowed_client_event_pair(0x00, 0));
