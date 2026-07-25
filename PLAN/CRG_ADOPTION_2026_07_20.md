@@ -93,3 +93,52 @@ CRG is also now installed + wired as an MCP server for Claude Code (`.mcp.json`,
 `uvx code-review-graph serve`, gitignored) — usable as an external review tool
 independent of any NEOTH port. The port above is about NEOTH's *own* coding
 intelligence, not replacing that.
+
+## Authoritative disposition (2026-07-25)
+
+Evidence verified by grepping `SRC/neothd/src/` at HEAD (2026-07-25). No builds run.
+
+| Item | Proposal | Disposition | Evidence owner |
+|------|----------|-------------|----------------|
+| CRG-01 | Wire `code_map` into coding hemisphere | **RETAINED-PARTIAL** | `SRC/neothd/src/coding/decomposer.rs` (call-site absent) + `SRC/neothd/src/code_map/recall.rs` (`relevant_files_for_prompt` exists, uncalled from decomposer) |
+| CRG-02 | Structural blast-radius tool (`codegraph_impact_radius`) | **DEFERRED-v1.1** | `SRC/neothd/src/code_map/graph.rs` (no `impact_radius` fn) + `SRC/neothd/src/mcp/codegraph_server.rs` (tool list capped at 6) |
+| CRG-03 | git diff → function-level node mapping | **DEFERRED-v1.1** | `SRC/neothd/src/code_map/` directory (`diff.rs` absent; no `nodes_in_line_range`) |
+| CRG-04 | `TestedBy` edge + test-gap detection | **DEFERRED-v1.1** | `SRC/neothd/src/code_map/graph.rs:43` (`EdgeKind` enum: only `Calls` + `References`; no `TestedBy` variant, no test-node marking) |
+| CRG-05 | PreToolUse hook injection (enrich.py port) | **DEFERRED-v1.1** | NEOTH hooks config (no codegraph enrich script; no `hookSpecificOutput` wiring) |
+
+### Per-item evidence detail
+
+**CRG-01 (RETAINED-PARTIAL):** R3-13 shipped the containment/index half —
+`persist.rs:760` `root_index_generation`, `persist.rs:782` `is_index_stale`,
+`codegraph_server.rs:334` MCP `index_generation` propagation. The MCP tool
+`codegraph_relevant_files` (`codegraph_server.rs:65`) also exists. What is absent:
+`coding/decomposer.rs` has zero calls to `recall.rs::relevant_files_for_prompt`
+or to codegraph callers/callees; the coding hemisphere's prompt bundle is
+un-enriched (confirmed by `grep -r "recall\|relevant_files\|codegraph" SRC/neothd/src/coding/`
+returning only incidental mentions — no decomposer integration).
+
+**CRG-02 (DEFERRED-v1.1):** Building blocks exist — `codegraph_server.rs:417`
+`callers_inner`, `:443` `callees_inner`. Missing: no `impact_radius()` in
+`code_map/graph.rs`; only 6 MCP tools registered (confirmed by test
+`codegraph_server.rs:785`). Requires a new graph traversal fn + 7th tool stub.
+Unblocked by CRG-01 but outside R3 scope.
+
+**CRG-03 (DEFERRED-v1.1):** `code_map_symbols.line` persists line ranges in the
+DB (the intersect substrate exists), but `code_map/diff.rs` does not exist and
+no `nodes_in_line_range()` fn is present anywhere in `code_map/`. Depends on
+CRG-02 to be actionable; defer together.
+
+**CRG-04 (DEFERRED-v1.1):** `EdgeKind` enum (`graph.rs:43`) has exactly two
+variants: `Calls` and `References`. No `TestedBy`, no test-node flag in
+`symbols.rs`, no `codegraph_test_gaps` tool. Requires an edge-schema extension
+and a DB migration; defer to v1.1.
+
+**CRG-05 (DEFERRED-v1.1):** Zero new Rust required (hook script only), but no
+hook script implementing the `hookSpecificOutput`/enrich.py pattern exists in
+NEOTH's hooks config. Logically depends on CRG-01 being wired first so the
+codegraph path is exercised end-to-end; defer to v1.1 with CRG-01 completion.
+
+**Summary:** 1 RETAINED-PARTIAL (CRG-01), 4 DEFERRED-v1.1 (CRG-02..05). The
+GOLD-R3-16 umbrella checkbox is ready for re-audit once the four DEFERRED-v1.1
+items are formally acknowledged as v1.1 scope and CRG-01's decomposer-wiring
+gap is either closed or moved to v1.1.

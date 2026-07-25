@@ -357,6 +357,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     inherits R3-13; native impact-radius, diff-hunk-to-symbol mapping,
     `TestedBy`/test-gap edges and the codegraph hook consumer remain absent.
     Reconcile after R3-13/R3-14 rather than closing the umbrella checkbox.
+    An authoritative disposition/evidence-owner matrix (CRG-01 RETAINED-PARTIAL,
+    CRG-02..05 DEFERRED-v1.1) now exists in `PLAN/CRG_ADOPTION_2026_07_20.md`
+    under "Authoritative disposition (2026-07-25)"; the umbrella checkbox is
+    ready for re-audit once the four deferred leaves are acknowledged as v1.1 scope.
 
 - [ ] **GOLD-R3-17 Explicit installed-Skill authority:** an imported or
   generated Skill must never gain ambiguous authority merely because its
