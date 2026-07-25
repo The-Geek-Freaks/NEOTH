@@ -92,8 +92,18 @@ impl KeetChannel {
     async fn deliver_pending_reply(&self, pending: &PendingReply) {
         let mut backoff_seconds = 1_u64;
         loop {
+            // Keep the typed variant: `reply` flattens every bridge error into
+            // `ChannelError::Transport(String)`, which erases exactly the
+            // permanent-vs-retryable distinction `post_message_idempotent`
+            // makes. This delivery is awaited inline by `run`, so retrying a
+            // permanently-rejected reply forever stalls the WHOLE channel — the
+            // cursor never advances and every later inbound message is silently
+            // dropped until a restart, which resumes the same reply into the
+            // same loop.
             match self
-                .reply(
+                .bridge
+                .post_message_idempotent(
+                    &self.topic,
                     &pending.text,
                     Some(&pending.message_id),
                     &pending.idempotency_key,
@@ -101,6 +111,17 @@ impl KeetChannel {
                 .await
             {
                 Ok(_) => return,
+                Err(error) if error.is_permanent() => {
+                    // Dead-letter: the caller clears the pending reply and
+                    // advances the cursor, so the channel keeps serving.
+                    warn!(
+                        channel = "keet",
+                        error = %error,
+                        "Keet reply was permanently rejected and is being DROPPED so the channel \
+                         can make progress; the operator's message was not delivered"
+                    );
+                    return;
+                }
                 Err(error) => {
                     warn!(
                         channel = "keet",

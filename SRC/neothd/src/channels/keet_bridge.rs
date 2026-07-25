@@ -62,6 +62,43 @@ pub enum KeetBridgeError {
     Protocol(&'static str),
 }
 
+impl KeetBridgeError {
+    /// Will retrying this exact request ever succeed?
+    ///
+    /// Retrying a permanent rejection forever is not resilience: the Keet
+    /// adapter awaits its durable outbox delivery inline, so an un-sendable
+    /// reply used to stall the ENTIRE channel — the cursor never advanced and
+    /// every later inbound message went silently unprocessed until a daemon
+    /// restart, which resumed the same reply into the same loop.
+    ///
+    /// Conservative by construction: anything that is not provably deterministic
+    /// counts as retryable, so a transient blip is never dead-lettered.
+    #[must_use]
+    pub fn is_permanent(&self) -> bool {
+        match self {
+            // Malformed inputs and rejected credentials do not become valid by
+            // waiting.
+            Self::InvalidUrl
+            | Self::InvalidToken
+            | Self::InvalidTopic
+            | Self::InvalidSenderId
+            | Self::InvalidIdempotencyKey
+            | Self::Unauthorized
+            | Self::Protocol(_) => true,
+            // 4xx is a rejection of THIS request — except the two that
+            // explicitly mean "ask again later".
+            Self::Http { status, .. } => {
+                (400..500).contains(status) && *status != 408 && *status != 429
+            }
+            // Network faults, 5xx, oversized or unparseable responses: a later
+            // attempt can legitimately differ.
+            Self::Transport { .. } | Self::ResponseTooLarge { .. } | Self::InvalidJson { .. } => {
+                false
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct KeetBridge {
     base_url: reqwest::Url,
@@ -580,6 +617,55 @@ mod tests {
 
     const TEST_TOPIC: &str = "nk1_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
     const TEST_SENDER: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    /// A permanently-rejected reply must be dead-letterable; a transient one
+    /// must never be. Retrying forever stalls the whole Keet channel.
+    #[test]
+    fn permanent_and_retryable_errors_are_separated() {
+        for permanent in [
+            KeetBridgeError::InvalidUrl,
+            KeetBridgeError::InvalidToken,
+            KeetBridgeError::InvalidTopic,
+            KeetBridgeError::InvalidSenderId,
+            KeetBridgeError::InvalidIdempotencyKey,
+            KeetBridgeError::Unauthorized,
+            KeetBridgeError::Protocol("bad shape"),
+            KeetBridgeError::Http {
+                operation: "post",
+                status: 404,
+            },
+            KeetBridgeError::Http {
+                operation: "post",
+                status: 422,
+            },
+        ] {
+            assert!(permanent.is_permanent(), "{permanent} must not be retried");
+        }
+
+        for retryable in [
+            KeetBridgeError::Transport { operation: "post" },
+            KeetBridgeError::ResponseTooLarge { limit: 1 },
+            KeetBridgeError::InvalidJson { operation: "post" },
+            // "ask again later" is not a rejection of the request.
+            KeetBridgeError::Http {
+                operation: "post",
+                status: 408,
+            },
+            KeetBridgeError::Http {
+                operation: "post",
+                status: 429,
+            },
+            KeetBridgeError::Http {
+                operation: "post",
+                status: 503,
+            },
+        ] {
+            assert!(
+                !retryable.is_permanent(),
+                "{retryable} must keep retrying — dead-lettering it would drop a deliverable reply"
+            );
+        }
+    }
 
     fn token() -> SecretString {
         SecretString::from("0123456789abcdef0123456789abcdef")
