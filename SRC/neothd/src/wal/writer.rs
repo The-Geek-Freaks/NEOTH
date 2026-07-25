@@ -644,6 +644,7 @@ pub fn spawn_for_home(
     segment_path: PathBuf,
     home: PathBuf,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    refuse_unimplemented_storage_policy(&home)?;
     let hmac_key_path = home.join("wal").join("hmac.key");
     spawn_with_policy_and_compression_at_home(
         segment_path,
@@ -652,6 +653,52 @@ pub fn spawn_for_home(
         home,
         hmac_key_path,
     )
+}
+
+/// Refuse to open a home-bound writer when `freedom.yaml` configures a WAL
+/// storage policy this build does not actually apply.
+///
+/// `wal.compression` is never mapped to a live [`CompressionPolicy`] —
+/// [`spawn_for_home`] passes `None` — and the AES-256-GCM-SIV seal is applied
+/// ONLY in [`finalize_compressed_segment`], which runs only under `Zstd3`. So
+/// `wal.encryption: aes256_gcm_siv` produced plaintext segments with no error
+/// and no warning, while `neoth doctor` told the operator to back up the master
+/// key. A silent at-rest no-op is worse than a startup failure: the operator
+/// cannot discover it, and every byte written under that belief is exposed.
+///
+/// Both fields are checked. Encryption alone is not sufficient even once
+/// compression is wired, because the seal happens at segment finalize.
+///
+/// A missing or unreadable `freedom.yaml` yields the default (`None`/`None`)
+/// and this is a no-op — a fresh home and every temp-dir test still start.
+fn refuse_unimplemented_storage_policy(home: &std::path::Path) -> Result<(), WalError> {
+    let config = crate::config::load_wal_config(&home.join("freedom.yaml")).map_err(|error| {
+        WalError::PolicyNotImplemented {
+            reason: format!("wal policy could not be read from freedom.yaml: {error:#}"),
+        }
+    })?;
+    if config.compression != crate::config::WalCompression::None {
+        return Err(WalError::PolicyNotImplemented {
+            reason: format!(
+                "freedom.yaml sets wal.compression = {:?}, but this build always writes \
+                 uncompressed segments. Refusing to start rather than silently ignoring it — \
+                 set `wal.compression: none`",
+                config.compression
+            ),
+        });
+    }
+    if config.encryption != crate::config::wal::WalEncryption::None {
+        return Err(WalError::PolicyNotImplemented {
+            reason: format!(
+                "freedom.yaml sets wal.encryption = {:?}, but at-rest sealing is applied only \
+                 when a segment is finalized under wal.compression = zstd_3, which this build \
+                 does not wire. Segments would be PLAINTEXT. Refusing to start rather than \
+                 claiming an encryption that is not applied — set `wal.encryption: none`",
+                config.encryption
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Spawn the writer task with an explicit rotation policy and no compression.
@@ -1476,8 +1523,15 @@ async fn finalize_compressed_segment(state: &mut WriterState, home: &Path) -> Re
     // the sealed (compressed) frame blob is AES-256-GCM-SIV-encrypted with the
     // plaintext v3 header as AAD, framed `ENC_MAGIC‖nonce‖ciphertext`. The
     // header keeps SEGMENT_FLAG_COMPRESSED (the decrypted blob IS compressed),
-    // so the reader chokepoint decrypts-then-decompresses. FAIL-CLOSED: a
-    // configured-on operator never silently gets a plaintext segment.
+    // so the reader chokepoint decrypts-then-decompresses.
+    //
+    // This seal is reachable ONLY under `CompressionPolicy::Zstd3`, which no
+    // production caller selects — `spawn_for_home` always passes `None`. The
+    // fail-closed guarantee therefore does NOT live here; it lives in
+    // `refuse_unimplemented_storage_policy`, which refuses to open a home-bound
+    // writer at all while a configured policy is unwired. Do not restore a
+    // "configured-on operators are safe" claim to this comment until
+    // `wal.compression` is actually mapped onto this branch.
     let encryption_enabled = crate::wal::master_key::wal_encryption_enabled_at(home)
         .map_err(|error| std::io::Error::other(format!("WAL encryption policy: {error:#}")))?;
     let body: Vec<u8> = if encryption_enabled {
@@ -1577,6 +1631,75 @@ async fn write_only(file: &mut File, frame: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A configured-but-unwired storage policy must refuse the writer rather
+    /// than silently writing plaintext segments the operator believes are
+    /// sealed. A fresh home (no freedom.yaml) must still start.
+    #[test]
+    fn unimplemented_storage_policy_refuses_the_home_bound_writer() {
+        let home = tempfile::tempdir().unwrap();
+        refuse_unimplemented_storage_policy(home.path())
+            .expect("a home without freedom.yaml uses the default policy and must start");
+
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "wal:\n  encryption: aes256_gcm_siv\n",
+        )
+        .unwrap();
+        let error = refuse_unimplemented_storage_policy(home.path())
+            .expect_err("configured-but-unapplied encryption must refuse");
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("PLAINTEXT") && rendered.contains("wal.encryption: none"),
+            "the refusal must name the real state and the fix: {rendered}"
+        );
+
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "wal:\n  compression: zstd_3\n",
+        )
+        .unwrap();
+        let error = refuse_unimplemented_storage_policy(home.path())
+            .expect_err("configured-but-unapplied compression must refuse");
+        assert!(
+            format!("{error:#}").contains("wal.compression: none"),
+            "unexpected refusal: {error:#}"
+        );
+
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "wal:\n  compression: none\n  encryption: none\n",
+        )
+        .unwrap();
+        refuse_unimplemented_storage_policy(home.path())
+            .expect("an explicitly-none policy is the implemented one and must start");
+    }
+
+    /// The guard sits on the production entrypoint, not on a caller.
+    #[tokio::test]
+    async fn spawn_for_home_refuses_a_configured_encryption_policy() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("wal")).unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "wal:\n  encryption: aes256_gcm_siv\n",
+        )
+        .unwrap();
+        let error = spawn_for_home(
+            home.path().join("wal").join("000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .err()
+        .expect("spawn_for_home must refuse the unwired policy");
+        assert!(
+            matches!(error, WalError::PolicyNotImplemented { .. }),
+            "{error:#}"
+        );
+        assert!(
+            !home.path().join("wal").join("000001.wal").exists(),
+            "a refused writer must not create a segment"
+        );
+    }
     use crate::wal::frame::decode_frame;
     use crate::wal::hlc::Hlc;
     use crate::wal::types::{EventFlags, EventId, Importance, NodeId, SessionId};

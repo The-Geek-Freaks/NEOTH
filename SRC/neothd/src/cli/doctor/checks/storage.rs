@@ -279,13 +279,25 @@ pub(crate) fn check_wal_encryption_backup(home: &Path) -> CheckOutcome {
             detail: "plaintext at rest (WAL integrity/HMAC always on)".into(),
         };
     }
+    // This check used to report "AES-256-GCM-SIV on" from the encryption field
+    // alone. It is not on: the seal is applied only when a segment is finalized
+    // under `wal.compression: zstd_3`, and no production path selects that
+    // policy — so a config with encryption set produced PLAINTEXT segments while
+    // this line told the operator to back up a key that was protecting nothing.
+    // The WAL writer now refuses to open under that config
+    // (`wal::writer::refuse_unimplemented_storage_policy`), so the honest
+    // diagnostic is a hard FAIL naming the fix, not a reassuring warning.
     let key = crate::wal::master_key::master_key_path(home);
     CheckOutcome {
         name: "wal encryption",
-        status: CheckStatus::Warn,
+        status: CheckStatus::Fail,
         detail: format!(
-            "AES-256-GCM-SIV on — BACK UP {} offline (`neoth security backup-master-key`); \
-             losing it makes sealed segments + encrypted credentials UNREADABLE forever",
+            "wal.encryption is set, but at-rest sealing is NOT applied in this build — it runs \
+             only when a segment is finalized under wal.compression = zstd_3, which is not \
+             wired. Segments would be plaintext, so the WAL writer refuses to start: set \
+             `wal.encryption: none` in {}. (The master key at {} may already exist and is \
+             still used for encrypted credentials — keep backing that up.)",
+            config_path.display(),
             key.display()
         ),
     }
@@ -373,16 +385,24 @@ pub(crate) const DOCS: &[CheckDoc] = &[
     },
     CheckDoc {
         name: "wal encryption",
-        purpose: "CRYPTO-04 — reports whether WAL/config AEAD-at-rest \
-                  (`freedom.yaml::wal.encryption`) is on, and (when on) reminds \
-                  the operator to back up `~/.neoth/wal/master.key`. WAL \
-                  integrity (HMAC) is always on independent of this.",
-        common_failures: "Encryption enabled WITHOUT an offline key backup → a \
+        purpose: "CRYPTO-04 — reports the TRUE state of WAL segment AEAD-at-rest. \
+                  Segment sealing runs only when a segment is finalized under \
+                  `wal.compression: zstd_3`, which this build does not wire, so \
+                  `wal.encryption` cannot take effect and the WAL writer refuses \
+                  to start while it is set. WAL integrity (HMAC) is always on \
+                  independent of this. Encrypted credentials use the same master \
+                  key and DO work.",
+        common_failures: "`wal.encryption: aes256_gcm_siv` left in freedom.yaml \
+                         from an earlier setup — segments were plaintext and this \
+                         check used to report the encryption as on. Separately: \
+                         encryption enabled WITHOUT an offline key backup → a \
                          Windows reinstall / machine migration permanently loses \
-                         all sealed segments + encrypted credentials.",
-        fix: "`neoth security backup-master-key --out <offline path>` and store \
-              it safely. Restore on a new machine with `neoth security \
-              restore-master-key --from <path>` before first start.",
+                         encrypted credentials.",
+        fix: "Set `wal.encryption: none` (segment sealing lands with WAL \
+              compression in a later release). Keep the master key backed up for \
+              credentials: `neoth security backup-master-key --out <offline \
+              path>`; restore with `neoth security restore-master-key --from \
+              <path>` before first start.",
     },
     CheckDoc {
         name: "self-heal proposals",

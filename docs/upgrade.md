@@ -113,7 +113,15 @@ can review). Fix any `FAIL` before resuming.
 
 ## Encryption keys (if you enabled AEAD-at-rest)
 
-If you turned on WAL/config encryption, the master key lives at
+> **WAL segment encryption is not active in this release.** Segment sealing is
+> applied only when a segment is finalized under `wal.compression: zstd_3`, and
+> that policy is not wired, so `wal.encryption: aes256_gcm_siv` would produce
+> plaintext segments. Rather than let that pass silently, the WAL writer now
+> **refuses to start** while the setting is present — set `wal.encryption: none`.
+> WAL *integrity* (HMAC) is always on and unaffected. Encrypted **credentials**
+> use the same master key and do work, so the backup advice below still applies.
+
+If you enabled encrypted credentials, the master key lives at
 `~/.neoth/wal/master.key` (DPAPI-wrapped on Windows, mode-0600 elsewhere).
 
 - **Back it up before any OS reinstall / machine migration.** On Windows the

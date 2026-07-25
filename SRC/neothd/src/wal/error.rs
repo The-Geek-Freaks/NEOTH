@@ -118,4 +118,11 @@ pub enum WalError {
     /// compaction markers tamper-evident.
     #[error("WAL compaction state unavailable: {reason}")]
     CompactionStateUnavailable { reason: String },
+
+    /// `freedom.yaml` configures a WAL storage policy this build does not
+    /// actually apply. Refusing is the only honest answer: the alternative is
+    /// writing plaintext segments while the operator believes their WAL is
+    /// sealed at rest.
+    #[error("WAL storage policy is configured but not implemented: {reason}")]
+    PolicyNotImplemented { reason: String },
 }
