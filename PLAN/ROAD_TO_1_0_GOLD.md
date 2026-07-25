@@ -290,10 +290,30 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     junction), and a hard child crash mid-apply into the absent root through the
     portable first-install marker path: a killpoint-driven child crashes at
     `StageReady(0)` during `apply_portable_release_bundle`, the test asserts no
-    committed-but-partial state (the ownership marker is absent), and a second
-    apply auto-recovers the leftover journal (`apply()` calls `recover_locked()`
-    first → rollback) and completes cleanly. STILL OPEN: only the absent-root
-    collision case (a concurrent create between staging and the commit rename).
+    committed-but-partial state (the ownership marker is absent). **Correction
+    2026-07-25 (finding from the crash test, locally reproduced on Windows, red
+    on all 3 OS in 777455fe before fix):** a naive retry over that crashed
+    partial does NOT auto-heal. The `StageReady(0)` crash creates the install
+    directory and NEOTH-owned subdirectories (e.g. `neoth-support`) but never
+    commits the ownership marker; on retry, `validate_existing_portable_marker`
+    runs in `apply_release_bundle` BEFORE the transaction's internal
+    `recover_locked()`, so the markerless-first-install guard sees the unmarked
+    NEOTH-owned leftovers and QUARANTINES the retry (Windows: "signed Setup.exe
+    handoff required"). That refusal is safe — no silent clobber — so the
+    reframed regression asserts the true property: the crash yields no committed
+    marker, and a retry either quarantines (exit 70, marker stays absent) or
+    self-heals (exit 0, valid marker), never a silent partial commit.
+    STILL OPEN:
+      1. **Crash-partial self-heal (R3-12a, enhancement):** let a portable
+         first-install retry recover its OWN journaled crashed partial before the
+         markerless guard fires (order recovery ahead of
+         `validate_existing_portable_marker`, or teach the guard to distinguish a
+         journaled-crash partial from a real prior install). Security-sensitive —
+         the guard exists to prevent clobbering foreign/prior NEOTH targets, so
+         the recovery must key strictly on the leftover journal's own
+         transaction id. Needs design + security-review before implementation.
+      2. **Absent-root collision:** a concurrent create between staging and the
+         commit rename.
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

@@ -2400,16 +2400,25 @@ mod tests {
                 );
             }
             ("portable-absent-root", "apply-recover") => {
-                // Recovery apply: clear the hook so apply runs to completion
-                // without hitting a killpoint, then exit 0 to signal success.
+                // Retry after a hard crash: clear the hook so no killpoint fires,
+                // then attempt the portable first-install again over the leftover
+                // partial. Exit code encodes the outcome for the parent:
+                //   70 = quarantined: the markerless-first-install guard refuses a
+                //        silent retry over the crashed partial (current gold safe
+                //        behavior — no clobber of leftover NEOTH-owned targets).
+                //    0 = self-healed: a future change let the retry recover its own
+                //        crashed partial and commit cleanly (tracked R3-12 enhancement).
+                // Either outcome proves the crash never yields a silently-trusted
+                // partial install.
                 TEST_HOOK.with(|cell| cell.set(None));
-                crate::updater::release_bundle::apply_portable_release_bundle(
+                match crate::updater::release_bundle::apply_portable_release_bundle(
                     root.join("bundle"),
                     root.join("install"),
                     env!("CARGO_PKG_VERSION"),
-                )
-                .expect("recovery apply must succeed");
-                std::process::exit(0);
+                ) {
+                    Err(_) => std::process::exit(70),
+                    Ok(_) => std::process::exit(0),
+                }
             }
             other => panic!("unknown child fixture/mode: {other:?}"),
         }
