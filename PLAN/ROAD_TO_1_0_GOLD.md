@@ -281,13 +281,15 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     same-volume anchor the install transaction locks and journals in, so a first
     install into an absent root succeeds (the transaction then creates the root
     and commits the marker). A regression exercises the real bundle apply into
-    an absent root whose leaf carries a space + non-ASCII, and a `cfg(unix)`
-    regression proving a first install whose absent destination sits under a
-    SYMLINKED ancestor is rejected (link-free ancestor chain, nothing created
-    through the link). STILL OPEN: absent-root collision, Windows
-    junction/reparse ancestor, and a hard child crash mid-apply into the
-    not-yet-created root (the generic transaction has a crash fixture, but not
-    through the portable first-install marker path).
+    an absent root whose leaf carries a space + non-ASCII, a `cfg(unix)`
+    regression proving a first install under a SYMLINKED ancestor is rejected,
+    and a `cfg(windows)` regression proving a first install under a DIRECTORY
+    JUNCTION ancestor is rejected (`metadata_is_link_like` catches the reparse
+    point via `FILE_ATTRIBUTE_REPARSE_POINT`; `mklink /J` needs no privilege, so
+    it is the realistic Windows redirect surface; nothing is created through the
+    junction). STILL OPEN: absent-root collision and a hard child crash mid-apply
+    into the not-yet-created root through the portable first-install marker path
+    (the generic transaction has a crash fixture, but not that specific path).
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

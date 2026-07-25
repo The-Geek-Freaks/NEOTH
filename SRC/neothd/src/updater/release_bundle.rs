@@ -1527,6 +1527,57 @@ mod tests {
         assert!(!real_parent.join("inst").exists());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn portable_bundle_rejects_junction_ancestor_on_absent_root() {
+        // GOLD-R3-12: the Windows analog of the symlink-ancestor rejection. A
+        // first install whose absent destination sits under a DIRECTORY JUNCTION
+        // (a reparse point) must be rejected — the resolved-root ancestor walk
+        // requires a real, reparse-free chain. `metadata_is_link_like` catches a
+        // junction via FILE_ATTRIBUTE_REPARSE_POINT even though Rust does not
+        // classify it as a symlink. Junctions (`mklink /J`) need no admin/dev
+        // mode, so they are the realistic Windows redirect surface.
+        let fixture = crate::test_env::canonical_tempdir().unwrap();
+        let bundle = fixture.path().join("bundle");
+        fs::create_dir_all(&bundle).unwrap();
+        exact_shape(&bundle, PortableBundleProfile::current());
+        fs::remove_dir_all(bundle.join(SELF_KNOWLEDGE)).unwrap();
+        crate::wiki::release_snapshot::write_test_snapshot(
+            &bundle.join(SELF_KNOWLEDGE),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+
+        let real_parent = fixture.path().join("real-parent");
+        fs::create_dir_all(&real_parent).unwrap();
+        let junction = fixture.path().join("junction-parent");
+        // `mklink /J <link> <target>` — a directory junction, no privilege needed.
+        let status = std::process::Command::new("cmd")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(&real_parent)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn mklink /J");
+        assert!(status.success(), "mklink /J must create the test junction");
+
+        // Absent leaf under the junctioned ancestor.
+        let install = junction.join("inst");
+        assert!(!install.exists());
+
+        let err = apply_portable_release_bundle(&bundle, &install, env!("CARGO_PKG_VERSION"))
+            .expect_err("install through a junction ancestor must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("ancestor"),
+            "expected a reparse-free-ancestor rejection, got: {msg}"
+        );
+        // Nothing was created through the junction.
+        assert!(!real_parent.join("inst").exists());
+    }
+
     #[test]
     fn markerless_shared_root_preserves_generic_collisions_but_blocks_neoth_targets() {
         let fixture = tempfile::tempdir().unwrap();
