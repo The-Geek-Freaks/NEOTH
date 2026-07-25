@@ -329,9 +329,10 @@ pub async fn run_evolver_pass(
                 continue;
             };
 
-            // Idempotent guard: skip if the skill artifact is already settled on disk.
-            let artifact_path = home.join("skills").join(&proposal.id).join("skill.yaml");
-            if is_verified_deployed(&artifact_path, ARTIFACT_MIN_AGE_SECS) {
+            // Idempotent guard: skip if the skill artifact is already settled on
+            // disk. Read through the capability-bound store (GOLD-R3-11).
+            let skills_root = home.join("skills");
+            if is_verified_deployed(&skills_root, &proposal.id, ARTIFACT_MIN_AGE_SECS) {
                 tracing::debug!(
                     skill_id = %proposal.id,
                     "capability_evolver: skill artifact already deployed, skipping"
@@ -640,10 +641,10 @@ mod tests {
             "0x0F CAPABILITY_EVOLVER_RAN must be present in WAL bytes"
         );
 
-        // Verify is_verified_deployed returns false for a nonexistent path.
+        // Verify is_verified_deployed returns false for a nonexistent skills root.
         assert!(
-            !is_verified_deployed(std::path::Path::new("/nonexistent/skill.yaml"), 0),
-            "nonexistent path must not be considered deployed"
+            !is_verified_deployed(std::path::Path::new("/nonexistent/skills"), "ghost", 0),
+            "nonexistent skills root must not be considered deployed"
         );
     }
 

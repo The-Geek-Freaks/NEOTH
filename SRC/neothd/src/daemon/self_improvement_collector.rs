@@ -156,12 +156,46 @@ pub struct CollectorReport {
 /// settled). Purely filesystem-based — no locks needed. The decision logic is
 /// factored into [`is_deployment_settled`] so every branch is deterministically
 /// testable without a real filesystem.
-pub fn is_verified_deployed(artifact_path: &Path, min_age_secs: u64) -> bool {
-    let Ok(meta) = std::fs::metadata(artifact_path) else {
+pub fn is_verified_deployed(skills_root: &Path, skill_id: &str, min_age_secs: u64) -> bool {
+    // GOLD-R3-11: read the artifact mtime through the capability-bound, no-follow
+    // store instead of an ambient `<root>/<id>/skill.yaml` join + `fs::metadata`,
+    // so a symlink / junction / reparse point planted at the skill id or the file
+    // cannot redirect this "already deployed" check onto a foreign file. Missing
+    // root / skill / artifact or any store error → not-deployed (fail closed,
+    // consistent with `is_deployment_settled`). No mutation lock is taken: this is
+    // a best-effort hint and reading a fresh mtime mid-install only yields
+    // "not settled" (the conservative direction), so the lock's 5s spin is kept
+    // off the collector/evolver tick path.
+    let Ok(Some(root)) =
+        crate::skills::store::open_bound_directory(skills_root, false, "skills root")
+    else {
         return false;
     };
+    let skill_display = root.display_path.join(skill_id);
+    let Ok(skill_dir) = crate::skills::store::open_real_child_dir(
+        &root.dir,
+        std::ffi::OsStr::new(skill_id),
+        &skill_display,
+    ) else {
+        return false;
+    };
+    let file_display = skill_display.join("skill.yaml");
+    let Ok(file) = crate::skills::store::open_regular_file(
+        &skill_dir,
+        std::ffi::OsStr::new("skill.yaml"),
+        &file_display,
+    ) else {
+        return false;
+    };
+    // cap-std reports a `cap_std::time::SystemTime`; convert to the std clock
+    // type the pure decision helper works with.
+    let modified = file
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .map(|t| t.into_std());
     is_deployment_settled(
-        meta.modified().ok(),
+        modified,
         std::time::SystemTime::now(),
         std::time::Duration::from_secs(min_age_secs),
     )
@@ -544,10 +578,10 @@ fn tick_inner(
             let Some(rec) = latest else { continue };
             let delta = rec.score_after - rec.score_before;
             if delta < SCORE_REGRESSION_THRESHOLD {
-                // Check artifact is deployed before recommending a patch.
-                let artifact = skill_root.join(skill_id).join("skill.yaml");
+                // Check artifact is deployed before recommending a patch — read
+                // through the capability-bound store (GOLD-R3-11).
                 deployed_artifacts_checked += 1;
-                if !is_verified_deployed(&artifact, DEFAULT_ARTIFACT_MIN_AGE_SECS) {
+                if !is_verified_deployed(&skill_root, skill_id, DEFAULT_ARTIFACT_MIN_AGE_SECS) {
                     signals.push(CollectorSignal::Escalate {
                         reason: format!(
                             "skill '{skill_id}' artifact not yet verified deployed \
@@ -1121,30 +1155,47 @@ mod tests {
 
     // ── is_verified_deployed ────────────────────────────────────────────────
 
+    fn write_installed_artifact(skills_root: &Path, skill_id: &str) {
+        let skill_dir = skills_root.join(skill_id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("skill.yaml"), b"enabled: true").unwrap();
+    }
+
     #[test]
-    fn is_verified_deployed_missing_path_returns_false() {
+    fn is_verified_deployed_missing_returns_false() {
+        // Every absence arm fails closed — read through the capability-bound
+        // store: absent skills root, absent skill dir under a present root, and a
+        // present skill dir with no `skill.yaml` artifact.
         assert!(!is_verified_deployed(
-            Path::new("/nonexistent/skill.yaml"),
+            Path::new("/nonexistent/skills"),
+            "ghost",
             0
         ));
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_verified_deployed(dir.path(), "ghost", 0));
+
+        // Skill dir exists but the artifact does not → open_regular_file errs.
+        let skills = dir.path().join("skills");
+        std::fs::create_dir_all(skills.join("my_skill")).unwrap();
+        assert!(!is_verified_deployed(&skills, "my_skill", 0));
     }
 
     #[test]
-    fn is_verified_deployed_existing_file_zero_age_returns_true() {
+    fn is_verified_deployed_existing_artifact_zero_age_returns_true() {
         let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("skill.yaml");
-        std::fs::write(&p, b"enabled: true").unwrap();
+        let skills = dir.path().join("skills");
+        write_installed_artifact(&skills, "my_skill");
         // min_age_secs = 0 → elapsed always >= 0.
-        assert!(is_verified_deployed(&p, 0));
+        assert!(is_verified_deployed(&skills, "my_skill", 0));
     }
 
     #[test]
-    fn is_verified_deployed_fresh_file_fails_age_check() {
+    fn is_verified_deployed_fresh_artifact_fails_age_check() {
         let dir = tempfile::tempdir().unwrap();
-        let p = dir.path().join("skill.yaml");
-        std::fs::write(&p, b"enabled: true").unwrap();
-        // A just-written file won't have elapsed 999_999 seconds.
-        assert!(!is_verified_deployed(&p, 999_999));
+        let skills = dir.path().join("skills");
+        write_installed_artifact(&skills, "my_skill");
+        // A just-written artifact won't have elapsed 999_999 seconds.
+        assert!(!is_verified_deployed(&skills, "my_skill", 999_999));
     }
 
     // ── is_deployment_settled — pure branch coverage (GOLD-R3-11) ────────────

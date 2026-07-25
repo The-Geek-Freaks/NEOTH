@@ -262,8 +262,18 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     into a pure `is_deployment_settled(modified, now, min_age)` under a
     deterministic branch contract (missing-mtime, future-mtime, too-young,
     exact-boundary, settled) so the fail-closed posture can't silently regress.
-    The `is_verified_deployed` ambient-path→generation-bound-store migration is
-    the last R3-11 remainder (the cross-process lock regression now exists).
+    **Last reader migrated 2026-07-25:** `is_verified_deployed` no longer joins
+    `<root>/<id>/skill.yaml` + `fs::metadata` (symlink-following) — it opens the
+    skills root as a bound directory and reads the artifact mtime through
+    `open_real_child_dir` (validate_child_name + `open_dir_nofollow`) →
+    `open_regular_file` (`FollowSymlinks::No`), so a planted symlink/junction at
+    the id or the file can no longer redirect the "already deployed" check; every
+    absence/error arm fails closed. Signature is now `(skills_root, skill_id,
+    min_age_secs)`; both callers migrated; independently rust-reviewed (no
+    CRITICAL/HIGH; the no-follow store guarantees were verified against
+    `skills/store.rs`). **All three R3-11 reader/lock remainders (mtime fail-open,
+    dreaming baseline, is_verified_deployed) plus the cross-process lock
+    regression are now closed** — R3-11 is ready for a checkbox re-audit.
   - **R3-12 (core landed 2026-07-24; broader edge matrix still OPEN):** the
     portable-marker staging no longer calls `tempdir_in(resolved_root)` before
     that root exists — `prepare_portable_marker` now stages in
