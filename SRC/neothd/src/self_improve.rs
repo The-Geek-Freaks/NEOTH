@@ -1081,9 +1081,12 @@ pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
         );
     }
 
-    let _guard = SELF_IMPROVE_STATE_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    // The cross-process file lock is held for the WHOLE sequence — it is what
+    // excludes another process. The in-process mutex is taken in short scopes
+    // around each synchronous step instead of across the audit await: holding a
+    // std guard over an await point can park the guard on a suspended task.
+    // Order within each scope stays mutex-then-file-lock, matching
+    // `with_state_lock`, so the two can never deadlock against each other.
     let _oslock = crate::util::locked_file::lock_file_blocking(
         &state_lock_path(home),
         "self-improvement state",
@@ -1091,8 +1094,14 @@ pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
 
     // NOTE: deliberately NOT `with_state_lock` — that runs recovery, which is
     // the thing being bypassed.
-    let Some(summary) = describe_discardable_journal(home)? else {
-        anyhow::bail!("no self-improvement journal to discard");
+    let summary = {
+        let _guard = SELF_IMPROVE_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match describe_discardable_journal(home)? {
+            Some(summary) => summary,
+            None => anyhow::bail!("no self-improvement journal to discard"),
+        }
     };
 
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -1114,7 +1123,12 @@ pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
     .await
     .context("the discard was NOT recorded; the journal was left in place")?;
 
-    remove_journal(&journal_path(home))?;
+    {
+        let _guard = SELF_IMPROVE_STATE_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        remove_journal(&journal_path(home))?;
+    }
     Ok(summary)
 }
 

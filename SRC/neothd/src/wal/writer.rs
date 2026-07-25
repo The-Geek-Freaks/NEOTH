@@ -1689,8 +1689,7 @@ mod tests {
             home.path().join("wal").join("000001.wal"),
             home.path().to_path_buf(),
         )
-        .err()
-        .expect("spawn_for_home must refuse the unwired policy");
+        .expect_err("spawn_for_home must refuse the unwired policy");
         assert!(
             matches!(error, WalError::PolicyNotImplemented { .. }),
             "{error:#}"

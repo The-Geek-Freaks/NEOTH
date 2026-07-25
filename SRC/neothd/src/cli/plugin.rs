@@ -1407,6 +1407,10 @@ fn activate_staged_install(
 /// survives. A stale config reference is cleaned even when the directory is
 /// already gone, and success is only reported after an inventory readback
 /// proves the plugin is no longer a loadable install.
+///
+/// Test-only: production goes through [`remove_plugin_at_tracked`], which also
+/// reports which steps ran so the terminal audit frame can be truthful.
+#[cfg(test)]
 fn remove_plugin_at(home: &std::path::Path, id: &str) -> Result<bool> {
     let mut progress = RemovalProgress::default();
     remove_plugin_at_tracked(home, id, &mut progress)

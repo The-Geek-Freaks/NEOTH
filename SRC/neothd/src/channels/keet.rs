@@ -76,19 +76,6 @@ impl KeetChannel {
             .context("Keet companion full-duplex probe failed")
     }
 
-    async fn reply(
-        &self,
-        text: &str,
-        reply_to: Option<&str>,
-        idempotency_key: &str,
-    ) -> std::result::Result<MessageId, ChannelError> {
-        self.bridge
-            .post_message_idempotent(&self.topic, text, reply_to, idempotency_key)
-            .await
-            .map(|response| MessageId(response.message_id))
-            .map_err(|error| ChannelError::Transport(error.to_string()))
-    }
-
     async fn deliver_pending_reply(&self, pending: &PendingReply) {
         let mut backoff_seconds = 1_u64;
         loop {
