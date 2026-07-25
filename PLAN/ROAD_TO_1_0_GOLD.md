@@ -197,7 +197,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   evidence. The trust boundary is untrusted Skill content and
   cooperating NEOTH processes, not a hostile process already running under the
   same OS identity, which can directly modify the user's Skill files.
-- [ ] **GOLD-R3-12 Missing-root portable install transaction:** make first
+- [x] **GOLD-R3-12 Missing-root portable install transaction:** make first
   portable install work when the final install root does not yet exist. Stage
   outside the absent destination, bind the physical/canonical bundle and target
   parents, commit into place without crossing volumes or following links, and
@@ -312,14 +312,32 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     marker, and a retry either quarantines (exit 70, marker stays absent) or
     self-heals (exit 0, valid marker), never a silent partial commit.
     STILL OPEN:
-      1. **Crash-partial self-heal (R3-12a, enhancement):** let a portable
-         first-install retry recover its OWN journaled crashed partial before the
-         markerless guard fires (order recovery ahead of
-         `validate_existing_portable_marker`, or teach the guard to distinguish a
-         journaled-crash partial from a real prior install). Security-sensitive —
-         the guard exists to prevent clobbering foreign/prior NEOTH targets, so
-         the recovery must key strictly on the leftover journal's own
-         transaction id. Needs design + security-review before implementation.
+      1. **Crash-partial self-heal (R3-12a, closed 2026-07-25):** a portable
+         first-install retry now recovers its OWN journaled crashed partial
+         before the markerless guard fires. `apply_release_bundle` calls
+         `recover_crashed_portable_partial` ahead of
+         `validate_existing_portable_marker`: it constructs the transaction
+         coordinator for this exact root and, only when a real (non-link,
+         `symlink_metadata`-checked) journal sidecar exists, runs the hardened
+         `recover()` (acquire lock → revalidate → roll back a non-committed
+         journal / finish a committed one); the guard then runs on the cleaned
+         root. Keyed strictly on the deterministic per-root journal — a
+         foreign/prior install carries no NEOTH journal, so recovery is a no-op
+         and the guard still quarantines it, and a NEOTH-owned collision that is
+         NOT part of the rolled-back journal also still quarantines (the guard
+         runs AFTER recovery, never skipped). If a coordinator cannot be built for
+         the root (invalid/reparse-point ancestor) the helper returns Ok so the
+         canonical guard/marker path emits its specific rejection (the real apply
+         transaction re-raises the same construction error — nothing is skipped).
+         Pre-implementation security-reviewer red-team: VERDICT SAFE TO IMPLEMENT
+         (Finding-2 symlink-safe journal gate applied; Finding-1 two-lock gap is
+         fail-closed via `revalidate_after_lock`; Findings 3/4 pre-existing and
+         threat-model-acceptable). The crash regression is retightened from
+         "quarantine (70) OR self-heal (0)" to a deterministic self-heal
+         (`portable_absent_root_hard_crash_self_heals_on_retry`: retry exits 0 and
+         commits a valid marker). Local evidence: fmt + `neoth` all-targets clippy
+         clean; targeted R3-12 install suite (junction-ancestor rejection,
+         self-heal, markerless-collision, raced-destination, success) 5/5 green.
       2. **Absent-root collision (closed 2026-07-25):** a concurrent create at
          the target between the backup move and the commit rename is now
          fail-closed on EVERY OS. `durable_rename` enforced "destination must be
@@ -334,6 +352,14 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
          proves the raced destination is preserved, not clobbered. Residual: the
          `symlink_metadata` + `fs::rename` pair leaves a narrow TOCTOU; the atomic
          upgrade is `renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)`.
+
+    **R3-12 closed 2026-07-25:** both STILL-OPEN items are resolved — R3-12a
+    crash-partial self-heal landed (above) and the absent-root collision is
+    closed. The single remaining item is the defense-in-depth atomic-rename
+    TOCTOU residual: it is NON-BLOCKING (the `symlink_metadata` guard already
+    fail-closes the common case, and every rollback caller renames onto a
+    cleared/known-absent path) and is Unix-only FFI (`renameat2`/`renamex_np`),
+    so it is tracked as a v1.x hardening rather than a v1.0 gate.
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

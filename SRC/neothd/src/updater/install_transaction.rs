@@ -2425,13 +2425,13 @@ mod tests {
                 // Retry after a hard crash: clear the hook so no killpoint fires,
                 // then attempt the portable first-install again over the leftover
                 // partial. Exit code encodes the outcome for the parent:
-                //   70 = quarantined: the markerless-first-install guard refuses a
-                //        silent retry over the crashed partial (current gold safe
-                //        behavior — no clobber of leftover NEOTH-owned targets).
-                //    0 = self-healed: a future change let the retry recover its own
-                //        crashed partial and commit cleanly (tracked R3-12 enhancement).
-                // Either outcome proves the crash never yields a silently-trusted
-                // partial install.
+                //    0 = self-healed (GOLD-R3-12a): apply_release_bundle recovers
+                //        this root's own journaled crashed partial before the
+                //        markerless guard, then commits a complete install.
+                //   70 = quarantined: the markerless-first-install guard refused a
+                //        silent retry (pre-R3-12a behavior; still the outcome for a
+                //        foreign/prior install that carries no NEOTH journal).
+                // Either way the crash never yields a silently-trusted partial.
                 TEST_HOOK.with(|cell| cell.set(None));
                 match crate::updater::release_bundle::apply_portable_release_bundle(
                     root.join("bundle"),

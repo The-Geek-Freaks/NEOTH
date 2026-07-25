@@ -408,6 +408,19 @@ pub fn apply_release_bundle(
     // Linux files are never treated as partially mutable bundles, even when
     // the caller supplies a bad archive.
     let transaction_root = layout.transaction_root()?;
+    // GOLD-R3-12a: before the markerless-first-install guard, roll back THIS
+    // root's own journaled crashed install partial so a crash mid-first-install
+    // self-heals on retry instead of quarantining. Keyed strictly on the
+    // deterministic journal sidecar for this exact root — a foreign/prior install
+    // carries no NEOTH journal, so recovery is a no-op for it and the guard below
+    // still quarantines it. recover() rolls back a non-committed journal (or
+    // finishes a committed one) under its own lock, then the guard runs on the
+    // cleaned root, so a foreign NEOTH-owned collision that is NOT part of the
+    // rolled-back journal STILL quarantines. The brief unlocked window before the
+    // real apply transaction is fail-closed by that transaction's
+    // revalidate_after_lock (a raced root re-appearance/swap bails retryably,
+    // never a clobber).
+    recover_crashed_portable_partial(&transaction_root, profile, &layout, &specs)?;
     validate_existing_portable_marker(&transaction_root, profile)?;
 
     validate_bundle_root_shape(bundle_root, &specs)?;
@@ -520,6 +533,44 @@ fn portable_marker_error(root: &Path, reason: impl Into<String>) -> anyhow::Erro
             root.display()
         )
     }
+}
+
+/// GOLD-R3-12a: roll back this install root's OWN journaled crashed install
+/// partial before the markerless-first-install guard runs, so a crash mid first
+/// install self-heals on retry instead of quarantining. Gated on a real
+/// (non-link) journal file for this exact root: a foreign/prior install carries
+/// no NEOTH journal, so this is a no-op for it and the guard still quarantines
+/// it. Reuses the transaction's hardened `recover()` (acquire lock → revalidate
+/// → roll back a non-committed journal / finish a committed one).
+fn recover_crashed_portable_partial(
+    transaction_root: &Path,
+    profile: PortableBundleProfile,
+    layout: &ReleaseInstallLayout,
+    specs: &[BundleMemberSpec],
+) -> Result<()> {
+    let allowed = allowed_targets(profile, layout, specs)?;
+    // If a coordinator cannot be constructed for this root (e.g. an invalid or
+    // reparse-point ancestor), there is no recoverable NEOTH partial here — no
+    // install ever committed through such a root. Return without masking the
+    // condition: the markerless guard and marker-preparation path below reject
+    // the root with their specific diagnostic instead of a recovery-flavored
+    // wrapper (and the real apply transaction re-raises the same construction
+    // error), so nothing is silently skipped.
+    let Ok(transaction) = InstallTransaction::new(transaction_root, allowed) else {
+        return Ok(());
+    };
+    // symlink_metadata (not Path::exists, which follows links) so a symlinked
+    // journal path counts as "no recoverable journal" here and is diagnosed by
+    // the ownership guard rather than followed by recover().
+    let journal_is_real_file = fs::symlink_metadata(transaction.journal_path())
+        .map(|metadata| metadata.is_file() && !metadata_is_link_like(&metadata))
+        .unwrap_or(false);
+    if journal_is_real_file {
+        transaction
+            .recover()
+            .context("recover a crashed portable install partial before the ownership guard")?;
+    }
+    Ok(())
 }
 
 fn validate_existing_portable_marker(
@@ -1579,21 +1630,21 @@ mod tests {
     }
 
     #[test]
-    fn portable_absent_root_hard_crash_quarantines_partial_no_silent_commit() {
-        // GOLD-R3-12 regression: a hard child-process crash at StageReady(0)
+    fn portable_absent_root_hard_crash_self_heals_on_retry() {
+        // GOLD-R3-12a regression: a hard child-process crash at StageReady(0)
         // during the first portable install (absent install root) must NOT leave
-        // a committed-but-partial install, and a naive retry must NOT silently
-        // clobber the leftover partial into a trusted install.
+        // a committed-but-partial install, and a retry must SELF-HEAL — recover
+        // its own crashed partial and commit a complete, valid install — rather
+        // than quarantining the operator out of their own crashed first install.
         //
-        // Observed gold behavior: the crash creates the install directory and
-        // NEOTH-owned subdirectories but never commits the ownership marker;
-        // a retry is then QUARANTINED — the markerless-first-install guard
-        // (validate_existing_portable_marker, which runs before the transaction's
-        // internal recover_locked) refuses to install over the unmarked
-        // NEOTH-owned leftovers. That refusal is safe (no clobber). Auto-healing
-        // the crashed partial in-place is a tracked R3-12 enhancement; this test
-        // accepts either quarantine (exit 70) or clean self-heal (exit 0), and
-        // asserts no silent partial commit in either case.
+        // Behavior: the crash creates the install directory and NEOTH-owned
+        // subdirectories but never commits the ownership marker. On retry,
+        // apply_release_bundle now runs recover_crashed_portable_partial BEFORE
+        // the markerless-first-install guard: recover() rolls back this root's own
+        // journaled crashed partial, the guard then sees a cleaned root, and the
+        // install commits. A foreign/prior install carries no NEOTH journal, so it
+        // is untouched by recovery and still quarantined by the guard (covered by
+        // markerless_shared_root_preserves_generic_collisions_but_blocks_neoth_targets).
         //
         // The killpoint mechanism lives in install_transaction::tests::crash_child_entry.
         // We dispatch to a "portable-absent-root" / "apply" arm added there, which
@@ -1653,11 +1704,11 @@ mod tests {
              the install must not be in a committed-but-partial state"
         );
 
-        // Phase 2 — naive retry over the crashed partial.
+        // Phase 2 — retry over the crashed partial must SELF-HEAL.
         // The "apply-recover" mode clears TEST_HOOK so no killpoint fires, then
         // re-runs apply_portable_release_bundle. The child encodes the outcome:
-        //   70 = quarantined (guard refused the retry — current safe behavior)
         //    0 = self-healed (retry recovered the partial and committed cleanly)
+        //   70 = quarantined (pre-R3-12a behavior — a regression now)
         let recover_status = std::process::Command::new(std::env::current_exe().unwrap())
             .arg("crash_child_entry")
             .arg("--nocapture")
@@ -1670,27 +1721,20 @@ mod tests {
             .status()
             .unwrap();
 
-        match recover_status.code() {
-            // Quarantine: the guard refused a silent retry, so the crashed partial
-            // must NOT have been promoted into a committed (marker-bearing) install.
-            Some(70) => assert!(
-                !install.join(PORTABLE_OWNERSHIP_MARKER).exists(),
-                "a quarantined retry must not commit an ownership marker over the \
-                 crashed partial"
-            ),
-            // Self-heal: the retry recovered and committed a complete, valid install.
-            Some(0) => {
-                assert!(
-                    install.join(PORTABLE_OWNERSHIP_MARKER).is_file(),
-                    "a self-healed retry must commit a valid ownership marker"
-                );
-                validate_existing_portable_marker(&install, PortableBundleProfile::current())
-                    .expect("self-healed marker must be valid");
-            }
-            other => panic!(
-                "retry over the crashed partial must quarantine (70) or self-heal (0), got {other:?}"
-            ),
-        }
+        // GOLD-R3-12a: the retry must recover its own journaled crashed partial
+        // and commit a complete, valid install — not quarantine the operator.
+        assert_eq!(
+            recover_status.code(),
+            Some(0),
+            "retry over the crashed first-install partial must self-heal (exit 0), \
+             recovering the journaled partial and committing cleanly"
+        );
+        assert!(
+            install.join(PORTABLE_OWNERSHIP_MARKER).is_file(),
+            "a self-healed retry must commit a valid ownership marker"
+        );
+        validate_existing_portable_marker(&install, PortableBundleProfile::current())
+            .expect("self-healed marker must be valid");
     }
 
     #[test]
