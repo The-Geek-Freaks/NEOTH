@@ -403,8 +403,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     into chat, Council and sub-agent dispatch still use parallel conventions;
     they should converge on one typed context-class/source-id/limit-aware encoding
     boundary with the same adversarial corpus run through every consumer.
-  - **R3-15 (ordered/fail-closed core landed 2026-07-24 `d80fba62`; durable
-    lifecycle still OPEN):** `remove_plugin_at` now clears the config trust
+  - **R3-15 (CLOSED — ordered/fail-closed core landed 2026-07-24 `d80fba62`;
+    durable lifecycle landed 2026-07-25 `0b33c166`, verify-reconfirmed 12/12
+    local green 2026-07-25):** `remove_plugin_at` now clears the config trust
     references (activation + hash pin) BEFORE deleting bytes, propagates every
     error (a config-write failure aborts before any deletion), preserves
     revocations as a deny-list, reconciles a stale reference even when the
