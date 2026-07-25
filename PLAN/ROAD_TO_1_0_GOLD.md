@@ -312,8 +312,20 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
          the guard exists to prevent clobbering foreign/prior NEOTH targets, so
          the recovery must key strictly on the leftover journal's own
          transaction id. Needs design + security-review before implementation.
-      2. **Absent-root collision:** a concurrent create between staging and the
-         commit rename.
+      2. **Absent-root collision (closed 2026-07-25):** a concurrent create at
+         the target between the backup move and the commit rename is now
+         fail-closed on EVERY OS. `durable_rename` enforced "destination must be
+         absent" only on Windows (`MoveFileExW` without `REPLACE_EXISTING`); the
+         Unix branch used bare POSIX `fs::rename`, which silently clobbers a file
+         at the destination. The Unix branch now mirrors the Windows guard
+         (`symlink_metadata` destination-absent check before `fs::rename`); all
+         four rollback callers already rename onto cleared/known-absent paths (and
+         Windows CI was green under the stricter guard), so no caller relied on
+         replace — `durable_replace` remains the primitive for that. A
+         cross-platform regression (`durable_rename_refuses_a_raced_existing_destination`)
+         proves the raced destination is preserved, not clobbered. Residual: the
+         `symlink_metadata` + `fs::rename` pair leaves a narrow TOCTOU; the atomic
+         upgrade is `renameat2(RENAME_NOREPLACE)` / `renamex_np(RENAME_EXCL)`.
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

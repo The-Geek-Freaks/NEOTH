@@ -1901,8 +1901,30 @@ fn durable_rename(from: &Path, to: &Path) -> Result<()> {
         }
     }
     #[cfg(not(windows))]
-    fs::rename(from, to)
-        .with_context(|| format!("rename {} -> {}", from.display(), to.display()))?;
+    {
+        // Mirror the Windows fail-closed-on-raced-destination guard (R3-12): this
+        // primitive renames onto an absent path — callers move any prior target
+        // to backup or clear the stage first — so a destination that exists here
+        // is a concurrent create between the backup move and the commit rename
+        // and must NOT be silently clobbered by POSIX rename's replace semantics.
+        // `durable_replace` is the separate primitive for intentional replacement.
+        // ponytail: symlink_metadata + rename leaves a narrow TOCTOU; the atomic
+        // upgrade is renameat2(RENAME_NOREPLACE) on Linux / renamex_np(RENAME_EXCL)
+        // on macOS.
+        match fs::symlink_metadata(to) {
+            Ok(_) => anyhow::bail!(
+                "transaction rename destination must be absent: {}",
+                to.display()
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("inspect rename destination {}", to.display()));
+            }
+        }
+        fs::rename(from, to)
+            .with_context(|| format!("rename {} -> {}", from.display(), to.display()))?;
+    }
     sync_parent(to)
 }
 
@@ -2423,6 +2445,32 @@ mod tests {
             other => panic!("unknown child fixture/mode: {other:?}"),
         }
         panic!("child did not reach killpoint {hook:?}");
+    }
+
+    #[test]
+    fn durable_rename_refuses_a_raced_existing_destination() {
+        // GOLD-R3-12: durable_rename targets an absent path; a destination that
+        // already exists (a concurrent create between the backup move and the
+        // commit rename) must fail closed on EVERY OS — never silently clobber.
+        // This locks the Windows guard's behavior onto the Unix path, which
+        // previously used bare POSIX rename (replace-existing). `durable_replace`
+        // remains the primitive for intentional replacement.
+        let dir = TempDir::new().unwrap();
+        let from = dir.path().join("stage");
+        let to = dir.path().join("target");
+        fs::write(&from, b"new").unwrap();
+        fs::write(&to, b"raced-in").unwrap();
+
+        let err = durable_rename(&from, &to)
+            .expect_err("a pre-existing destination must fail closed, not clobber");
+        assert!(
+            err.to_string().contains("destination must be absent"),
+            "unexpected error: {err:#}"
+        );
+        // The raced-in destination is preserved and the source is left intact for
+        // the caller's rollback — nothing was moved.
+        assert_eq!(fs::read(&to).unwrap(), b"raced-in");
+        assert_eq!(fs::read(&from).unwrap(), b"new");
     }
 
     #[test]
