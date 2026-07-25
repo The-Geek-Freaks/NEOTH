@@ -676,7 +676,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `noq 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `noq-proto 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `noq-udp 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `nostr 0.44.3` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `nostr 0.44.5` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-database 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-gossip 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-relay-pool 0.44.1` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1319,7 +1319,6 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `n0-error-macros 1.0.0` - `MIT OR Apache-2.0` - revision `56019f01cd4c838edccd9f9b074953a45d87b6ef` - https://github.com/n0-computer/n0-error
 - `negentropy 0.5.0` - `MIT` - revision `94742ad2221e8350336fa0a40cf0fdb4a5228520` - https://github.com/rust-nostr/negentropy
 - `netwatch 0.19.0` - `MIT OR Apache-2.0` - revision `59a1a38ea39053c4712f4133967e432b3c33f3c4` - https://github.com/n0-computer/net-tools
-- `nostr 0.44.3` - `MIT` - revision `94398c944cf58f7c4e8dd622cedd103e997e5b98` - https://github.com/rust-nostr/nostr
 - `nostr-database 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
 - `nostr-gossip 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
 - `nostr-relay-pool 0.44.1` - `MIT` - revision `94398c944cf58f7c4e8dd622cedd103e997e5b98` - https://github.com/rust-nostr/nostr
@@ -1417,6 +1416,7 @@ These upstreams publish a license expression but no standalone notice in the loc
 
 These crate archives contain no standalone notice file, but another locked crate from the same canonical upstream repository publishes the repository-level text reproduced below. The crate's exact SPDX expression in the inventory remains authoritative; carrying a repository's additional text does not change that expression.
 
+- `nostr 0.44.5` - `MIT` - https://github.com/rust-nostr/nostr.git
 - `selectors 0.38.0` - `MPL-2.0` - https://github.com/servo/stylo
 
 ### Published license and notice texts
@@ -25371,7 +25371,7 @@ limitations under the License.
 
 #### SHA-256 `a333d394b9f31b6ca64d08f3048a8a38125c181d68d3d376c4ddf988cffd12d2`
 
-Applies to: `nostr 0.44.3`, `nostr-database 0.44.0`, `nostr-gossip 0.44.0`, `nostr-relay-pool 0.44.1`, `nostr-sdk 0.44.1`
+Applies to: `nostr 0.44.5`, `nostr-database 0.44.0`, `nostr-gossip 0.44.0`, `nostr-relay-pool 0.44.1`, `nostr-sdk 0.44.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 MIT License
