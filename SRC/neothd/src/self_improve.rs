@@ -1321,15 +1321,38 @@ fn recover_accept_transaction_locked(home: &Path) -> Result<()> {
 
     match proposal_installed_target(home, &proposal)? {
         Some(target) => with_locked_installed_skill(&target, |view| {
-            let generations = installed_generation_transition(&proposal, journal.intended_status)?;
-            if journal.base_generation_sha256.as_deref() != Some(generations.base)
-                || journal.target_generation_sha256.as_deref() != Some(generations.target)
-            {
-                anyhow::bail!(
-                    "recover: installed-skill journal generation binding is missing or does not match proposal `{}`; re-stage it (journal preserved)",
-                    journal.proposal_id
+            // A journal with NEITHER generation field predates full-package
+            // generation binding. That is an older valid format, not corruption
+            // — and failing it wedged the product permanently: recovery runs
+            // ahead of every `with_state_lock` operation, so the daemon refused
+            // to start and the advice in the old message ("re-stage it") was
+            // unreachable because staging takes the same lock.
+            let legacy_journal = journal.base_generation_sha256.is_none()
+                && journal.target_generation_sha256.is_none();
+            let generations = if legacy_journal {
+                tracing::warn!(
+                    proposal = %journal.proposal_id,
+                    journal = %jp.display(),
+                    "recovering a pre-generation-binding self-improvement journal on byte \
+                     bindings only; the full-package sibling-mutation check cannot be \
+                     evaluated for it"
                 );
-            }
+                None
+            } else {
+                let generations =
+                    installed_generation_transition(&proposal, journal.intended_status)?;
+                if journal.base_generation_sha256.as_deref() != Some(generations.base)
+                    || journal.target_generation_sha256.as_deref() != Some(generations.target)
+                {
+                    anyhow::bail!(
+                        "recover: installed-skill journal generation binding does not match \
+                         proposal `{}`; journal preserved at {}",
+                        journal.proposal_id,
+                        jp.display()
+                    );
+                }
+                Some(generations)
+            };
             let installed_directory = target.root.join(&target.id);
             recover_accept_against_current_locked(
                 home,
@@ -1410,7 +1433,8 @@ fn recover_accept_against_current_locked(
     }
     if current_bytes == journal.original_bytes {
         if let Some(context) = installed_recovery
-            && context.current_generation != context.generations.base
+            && let Some(generations) = context.generations
+            && context.current_generation != generations.base
         {
             anyhow::bail!(
                 "recover: installed skill {} has base document bytes but a different full package generation; ambiguous sibling mutation detected (journal preserved)",
@@ -1466,7 +1490,8 @@ fn recover_accept_against_current_locked(
         );
     }
     if let Some(context) = installed_recovery
-        && context.current_generation != context.generations.target
+        && let Some(generations) = context.generations
+        && context.current_generation != generations.target
     {
         anyhow::bail!(
             "recover: installed skill {} has intended document bytes but a different full package generation; ambiguous sibling mutation detected (journal preserved)",
@@ -1882,7 +1907,13 @@ struct InstalledGenerationTransition<'a> {
 #[derive(Clone, Copy)]
 struct InstalledRecoveryContext<'a> {
     current_generation: &'a str,
-    generations: InstalledGenerationTransition<'a>,
+    /// `None` for a LEGACY journal written before full-package generation
+    /// binding existed. Such a journal carries no generation evidence, so the
+    /// sibling-mutation check cannot be evaluated — it is skipped rather than
+    /// treated as corruption. Recovery then verifies exactly what the
+    /// pre-binding version verified (the byte bindings), still under the
+    /// installer mutation lock.
+    generations: Option<InstalledGenerationTransition<'a>>,
     parent: &'a cap_std::fs::Dir,
     directory_display_path: &'a Path,
 }
@@ -4277,6 +4308,64 @@ mod tests {
         assert_eq!(
             load_proposals_raw(home.path()).unwrap()[0].status,
             ProposalStatus::VerifiedApproved
+        );
+    }
+
+    #[test]
+    fn legacy_journal_recovers_on_byte_bindings_instead_of_wedging_the_daemon() {
+        // External review PR5-002: a journal written before full-package
+        // generation binding existed carries neither generation field. Treating
+        // that as corruption made recovery fail forever — and recovery runs
+        // ahead of EVERY `with_state_lock` operation, so `neoth serve` refused
+        // to start and the suggested "re-stage it" was unreachable because
+        // staging takes the same lock. A legacy journal is an older valid
+        // format: recover it on exactly the bindings it carries.
+        let home = tempfile::tempdir().unwrap();
+        install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
+        let mut proposal = installed_proposal(home.path(), "legacy-journal", "live-v1", "improved");
+        proposal.status = ProposalStatus::VerifiedApproved;
+        // A pre-binding proposal has no generation spec either — the path that
+        // used to bail inside `installed_generation_transition`.
+        proposal.spec = None;
+        let skill_path = proposal.skill_path.clone();
+        let before = proposal.before.clone();
+        let after = proposal.after.clone();
+        save_proposals(home.path(), std::slice::from_ref(&proposal)).unwrap();
+
+        let journal = AcceptJournal {
+            proposal_id: "legacy-journal".to_string(),
+            skill_path,
+            original_bytes: before.clone(),
+            intended_status: ProposalStatus::Accepted,
+            base_sha256: Some(sha256_hex(&before)),
+            target_sha256: Some(sha256_hex(&after)),
+            base_generation_sha256: None,
+            target_generation_sha256: None,
+            base_hash: None,
+            target_hash: None,
+        };
+        std::fs::write(
+            journal_path(home.path()),
+            serde_json::to_vec_pretty(&journal).unwrap(),
+        )
+        .unwrap();
+        // The write landed before the crash: the skill holds the target bytes.
+        std::fs::write(
+            home.path().join("skills").join("pinned").join("skill.md"),
+            &after,
+        )
+        .unwrap();
+
+        recover_pending_journal(home.path())
+            .expect("a legacy journal must recover, not block every operation");
+        assert!(
+            !journal_path(home.path()).exists(),
+            "a completed recovery must retire the journal"
+        );
+        assert_eq!(
+            load_proposals_raw(home.path()).unwrap()[0].status,
+            ProposalStatus::Accepted,
+            "the interrupted transition must be committed"
         );
     }
 
