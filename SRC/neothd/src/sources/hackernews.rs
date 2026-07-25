@@ -134,6 +134,15 @@ async fn response_json_limited<T: DeserializeOwned>(
     let response = response
         .error_for_status()
         .with_context(|| format!("{context} HTTP status"))?;
+    // `error_for_status` rejects only 4xx/5xx. Redirects are deliberately NOT
+    // followed (`redirect::Policy::none()`), so a 3xx arrives here WITH its
+    // body — and a redirect body is not the payload we asked for. Accepting it
+    // would let an endpoint answer "302 + valid JSON" and have it processed as
+    // a successful response.
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("{context} returned a non-success HTTP status {status}");
+    }
     if response
         .content_length()
         .is_some_and(|length| length > max_bytes as u64)
@@ -539,6 +548,36 @@ mod tests {
         let requests = server.received_requests().await.unwrap();
         assert_eq!(requests.len(), 1, "redirect target must never be requested");
         assert_eq!(requests[0].url.path(), "/v0/topstories.json");
+    }
+
+    /// External review PR5-042: the test above passed only because wiremock's
+    /// 302 carried an EMPTY body, so the JSON parse failed — not because the
+    /// status was rejected. A redirect that also returns valid JSON must still
+    /// be refused: `error_for_status` only covers 4xx/5xx.
+    #[tokio::test]
+    async fn a_redirect_with_a_valid_json_body_is_still_refused() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v0/topstories.json"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("Location", "/redirect-target")
+                    .set_body_json(vec![1i64, 2, 3]),
+            )
+            .mount(&server)
+            .await;
+
+        let error = top_stories_from_base(
+            &mock_base(&server),
+            &ExternalHttpAuthorizer::test_allow(),
+            1,
+        )
+        .await
+        .expect_err("a 3xx body must never be processed as the payload");
+        assert!(
+            format!("{error:#}").contains("non-success HTTP status"),
+            "the status must be what rejects it, not a parse failure: {error:#}"
+        );
     }
 
     #[tokio::test]
