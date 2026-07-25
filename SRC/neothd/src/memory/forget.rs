@@ -717,8 +717,8 @@ pub(crate) fn redaction_blocks_claim(
 }
 
 /// Active local forget topics. Receive-side raw gossip consults this registry
-/// before writing a peer frame back into the queryable backup surface.
-#[cfg(feature = "cluster")]
+/// before writing a peer frame back into the queryable backup surface, and every
+/// ingest that can lift text into live recall must consult it too.
 pub(crate) fn active_tombstone_topics(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn
         .prepare(
@@ -738,6 +738,17 @@ pub(crate) fn active_tombstone_topics(conn: &Connection) -> Result<Vec<String>> 
         })
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("collect active tombstones")
+}
+
+/// The first active forget-tombstone topic that `text` mentions, if any.
+///
+/// The anti-resurrection contract only holds if EVERY ingest that can put text
+/// back into live recall consults it. `forget` installs the sentinel; a path
+/// that writes without checking silently undoes the erasure.
+pub(crate) fn tombstoned_topic_in_text(conn: &Connection, text: &str) -> Result<Option<String>> {
+    Ok(active_tombstone_topics(conn)?
+        .into_iter()
+        .find(|topic| text_contains_topic(text, topic)))
 }
 
 /// Decode one canonical foreign WAL frame and match only its logical payload.

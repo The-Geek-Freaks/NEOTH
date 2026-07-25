@@ -890,6 +890,25 @@ pub fn promote_restricted(
         });
     }
 
+    // Anti-resurrection gate. `forget` installs a `_tombstone.<topic>` sentinel
+    // and the OMI ingest honours it, but this path did not — so promoting a
+    // restricted Vault chunk whose text mentions a forgotten topic lifted it
+    // straight back into idx_groundtruth and live recall, undoing the erasure
+    // with no warning. This is the only ingest that could silently reverse an
+    // active deletion. Checked before the dry-run return too: a preview must
+    // report the refusal rather than promise a promotion that will not happen.
+    let tombstoned = |text: &str| -> Result<Option<String>> {
+        crate::memory::forget::tombstoned_topic_in_text(conn, text)
+            .context("promote_restricted: consult the anti-resurrection registry")
+    };
+    if let Some(topic) = tombstoned(&chunk.statement)?.or(tombstoned(&chunk.scope)?) {
+        anyhow::bail!(
+            "promote refused: this chunk mentions `{topic}`, which was forgotten \
+             (`neoth memory forget`). Promoting it would restore erased content. \
+             Revoke the redaction first if the erasure no longer applies."
+        );
+    }
+
     if dry_run {
         return Ok(PromoteOutcome::DryRun { chunk });
     }
@@ -1893,6 +1912,49 @@ mod tests {
         );
         let rows = search_restricted(&conn, "scope-x").unwrap();
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn promote_refuses_a_chunk_that_mentions_a_forgotten_topic() {
+        // External review PR4-007: the restricted promote was the one ingest
+        // that could silently reverse an active erasure — it never consulted
+        // the anti-resurrection registry that `forget` installs.
+        let (_dir, conn) = open();
+        let rid = insert_restricted(
+            &conn,
+            "Alexa Muster moved to Bonn",
+            "vault",
+            "people",
+            "personal-data",
+            1_000,
+        )
+        .unwrap();
+        // The sentinel `forget` installs.
+        conn.execute(
+            "INSERT INTO idx_profile_redactions (field, never_recreate, asserted_by, asserted_at) \
+             VALUES ('_tombstone.Alexa Muster', 1, 'cli', 1)",
+            [],
+        )
+        .unwrap();
+
+        let error = promote_restricted(&conn, rid, "op", 2_000, false)
+            .expect_err("promoting forgotten content must be refused");
+        assert!(
+            format!("{error:#}").contains("promote refused"),
+            "unexpected error: {error:#}"
+        );
+        // The preview must refuse too — it may not promise a promotion that
+        // will not happen.
+        assert!(promote_restricted(&conn, rid, "op", 2_000, true).is_err());
+
+        let promoted: Option<i64> = conn
+            .query_row(
+                "SELECT promoted_at FROM idx_restricted WHERE id = ?1",
+                params![rid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(promoted.is_none(), "nothing may have been promoted");
     }
 
     #[test]
