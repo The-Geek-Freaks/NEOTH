@@ -1518,6 +1518,9 @@ fn remove_plugin_at_tracked(
     // deletion. The empty-config case creates nothing (guarded on existence).
     // Removal invalidates the operator's prior trust decision, so the activation
     // AND the hash pin go; a revocation is a deny-list and deliberately stays.
+    // Each flag records a step that ACTUALLY ran: a skipped step must never be
+    // reported as performed, or the audit trail claims a mutation that never
+    // happened (e.g. "config_cleared" with no freedom.yaml on disk at all).
     if freedom_path.exists() {
         FreedomConfig::update_at(&freedom_path, |config| {
             config.plugins.wasm.activations.remove(id);
@@ -1525,15 +1528,15 @@ fn remove_plugin_at_tracked(
             Ok(())
         })
         .with_context(|| format!("clear config references for plugin `{id}`"))?;
+        progress.config_cleared = true;
     }
-    progress.config_cleared = true;
 
     // Config is clean; delete the bytes.
     if bytes_present {
         std::fs::remove_dir_all(&target)
             .with_context(|| format!("remove plugin directory `{}`", target.display()))?;
+        progress.bytes_deleted = true;
     }
-    progress.bytes_deleted = true;
 
     // Inventory readback: never report success before proving the plugin is no
     // longer discoverable as a loadable install.
@@ -3402,6 +3405,51 @@ version = \"0.1.0\"\n\
         assert!(
             super::removal_journal_path(home.path(), "not_a_dir").exists(),
             "an unfinished removal must stay journalled so the retry resumes it"
+        );
+    }
+
+    #[test]
+    fn skipped_steps_are_never_reported_as_performed() {
+        // The audit trail must not claim a mutation that never ran: with no
+        // freedom.yaml on disk there is no config to clear, and a stale config
+        // reference alone deletes no bytes.
+        let home = TempDir::new().unwrap();
+        let dir = home.path().join("plugins").join("no_config");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.toml"), b"x").unwrap();
+        std::fs::write(dir.join("plugin.wasm"), MINIMAL_WASM).unwrap();
+
+        let mut progress = super::RemovalProgress::default();
+        assert!(super::remove_plugin_at_tracked(home.path(), "no_config", &mut progress).unwrap());
+        assert_eq!(
+            progress,
+            super::RemovalProgress {
+                config_cleared: false,
+                bytes_deleted: true,
+            },
+            "no freedom.yaml → the config-clear step never ran"
+        );
+
+        // Mirror image: a stale config reference with the directory gone.
+        let mut cfg = super::FreedomConfig::default();
+        cfg.plugins.wasm.activations.insert(
+            "ghost_only".to_string(),
+            super::PluginActivationRecord::from_state(super::PluginActivation::Active),
+        );
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let mut progress = super::RemovalProgress::default();
+        assert!(super::remove_plugin_at_tracked(home.path(), "ghost_only", &mut progress).unwrap());
+        assert_eq!(
+            progress,
+            super::RemovalProgress {
+                config_cleared: true,
+                bytes_deleted: false,
+            },
+            "no directory → the byte-delete step never ran"
         );
     }
 

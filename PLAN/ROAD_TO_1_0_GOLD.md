@@ -461,7 +461,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     reporting a no-op), idempotent retry (a no-op mints no journal), and the
     exact inventory readback.
 
-    Verified locally: `cli::plugin::` 50/50, `wasm_plugin::dispatch::`
+    Verified locally: `cli::plugin::` 51/51, `wasm_plugin::dispatch::`
     (`--features wasm-plugin-host`) 42/42, targeted `rustfmt --check` clean.
     Same run fixed `compiled_invoker_emits_cap_denied_frame_via_production_path`,
     which failed on a clean `54be5c25` (verified by stashing the change): its
