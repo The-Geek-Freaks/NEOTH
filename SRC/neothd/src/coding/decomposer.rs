@@ -334,10 +334,36 @@ pub fn build_repair_prompt(original_prompt: &str, malformed_output: &str) -> Str
 /// human/model-readable. The trusted callers emit the real fence tags around
 /// the defanged data, so exactly one intact boundary pair survives.
 fn defang_prompt_delimiters(s: &str) -> String {
+    defang_fence_tags(
+        s,
+        &["project_context", "operator_request", "malformed_output"],
+    )
+}
+
+/// GOLD-R3-14 — shared fence-delimiter neutralizer for every consumer that
+/// wraps untrusted content in delimiter-fenced prompt blocks. For each `tag`,
+/// a zero-width space is inserted at its first `_` (or after its first char if
+/// it has none) so an occurrence of `tag` inside the untrusted data no longer
+/// matches the literal `<tag>` / `</tag>` a model scans for — the data cannot
+/// forge a boundary. The trusted caller emits the real, intact fence tags
+/// AFTER defanging, so exactly one boundary pair per tag survives.
+pub(crate) fn defang_fence_tags(s: &str, tags: &[&str]) -> String {
     const ZWSP: &str = "\u{200b}";
-    s.replace("project_context", &format!("project{ZWSP}_context"))
-        .replace("operator_request", &format!("operator{ZWSP}_request"))
-        .replace("malformed_output", &format!("malformed{ZWSP}_output"))
+    let mut out = s.to_string();
+    for tag in tags {
+        let defanged = match tag.find('_') {
+            Some(idx) => format!("{}{ZWSP}{}", &tag[..idx], &tag[idx..]),
+            None => {
+                let mut chars = tag.chars();
+                match chars.next() {
+                    Some(first) => format!("{first}{ZWSP}{}", chars.as_str()),
+                    None => continue,
+                }
+            }
+        };
+        out = out.replace(tag, &defanged);
+    }
+    out
 }
 
 /// Cheap token-count estimate via the 4-chars-per-token heuristic.
