@@ -267,18 +267,30 @@ fn load_user_skills(skills_dir: &Path) -> Result<Vec<Skill>> {
             if name.as_encoded_bytes().first() == Some(&b'.') {
                 continue;
             }
-            let dir_name = name.to_str().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "installed skill directory name is not valid UTF-8: {}",
-                    path.display()
-                )
-            })?;
-            super::creator::validate_skill_id(dir_name).with_context(|| {
-                format!(
-                    "installed skill directory id is not canonical at {}",
-                    path.display()
-                )
-            })?;
+            // A directory whose NAME cannot be a skill id is not loaded — but it
+            // must not take the other skills down with it. `validate_skill_id`
+            // was tightened to lowercase-only after installs already existed, so
+            // one legacy `MySkill/` would otherwise fail the whole registry
+            // build and with it `neoth serve` and `neoth chat`. Skipping is
+            // equally fail-closed for authority (the skill is never loaded) and
+            // the entry still surfaces as a Broken row in `diagnostic_inventory`,
+            // which is the operator's repair path.
+            let Some(dir_name) = name.to_str() else {
+                tracing::warn!(
+                    path = %path.display(),
+                    "skipping installed skill: directory name is not valid UTF-8"
+                );
+                continue;
+            };
+            if let Err(error) = super::creator::validate_skill_id(dir_name) {
+                tracing::warn!(
+                    path = %path.display(),
+                    %error,
+                    "skipping installed skill: directory id is not canonical \
+                     (see `neoth skills --list` for the repair path)"
+                );
+                continue;
+            }
             let file_type = entry
                 .file_type()
                 .with_context(|| format!("inspect skill entry {}", path.display()))?;
@@ -1412,6 +1424,44 @@ system_prompt: |
         assert!(
             !raskal.is_enabled(),
             "visibility=off key match must be case-insensitive (RASKAL → raskal)"
+        );
+    }
+
+    /// External review PR5-005: `validate_skill_id` was tightened to
+    /// lowercase-only AFTER installs already existed, and the runtime loader
+    /// propagated that failure — one legacy `MySkill/` directory then failed the
+    /// WHOLE registry build, taking `neoth serve` and `neoth chat` down with it.
+    /// A directory that cannot be a skill id is skipped, never loaded, and the
+    /// healthy skills still load.
+    #[tokio::test]
+    async fn noncanonical_user_skill_directory_is_skipped_not_fatal() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::create_dir_all(skills_dir.join("MySkill")).unwrap();
+        std::fs::write(
+            skills_dir.join("MySkill").join("skill.yaml"),
+            "id: myskill\ndescription: legacy\ntrigger_keywords: [legacy]\n\
+             system_prompt: legacy\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(skills_dir.join("good_one")).unwrap();
+        std::fs::write(
+            skills_dir.join("good_one").join("skill.yaml"),
+            "id: good_one\ndescription: fine\ntrigger_keywords: [fine]\n\
+             system_prompt: fine\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir)
+            .await
+            .expect("one non-canonical directory must not fail the whole load");
+        assert!(
+            skills.iter().any(|s| s.id() == "good_one"),
+            "the healthy user skill must still load"
+        );
+        assert!(
+            !skills.iter().any(|s| s.id() == "myskill"),
+            "the non-canonical directory must NOT be loaded"
         );
     }
 }

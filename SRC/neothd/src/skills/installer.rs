@@ -1430,6 +1430,18 @@ fn copy_dir_recursive(
 
         let from_display = source_display.join(&name);
         let to_display = destination_display.join(&name);
+        // The store's crash-recovery artifacts own these prefixes. A package
+        // entry must never occupy that namespace.
+        if let Some(entry_name) = name.to_str()
+            && let Some(prefix) = RESERVED_SKILL_ENTRY_PREFIXES
+                .iter()
+                .find(|prefix| entry_name.starts_with(**prefix))
+        {
+            anyhow::bail!(
+                "skill package entry uses the reserved private-artifact prefix `{prefix}`: {}",
+                from_display.display()
+            );
+        }
         let file_type = entry
             .file_type()
             .with_context(|| format!("inspect skill source entry {}", from_display.display()))?;
@@ -1699,7 +1711,7 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
             )
         })?;
         let name = entry.file_name();
-        if matches_private_stage_marker(&name, CREATOR_DIRECTORY_STAGE_PREFIX)? {
+        if matches_private_stage_marker(&name, CREATOR_DIRECTORY_STAGE_PREFIX, &root.display_path) {
             let display_path = root.display_path.join(&name);
             drop(
                 open_real_child_dir(&root.dir, &name, &display_path).with_context(|| {
@@ -1846,29 +1858,77 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
     Ok(())
 }
 
+/// What one directory entry is, relative to a private stage-marker prefix.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrivateStageMarker {
+    /// Exactly one of ours — recover it.
+    Ours,
+    /// Carries the reserved prefix but not the 32-hex nonce. NOT one of ours:
+    /// recovery must neither act on it nor guess what it was.
+    Malformed,
+    /// Unrelated entry.
+    Foreign,
+}
+
 /// Classify a private crash-recovery artifact by its fixed-shape marker.
 ///
 /// The marker prevents transaction-name collisions; it is not a credential.
-/// Malformed names are nevertheless untrusted filesystem input and must not be
-/// copied into diagnostics that a caller may persist.
-fn matches_private_stage_marker(name: &OsStr, prefix: &str) -> Result<bool> {
+/// Malformed names are untrusted filesystem input and are never copied into
+/// diagnostics a caller may persist.
+///
+/// A malformed marker is reported, not fatal. Failing the store on it was a
+/// self-inflicted denial of service: skill packages are externally sourced, the
+/// install copy was name-agnostic, and recovery runs `?`-propagated ahead of
+/// every store read — so a single package file named `.skill-yaml.stage-readme`
+/// wedged `neoth serve`, `neoth chat`, the inventory AND the uninstall that
+/// could have removed it, leaving no in-product repair path. Planting one is now
+/// refused at install time (see [`RESERVED_SKILL_ENTRY_PREFIXES`]); an entry
+/// that still appears is left untouched for the operator.
+fn classify_private_stage_marker(name: &OsStr, prefix: &str) -> PrivateStageMarker {
     let Some(name) = name.to_str() else {
-        return Ok(false);
+        return PrivateStageMarker::Foreign;
     };
     let Some(nonce) = name.strip_prefix(prefix) else {
-        return Ok(false);
+        return PrivateStageMarker::Foreign;
     };
-    if nonce.len() != 32
-        || !nonce
+    if nonce.len() == 32
+        && nonce
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     {
-        anyhow::bail!(
-            "malformed private skill stage marker (expected 32 lowercase hexadecimal characters)"
-        );
+        PrivateStageMarker::Ours
+    } else {
+        PrivateStageMarker::Malformed
     }
-    Ok(true)
 }
+
+/// True only for an artifact this store owns. A malformed marker is reported
+/// once — WITHOUT echoing the untrusted name — and then ignored.
+fn matches_private_stage_marker(name: &OsStr, prefix: &str, directory: &Path) -> bool {
+    match classify_private_stage_marker(name, prefix) {
+        PrivateStageMarker::Ours => true,
+        PrivateStageMarker::Malformed => {
+            tracing::warn!(
+                directory = %directory.display(),
+                prefix,
+                "ignoring a foreign entry that carries a reserved private skill stage prefix \
+                 with a malformed nonce; it is not a recoverable transaction"
+            );
+            false
+        }
+        PrivateStageMarker::Foreign => false,
+    }
+}
+
+/// Reserved private-artifact prefixes that a skill package may never carry.
+///
+/// Rejected at install time so a foreign file can never occupy the namespace
+/// this store's crash recovery owns.
+const RESERVED_SKILL_ENTRY_PREFIXES: [&str; 3] = [
+    CREATOR_DIRECTORY_STAGE_PREFIX,
+    CREATOR_MANIFEST_STAGE_PREFIX,
+    FILE_REPLACEMENT_STAGE_PREFIX,
+];
 
 fn cleanup_private_file_stages(directory: &Dir, display_directory: &Path) -> Result<()> {
     let entries = directory.entries().with_context(|| {
@@ -1896,8 +1956,8 @@ fn cleanup_private_file_stages(directory: &Dir, display_directory: &Path) -> Res
             )
         })?;
         let name = entry.file_name();
-        if matches_private_stage_marker(&name, CREATOR_MANIFEST_STAGE_PREFIX)?
-            || matches_private_stage_marker(&name, FILE_REPLACEMENT_STAGE_PREFIX)?
+        if matches_private_stage_marker(&name, CREATOR_MANIFEST_STAGE_PREFIX, display_directory)
+            || matches_private_stage_marker(&name, FILE_REPLACEMENT_STAGE_PREFIX, display_directory)
         {
             let metadata = directory.symlink_metadata(&name).with_context(|| {
                 format!(
@@ -3203,24 +3263,60 @@ mod tests {
     }
 
     #[test]
-    fn recovery_rejects_noncanonical_private_transaction_nonces() {
+    fn recovery_ignores_noncanonical_private_transaction_nonces() {
+        // A non-canonical nonce is NOT one of our transactions: recovery must
+        // neither act on it nor guess. It must also not fail the store — that
+        // turned one foreign entry into a permanent product-wide outage with no
+        // in-product repair path (external review PR5-001).
         let dest = tempdir().unwrap();
         let uppercase = "0123456789ABCDEF0123456789ABCDEF";
         let stage = dest
             .path()
             .join(format!("{CREATOR_DIRECTORY_STAGE_PREFIX}{uppercase}"));
         std::fs::create_dir(&stage).unwrap();
-
-        let error = list_installed(dest.path()).unwrap_err();
-        let rendered = format!("{error:#}");
-
-        assert!(rendered.contains(
-            "malformed private skill stage marker (expected 32 lowercase hexadecimal characters)"
-        ));
-        assert!(
-            !rendered.contains(uppercase),
-            "malformed marker diagnostics must not echo the untrusted name"
+        write_skill(
+            &dest.path().join("healthy"),
+            "healthy",
+            &good_yaml("healthy"),
         );
-        assert!(stage.exists());
+
+        let rows = list_installed(dest.path()).expect("a foreign entry must not fail the store");
+        assert!(
+            rows.iter().any(|row| row.dir_name == "healthy"),
+            "the healthy skill must still be inventoried: {rows:?}"
+        );
+        assert!(
+            stage.exists(),
+            "an entry we do not own must be left untouched for the operator"
+        );
+        assert_eq!(
+            classify_private_stage_marker(
+                std::ffi::OsStr::new(&format!("{CREATOR_DIRECTORY_STAGE_PREFIX}{uppercase}")),
+                CREATOR_DIRECTORY_STAGE_PREFIX
+            ),
+            PrivateStageMarker::Malformed
+        );
+    }
+
+    #[test]
+    fn install_refuses_a_package_entry_with_a_reserved_private_prefix() {
+        // The planting vector for PR5-001: the install copy was name-agnostic,
+        // so a package could drop a file into the namespace the store's crash
+        // recovery owns.
+        for prefix in RESERVED_SKILL_ENTRY_PREFIXES {
+            let staging = tempdir().unwrap();
+            let dest = tempdir().unwrap();
+            let source = staging.path().join("planted");
+            write_skill(&source, "planted", &good_yaml("planted"));
+            std::fs::write(source.join(format!("{prefix}readme")), b"x").unwrap();
+
+            let error = install_from_local(&source, dest.path(), false)
+                .expect_err("a reserved prefix must be refused at install time");
+            let rendered = format!("{error:#}");
+            assert!(
+                rendered.contains("reserved private-artifact prefix"),
+                "unexpected error for {prefix}: {rendered}"
+            );
+        }
     }
 }
