@@ -610,29 +610,34 @@ pub fn list_proposals(
                 ),
             ));
         }
+        // An entry this store could never have written is FOREIGN, not corrupt:
+        // an editor backup, a manual rename, a non-UTF-8 name. Failing the whole
+        // listing on one of those took down the curator (approved proposals
+        // stopped being promoted, every tick just logged), the vault sync, AND
+        // the operator's view — exactly when they most need to see the store.
+        // Anything that IS recognisably one of ours stays fail-closed below, so
+        // a corrupted approved proposal is still never silently skipped.
         let name = entry.file_name();
         let Some(name_text) = name.to_str() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "proposal store {} contains a non-UTF-8 entry name",
-                    root.display_path.display()
-                ),
-            ));
+            tracing::warn!(
+                store = %root.display_path.display(),
+                "skipping a proposal-store entry with a non-UTF-8 name; no proposal this store \
+                 wrote can have one"
+            );
+            continue;
         };
         let Some(id) = name_text.strip_suffix(".json") else {
             continue;
         };
-        validate_proposal_id(id).map_err(|error| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "invalid proposal filename {} under {}: {error}",
-                    name_text,
-                    root.display_path.display()
-                ),
-            )
-        })?;
+        if let Err(error) = validate_proposal_id(id) {
+            tracing::warn!(
+                store = %root.display_path.display(),
+                %error,
+                "skipping a `.json` entry whose name is not a proposal id; no proposal this \
+                 store wrote can have one"
+            );
+            continue;
+        }
         let path = root.display_path.join(&name);
         let bytes = read_regular_file_bounded(&root.dir, &name, &path, MAX_PROPOSAL_BYTES)
             .map_err(anyhow_to_io)?;
@@ -1095,6 +1100,39 @@ mod tests {
         let proposals = list_proposals(home.path(), None).unwrap();
         assert!(proposals.is_empty());
         assert!(!proposals_dir(home.path()).exists());
+    }
+
+    #[test]
+    fn list_proposals_skips_foreign_entries_but_still_fails_on_corrupt_proposals() {
+        // External review PR5-008: one entry this store could never have written
+        // used to fail the WHOLE listing, which silently stopped the curator
+        // from promoting approved proposals, stopped the vault sync, and blanked
+        // the operator's view of every healthy proposal.
+        let home = tempfile::tempdir().unwrap();
+        let healthy = sample(ProposalKind::CronJob, "healthy", 100);
+        save_proposal(home.path(), &healthy).unwrap();
+        // An editor/backup artefact: `.json`, but the stem is not a proposal id.
+        std::fs::write(
+            proposals_dir(home.path()).join("notes.backup.json"),
+            b"whatever",
+        )
+        .unwrap();
+
+        let listed = list_proposals(home.path(), None)
+            .expect("a foreign entry must not blank the whole store");
+        assert_eq!(listed.len(), 1, "the healthy proposal must still be listed");
+        assert_eq!(listed[0].id, healthy.id);
+
+        // A recognisable proposal that is corrupt stays fail-closed: an approved
+        // proposal must never be silently skipped.
+        std::fs::write(
+            proposals_dir(home.path()).join("corrupt-one.json"),
+            b"{not-json",
+        )
+        .unwrap();
+        let error = list_proposals(home.path(), None)
+            .expect_err("a corrupt proposal must still fail the listing");
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]
