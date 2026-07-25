@@ -245,9 +245,14 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     (absent root/persona/file → empty baseline; direct unit coverage added since
     the old path sat behind the `auto && is_installed` gate and had none). STILL
     OPEN: `self_improvement_collector::is_verified_deployed` still follows an
-    ambient manifest path (only its missing-`mtime` fail-open was closed), and a
-    real second-process mutation-lock regression is still needed; thread-only
-    evidence is insufficient for the Windows/macOS/Linux release claim.
+    ambient manifest path (only its missing-`mtime` fail-open was closed).
+    **Cross-process lock regression landed 2026-07-24:** a cross-platform
+    `second_os_process_is_blocked_by_the_held_skill_mutation_lock` test re-execs
+    the test binary as a genuine second OS process — while the parent holds
+    `lock_skill_mutations` the child is blocked (exit 3) and after release it
+    acquires (exit 0), proving the Unix flock / Windows share-mode serialisation
+    across processes rather than only the in-process mutex. Thread-only evidence
+    is no longer the sole basis for the Windows/macOS/Linux claim.
     **Partial 2026-07-24 (mtime):**
     the `is_verified_deployed` missing-`mtime` fail-open (unreadable mtime was
     treated as *deployed*, so `capability_evolver` silently skipped the proposal
@@ -257,8 +262,8 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     into a pure `is_deployment_settled(modified, now, min_age)` under a
     deterministic branch contract (missing-mtime, future-mtime, too-young,
     exact-boundary, settled) so the fail-closed posture can't silently regress.
-    The ambient-path→store migration and the multi-process lock regression
-    remain OPEN.
+    The `is_verified_deployed` ambient-path→generation-bound-store migration is
+    the last R3-11 remainder (the cross-process lock regression now exists).
   - **R3-12 (core landed 2026-07-24; broader edge matrix still OPEN):** the
     portable-marker staging no longer calls `tempdir_in(resolved_root)` before
     that root exists — `prepare_portable_marker` now stages in

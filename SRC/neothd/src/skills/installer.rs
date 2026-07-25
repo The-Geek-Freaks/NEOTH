@@ -2193,6 +2193,65 @@ mod tests {
     }
 
     #[test]
+    fn second_os_process_is_blocked_by_the_held_skill_mutation_lock() {
+        // GOLD-R3-11 cross-process regression: prove the capability-bound store
+        // mutation lock serialises SEPARATE OS PROCESSES (the Unix flock /
+        // Windows share-mode open), not merely threads sharing the in-process
+        // mutex — thread-only evidence does not establish the Windows/macOS/
+        // Linux release claim.
+        //
+        // Child mode: this same test is re-execed by the parent with the shared
+        // directory in the environment; it attempts the lock and exits 0 when it
+        // acquires, 3 when it is blocked.
+        const CHILD_ENV: &str = "NEOTH_SKILL_LOCK_CHILD";
+        const TEST_PATH: &str = "skills::installer::tests::second_os_process_is_blocked_by_the_held_skill_mutation_lock";
+
+        if let Ok(shared) = std::env::var(CHILD_ENV) {
+            let root = open_bound_directory(Path::new(&shared), true, "skills")
+                .expect("child: open bound dir")
+                .expect("child: bound dir present");
+            match lock_skill_mutations(&root) {
+                Ok(_guard) => std::process::exit(0),
+                Err(_) => std::process::exit(3),
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let shared = dir.path();
+        let root = open_bound_directory(shared, true, "skills")
+            .unwrap()
+            .expect("parent: bound dir present");
+
+        // Parent holds the lock across the child's entire attempt.
+        let guard = lock_skill_mutations(&root).expect("parent acquires the lock");
+        let blocked = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH])
+            .env(CHILD_ENV, shared)
+            .output()
+            .expect("spawn blocked child");
+        assert_eq!(
+            blocked.status.code(),
+            Some(3),
+            "a second OS process must NOT acquire the lock while it is held (stderr: {})",
+            String::from_utf8_lossy(&blocked.stderr)
+        );
+        drop(guard);
+
+        // Lock released → a second OS process can now acquire it.
+        let acquired = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", TEST_PATH])
+            .env(CHILD_ENV, shared)
+            .output()
+            .expect("spawn acquiring child");
+        assert_eq!(
+            acquired.status.code(),
+            Some(0),
+            "once released a second OS process must acquire the lock (stderr: {})",
+            String::from_utf8_lossy(&acquired.stderr)
+        );
+    }
+
+    #[test]
     fn install_from_local_copies_skill_dir_into_target() {
         let staging = tempdir().unwrap();
         let dest = tempdir().unwrap();
