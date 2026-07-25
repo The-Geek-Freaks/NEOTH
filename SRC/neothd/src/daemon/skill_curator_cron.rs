@@ -12,7 +12,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::automation::SkillCuratorConfig;
 use crate::proactive::action_staging::{
-    ProposalKind, ProposalStatus, adopt_approved_skill, list_proposals,
+    ProposalKind, ProposalStatus, SkillReconciliation, list_proposals, reconcile_approved_skill,
 };
 
 /// Reconcile mature approved Skill proposals into the live skill directory.
@@ -55,8 +55,18 @@ fn run_skill_curator_tick_blocking(home: &Path, cfg: &SkillCuratorConfig) -> any
             continue;
         }
 
-        match adopt_approved_skill(home, &proposal) {
-            Ok(report) => {
+        match reconcile_approved_skill(home, &proposal) {
+            Ok(SkillReconciliation::OperatorModified { id }) => {
+                // The operator edited the adopted skill — the normal follow-up.
+                // Overwriting it was the original bug; erroring on it every tick
+                // forever was the fix's own defect. Leave it alone, quietly.
+                debug!(
+                    proposal_id = %proposal.id,
+                    skill_id = %id,
+                    "skill_curator: adopted skill was modified by the operator; leaving it as is"
+                );
+            }
+            Ok(SkillReconciliation::Adopted(report)) => {
                 promoted += 1;
                 let warning_count = report.warnings.len();
                 if warning_count > 0 {

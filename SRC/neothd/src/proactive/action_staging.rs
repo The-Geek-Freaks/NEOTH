@@ -161,6 +161,77 @@ impl ProposedAction {
     }
 }
 
+/// What one curator reconciliation pass did.
+#[derive(Debug)]
+pub enum SkillReconciliation {
+    /// The skill was created, or already matched the approved draft byte for
+    /// byte.
+    Adopted(Box<crate::skills::creator::CreateReport>),
+    /// The skill exists but no longer matches the draft: the operator edited it
+    /// after adoption, which is the normal follow-up workflow. Neither an error
+    /// nor something to overwrite.
+    OperatorModified { id: String },
+}
+
+/// Reconcile an approved Skill proposal for the CURATOR CRON.
+///
+/// Differs from [`adopt_approved_skill`] only in how an operator-modified
+/// target is reported. The cron re-walks every approved proposal on every tick
+/// and has no terminal state to mark, so once the operator edited an adopted
+/// `skill.yaml` — the normal follow-up — `ExistingSkillPolicy::KeepIfIdentical`
+/// made that proposal fail on every tick forever, with nothing to do about it.
+/// The explicit `neoth proactive accept` path keeps erroring, because there an
+/// operator asked for the write and needs to hear that it was refused.
+///
+/// The divergence is detected POSITIVELY, by comparing bytes — never by
+/// classifying an error message.
+pub fn reconcile_approved_skill(
+    home: &Path,
+    proposal: &ProposedAction,
+) -> anyhow::Result<SkillReconciliation> {
+    use anyhow::Context as _;
+    let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(&proposal.draft_yaml)
+        .with_context(|| {
+            format!(
+                "approved skill proposal {} carries invalid draft_yaml",
+                proposal.id
+            )
+        })?;
+    if let Some(current) = installed_skill_yaml(home, &manifest.id)?
+        && current != proposal.draft_yaml
+    {
+        return Ok(SkillReconciliation::OperatorModified { id: manifest.id });
+    }
+    adopt_approved_skill(home, proposal)
+        .map(|report| SkillReconciliation::Adopted(Box::new(report)))
+}
+
+/// The installed `skill.yaml` for `id`, or `None` when it is not installed.
+///
+/// Read through the bound, no-follow store primitives: this compares operator
+/// content, so a symlinked or oversized path must not be followed into.
+fn installed_skill_yaml(home: &Path, id: &str) -> anyhow::Result<Option<String>> {
+    let Some(root) = open_bound_directory(&home.join("skills"), false, "skills root")? else {
+        return Ok(None);
+    };
+    let name = OsStr::new(id);
+    let display = root.display_path.join(name);
+    let Ok(skill_dir) = crate::skills::store::open_real_child_dir(&root.dir, name, &display) else {
+        return Ok(None);
+    };
+    let manifest_name = OsStr::new("skill.yaml");
+    let manifest_path = display.join("skill.yaml");
+    match read_regular_file_bounded(
+        &skill_dir,
+        manifest_name,
+        &manifest_path,
+        MAX_PROPOSAL_BYTES,
+    ) {
+        Ok(bytes) => Ok(String::from_utf8(bytes).ok()),
+        Err(_) => Ok(None),
+    }
+}
+
 /// Adopt an operator-approved Skill proposal into the live skill loader path.
 ///
 /// This is the single schema boundary used by both `neoth proactive accept`
@@ -1100,6 +1171,47 @@ mod tests {
         let proposals = list_proposals(home.path(), None).unwrap();
         assert!(proposals.is_empty());
         assert!(!proposals_dir(home.path()).exists());
+    }
+
+    #[test]
+    fn curator_reconciliation_leaves_an_operator_modified_skill_alone() {
+        // External review PR5-029: the curator re-walks every approved proposal
+        // on every tick and has no terminal state, so once the operator edited
+        // the adopted skill.yaml — the normal follow-up — KeepIfIdentical made
+        // that proposal fail on every tick forever with nothing to do about it.
+        let home = tempfile::tempdir().unwrap();
+        let draft = "id: adopted_one\ndescription: d\ntrigger_keywords: [x]\nsystem_prompt: s\n";
+        let mut proposal = sample(ProposalKind::Skill, "adopted", 100);
+        proposal.draft_yaml = draft.to_string();
+        proposal.status = ProposalStatus::Approved;
+
+        assert!(matches!(
+            reconcile_approved_skill(home.path(), &proposal).unwrap(),
+            SkillReconciliation::Adopted(_)
+        ));
+        // Identical bytes: the repeated tick is a clean no-op, not an error.
+        assert!(matches!(
+            reconcile_approved_skill(home.path(), &proposal).unwrap(),
+            SkillReconciliation::Adopted(_)
+        ));
+
+        let installed = home
+            .path()
+            .join("skills")
+            .join("adopted_one")
+            .join("skill.yaml");
+        std::fs::write(&installed, format!("{draft}# operator note\n")).unwrap();
+
+        match reconcile_approved_skill(home.path(), &proposal).unwrap() {
+            SkillReconciliation::OperatorModified { id } => assert_eq!(id, "adopted_one"),
+            other => panic!("an operator edit must not error on every tick: {other:?}"),
+        }
+        assert!(
+            std::fs::read_to_string(&installed)
+                .unwrap()
+                .contains("# operator note"),
+            "and the operator's edit must survive — overwriting it was the original bug"
+        );
     }
 
     #[test]
