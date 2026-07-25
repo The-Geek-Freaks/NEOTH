@@ -327,6 +327,12 @@ fn relevant_files_inner(db_path: &Path, prompt: &str, limit: usize) -> Result<St
     };
     let files =
         crate::code_map::recall::relevant_files_for_prompt(&conn, prompt, &active_root, limit)?;
+    // GOLD-R3-13: surface the active root's index generation so an MCP client can
+    // detect a re-index under it and invalidate a cached result. Carried per file
+    // (the array shape is preserved so existing clients keep parsing) — every row
+    // shares the one active root's generation.
+    let index_generation =
+        crate::code_map::persist::root_index_generation(&conn, &active_root).unwrap_or(None);
     // Project the typed result down to the JSON shape MCP clients want.
     let payload: Vec<serde_json::Value> = files
         .iter()
@@ -337,6 +343,7 @@ fn relevant_files_inner(db_path: &Path, prompt: &str, limit: usize) -> Result<St
                 "identifier_hits": f.identifier_hits,
                 "matched_symbols": f.matched_symbols,
                 "path_keyword_overlap": f.path_keyword_overlap,
+                "index_generation": index_generation,
             })
         })
         .collect();
