@@ -244,6 +244,11 @@ pub async fn run_scheduler(
     reload_controller: Arc<crate::config::reload::ReloadController>,
 ) -> Result<()> {
     let mut state = SchedulerState::new(jobs_file);
+    // Deliberately fatal, unlike the reload and fire paths: the durable state is
+    // what stops an already-executed one-shot from firing again after a restart.
+    // Starting without it would trade a visible startup failure for silent
+    // duplicate dispatches. The reload path has no such excuse — it already
+    // holds a valid in-memory generation — so it degrades instead.
     let durable = RuntimeState::modify(&home, |durable| {
         durable.reconcile(&state.jobs_file.jobs)?;
         Ok(durable.clone())
@@ -282,11 +287,25 @@ pub async fn run_scheduler(
                 recovered,
             } => {
                 {
-                    let checkpoint = RuntimeState::modify(&home, |checkpoint| {
+                    // Same treatment as the fire path below: a failed checkpoint
+                    // must not end the scheduler. Propagating here killed the
+                    // ENTIRE cron loop — every job, permanently, until a daemon
+                    // restart — for a transient I/O error while persisting
+                    // cron_runtime_state.json, or forever for a corrupt/foreign
+                    // state file. The in-memory snapshot from the previous
+                    // generation stays authoritative and the next reload retries.
+                    match RuntimeState::modify(&home, |checkpoint| {
                         checkpoint.reconcile(&state.jobs_file.jobs)?;
                         Ok(checkpoint.clone())
-                    })?;
-                    merge_durable_checkpoint(&mut state, &checkpoint);
+                    }) {
+                        Ok(checkpoint) => merge_durable_checkpoint(&mut state, &checkpoint),
+                        Err(error) => warn!(
+                            path = %jobs_path.display(),
+                            error = %error,
+                            "cron reload checkpoint failed; keeping the last valid durable state \
+                             and continuing to schedule"
+                        ),
+                    }
                 }
                 info!(
                     path = %jobs_path.display(),
