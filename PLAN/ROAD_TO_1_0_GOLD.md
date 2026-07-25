@@ -180,7 +180,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   final README/channel/migration/architecture/release reconciliation plus
   visible exact-head CI, Security and CodeQL remain required.
 
-- [ ] **GOLD-R3-11 Capability-bound Skill store:** replace path-check-then-use
+- [x] **GOLD-R3-11 Capability-bound Skill store:** replace path-check-then-use
   installation, creation, teaching, loading, update probing, inventory and
   uninstall flows with one handle-relative no-follow store. The exact validated
   manifest generation must be committed transactionally; recursive copy/delete
@@ -243,9 +243,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     bound directory, takes `lock_skill_mutations`, and reads `<persona>/skill.md`
     through the handle-relative, no-follow, size-bounded store primitives
     (absent root/persona/file → empty baseline; direct unit coverage added since
-    the old path sat behind the `auto && is_installed` gate and had none). STILL
-    OPEN: `self_improvement_collector::is_verified_deployed` still follows an
-    ambient manifest path (only its missing-`mtime` fail-open was closed).
+    the old path sat behind the `auto && is_installed` gate and had none). The
+    `self_improvement_collector::is_verified_deployed` ambient-manifest remainder
+    once noted here was subsequently closed 2026-07-25 (see "Last reader migrated"
+    below); this line is retained as chronological history, not an open item.
     **Cross-process lock regression landed 2026-07-24:** a cross-platform
     `second_os_process_is_blocked_by_the_held_skill_mutation_lock` test re-execs
     the test binary as a genuine second OS process — while the parent holds
@@ -273,7 +274,14 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     CRITICAL/HIGH; the no-follow store guarantees were verified against
     `skills/store.rs`). **All three R3-11 reader/lock remainders (mtime fail-open,
     dreaming baseline, is_verified_deployed) plus the cross-process lock
-    regression are now closed** — R3-11 is ready for a checkbox re-audit.
+    regression are now closed.** **Closed 2026-07-25:** in-tree re-audit confirmed
+    the no-follow `is_verified_deployed`
+    (`open_bound_directory`→`open_real_child_dir`→`open_regular_file`, every
+    absence/error arm fail-closed, pure `is_deployment_settled` branch contract),
+    the migrated `read_installed_baseline`, and the re-exec cross-process mutation
+    lock; the targeted R3-11 suite (`is_verified_deployed` / `is_deployment_settled`
+    / `read_installed_baseline` / `second_os_process_is_blocked_by_the_held_skill_mutation_lock`)
+    is **7/7** local green (0 ignored). Checkbox flipped to `[x]`.
   - **R3-12 (core landed 2026-07-24; broader edge matrix still OPEN):** the
     portable-marker staging no longer calls `tempdir_in(resolved_root)` before
     that root exists — `prepare_portable_marker` now stages in
