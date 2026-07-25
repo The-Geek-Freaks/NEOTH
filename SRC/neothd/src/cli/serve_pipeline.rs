@@ -2221,6 +2221,18 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         skill_agent = %agent_name,
                         "channel delegate_to: substituting sub-agent system prompt"
                     );
+                    // The typed bundle must be rebuilt to MATCH the substituted
+                    // system. `finalize_provider_request` re-renders these items
+                    // and refuses the dispatch unless the rendered system equals
+                    // the preflight system — so leaving the enriched layers here
+                    // made every non-slash delegate_to turn fail closed with
+                    // "typed prompt blocks do not match preflight output",
+                    // i.e. the feature was dead on channels. The slash branch
+                    // above already rebuilds; this one did not.
+                    channel_budget_items = delegated_system_bundle(
+                        &agent.system,
+                        current_user_message(&channel_budget_items),
+                    );
                     Some(agent.system.clone())
                 }
             } else {
@@ -3977,10 +3989,66 @@ fn require_delegate_agent<'a>(
         .ok_or_else(|| anyhow::anyhow!("delegated agent `{target}` is not installed or enabled"))
 }
 
+/// The user message currently held by a typed budget bundle. Absent (malformed
+/// bundle) is reported as empty; the caller's rebuild re-establishes the sole
+/// Block E item, and `replace_user_message` overwrites it with the final prompt
+/// before dispatch either way.
+fn current_user_message(items: &[crate::tokens::budget::BlockItem]) -> String {
+    items
+        .iter()
+        .find(|item| item.block == crate::tokens::budget::Block::E)
+        .map(|item| item.content.clone())
+        .unwrap_or_default()
+}
+
+/// The typed bundle for a delegated sub-agent turn.
+///
+/// `render_request` joins every non-E item into the system, so the substituted
+/// agent system must be the ONLY non-E item — otherwise the rendered system does
+/// not equal the preflight system and `finalize_provider_request` refuses the
+/// dispatch.
+fn delegated_system_bundle(
+    agent_system: &str,
+    user_message: String,
+) -> Vec<crate::tokens::budget::BlockItem> {
+    use crate::tokens::budget::{Block, BlockItem};
+    vec![
+        BlockItem::new(Block::B, agent_system.to_string()),
+        BlockItem::new(Block::E, user_message),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
+
+    /// BUG-W2-P1-CHANNEL-DELEGATION: the bundle a delegated channel turn sends
+    /// must render EXACTLY the substituted agent system, or the preflight guard
+    /// in `finalize_provider_request` refuses every such turn.
+    #[test]
+    fn delegated_bundle_renders_exactly_the_agent_system() {
+        use crate::tokens::budget::{Block, BlockItem};
+        let agent_system = "You are the triage agent.";
+        let enriched = vec![
+            BlockItem::new(Block::B, "enriched identity layer".to_string()),
+            BlockItem::new(Block::C, "enriched recall layer".to_string()),
+            BlockItem::new(Block::E, "what is broken?".to_string()),
+        ];
+
+        let (prompt, system) = crate::tokens::budget::render_request(&enriched).unwrap();
+        assert_ne!(
+            system.as_deref(),
+            Some(agent_system),
+            "the enriched bundle is what used to be sent — it cannot match the override"
+        );
+
+        let bundle = delegated_system_bundle(agent_system, current_user_message(&enriched));
+        let (delegated_prompt, delegated_system) =
+            crate::tokens::budget::render_request(&bundle).unwrap();
+        assert_eq!(delegated_system.as_deref(), Some(agent_system));
+        assert_eq!(delegated_prompt, prompt, "the user message must survive");
+    }
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
