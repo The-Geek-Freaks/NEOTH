@@ -2389,6 +2389,28 @@ mod tests {
             ("absent", "apply") => {
                 let _ = absent_transaction(&root).apply(&absent_members(&root));
             }
+            ("portable-absent-root", "apply") => {
+                // GOLD-R3-12 crash harness: portable first-install into an absent
+                // root. NEOTH_INSTALL_STATE_DIR is pinned by the parent so the
+                // journal lands in the test temp dir, not in LOCALAPPDATA/HOME.
+                let _ = crate::updater::release_bundle::apply_portable_release_bundle(
+                    &root.join("bundle"),
+                    &root.join("install"),
+                    env!("CARGO_PKG_VERSION"),
+                );
+            }
+            ("portable-absent-root", "apply-recover") => {
+                // Recovery apply: clear the hook so apply runs to completion
+                // without hitting a killpoint, then exit 0 to signal success.
+                TEST_HOOK.with(|cell| cell.set(None));
+                crate::updater::release_bundle::apply_portable_release_bundle(
+                    &root.join("bundle"),
+                    &root.join("install"),
+                    env!("CARGO_PKG_VERSION"),
+                )
+                .expect("recovery apply must succeed");
+                std::process::exit(0);
+            }
             other => panic!("unknown child fixture/mode: {other:?}"),
         }
         panic!("child did not reach killpoint {hook:?}");

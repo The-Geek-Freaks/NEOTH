@@ -287,9 +287,13 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     JUNCTION ancestor is rejected (`metadata_is_link_like` catches the reparse
     point via `FILE_ATTRIBUTE_REPARSE_POINT`; `mklink /J` needs no privilege, so
     it is the realistic Windows redirect surface; nothing is created through the
-    junction). STILL OPEN: absent-root collision and a hard child crash mid-apply
-    into the not-yet-created root through the portable first-install marker path
-    (the generic transaction has a crash fixture, but not that specific path).
+    junction), and a hard child crash mid-apply into the absent root through the
+    portable first-install marker path: a killpoint-driven child crashes at
+    `StageReady(0)` during `apply_portable_release_bundle`, the test asserts no
+    committed-but-partial state (the ownership marker is absent), and a second
+    apply auto-recovers the leftover journal (`apply()` calls `recover_locked()`
+    first → rollback) and completes cleanly. STILL OPEN: only the absent-root
+    collision case (a concurrent create between staging and the commit rename).
   - **R3-13 (containment landed 2026-07-24; index-generation binding still
     OPEN):** `relevant_files_for_prompt` now takes a mandatory `active_root` and
     applies repo containment BEFORE ranking/truncation — symbol hits filter up

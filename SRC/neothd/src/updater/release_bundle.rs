@@ -1579,6 +1579,105 @@ mod tests {
     }
 
     #[test]
+    fn portable_absent_root_hard_crash_mid_apply_leaves_recoverable_state() {
+        // GOLD-R3-12 regression: a hard child-process crash at StageReady(0)
+        // during the first portable install (absent install root) must NOT leave
+        // a committed-but-partial install. A subsequent apply must auto-recover
+        // the leftover journal and complete cleanly.
+        //
+        // The killpoint mechanism lives in install_transaction::tests::crash_child_entry.
+        // We dispatch to a "portable-absent-root" / "apply" arm added there, which
+        // sets TEST_HOOK and calls apply_portable_release_bundle. NEOTH_INSTALL_STATE_DIR
+        // pins default_transaction_anchor() to our temp dir so the journal does not
+        // bleed into LOCALAPPDATA/HOME.
+        let fixture = crate::test_env::canonical_tempdir().unwrap();
+        let bundle = fixture.path().join("bundle");
+        let install = fixture.path().join("install");
+
+        fs::create_dir_all(&bundle).unwrap();
+        exact_shape(&bundle, PortableBundleProfile::current());
+        fs::remove_dir_all(bundle.join(SELF_KNOWLEDGE)).unwrap();
+        crate::wiki::release_snapshot::write_test_snapshot(
+            &bundle.join(SELF_KNOWLEDGE),
+            env!("CARGO_PKG_VERSION"),
+        )
+        .unwrap();
+        assert!(
+            !install.exists(),
+            "precondition: install root must be absent"
+        );
+
+        // env-var name constants mirror install_transaction::tests (same string values).
+        const CHILD_ROOT: &str = "NEOTH_INSTALL_TXN_TEST_ROOT";
+        const CHILD_FIXTURE: &str = "NEOTH_INSTALL_TXN_TEST_FIXTURE";
+        const CHILD_MODE: &str = "NEOTH_INSTALL_TXN_TEST_MODE";
+        const CHILD_HOOK: &str = "NEOTH_INSTALL_TXN_TEST_HOOK";
+
+        // Phase 1 — crash mid-apply.
+        // StageReady(0) fires after directories are created and the first member
+        // is staged, but BEFORE any file is renamed into its final target.
+        // serde_json serialises HookPoint::StageReady(0) as {"StageReady":0}.
+        let crash_status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("crash_child_entry")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ROOT, fixture.path())
+            .env(CHILD_FIXTURE, "portable-absent-root")
+            .env(CHILD_MODE, "apply")
+            .env(CHILD_HOOK, "{\"StageReady\":0}")
+            .env("NEOTH_INSTALL_STATE_DIR", fixture.path())
+            .status()
+            .unwrap();
+        assert_eq!(
+            crash_status.code(),
+            Some(86),
+            "child must exit at the StageReady(0) killpoint"
+        );
+
+        // Post-crash: the ownership marker must not exist.
+        // The marker is the final commit artefact; its absence proves the install
+        // was never partially committed (only staged, then crashed).
+        assert!(
+            !install.join(PORTABLE_OWNERSHIP_MARKER).exists(),
+            "ownership marker must not exist after a StageReady(0) crash — \
+             the install must not be in a committed-but-partial state"
+        );
+
+        // Phase 2 — recovery apply.
+        // The "apply-recover" mode clears TEST_HOOK so no killpoint fires.
+        // apply_portable_release_bundle calls recover_locked() internally before
+        // staging, which rolls back the leftover journal, then the full apply runs.
+        // The child exits 0 on success.
+        let recover_status = std::process::Command::new(std::env::current_exe().unwrap())
+            .arg("crash_child_entry")
+            .arg("--nocapture")
+            .arg("--test-threads=1")
+            .env(CHILD_ROOT, fixture.path())
+            .env(CHILD_FIXTURE, "portable-absent-root")
+            .env(CHILD_MODE, "apply-recover")
+            .env(CHILD_HOOK, "\"DirectoriesReady\"") // valid JSON; cleared by the arm
+            .env("NEOTH_INSTALL_STATE_DIR", fixture.path())
+            .status()
+            .unwrap();
+        assert_eq!(
+            recover_status.code(),
+            Some(0),
+            "recovery apply must succeed (exit 0)"
+        );
+
+        assert!(
+            install.is_dir(),
+            "install root must exist after recovery-apply"
+        );
+        assert!(
+            install.join(PORTABLE_OWNERSHIP_MARKER).is_file(),
+            "ownership marker must be present after recovery-apply"
+        );
+        validate_existing_portable_marker(&install, PortableBundleProfile::current())
+            .expect("marker must be valid after crash-recovery-apply");
+    }
+
+    #[test]
     fn markerless_shared_root_preserves_generic_collisions_but_blocks_neoth_targets() {
         let fixture = tempfile::tempdir().unwrap();
         let install = fixture.path().join("shared-bin");
