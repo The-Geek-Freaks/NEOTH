@@ -1788,8 +1788,20 @@ fn git_diff_stat_since(from_sha: &str, path: &str) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
+/// Is this a value we are willing to hand to `git` as a revision?
+///
+/// Full SHA-1/SHA-256 ids AND abbreviated ones. `git_capture_head_sha` moved to
+/// `rev-parse --verify HEAD` (full length), but proposals staged before that ran
+/// `--short` and carry a 7-character id. Rejecting those made
+/// `git_diff_stat_since` return `None` for the ENTIRE existing backlog, which
+/// silently disabled the drift-detection bail in `accept_proposal` for every
+/// already-staged proposal — no warning, no trace.
+///
+/// The bound stays: hex only, never shorter than git's own 4-character floor,
+/// never longer than a SHA-256, so no caller- or disk-supplied string can be
+/// smuggled in as a git argument.
 fn valid_git_commit_id(value: &str) -> bool {
-    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+    (4..=64).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 /// Stage a proposal (status Pending). Returns its id.
@@ -5951,6 +5963,24 @@ mod tests {
                 .is_none_or(|sha| valid_git_commit_id(&sha))
         );
         assert!(!injected_output.exists());
+    }
+
+    #[test]
+    fn abbreviated_commit_ids_stay_usable_as_a_drift_anchor() {
+        // External review PR5-030: proposals staged before the switch to
+        // `rev-parse --verify HEAD` carry a 7-character short SHA. Rejecting
+        // those turned the drift check off for the whole existing backlog —
+        // silently, because `git_diff_stat_since` just returns None.
+        assert!(valid_git_commit_id("a1b2c3d"), "git's own --short output");
+        assert!(valid_git_commit_id(&"a".repeat(40)), "SHA-1");
+        assert!(valid_git_commit_id(&"a".repeat(64)), "SHA-256");
+        // The bound is what keeps this out of git's argument surface.
+        assert!(!valid_git_commit_id(""));
+        assert!(!valid_git_commit_id("abc"), "below git's 4-char floor");
+        assert!(!valid_git_commit_id(&"a".repeat(65)));
+        assert!(!valid_git_commit_id("--upload-pack=evil"));
+        assert!(!valid_git_commit_id("HEAD~1"));
+        assert!(!valid_git_commit_id("a1b2c3g"), "g is not hex");
     }
 
     #[test]
