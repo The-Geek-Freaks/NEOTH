@@ -233,29 +233,34 @@ fn scan_bound_manifests_with_limits(
             return scan;
         }
     };
+    // This is an OBSERVATION probe. It takes the mutation lock so the snapshot
+    // is not torn by a concurrent install, but it must not WRITE: the recovery
+    // pass that used to run here rolled back or committed interrupted install
+    // transactions from an audit cron. Recovery stays lazy at the next real
+    // skill operation, which has eleven production callers.
+    //
+    // A lock failure degrades the snapshot; it does not erase it. Returning
+    // early made every skill component vanish from the audit inventory for that
+    // tick — one concurrent `skill install` and the WAL frames that exist to
+    // record what is installed recorded nothing at all. The failure row says
+    // the snapshot is unlocked; the readable manifests are still reported.
     let _skill_mutation_guard = if kind == "skill" {
         match crate::skills::installer::lock_skill_mutations(&root) {
             Ok(guard) => Some(guard),
             Err(error) => {
                 scan.failures.push(ManifestScanFailure {
                     component: "skill:<store>".to_string(),
-                    error: format!("cannot lock skill store for updater snapshot: {error:#}"),
+                    error: format!(
+                        "skill store could not be locked for the updater snapshot; \
+                         reporting an unsynchronised read: {error:#}"
+                    ),
                 });
-                return scan;
+                None
             }
         }
     } else {
         None
     };
-    if kind == "skill"
-        && let Err(error) = crate::skills::installer::recover_pending_transactions_locked(&root)
-    {
-        scan.failures.push(ManifestScanFailure {
-            component: "skill:<store>".to_string(),
-            error: format!("cannot recover interrupted skill transaction: {error:#}"),
-        });
-        return scan;
-    }
     let entries = match root.dir.entries() {
         Ok(entries) => entries,
         Err(error) => {
@@ -802,11 +807,13 @@ fn read_exact_skill_row_at_sink(
             "upstream probe skipped without network: skill generation is no longer valid"
                 .to_string()
         })?;
+    // The lock keeps this single-row read coherent against a concurrent
+    // install. Recovery deliberately does NOT run here: it enumerates the whole
+    // store and WRITES, so calling it once per source-carrying skill turned a
+    // per-skill read into a full store pass per skill — and put mutations on a
+    // read path. Recovery stays lazy at the next real skill operation.
     let _mutation_guard = crate::skills::installer::lock_skill_mutations(&root).map_err(|_| {
         "upstream probe skipped without network: skill store cannot be locked".to_string()
-    })?;
-    crate::skills::installer::recover_pending_transactions_locked(&root).map_err(|_| {
-        "upstream probe skipped without network: skill transaction recovery failed".to_string()
     })?;
 
     let name = OsStr::new(id);
