@@ -924,6 +924,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                         "idx_memory_links": report.link_rows,
                         "idx_contradictions": report.contradiction_rows,
                         "idx_foreign_events": report.foreign_event_rows,
+                        "idx_restricted": report.restricted_rows,
                         "people_json": report.people_rows,
                         "total": total,
                     },
@@ -957,6 +958,10 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 println!(
                     "  idx_foreign_evt  : {} peer frames",
                     report.foreign_event_rows
+                );
+                println!(
+                    "  idx_restricted   : {} vault chunks",
+                    report.restricted_rows
                 );
                 println!("  people.json      : {} rows", report.people_rows);
                 println!(
@@ -1062,6 +1067,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         memory_links = report.link_rows,
         contradictions = report.contradiction_rows,
         foreign_events = report.foreign_event_rows,
+        restricted = report.restricted_rows,
         people = report.people_rows,
         audit_segment = %segment.display(),
         "forget executed (TOMBSTONE_REQUESTED audit frame written)"
@@ -1157,6 +1163,10 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
             println!(
                 "  idx_contradict   : {} rows deleted",
                 report.contradiction_rows
+            );
+            println!(
+                "  idx_restricted   : {} vault chunks deleted",
+                report.restricted_rows
             );
             println!("  people.json      : {} rows deleted", report.people_rows);
             println!(

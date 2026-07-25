@@ -81,6 +81,13 @@ pub struct ForgetReport {
     /// every local recall projection has been erased.
     #[serde(default)]
     pub foreign_event_rows: i64,
+    /// L6-PRELOAD (GDPR) — restricted Vault chunks deleted. `idx_restricted`
+    /// carries free statement text preloaded from the operator's Obsidian vault
+    /// and was added after this cascade was written; NO path deleted from it, so
+    /// a right-to-erasure `forget` left statements about the topic physically on
+    /// disk in a store the promote path can lift straight back into recall.
+    #[serde(default)]
+    pub restricted_rows: i64,
     /// D4 (GDPR) — People-scorer entries wiped from `~/.neoth/people.json`
     /// whose display name matches the forgotten topic. people.json is an
     /// operator-visible store (`neoth memory --people`) that the SQLite-only
@@ -107,6 +114,7 @@ impl ForgetReport {
             + self.link_rows
             + self.contradiction_rows
             + self.foreign_event_rows
+            + self.restricted_rows
             + self.people_rows
     }
 }
@@ -169,6 +177,12 @@ pub fn preview_forget_by_topic(conn: &Connection, topic: &str) -> Result<ForgetR
         "SELECT COUNT(*) FROM idx_groundtruth \
          WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
         "active idx_groundtruth",
+    )?;
+    let restricted_rows = count(
+        "SELECT COUNT(*) FROM idx_restricted \
+         WHERE statement COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+            OR source_name COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        "idx_restricted",
     )?;
     let entity_rows = count(
         "SELECT COUNT(*) FROM idx_entities \
@@ -300,6 +314,7 @@ pub fn preview_forget_by_topic(conn: &Connection, topic: &str) -> Result<ForgetR
         link_rows,
         contradiction_rows,
         foreign_event_rows,
+        restricted_rows,
         people_rows,
         topic: topic.to_string(),
     })
@@ -452,6 +467,21 @@ fn forget_by_topic_as_source(
         )
         .context("delete from idx_profile")? as i64;
 
+    // L6-PRELOAD — restricted Vault chunks. `idx_restricted` holds free
+    // statement text preloaded from the operator's Obsidian vault and was added
+    // after this cascade was written; no path in the tree deleted from it, so a
+    // right-to-erasure `forget` left statements about the topic physically on
+    // disk — and `promote_restricted` can lift them straight back into
+    // ground-truth and live recall.
+    let restricted_rows = tx
+        .execute(
+            "DELETE FROM idx_restricted \
+             WHERE statement COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                OR source_name COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_restricted")? as i64;
+
     // GOLD-ADAPT-MEM-02 — collect the ground-truth ids that WILL be revoked,
     // BEFORE the revoke runs, so the contradiction-ledger cascade can reference
     // them (the revoke flips `revoked_at`, not the id, but pre-collecting keeps
@@ -578,6 +608,7 @@ fn forget_by_topic_as_source(
         link_rows,
         contradiction_rows,
         foreign_event_rows,
+        restricted_rows,
         people_rows,
         topic: topic.to_string(),
     })
@@ -1287,6 +1318,54 @@ mod tests {
                 .unwrap()
                 .expect("every forget installs its anti-resurrection sentinel");
         assert!(sentinel.never_recreate);
+    }
+
+    #[test]
+    fn forget_erases_restricted_vault_chunks() {
+        // External review PR4-002: `idx_restricted` carries free statement text
+        // from the operator's vault and NO path in the tree deleted from it, so
+        // a right-to-erasure forget left the topic physically on disk — and
+        // `promote_restricted` can lift it back into live recall.
+        let conn = seed_db();
+        crate::memory::groundtruth::insert_restricted(
+            &conn,
+            "Alexa Muster lives in Bonn",
+            "vault-notes",
+            "people",
+            "personal-data",
+            1_000,
+        )
+        .unwrap();
+        crate::memory::groundtruth::insert_restricted(
+            &conn,
+            "unrelated statement",
+            "vault-notes",
+            "people",
+            "personal-data",
+            1_000,
+        )
+        .unwrap();
+
+        let preview = preview_forget_by_topic(&conn, "Alexa Muster").unwrap();
+        assert_eq!(
+            preview.restricted_rows, 1,
+            "the preview must not under-report what the confirmed forget erases"
+        );
+
+        let report = forget_by_topic(&conn, "Alexa Muster", 2_000).unwrap();
+        assert_eq!(report.restricted_rows, 1);
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_restricted WHERE statement LIKE '%Alexa Muster%'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 0, "the forgotten statement must be gone on disk");
+        let untouched: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_restricted", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(untouched, 1, "unrelated chunks must survive");
     }
 
     #[test]

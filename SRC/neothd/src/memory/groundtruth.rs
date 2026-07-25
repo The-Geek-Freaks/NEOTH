@@ -940,7 +940,15 @@ pub fn promote_restricted(
         }
         Err(e) => {
             // Best-effort rollback — reverts all three writes atomically.
-            let _ = conn.execute_batch("ROLLBACK TO SAVEPOINT promote_atomic");
+            // RELEASE is NOT optional: `ROLLBACK TO` undoes the work but leaves
+            // the savepoint on the stack and the transaction OPEN. This is the
+            // shared memory-store connection, so without the release every
+            // later write on it stays uncommitted and the next `BEGIN` fails
+            // with "cannot start a transaction within a transaction" — one
+            // local error would poison the whole connection.
+            let _ = conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT promote_atomic; RELEASE SAVEPOINT promote_atomic",
+            );
             Err(e)
         }
     }
@@ -1885,6 +1893,45 @@ mod tests {
         );
         let rows = search_restricted(&conn, "scope-x").unwrap();
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn failed_promotion_leaves_the_shared_connection_usable() {
+        // External review PR4-008: `ROLLBACK TO SAVEPOINT` alone does not end
+        // the transaction — without the RELEASE the connection stays inside an
+        // open transaction and every later write on it is uncommitted.
+        let (_dir, conn) = open();
+        let rid =
+            insert_restricted(&conn, "poisoning-check", "src", "scope", "tag", 1_000).unwrap();
+        // Deterministically fail the LAST of the three inner writes.
+        ensure_promotion_outbox(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER promote_outbox_boom BEFORE INSERT ON idx_promotion_outbox \
+             BEGIN SELECT RAISE(ABORT, 'injected outbox failure'); END",
+        )
+        .unwrap();
+
+        promote_restricted(&conn, rid, "op", 2_000, false)
+            .expect_err("the injected outbox failure must propagate");
+
+        assert!(
+            conn.is_autocommit(),
+            "a failed promotion must not leave the shared connection in an open transaction"
+        );
+        // Proof at the SQL level: a fresh transaction must still be startable.
+        conn.execute_batch("BEGIN; COMMIT;")
+            .expect("the connection must still accept a new transaction");
+        let promoted: Option<i64> = conn
+            .query_row(
+                "SELECT promoted_at FROM idx_restricted WHERE id = ?1",
+                params![rid],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            promoted.is_none(),
+            "the rollback must still have undone the partial writes"
+        );
     }
 
     #[test]
