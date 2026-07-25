@@ -2394,8 +2394,8 @@ mod tests {
                 // root. NEOTH_INSTALL_STATE_DIR is pinned by the parent so the
                 // journal lands in the test temp dir, not in LOCALAPPDATA/HOME.
                 let _ = crate::updater::release_bundle::apply_portable_release_bundle(
-                    &root.join("bundle"),
-                    &root.join("install"),
+                    root.join("bundle"),
+                    root.join("install"),
                     env!("CARGO_PKG_VERSION"),
                 );
             }
@@ -2404,8 +2404,8 @@ mod tests {
                 // without hitting a killpoint, then exit 0 to signal success.
                 TEST_HOOK.with(|cell| cell.set(None));
                 crate::updater::release_bundle::apply_portable_release_bundle(
-                    &root.join("bundle"),
-                    &root.join("install"),
+                    root.join("bundle"),
+                    root.join("install"),
                     env!("CARGO_PKG_VERSION"),
                 )
                 .expect("recovery apply must succeed");
