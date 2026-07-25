@@ -215,6 +215,16 @@ pub fn load_unsubmitted_windows(
     use super::signals::SignalPosture;
     use super::window::WindowGranularity;
 
+    // Rows rejected below are never marked submitted, so they stay at the head
+    // of this oldest-first window forever. Selecting exactly `limit` rows meant
+    // that once `limit` permanently-invalid ripe windows accumulated — e.g. the
+    // pre-upgrade rows the window-schema bump and the posture completeness
+    // checks retired — every round returned only those, produced zero records,
+    // and federation stopped making progress SILENTLY. Scan past them instead
+    // and stop as soon as `limit` usable windows are in hand.
+    let scan_budget = limit
+        .saturating_mul(SKIPPED_WINDOW_SCAN_FACTOR)
+        .min(MAX_WINDOW_SCAN);
     let mut stmt = conn.prepare(
         "SELECT id, session_id, window_secs, ts_start, ts_end,
                 b_log, b_mult, b_bottleneck, variables,
@@ -224,7 +234,7 @@ pub fn load_unsubmitted_windows(
          WHERE window_secs = 900 AND submitted = 0 AND collapse_30m IS NOT NULL
          ORDER BY ts_end ASC LIMIT ?1",
     )?;
-    let rows = stmt.query_map(rusqlite::params![limit as i64], |r| {
+    let rows = stmt.query_map(rusqlite::params![scan_budget as i64], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, String>(1)?,
@@ -243,7 +253,9 @@ pub fn load_unsubmitted_windows(
         ))
     })?;
     let mut out = Vec::new();
+    let mut scanned = 0usize;
     for row in rows {
+        scanned += 1;
         let (
             id,
             session_id,
@@ -400,9 +412,30 @@ pub fn load_unsubmitted_windows(
             features,
         };
         out.push((window, is_collapse));
+        if out.len() >= limit {
+            return Ok(out);
+        }
+    }
+    // The scan budget ran out without filling the batch. Harmless while some
+    // windows came back; a completely empty result after skipping means the
+    // head of the queue is jammed with rows this build can never submit, which
+    // used to be an invisible standstill.
+    if out.is_empty() && scanned > out.len() {
+        tracing::warn!(
+            scanned,
+            scan_budget,
+            "babel federation: every scanned window was unusable — federation cannot make \
+             progress until these rows are pruned or the head of the queue advances"
+        );
     }
     Ok(out)
 }
+
+/// How far past the requested batch size the loader may scan to step over
+/// windows it can never submit.
+const SKIPPED_WINDOW_SCAN_FACTOR: usize = 8;
+/// Hard ceiling on that scan so one federation tick cannot walk the whole table.
+const MAX_WINDOW_SCAN: usize = 8192;
 
 /// Mark a set of windows as submitted (after their batch is durably on
 /// disk as a pending file — the pending file IS the submission record).
