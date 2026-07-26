@@ -1697,6 +1697,9 @@ const GIT_OUTPUT_MAX_BYTES: usize = 1024 * 1024;
 const PROBE_OUTPUT_MAX_BYTES: usize = 64 * 1024;
 const GIT_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const PROBE_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// How long to wait for an already-exited child's reader threads to hand over
+/// what they read. Independent of the process budget — see the call site.
+const DRAIN_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn command_output_capped(
     command: &mut std::process::Command,
@@ -1735,12 +1738,22 @@ fn command_output_capped(
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
     };
+    // The child has EXITED; its pipes are closed and the reader threads are
+    // about to send. Charging the drain against the process deadline meant a
+    // child that finished just before it left a near-zero budget, so
+    // `recv_timeout` returned Timeout for a reader that had simply not been
+    // scheduled yet, and a successful command was reported as a deadline
+    // failure. Callers swallow that with `.ok()?`, which silently turned off the
+    // git drift check and made `is_installed()` answer "not installed" — a whole
+    // nightly self-improve pass skipped for a scheduling hiccup. The drain gets
+    // its own small window, independent of how much of the process budget the
+    // child consumed.
     let stdout = stdout_rx
-        .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        .recv_timeout(DRAIN_GRACE)
         .context("external command stdout drain exceeded its deadline")?
         .context("read external command stdout")?;
     let stderr = stderr_rx
-        .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        .recv_timeout(DRAIN_GRACE)
         .context("external command stderr drain exceeded its deadline")?
         .context("read external command stderr")?;
     if stdout.exceeded || stderr.exceeded {
