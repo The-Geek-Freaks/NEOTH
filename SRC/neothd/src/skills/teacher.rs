@@ -4,10 +4,9 @@
 //! confidence, this module sends the fenced local output to a SOTA cloud
 //! teacher model that writes a corrective reply.
 //!
-//! **Security:** the local model output is wrapped via
-//! `crate::pipeline::wrap_untrusted` (ODY-18) BEFORE it enters the teacher
-//! prompt — prompt-injection payloads from a compromised local model cannot
-//! escape into the teacher's instruction-following path.
+//! **Security:** the local model output is serialized as typed
+//! `UntrustedContextClass::ModelOutput` data BEFORE it enters the teacher
+//! prompt.
 //!
 //! **Consent:** this is a cloud-egress call. `teacher_escalation_enabled`
 //! defaults to `false`; operators opt in explicitly in `freedom.yaml`.
@@ -143,10 +142,14 @@ pub async fn try_teacher_escalation(
 
     // ── ODY-18 anti-injection: fence the local output ─────────────────────
     // MUST happen before the local text enters the teacher's system prompt.
-    // wrap_untrusted wraps it in a clearly labelled fence so the teacher
-    // cannot mistake operator instructions injected by the local model for
-    // its own system prompt.
-    let fenced_local = crate::pipeline::wrap_untrusted("local_model_output", local_response);
+    // The typed class cannot be mistaken for operator-authored instruction.
+    let local_context = crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::ModelOutput,
+        "teacher:local-model-output",
+        local_response,
+    )
+    .render();
+    let fenced_local = local_context.as_str();
 
     // ── Build the teacher request ──────────────────────────────────────────
     // The fenced local output goes into the SYSTEM (operator-controlled path),

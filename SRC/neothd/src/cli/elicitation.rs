@@ -107,7 +107,7 @@ struct ToolResultEnvelope {
 // ── Main entry point ─────────────────────────────────────────────────────────
 
 /// Called inside the dispatch loop's `Ok(rendered)` arm, after
-/// `maybe_skeletonize` and before `wrap_untrusted`.
+/// `maybe_skeletonize` and before typed prompt serialization.
 ///
 /// Returns `Some(answer_block)` when the operator filled in the form;
 /// the caller appends this string to `tool_result_blocks` so the next

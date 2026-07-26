@@ -27,12 +27,16 @@
 //!   metadata (channel vs CLI).
 
 pub mod enriched_request;
-/// GOLD-ADAPT-ODY-18 — untrusted-source-data sandbox (`<<<UNTRUSTED_SOURCE_DATA>>>`
-/// guard + policy preamble + marker-injection defang) applied to external tool
-/// output before it re-enters the LLM prompt.
+/// GOLD-R3-14 — typed, canonical, length-bound untrusted prompt data.
+pub mod untrusted_context;
+/// Deprecated pre-v1 string API; delegates to [`untrusted_context`].
 pub mod untrusted_wrap;
 
 pub use enriched_request::{
     CommunicationProfilePrompt, EnrichedRequest, EnrichmentInputs, build_enriched_request,
 };
+pub use untrusted_context::{
+    RenderedUntrustedContext, StableSourceId, UntrustedContext, UntrustedContextClass,
+};
+#[allow(deprecated)]
 pub use untrusted_wrap::wrap_untrusted;

@@ -1274,7 +1274,8 @@ mod tests {
             ProviderKind::LocalOllama,
             Some("http://ollama-b.example:11434"),
         );
-        let initial = consent::prepare_grant_routes(home.path(), &[route_a.clone()]).unwrap();
+        let initial =
+            consent::prepare_grant_routes(home.path(), std::slice::from_ref(&route_a)).unwrap();
         assert!(initial.commit().unwrap());
 
         let add_route = consent::prepare_grant_routes(home.path(), &[route_a, route_b]).unwrap();

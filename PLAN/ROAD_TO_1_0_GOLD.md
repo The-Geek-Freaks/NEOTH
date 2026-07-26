@@ -391,18 +391,40 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     them), and the deeper "canonical root IDENTITY" point (the key is still the
     path string, so a rename/move/mount/Windows-case change reads as a new root
     rather than the same repo — would need a path + repo-fingerprint identity).
-  - **R3-14 (decomposition/repair defanged 2026-07-24; rest still OPEN):**
-    `wrap_untrusted` protects selected MCP/deep-research/teacher paths, and the
-    coding decomposer/repair fences no longer interpolate untrusted data raw —
-    `build_prompt` (project_context) and `build_repair_prompt` (malformed_output)
-    now run the untrusted body through `defang_prompt_delimiters`, so an imported
-    code map or manipulated model output can no longer forge a
-    `</project_context>` / `</malformed_output>` boundary and smuggle instructions
-    past the fence (adversarial regressions pin both). STILL OPEN: enriched repo
-    context (chat/serve compression path), attachments, recall fragments injected
-    into chat, Council and sub-agent dispatch still use parallel conventions;
-    they should converge on one typed context-class/source-id/limit-aware encoding
-    boundary with the same adversarial corpus run through every consumer.
+  - **R3-14 (typed core + first consumers landed locally 2026-07-26; still
+    OPEN):** the parallel `wrap_untrusted` convention is replaced by one
+    `UntrustedContext` serializer with explicit context class, bounded canonical
+    source ID, root/payload byte counts and SHA-256 lineage, pre-render UTF-8
+    truncation, class-owned ceilings and a canonical single-line JSON data
+    envelope. Structural controls, bidi/zero-width/default-ignorable code
+    points, NFKC confusables, private-use/noncharacters and nested forged
+    boundaries remain JSON data; the wire is fully ASCII/NFKC-stable, and long
+    percent-encoded source IDs stop only at complete `%XX` tokens. Production
+    exposes no parser that can promote self-asserted provenance. The old public
+    `wrap_untrusted` source API remains as a deprecated shim that delegates to
+    this canonical serializer; no internal caller uses it. MCP
+    success/error/diagnostic/elicitation feedback,
+    MCP body-only skeletonization/compression, Deep Research evidence/citations,
+    the Web goal-extraction first provider call, Council leaves, Teacher output
+    and Abliterated local drafts now carry the typed value until the final prompt
+    render. Deep Research budgets complete evidence and citation envelopes
+    instead of slicing a boundary; lossy MCP skeletonization/compression retains
+    the original root digest and records the digest of the exact transform
+    input. Model-emitted MCP server/tool identifiers are parser-bounded and
+    oversized structured metadata degrades to typed data instead of panicking.
+    Local evidence: test compilation, rustfmt and Clippy `-D warnings` are
+    green; 71 targeted unit contracts and 4 cross-class adversarial integration
+    tests pass. Independent review findings for incomplete `%XX`, cross-scalar
+    normalization, metadata-only overflow, hidden skeleton loss, retained-root
+    parent lineage and raw citation-vs-wire budgeting are pinned by regressions.
+    The earlier coding
+    decomposer/repair delimiter regressions remain in force. STILL OPEN:
+    attachment and `$ARGUMENTS` ingestion, enriched repo/recall/memory fragments,
+    MCP catalogue/hint/assistant fields, coding-review/model-retry output,
+    compaction, sub-agent/channel/Buddy dispatch and provider/retry/fallback/
+    streaming/cost leaves must adopt the same typed boundary. The checkbox
+    remains open until a source gate proves that no model-bound raw bypass or
+    parallel prompt-frame convention remains and exact-head CI is green.
   - **R3-15 (CLOSED — ordered/fail-closed core landed 2026-07-24 `d80fba62`;
     durable lifecycle landed 2026-07-25 `0b33c166`, verify-reconfirmed 12/12
     local green 2026-07-25):** `remove_plugin_at` now clears the config trust

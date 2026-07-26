@@ -4122,7 +4122,7 @@ async fn run_post_reply_pipelines(
     // ── GOLD-ADAPT-ODY-08 Tier-4: SOTA teacher correction ────────────────
     // After FEAT-08 local-abliterated path: if the ORIGINAL provider was a
     // local model and the response is still a refusal or low-confidence,
-    // escalate to the SOTA cloud teacher. ODY-18 `wrap_untrusted` is applied
+    // escalate to the SOTA cloud teacher. Typed ModelOutput framing is applied
     // EXACTLY on local output before sending to teacher (anti-injection MUST).
     // Hard-blocked floor (`hard_blocked`) suppresses this tier too.
     // `derived_from_mirror_pipeline = true` (ADV-07) skips profile extraction

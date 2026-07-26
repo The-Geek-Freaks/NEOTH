@@ -679,7 +679,7 @@ pub struct RefusalRecoveryConfig {
     pub jailbreak_max_retries: usize,
     /// GOLD-ADAPT-ODY-08 — enable SOTA teacher escalation when the local model
     /// fails or produces a low-confidence reply. Default `false` (opt-in, cloud
-    /// egress). When `true`, the local response is fenced via `wrap_untrusted`
+    /// egress). When `true`, the local response is typed as `ModelOutput`
     /// (ODY-18 anti-injection) and sent to `inference.teacher_provider` (default:
     /// flagship cloud) for correction. Only fires when the ORIGINAL provider was a
     /// local model (`is_local_provider` check). WAL records

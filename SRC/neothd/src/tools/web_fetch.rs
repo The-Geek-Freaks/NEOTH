@@ -198,11 +198,25 @@ pub(crate) async fn extract_goal_from_text(
         .char_indices()
         .nth(MAX_PAGE_CHARS_FOR_GOAL)
         .map_or(page_text, |(byte_index, _)| &page_text[..byte_index]);
+    let url_context = crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::Web,
+        "web-fetch:source-url",
+        page_url,
+    )
+    .render();
+    let page_context = crate::pipeline::UntrustedContext::new(
+        crate::pipeline::UntrustedContextClass::Web,
+        format!("web-fetch:page:{page_url}"),
+        page_snippet,
+    )
+    .render();
 
     let prompt = format!(
-        "GOAL: {goal}\n\nSOURCE URL: {page_url}\n\nPAGE TEXT:\n{page_snippet}\n\n\
+        "GOAL: {goal}\n\nSOURCE URL DATA:\n{}\n\nPAGE TEXT DATA:\n{}\n\n\
          Extract the goal-relevant information from the page above as a JSON object \
-         with fields rational, evidence, summary."
+         with fields rational, evidence, summary.",
+        url_context.as_str(),
+        page_context.as_str(),
     );
 
     let req = Request {
@@ -811,6 +825,7 @@ fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::time::Duration as StdDuration;
 
     #[test]
@@ -1231,16 +1246,41 @@ mod tests {
 
     /// A mock provider that always returns a fixed JSON string, simulating the
     /// LLM extraction pass without any network or API key dependency.
-    struct FixedJsonProvider(String);
+    struct FixedJsonProvider {
+        response: String,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl FixedJsonProvider {
+        fn new(response: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn last_prompt(&self) -> String {
+            self.prompts
+                .lock()
+                .expect("prompt capture lock")
+                .last()
+                .cloned()
+                .expect("provider was called")
+        }
+    }
 
     #[async_trait::async_trait]
     impl Provider for FixedJsonProvider {
         fn name(&self) -> &'static str {
             "goal-extract-mock"
         }
-        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+        async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
+            self.prompts
+                .lock()
+                .expect("prompt capture lock")
+                .push(req.prompt);
             Ok(Completion {
-                text: self.0.clone(),
+                text: self.response.clone(),
                 identity: Default::default(),
                 model: "mock".to_string(),
                 latency: StdDuration::from_millis(0),
@@ -1286,7 +1326,7 @@ mod tests {
             "summary": "Rust achieves memory safety through ownership, borrow checking, and bounds checks."
         }"#;
 
-        let provider = FixedJsonProvider(json.to_string());
+        let provider = FixedJsonProvider::new(json);
         let goal = "How does Rust achieve memory safety?";
 
         let result =
@@ -1314,6 +1354,16 @@ mod tests {
             "summary should mention Rust; got: {}",
             result.summary
         );
+        let prompt = provider.last_prompt();
+        assert_eq!(prompt.matches("\"class\":\"web\"").count(), 2);
+        assert!(prompt.contains("\"source_id\":\"web-fetch:source-url\""));
+        assert!(prompt.contains("\"source_id\":\"web-fetch:page:https://example.com/rust\""));
+        assert_eq!(
+            prompt
+                .matches(crate::pipeline::untrusted_context::GUARD_OPEN)
+                .count(),
+            2
+        );
     }
 
     /// When the page has no relevant content, the LLM returns empty evidence
@@ -1325,7 +1375,7 @@ mod tests {
             "evidence": [],
             "summary": ""
         }"#;
-        let provider = FixedJsonProvider(json.to_string());
+        let provider = FixedJsonProvider::new(json);
 
         let result = extract_goal_from_text(
             "This page is about pasta carbonara and tiramisu.",
@@ -1353,7 +1403,7 @@ mod tests {
             \"evidence\": [\"item one\"],\
             \"summary\": \"A summary.\"\
         }\n```";
-        let provider = FixedJsonProvider(json_with_fence.to_string());
+        let provider = FixedJsonProvider::new(json_with_fence);
 
         let result = extract_goal_from_text(
             "some page text",
@@ -1377,7 +1427,7 @@ mod tests {
             \"evidence\": [],\
             \"summary\": \"bare\"\
         }\n```";
-        let provider = FixedJsonProvider(json_with_bare_fence.to_string());
+        let provider = FixedJsonProvider::new(json_with_bare_fence);
 
         let result = extract_goal_from_text(
             "page content",
@@ -1418,7 +1468,7 @@ mod tests {
     /// regressions without reading logs.
     #[tokio::test]
     async fn goal_extraction_returns_err_on_malformed_json() {
-        let provider = FixedJsonProvider("not valid json {{{".to_string());
+        let provider = FixedJsonProvider::new("not valid json {{{");
         let err = extract_goal_from_text("page", "https://example.com/bad-json", "goal", &provider)
             .await
             .unwrap_err();
@@ -1432,7 +1482,7 @@ mod tests {
 
     #[tokio::test]
     async fn goal_extraction_unicode_error_preview_never_splits_utf8() {
-        let provider = FixedJsonProvider(format!("{}{{{{", "日本語".repeat(80)));
+        let provider = FixedJsonProvider::new(format!("{}{{{{", "日本語".repeat(80)));
         let err = extract_goal_from_text(
             "page",
             "https://example.com/bad-unicode-json",
@@ -1447,7 +1497,7 @@ mod tests {
 
     #[tokio::test]
     async fn goal_extraction_unicode_page_limit_never_splits_utf8() {
-        let provider = FixedJsonProvider(
+        let provider = FixedJsonProvider::new(
             r#"{"rational":"safe","evidence":[],"summary":"bounded"}"#.to_string(),
         );
         let page = format!("{}🌍tail", "a".repeat(7_999));

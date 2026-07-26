@@ -3,9 +3,9 @@
 //! Implements a multi-step search→read→synthesize loop that:
 //! 1. Uses an LLM call to decompose the operator's topic into N sub-queries.
 //! 2. For each round: calls `web_search::search_cached` → fetches up to
-//!    `pages_per_round` URLs via `web_fetch::fetch_with_goal` → fences every
-//!    page through `pipeline::untrusted_wrap::wrap_untrusted` before handing
-//!    the content to the LLM → accumulates evidence + citations.
+//!    `pages_per_round` URLs via `web_fetch::fetch_with_goal` → serializes every
+//!    page as typed `Web` data before handing it to the LLM → accumulates
+//!    evidence + citations.
 //! 3. After each round asks the LLM whether the evidence is sufficient;
 //!    if yes, or after `max_rounds`, runs a final synthesis pass.
 //! 4. Emits WAL `0x6B DEEP_RESEARCH_STARTED` / `0x6C DEEP_RESEARCH_COMPLETED`.
@@ -16,7 +16,7 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use crate::pipeline::untrusted_wrap;
+use crate::pipeline::{RenderedUntrustedContext, UntrustedContext, UntrustedContextClass};
 use crate::providers::{Provider, Request};
 use crate::secret::SecretString;
 use crate::tools::web_fetch;
@@ -29,9 +29,9 @@ const DEFAULT_MAX_ROUNDS: u8 = 5;
 const DEFAULT_RESULTS_PER_QUERY: usize = 5;
 const DEFAULT_PAGES_PER_ROUND: usize = 3;
 
-/// Char ceiling on accumulated evidence fed to each synthesis/continue prompt.
+/// Byte ceiling on accumulated evidence fed to each synthesis/continue prompt.
 /// Keeps the context window cost bounded; older rounds are truncated first.
-const MAX_EVIDENCE_CHARS: usize = 24_000;
+const MAX_EVIDENCE_BYTES: usize = 24_000;
 
 /// Char ceiling on text from a single page before it is truncated in the
 /// evidence buffer. Matches `web_fetch::MAX_EXTRACTED_BYTES / 10` —
@@ -119,7 +119,7 @@ pub async fn run_deep_research(
     debug!(queries = ?queries, "deep_research: planned sub-queries");
 
     // ── Step 2: Round loop ─────────────────────────────────────────────────
-    let mut all_evidence: Vec<String> = Vec::new();
+    let mut all_evidence: Vec<RenderedUntrustedContext> = Vec::new();
     let mut citations: Vec<CitedSource> = Vec::new();
     let mut rounds_done: u8 = 0;
 
@@ -249,7 +249,7 @@ async fn research_round(
     search_provider: SearchProvider,
     budget: &Budget,
     http: &crate::tools::external_http::ExternalHttpAuthorizer,
-) -> Result<(Vec<String>, Vec<CitedSource>)> {
+) -> Result<(Vec<RenderedUntrustedContext>, Vec<CitedSource>)> {
     let hits = web_search::search_cached_authorized(
         search_provider,
         search_key,
@@ -265,7 +265,7 @@ async fn research_round(
         return Ok((vec![], vec![]));
     }
 
-    let mut evidence_blocks: Vec<String> = Vec::new();
+    let mut evidence_blocks: Vec<RenderedUntrustedContext> = Vec::new();
     let mut new_citations: Vec<CitedSource> = Vec::new();
 
     for hit in hits.iter().take(budget.pages_per_round) {
@@ -294,11 +294,12 @@ async fn research_round(
                 // Truncate to per-page ceiling
                 let truncated: String = page_block.chars().take(MAX_PAGE_EVIDENCE_CHARS).collect();
 
-                // ODY-18: fence every web content block before it enters a prompt
-                let fenced = untrusted_wrap::wrap_untrusted(
-                    &format!("deep_research_web:{}", hit.url),
+                let fenced = UntrustedContext::new(
+                    UntrustedContextClass::Web,
+                    format!("deep-research:web:{}", hit.url),
                     &truncated,
-                );
+                )
+                .render();
 
                 evidence_blocks.push(fenced);
                 new_citations.push(CitedSource {
@@ -319,7 +320,7 @@ async fn research_round(
 /// write a complete answer to the topic. Returns `true` = satisfied.
 async fn check_satisfied(
     topic: &str,
-    evidence: &[String],
+    evidence: &[RenderedUntrustedContext],
     rounds_done: u8,
     max_rounds: u8,
     provider: &dyn Provider,
@@ -330,7 +331,7 @@ been completed, decide whether the evidence is sufficient to write a comprehensi
 answer. Respond ONLY with the single JSON boolean true or false.";
 
     // Feed a truncated view of evidence to keep token cost low
-    let evidence_preview = truncate_evidence(evidence, MAX_EVIDENCE_CHARS / 2);
+    let evidence_preview = truncate_evidence(evidence, MAX_EVIDENCE_BYTES / 2);
 
     let req = Request {
         prompt: format!(
@@ -354,7 +355,7 @@ answer. Respond ONLY with the single JSON boolean true or false.";
 /// Run the final synthesis pass and return the full article text.
 async fn synthesize(
     topic: &str,
-    evidence: &[String],
+    evidence: &[RenderedUntrustedContext],
     citations: &[CitedSource],
     provider: &dyn Provider,
 ) -> Result<String> {
@@ -364,7 +365,7 @@ comprehensive, well-structured article (at least 800 words). \
 Cite your sources inline as [1], [2], etc. using the source numbers provided. \
 Use Markdown headings. Be factual, accurate, and analytical.";
 
-    let evidence_block = truncate_evidence(evidence, MAX_EVIDENCE_CHARS);
+    let evidence_block = truncate_evidence(evidence, MAX_EVIDENCE_BYTES);
 
     let citation_list: String = citations
         .iter()
@@ -372,6 +373,16 @@ Use Markdown headings. Be factual, accurate, and analytical.";
         .map(|(i, c)| format!("[{}] {} — {}", i + 1, c.title, c.url))
         .collect::<Vec<_>>()
         .join("\n");
+    let citation_context = UntrustedContext::with_payload_limit(
+        UntrustedContextClass::Web,
+        "deep-research:citations",
+        citation_list,
+        MAX_EVIDENCE_BYTES / 2,
+    )
+    .render()
+    .fit_to_wire_limit(MAX_EVIDENCE_BYTES / 2)
+    .ok_or_else(|| anyhow::anyhow!("citation envelope cannot fit the synthesis wire budget"))?;
+    let citation_list = citation_context.as_str();
 
     let req = Request {
         prompt: format!(
@@ -445,24 +456,33 @@ async fn emit_wal_completed(
 
 // ── Utility ───────────────────────────────────────────────────────────────
 
-/// Concatenate evidence blocks up to `max_chars` total, newest-first within
-/// the limit (older rounds are truncated first).
-fn truncate_evidence(evidence: &[String], max_chars: usize) -> String {
-    let mut out = String::with_capacity(max_chars.min(evidence.iter().map(|s| s.len()).sum()));
-    for block in evidence {
-        if out.len() + block.len() > max_chars {
-            let remaining = max_chars.saturating_sub(out.len());
-            if remaining > 0 {
-                let truncated: String = block.chars().take(remaining).collect();
-                out.push_str(&truncated);
-                out.push_str("\n…[truncated]");
-            }
-            break;
+/// Concatenate complete canonical evidence blocks within a wire-byte budget.
+/// Newest evidence wins; an older boundary block is re-rendered from a shorter
+/// raw payload rather than slicing its serialized JSON/header/footer.
+fn truncate_evidence(evidence: &[RenderedUntrustedContext], max_bytes: usize) -> String {
+    let mut selected = Vec::new();
+    let mut remaining = max_bytes;
+    for block in evidence.iter().rev() {
+        let separator = usize::from(!selected.is_empty());
+        if block.as_str().len() + separator <= remaining {
+            remaining -= block.as_str().len() + separator;
+            selected.push(block.clone());
+            continue;
         }
-        out.push_str(block);
-        out.push('\n');
+
+        let available = remaining.saturating_sub(separator);
+        if let Some(fitted) = block.fit_to_wire_limit(available) {
+            selected.push(fitted);
+        }
+        break;
     }
-    out
+
+    selected.reverse();
+    selected
+        .iter()
+        .map(RenderedUntrustedContext::as_str)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── Key resolution helpers (shared by chat.rs and serve_pipeline.rs) ──────
@@ -509,14 +529,15 @@ mod tests {
     use super::*;
     use crate::providers::{Completion, Provider, Request};
     use async_trait::async_trait;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     /// Deterministic provider that cycles through a list of canned responses.
     struct CycleProvider {
         responses: Vec<String>,
         cursor: Arc<AtomicUsize>,
+        prompts: Arc<Mutex<Vec<String>>>,
     }
 
     impl CycleProvider {
@@ -524,7 +545,17 @@ mod tests {
             Self {
                 responses: responses.into_iter().map(Into::into).collect(),
                 cursor: Arc::new(AtomicUsize::new(0)),
+                prompts: Arc::new(Mutex::new(Vec::new())),
             }
+        }
+
+        fn last_prompt(&self) -> String {
+            self.prompts
+                .lock()
+                .expect("prompt capture lock")
+                .last()
+                .cloned()
+                .expect("provider was called")
         }
     }
 
@@ -533,7 +564,11 @@ mod tests {
         fn name(&self) -> &'static str {
             "cycle-test"
         }
-        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+        async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
+            self.prompts
+                .lock()
+                .expect("prompt capture lock")
+                .push(req.prompt);
             let idx = self.cursor.fetch_add(1, Ordering::SeqCst) % self.responses.len();
             Ok(Completion {
                 text: self.responses[idx].clone(),
@@ -550,9 +585,27 @@ mod tests {
 
     #[test]
     fn truncate_evidence_respects_limit() {
-        let blocks = vec!["abc".to_string(), "def".to_string(), "ghi".to_string()];
-        let out = truncate_evidence(&blocks, 5);
-        assert!(out.len() <= 5 + "\n…[truncated]".len());
+        let blocks = ["abc", "def", "ghi"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, data)| {
+                UntrustedContext::new(
+                    UntrustedContextClass::Web,
+                    format!("test:web:{index}"),
+                    data,
+                )
+                .render()
+            })
+            .collect::<Vec<_>>();
+        let limit = blocks[2].as_str().len();
+        let out = truncate_evidence(&blocks, limit);
+        assert!(out.len() <= limit);
+        assert!(out.contains("\"source_id\":\"test:web:2\""));
+        assert!(!out.contains("\"source_id\":\"test:web:1\""));
+        assert!(
+            crate::pipeline::untrusted_context::parse_rendered_untrusted(&out).is_some(),
+            "budgeted evidence must remain one complete canonical envelope"
+        );
     }
 
     #[test]
@@ -602,7 +655,9 @@ mod tests {
     #[tokio::test]
     async fn check_satisfied_returns_true() {
         let provider = CycleProvider::new(vec!["true"]);
-        let result = check_satisfied("topic", &["ev1".to_string()], 3, 5, &provider)
+        let evidence =
+            UntrustedContext::new(UntrustedContextClass::Web, "test:web", "ev1").render();
+        let result = check_satisfied("topic", &[evidence], 3, 5, &provider)
             .await
             .unwrap();
         assert!(result);
@@ -625,14 +680,42 @@ mod tests {
             title: "Test".into(),
             url: "https://example.com".into(),
         }];
-        let article = synthesize(
-            "topic",
-            &["evidence block".to_string()],
-            &citations,
-            &provider,
-        )
-        .await
-        .unwrap();
+        let evidence =
+            UntrustedContext::new(UntrustedContextClass::Web, "test:web", "evidence block")
+                .render();
+        let article = synthesize("topic", &[evidence], &citations, &provider)
+            .await
+            .unwrap();
         assert_eq!(article, expected);
+    }
+
+    #[tokio::test]
+    async fn synthesize_caps_escape_expanding_citations_by_wire_bytes() {
+        let provider = CycleProvider::new(vec!["article"]);
+        let citations = vec![CitedSource {
+            title: "\u{202e}".repeat(MAX_EVIDENCE_BYTES),
+            url: format!(
+                "https://example.test/{}",
+                "\u{030a}".repeat(MAX_EVIDENCE_BYTES)
+            ),
+        }];
+
+        synthesize("topic", &[], &citations, &provider)
+            .await
+            .expect("synthesis request");
+        let prompt = provider.last_prompt();
+        let citation_wire = prompt
+            .split_once("Available sources:\n")
+            .expect("citation section")
+            .1
+            .split_once("\n\nCollected evidence:")
+            .expect("evidence section")
+            .0;
+
+        assert!(citation_wire.len() <= MAX_EVIDENCE_BYTES / 2);
+        assert!(
+            crate::pipeline::untrusted_context::parse_rendered_untrusted(citation_wire).is_some(),
+            "wire-budgeted citations remain a complete canonical envelope"
+        );
     }
 }

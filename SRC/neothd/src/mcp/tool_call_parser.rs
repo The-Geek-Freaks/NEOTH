@@ -24,6 +24,12 @@ use serde::{Deserialize, Serialize};
 /// here so a Step 1 / Step 2 drift fails loudly via the catalogue's
 /// `catalogue_header_documents_invocation_format` test.
 pub const FENCE_TAG: &str = "mcp-tool-call";
+/// Maximum UTF-8 byte length for a model-emitted MCP server or tool name.
+///
+/// Catalogue names are human-scale identifiers. Bounding them at the parser
+/// prevents hostile model output from turning result metadata into an
+/// unbounded prompt or exceeding the typed ToolError envelope by itself.
+pub const MAX_MCP_IDENTIFIER_BYTES: usize = 256;
 
 /// One successfully parsed call site in the LLM response.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +138,16 @@ fn parse_block_body(body: &str) -> Result<ParsedToolCall, String> {
     if wire.tool.is_empty() {
         return Err("`tool` field is empty".to_string());
     }
+    if wire.server.len() > MAX_MCP_IDENTIFIER_BYTES {
+        return Err(format!(
+            "`server` field exceeds the {MAX_MCP_IDENTIFIER_BYTES}-byte limit"
+        ));
+    }
+    if wire.tool.len() > MAX_MCP_IDENTIFIER_BYTES {
+        return Err(format!(
+            "`tool` field exceeds the {MAX_MCP_IDENTIFIER_BYTES}-byte limit"
+        ));
+    }
     Ok(ParsedToolCall {
         server: wire.server,
         tool: wire.tool,
@@ -235,6 +251,21 @@ Some intermediate text.
         let r = extract_tool_calls(text);
         assert_eq!(r.errors.len(), 1);
         assert!(r.errors[0].reason.contains("empty"));
+    }
+
+    #[test]
+    fn parse_rejects_oversized_server_and_tool_identifiers() {
+        for field in ["server", "tool"] {
+            let mut value = serde_json::json!({
+                "server": "filesystem",
+                "tool": "read_file",
+                "arguments": {}
+            });
+            value[field] = serde_json::Value::String("x".repeat(MAX_MCP_IDENTIFIER_BYTES + 1));
+            let error = parse_block_body(&value.to_string()).expect_err("oversized identifier");
+            assert!(error.contains(field));
+            assert!(error.contains("byte limit"));
+        }
     }
 
     #[test]

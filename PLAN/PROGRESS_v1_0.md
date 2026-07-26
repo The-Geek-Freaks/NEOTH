@@ -3,6 +3,24 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-26
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Typed untrusted-context checkpoint 2026-07-26 (R3-14 remains OPEN;
+> counts unchanged):** one canonical typed serializer now owns context class,
+> token-complete bounded source identity, UTF-8-safe class ceilings, fully
+> ASCII/NFKC-stable canonical JSON escaping and exact transform/root/payload
+> digest lineage. MCP tool feedback and lossy transforms, Deep Research, Web
+> goal extraction, Council profiles/leaves, Teacher and Abliterated drafts carry
+> typed values to the final render instead of parallel XML-like wrappers or
+> post-render slicing. Model-emitted MCP identifiers are bounded, metadata-only
+> overflow cannot panic, citation budgets are wire-aware, and the old public
+> string wrapper is a deprecated canonical shim rather than a source break.
+> Local evidence is green for test compilation, rustfmt, Clippy `-D warnings`,
+> 71 targeted unit contracts and 4 adversarial integration tests. R3-14 is
+> deliberately not
+> closed: attachments/`$ARGUMENTS`, repo/recall/memory, remaining MCP fields,
+> coding/retry/compaction, sub-agents/channels/Buddy and every provider leaf
+> still need the same boundary plus a no-bypass source gate and exact-head CI.
+> WS-R3 therefore remains **13 done / 6 open**.
+>
 > **Endpoint-bound consent closure 2026-07-26 (`7c97d558`, `7dfc4d80`,
 > final closure follow-up; exact-head CI remains separate):** remote
 > LocalOllama, OpenAI API, OpenAI-compatible, AWS Bedrock and Azure OpenAI

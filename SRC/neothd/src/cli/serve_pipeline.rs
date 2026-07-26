@@ -3238,7 +3238,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // Same gate as cli/chat.rs Tier-4 but operating on `completion.text`
             // and `config_for_handler`. Channel/daemon path has no FEAT-08 blocks —
             // teacher is the only post-LOWKEY escalation path here.
-            // ODY-18 `wrap_untrusted` applied inside `try_teacher_escalation`.
+            // Typed ModelOutput framing is applied inside `try_teacher_escalation`.
             // Best-effort; never fails the channel turn.
             if !config_for_handler
                 .refusal_recovery
