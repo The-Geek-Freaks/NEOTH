@@ -6695,7 +6695,27 @@ pub(crate) fn maybe_repo_context_block(
     // repo; inject nothing rather than fall back to another root.
     let active_root = {
         let conn = crate::code_map::persist::open(&paths.code_map).ok()?;
-        crate::code_map::recall::resolve_active_root(&conn, current_path)?
+        match crate::code_map::recall::resolve_active_root(&conn, current_path) {
+            Some(root) => root,
+            // The daemon runs as a service: its process CWD is `/` or the
+            // service directory, never the indexed repo, so this arm is the
+            // NORMAL case on the channel path — where it silently disabled the
+            // repo-map auto-context entirely. A single persisted root is
+            // unambiguous (there is no other repo to confuse it with), so use
+            // it; with several indexed repos the choice would be a guess, and
+            // guessing is what the containment forbids.
+            None => match crate::code_map::recall::sole_persisted_root(&conn) {
+                Some(root) => root,
+                None => {
+                    tracing::debug!(
+                        cwd = %current_path.display(),
+                        "repo-map auto-context skipped: the working directory is not inside a \
+                         persisted code-map root and more than one root is indexed"
+                    );
+                    return None;
+                }
+            },
+        }
     };
     maybe_repo_context_block_at_paths(config, prompt, &paths.code_map, &paths.ccr, &active_root)
 }

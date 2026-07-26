@@ -293,6 +293,28 @@ pub fn resolve_active_root(conn: &Connection, current_path: &Path) -> Option<Str
         .max_by_key(|root| Path::new(root).components().count())
 }
 
+/// The one persisted root, when exactly one repository is indexed.
+///
+/// For a caller whose working directory cannot identify a repo — a daemon runs
+/// as a service, its CWD is `/` or the service directory — a single indexed root
+/// is not a guess: there is no other repository the content could come from, so
+/// using it cannot mix repos. With two or more roots this returns `None`, and
+/// the caller must inject nothing rather than pick one.
+pub fn sole_persisted_root(conn: &Connection) -> Option<String> {
+    let mut stmt = conn
+        .prepare("SELECT root FROM code_map_roots ORDER BY root ASC LIMIT 2")
+        .ok()?;
+    let roots: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .ok()?
+        .filter_map(|row| row.ok())
+        .collect();
+    match roots.as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
+    }
+}
+
 /// SQL helper — find every file whose `path` contains any of the
 /// supplied keywords. Returns `(root, path)` pairs. Skips when the
 /// keyword set is empty.
@@ -531,6 +553,40 @@ mod tests {
     use crate::code_map::symbols::{Symbol, SymbolKind};
     use crate::code_map::walker::{Language, RepoFile, RepoMap, ScanReport};
     use tempfile::tempdir;
+
+    /// PR5-010: a daemon's process CWD is never the indexed repo, so
+    /// `resolve_active_root` always answers `None` there and the repo-map
+    /// auto-context went silently dead on the channel path. One indexed root is
+    /// unambiguous and may be used; two or more is a guess and must not be.
+    #[test]
+    fn sole_persisted_root_is_only_unambiguous_for_one_repo() {
+        let dir = tempdir().unwrap();
+        let conn = open(&dir.path().join("code_map.db")).unwrap();
+        assert_eq!(
+            sole_persisted_root(&conn),
+            None,
+            "no roots → nothing to use"
+        );
+
+        let insert = |root: &str| {
+            conn.execute(
+                "INSERT INTO code_map_roots \
+                 (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
+                 VALUES (?1, 0, 0, 0, 0, 0)",
+                rusqlite::params![root],
+            )
+            .unwrap();
+        };
+        insert("/repo/only");
+        assert_eq!(sole_persisted_root(&conn).as_deref(), Some("/repo/only"));
+
+        insert("/repo/second");
+        assert_eq!(
+            sole_persisted_root(&conn),
+            None,
+            "with two repos the choice would be a guess — inject nothing"
+        );
+    }
 
     fn seed_db_with_two_files() -> (tempfile::TempDir, Connection) {
         let dir = tempdir().unwrap();
