@@ -93,6 +93,20 @@ fn validate_strict(hook: &HookDef) -> Result<()> {
             )
         })?;
     }
+    // GOLD-CCPARITY-ONCE is for startup banners and one-shot plugins. Combined
+    // with a blocking action it is a latent fail-OPEN: the hook blocks the first
+    // turn, its once-claim is consumed, and every later turn passes the stage
+    // through — an operator who wrote a gate gets a gate that stops working
+    // after one use, silently. Nothing validated the combination, so refuse it
+    // at load: a security-shaped hook must not depend on the operator noticing.
+    if hook.once() && matches!(hook.action, crate::hooks::schema::HookAction::Block { .. }) {
+        anyhow::bail!(
+            "hook `{}` combines `once = true` with a blocking action. A once-hook is consumed \
+             after it fires, so the block would stop applying from the second turn on. Drop \
+             `once` to keep blocking, or use a non-blocking action.",
+            hook.name
+        );
+    }
     Ok(())
 }
 
@@ -112,6 +126,51 @@ async fn parse_file(path: &Path) -> Result<HookDef> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// External review PR4-036: a once-hook is consumed after it fires, so
+    /// pairing it with a blocking action yields a gate that stops gating from
+    /// the second turn on — a latent fail-open nothing validated.
+    #[tokio::test]
+    async fn once_plus_block_is_refused_at_load() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("gate.toml"),
+            r#"
+name = "gate"
+stage = "pre_provider_call"
+once = true
+[action]
+kind = "block"
+reason = "not allowed"
+"#,
+        )
+        .await
+        .unwrap();
+
+        let error = load_all_strict(dir.path())
+            .await
+            .expect_err("a once-hook that blocks must not load");
+        let rendered = format!("{error:#}");
+        assert!(
+            rendered.contains("once = true") && rendered.contains("blocking action"),
+            "the refusal must name the combination and the fix: {rendered}"
+        );
+
+        // The same hook without `once` is a real gate and still loads.
+        tokio::fs::write(
+            dir.path().join("gate.toml"),
+            r#"
+name = "gate"
+stage = "pre_provider_call"
+[action]
+kind = "block"
+reason = "not allowed"
+"#,
+        )
+        .await
+        .unwrap();
+        assert_eq!(load_all_strict(dir.path()).await.unwrap().len(), 1);
+    }
 
     #[tokio::test]
     async fn missing_dir_returns_empty() {
