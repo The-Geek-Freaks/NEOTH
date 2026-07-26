@@ -187,18 +187,30 @@ pub fn is_verified_deployed(skills_root: &Path, skill_id: &str, min_age_secs: u6
     ) else {
         return false;
     };
-    // cap-std reports a `cap_std::time::SystemTime`; convert to the std clock
-    // type the pure decision helper works with.
-    let modified = file
-        .metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .map(|t| t.into_std());
+    let modified = modified_time_of(&file);
     is_deployment_settled(
         modified,
         std::time::SystemTime::now(),
         std::time::Duration::from_secs(min_age_secs),
     )
+}
+
+/// The artifact mtime as the std clock type, or `None` when the platform or
+/// filesystem does not report one.
+///
+/// Split out because THIS is where the `None` the fail-closed contract depends
+/// on is produced: [`is_deployment_settled`] has deterministic coverage for
+/// every branch, but the mapping that can feed it was only exercised through
+/// real files that always have an mtime. A later "simplification" to
+/// `unwrap_or(UNIX_EPOCH)` here would silently flip the whole contract from
+/// fail-closed to fail-open while every existing test stayed green.
+fn modified_time_of(file: &cap_std::fs::File) -> Option<std::time::SystemTime> {
+    // cap-std reports a `cap_std::time::SystemTime`; convert to the std clock
+    // type the pure decision helper works with. Never substitute a default.
+    file.metadata()
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .map(|time| time.into_std())
 }
 
 /// Pure deployment-age decision, split from the filesystem calls so the
@@ -222,6 +234,54 @@ fn is_deployment_settled(
         Ok(elapsed) => elapsed >= min_age,
         // `modified` is in the future relative to `now` → not settled.
         Err(_) => false,
+    }
+}
+
+/// Is the artifact possibly already deployed — i.e. can we NOT prove it is
+/// absent or fresh?
+///
+/// [`is_verified_deployed`] fails closed toward "not deployed", which is the
+/// conservative answer for a caller whose `false` branch ESCALATES to the
+/// operator. For a caller whose `false` branch instead does more work — the
+/// capability evolver stages a proposal — the same `false` is the RISKY
+/// direction: on a filesystem that reports no mtime it would re-stage proposals
+/// for artifacts that are already on disk, forever.
+///
+/// Same evidence, opposite default: only a provable absence (no root, no skill,
+/// no artifact) answers `false` here. An unreadable mtime is "unknown", and
+/// unknown means don't do more work.
+pub fn is_possibly_deployed(skills_root: &Path, skill_id: &str, min_age_secs: u64) -> bool {
+    let Ok(Some(root)) =
+        crate::skills::store::open_bound_directory(skills_root, false, "skills root")
+    else {
+        return false;
+    };
+    let skill_display = root.display_path.join(skill_id);
+    let Ok(skill_dir) = crate::skills::store::open_real_child_dir(
+        &root.dir,
+        std::ffi::OsStr::new(skill_id),
+        &skill_display,
+    ) else {
+        return false;
+    };
+    let file_display = skill_display.join("skill.yaml");
+    let Ok(file) = crate::skills::store::open_regular_file(
+        &skill_dir,
+        std::ffi::OsStr::new("skill.yaml"),
+        &file_display,
+    ) else {
+        return false;
+    };
+    // The artifact exists. Only a mtime we can read AND that is younger than
+    // the settle window proves it is still in flight; anything else counts as
+    // deployed for the purpose of "should I stage more work?".
+    match modified_time_of(&file) {
+        Some(modified) => is_deployment_settled(
+            Some(modified),
+            std::time::SystemTime::now(),
+            std::time::Duration::from_secs(min_age_secs),
+        ),
+        None => true,
     }
 }
 
@@ -1159,6 +1219,35 @@ mod tests {
         let skill_dir = skills_root.join(skill_id);
         std::fs::create_dir_all(&skill_dir).unwrap();
         std::fs::write(skill_dir.join("skill.yaml"), b"enabled: true").unwrap();
+    }
+
+    /// PR5-050: the two callers read the SAME evidence with opposite risk. The
+    /// collector escalates on `false`; the evolver does more work on `false`. So
+    /// an unprovable state must answer differently to each — absence is the only
+    /// thing that lets the evolver proceed.
+    #[test]
+    fn possibly_deployed_and_verified_deployed_agree_except_on_the_unknown() {
+        // Absence: both say "not deployed" — the evolver may stage.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!is_verified_deployed(dir.path(), "ghost", 0));
+        assert!(!is_possibly_deployed(dir.path(), "ghost", 0));
+
+        // A present, settled artifact: both say deployed.
+        let skills = dir.path().join("skills");
+        write_installed_artifact(&skills, "my_skill");
+        assert!(is_verified_deployed(&skills, "my_skill", 0));
+        assert!(is_possibly_deployed(&skills, "my_skill", 0));
+
+        // The unknown arm is what the two disagree on, pinned on the pure
+        // helper because a filesystem without mtime is not summonable in a test:
+        // no mtime means "not settled" (collector escalates) while
+        // `is_possibly_deployed` maps the same input to "deployed" (evolver
+        // skips) — see its `None => true` arm.
+        assert!(!is_deployment_settled(
+            None,
+            std::time::SystemTime::now(),
+            std::time::Duration::from_secs(0)
+        ));
     }
 
     #[test]

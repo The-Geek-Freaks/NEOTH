@@ -48,7 +48,7 @@
 use std::path::Path;
 
 use crate::daemon::self_improvement_collector::{
-    CollectorReport, CollectorSignal, is_verified_deployed,
+    CollectorReport, CollectorSignal, is_possibly_deployed,
 };
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder, events::EVENT_TYPE_CAPABILITY_EVOLVER_RAN};
@@ -331,8 +331,11 @@ pub async fn run_evolver_pass(
 
             // Idempotent guard: skip if the skill artifact is already settled on
             // disk. Read through the capability-bound store (GOLD-R3-11).
+            // `is_possibly_deployed`, not `is_verified_deployed`: here `false`
+            // means "stage more work", so an UNKNOWN deployment state must skip,
+            // not proceed. Same evidence, opposite default — see its doc.
             let skills_root = home.join("skills");
-            if is_verified_deployed(&skills_root, &proposal.id, ARTIFACT_MIN_AGE_SECS) {
+            if is_possibly_deployed(&skills_root, &proposal.id, ARTIFACT_MIN_AGE_SECS) {
                 tracing::debug!(
                     skill_id = %proposal.id,
                     "capability_evolver: skill artifact already deployed, skipping"
@@ -641,9 +644,10 @@ mod tests {
             "0x0F CAPABILITY_EVOLVER_RAN must be present in WAL bytes"
         );
 
-        // Verify is_verified_deployed returns false for a nonexistent skills root.
+        // A nonexistent skills root is a PROVABLE absence, so the evolver's
+        // guard lets staging proceed.
         assert!(
-            !is_verified_deployed(std::path::Path::new("/nonexistent/skills"), "ghost", 0),
+            !is_possibly_deployed(std::path::Path::new("/nonexistent/skills"), "ghost", 0),
             "nonexistent skills root must not be considered deployed"
         );
     }
