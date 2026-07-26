@@ -808,31 +808,29 @@ async fn handle_consent(args: &str, config: &FreedomConfig, home: &Path) -> Acti
                     text: rows
                         .into_iter()
                         .map(|row| {
-                            let configured = (!row.configured_endpoint_origins.is_empty())
-                                .then(|| {
-                                    format!(
-                                        " configured=[{}]",
-                                        row.configured_endpoint_origins.join(", ")
-                                    )
-                                })
-                                .unwrap_or_default();
-                            let granted = (!row.granted_endpoint_origins.is_empty())
-                                .then(|| {
-                                    format!(
-                                        " granted=[{}]",
-                                        row.granted_endpoint_origins.join(", ")
-                                    )
-                                })
-                                .unwrap_or_default();
-                            let stale = (!row.stale_endpoint_origins.is_empty())
-                                .then(|| {
-                                    format!(" stale=[{}]", row.stale_endpoint_origins.join(", "))
-                                })
-                                .unwrap_or_default();
-                            let audit = row
-                                .audit_pending
-                                .then_some(" audit=pending")
-                                .unwrap_or_default();
+                            let configured = if row.configured_endpoint_origins.is_empty() {
+                                String::new()
+                            } else {
+                                format!(
+                                    " configured=[{}]",
+                                    row.configured_endpoint_origins.join(", ")
+                                )
+                            };
+                            let granted = if row.granted_endpoint_origins.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" granted=[{}]", row.granted_endpoint_origins.join(", "))
+                            };
+                            let stale = if row.stale_endpoint_origins.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" stale=[{}]", row.stale_endpoint_origins.join(", "))
+                            };
+                            let audit = if row.audit_pending {
+                                " audit=pending"
+                            } else {
+                                ""
+                            };
                             let error = row
                                 .error
                                 .as_deref()

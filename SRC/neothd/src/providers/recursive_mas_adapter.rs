@@ -80,7 +80,7 @@ impl RecursiveMasAdapter {
                 home
             );
         }
-        let vram = crate::daemon::hardware::probe(&home)?.vram;
+        let vram = crate::daemon::hardware::probe(home)?.vram;
         crate::providers::recursive_mas::recursive_mas_available(cfg, vram.as_ref())
             .map_err(|reason| anyhow::anyhow!("recursive_mas unavailable: {reason}"))?;
 
