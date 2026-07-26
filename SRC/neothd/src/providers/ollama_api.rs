@@ -126,7 +126,7 @@ impl Provider for OllamaAdapter {
             let started = Instant::now();
             let model = req.model.clone().unwrap_or_else(|| self.model.clone());
 
-            let body = build_request(&model, &req, false);
+            let body = build_request(&model, &req, false, self.is_loopback_endpoint);
             let url = format!("{}/api/chat", self.base_url);
 
             let response = self
@@ -194,7 +194,7 @@ impl Provider for OllamaAdapter {
         crate::providers::circuit_breaker_stream::run_stream_with_breaker(provider_name, async {
             let model = req.model.clone().unwrap_or_else(|| self.model.clone());
 
-            let body = build_request(&model, &req, true);
+            let body = build_request(&model, &req, true, self.is_loopback_endpoint);
             let url = format!("{}/api/chat", self.base_url);
 
             let response = self
@@ -404,7 +404,12 @@ struct OllamaResponseMessage {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-fn build_request(model: &str, req: &Request, stream: bool) -> OllamaChatRequest {
+fn build_request(
+    model: &str,
+    req: &Request,
+    stream: bool,
+    is_loopback_endpoint: bool,
+) -> OllamaChatRequest {
     let mut messages = Vec::new();
     if let Some(sys) = &req.system {
         messages.push(OllamaMessage {
@@ -418,15 +423,21 @@ fn build_request(model: &str, req: &Request, stream: bool) -> OllamaChatRequest 
     });
 
     let options = {
+        // The ceiling exists to make a REMOTE endpoint cost-authorizable: it is
+        // the wire-enforced output limit paid-call authorization relies on. A
+        // loopback endpoint is neither remote nor metered, and sending it there
+        // silently truncated long local generations (code, documents) at the
+        // cloud ceiling where they previously ran to completion — with no
+        // request field to raise it. Local stays on the server's own default.
         let opts = OllamaOptions {
             temperature: req.temperature,
             top_p: req.top_p,
             seed: req.sampling_seed,
             stop: req.stop_sequences.clone(),
-            num_predict: Some(OUTPUT_TOKEN_CEILING),
+            num_predict: (!is_loopback_endpoint).then_some(OUTPUT_TOKEN_CEILING),
         };
-        // `num_predict` is mandatory: it is the wire-enforced output ceiling
-        // used by paid-call authorization for remote Ollama endpoints.
+        // `num_predict` is mandatory for a remote endpoint: it is the
+        // wire-enforced output ceiling used by paid-call authorization.
         if opts.temperature.is_some()
             || opts.top_p.is_some()
             || opts.seed.is_some()
@@ -778,7 +789,7 @@ mod tests {
             stop_sequences: vec!["</s>".into()],
             ..Default::default()
         };
-        let body = build_request("llama3.2", &req, false);
+        let body = build_request("llama3.2", &req, false, false);
         let opts = body
             .options
             .expect("options must be present when sampling fields set");
@@ -789,19 +800,49 @@ mod tests {
         assert_eq!(opts.num_predict, Some(OUTPUT_TOKEN_CEILING));
     }
 
-    /// The output cap is present even without sampling overrides.
+    /// The output cap is present even without sampling overrides — on a REMOTE
+    /// endpoint, where it is what makes the call cost-authorizable.
     #[test]
     fn build_request_always_sends_authorized_num_predict_ceiling() {
         let req = Request {
             prompt: "test".into(),
             ..Default::default()
         };
-        let body = build_request("llama3.2", &req, false);
+        let body = build_request("llama3.2", &req, false, false);
         assert_eq!(
             body.options
                 .expect("num_predict makes options mandatory")
                 .num_predict,
             Some(OUTPUT_TOKEN_CEILING)
         );
+    }
+
+    /// External review PR4-016: the loopback endpoint is neither remote nor
+    /// metered. Sending the cloud ceiling there truncated long local
+    /// generations at 4096 tokens where they previously ran to completion, with
+    /// no request field to raise it.
+    #[test]
+    fn loopback_endpoint_keeps_the_servers_own_output_limit() {
+        let req = Request {
+            prompt: "write a long document".into(),
+            ..Default::default()
+        };
+        let local = build_request("llama3.2", &req, false, true);
+        assert!(
+            local.options.is_none_or(|opts| opts.num_predict.is_none()),
+            "a loopback call must not carry the remote cost ceiling"
+        );
+
+        // Sampling overrides still travel on the local path.
+        let tuned = Request {
+            prompt: "test".into(),
+            temperature: Some(0.5),
+            ..Default::default()
+        };
+        let opts = build_request("llama3.2", &tuned, false, true)
+            .options
+            .expect("sampling overrides still produce options");
+        assert_eq!(opts.temperature, Some(0.5));
+        assert_eq!(opts.num_predict, None);
     }
 }
