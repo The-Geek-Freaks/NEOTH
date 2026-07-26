@@ -366,7 +366,15 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     );
     // KB-01 — append the prompt-disclosure guard when a skill, persona, or
     // identity-lock is in play (the injection surface).
-    if skill_prompt_expanded.is_some() || persona.is_some() || inputs.identity_locked {
+    //
+    // Only when there IS a surface to protect. `identity_locked` with an empty
+    // anchor and every other layer empty would otherwise produce a system
+    // consisting solely of the guard — a bare prompt silently gaining an
+    // instruction about content that is not there, contrary to the documented
+    // "a bare prompt gets no guard" behaviour.
+    if !budget_items.is_empty()
+        && (skill_prompt_expanded.is_some() || persona.is_some() || inputs.identity_locked)
+    {
         budget_items.push(budget_item(Block::B, PROMPT_NON_DISCLOSURE_CLAUSE));
     }
 
@@ -408,6 +416,31 @@ mod tests {
             current_goal: None,
             communication_profile: None,
         }
+    }
+
+    /// External review PR4-017: an identity lock with an empty anchor and no
+    /// other layer must leave a bare prompt bare. Emitting a system consisting
+    /// solely of the non-disclosure guard tells the model to keep secret
+    /// something that was never injected.
+    #[test]
+    fn identity_lock_alone_never_produces_a_guard_only_system() {
+        let mut inputs = empty_inputs("hi");
+        inputs.identity_locked = true;
+        let enriched = build_enriched_request(inputs);
+        assert!(
+            enriched.system.is_none(),
+            "a bare prompt must stay bare: {:?}",
+            enriched.system
+        );
+
+        // With something real to protect, the guard is still appended.
+        let mut inputs = empty_inputs("hi");
+        inputs.identity_locked = true;
+        inputs.identity_anchor = Some("You are NEOTH.");
+        let enriched = build_enriched_request(inputs);
+        let system = enriched.system.expect("an anchored lock produces a system");
+        assert!(system.contains("You are NEOTH."));
+        assert!(system.contains(PROMPT_NON_DISCLOSURE_CLAUSE));
     }
 
     #[test]
