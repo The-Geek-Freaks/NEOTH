@@ -102,7 +102,12 @@ impl SubAgentWorker for ProviderSubAgentWorker {
                     attempt,
                     &verdict,
                     &output,
-                    provider_calls.last(),
+                    // No QA call happened — the candidate was refused before
+                    // one could run. `provider_calls.last()` is the PRIMARY
+                    // call here, and passing it wrote the primary's
+                    // provider/model into the frame's QA provider fields. The
+                    // field is already `Option`; absent is the honest value.
+                    None,
                 )
                 .await?;
                 return Ok(result(
