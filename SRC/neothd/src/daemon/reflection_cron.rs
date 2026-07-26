@@ -432,6 +432,20 @@ async fn run_tech_currency_tick_once(
         return Ok(false);
     };
 
+    // An unattended cron has no operator to confirm, so a Confirm decision under
+    // the fail-closed strategy this task is built with is a guaranteed refusal.
+    // Reporting that as an error made the tick fail every 24h forever: the week
+    // marker is only written by `commit_tech_currency_tick`, which is never
+    // reached, so the same refusal repeated and warned unboundedly. A known
+    // refusal is a clean no-op — the operator opts in by raising autonomy.
+    if http.is_certainly_denied(crate::tools::external_http::ExternalHttpSurface::HackerNews) {
+        tracing::debug!(
+            "tech-currency refresh skipped: the autonomy policy does not permit unattended \
+             external HTTP for this surface"
+        );
+        return Ok(false);
+    }
+
     let stories = crate::sources::hackernews::top_stories(http, 50)
         .await
         .map_err(|error| format!("HN fetch failed: {error}"))?;

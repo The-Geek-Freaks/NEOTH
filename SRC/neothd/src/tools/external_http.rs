@@ -264,6 +264,35 @@ impl ExternalHttpAuthorizer {
         }
     }
 
+    /// Would this surface be refused right now, without asking anyone?
+    ///
+    /// For an UNATTENDED caller — a cron with no operator to confirm — a
+    /// `Confirm` decision under a fail-closed strategy is a guaranteed refusal.
+    /// Such a caller needs to know that BEFORE it treats the refusal as a
+    /// failure: a periodic task that reports an error it can never avoid retries
+    /// and warns on every tick forever. This lets it no-op cleanly instead.
+    ///
+    /// Deliberately conservative: `false` means "not certainly refused", never
+    /// "permitted". The real gate still runs inside [`Self::execute`] — this is
+    /// a scheduling hint, never an authorisation.
+    #[must_use]
+    pub fn is_certainly_denied(&self, surface: ExternalHttpSurface) -> bool {
+        if !matches!(self.confirm, ConfirmStrategy::FailClosed) || self.channel_asker.is_some() {
+            return false;
+        }
+        let action = Action::ExternalHttpRequest {
+            method: "GET".to_string(),
+            destination: String::new(),
+            surface: surface.as_str().to_string(),
+            request_id: String::new(),
+            request_binding_sha256: String::new(),
+        };
+        matches!(
+            crate::permissions::evaluate(&action, &self.policy.current()),
+            crate::permissions::Decision::Confirm(_) | crate::permissions::Decision::Deny(_)
+        )
+    }
+
     pub async fn execute<F, Fut, T>(&self, request: ExternalHttpRequest, network: F) -> Result<T>
     where
         F: FnOnce(ExternalHttpPermit) -> Fut,
