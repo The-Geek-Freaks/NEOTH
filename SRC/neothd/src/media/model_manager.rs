@@ -911,7 +911,18 @@ pub(crate) async fn install_from_hf_source(
             source_fingerprint
         );
     }
-    commit_verified_part(&part, destination, &source_fingerprint).await?;
+    // The mismatch path above cleans up; the commit path did not. Any failure
+    // in `commit_verified_part` — the commit mutex, a rename — returned before
+    // the part was consumed, leaving a FULL copy of the model artifact as
+    // `<name>.part.<uniq>` in the cache. `copy_to_unique_part` mints a fresh
+    // name per attempt, so retries accumulated whole copies of a
+    // multi-gigabyte file.
+    if let Err(error) = commit_verified_part(&part, destination, &source_fingerprint).await {
+        if part != source {
+            let _ = tokio::fs::remove_file(&part).await;
+        }
+        return Err(error);
+    }
     Ok(source_fingerprint)
 }
 
