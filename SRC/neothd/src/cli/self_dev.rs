@@ -631,13 +631,23 @@ async fn flush_pending_audits(home: &Path, writer: Option<&WalWriterHandle>) -> 
         };
         let event = intent.to_pending_event();
         super::self_dev_outbox::enqueue(home, &event).await?;
-        if let Some(w) = writer {
-            super::self_dev_outbox::drain_once(home, w).await?;
-        }
+        // Retire the pending intent as soon as the event is durably IN the
+        // outbox — before draining it back out, not after. Draining first left a
+        // window in which the frame was already emitted and removed from the
+        // outbox while the intent still looked pending: the next run re-enqueued
+        // it, and the outbox's content dedup could no longer help because the
+        // event was already gone from it, so a second
+        // SELF_DEV_ACCEPTED/DECLINED/PROPOSED frame landed. With this order a
+        // crash before the remove re-enqueues into an outbox that still holds
+        // the event (dedup catches it), and a crash after the remove leaves the
+        // event queued for the next drain. Neither loses nor duplicates.
         let mut latest = load_store(home)?;
         if latest.audit_pending.first() == Some(&intent) {
             latest.audit_pending.remove(0);
             save_store(home, &latest)?;
+        }
+        if let Some(w) = writer {
+            super::self_dev_outbox::drain_once(home, w).await?;
         }
         flushed += 1;
     }
