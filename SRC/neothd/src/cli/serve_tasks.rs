@@ -7597,13 +7597,29 @@ mod tests {
             crate::config::reload::ReloadResult::Reloaded { .. }
         ));
 
+        // Wait on the DURABLE state, not on one specific transient message.
+        // `record_runtime_health` is written by several arms of the candidate
+        // path, and a later attempt overwrites `runtime_detail` — so waiting for
+        // the exact "intentionally not restored" wording raced whichever write
+        // landed last and timed out intermittently in CI (twice, on unrelated
+        // commits). `failed` is the state that persists; the security property
+        // the test exists for is asserted below on the pid and the port, which
+        // no message can fake.
         let failed = wait_for_omi_status(&db_path, |status| {
             status.runtime_state.as_deref() == Some("failed")
-                && status.runtime_detail.as_deref().is_some_and(|detail| {
-                    detail.contains("prior runtime was intentionally not restored")
-                })
         })
         .await;
+        // Several arms report this same terminal situation with different
+        // wording ("start rejected", "listener stopped", the
+        // intentionally-not-restored suffix), and the OS half of the bind error
+        // is localised — so assert on OUR substring, which every variant
+        // carries, rather than on one arm's phrasing.
+        let detail = failed.runtime_detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("prior runtime was intentionally not restored")
+                || detail.contains("bind native OMI listener"),
+            "the refusal must be reported to the operator: {detail}"
+        );
         assert_eq!(failed.runtime_pid, Some(std::process::id()));
         assert!(tokio::net::TcpStream::connect(initial_addr).await.is_err());
         let connection = rusqlite::Connection::open_with_flags(
