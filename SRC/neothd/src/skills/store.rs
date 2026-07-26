@@ -278,15 +278,24 @@ pub(crate) fn rename_child(
                     target_display.display()
                 )
             })?;
+            // A runtime bail here is unreachable-by-build: this is the commit
+            // path of every skill install, uninstall tombstone and create, so a
+            // target without `renameat2(RENAME_NOREPLACE)` would compile a
+            // binary in which EVERY skill mutation fails at run time, with no
+            // build-time signal. Fail at compile time instead — porting to such
+            // a target is a deliberate act that needs a link+unlink fallback,
+            // not a silent runtime dead end.
             #[cfg(not(any(
                 target_vendor = "apple",
                 target_os = "linux",
                 target_os = "android",
-                target_os = "redox"
+                target_os = "redox",
+                windows
             )))]
-            anyhow::bail!(
-                "exclusive capability-bound rename is unavailable on this Unix target: {}",
-                target_display.display()
+            compile_error!(
+                "exclusive capability-bound rename needs renameat2(RENAME_NOREPLACE) or \
+                 renamex_np(RENAME_EXCL); this Unix target has neither. Implement a \
+                 linkat/unlinkat fallback in skills::store::rename_child before enabling it."
             );
         }
     }
