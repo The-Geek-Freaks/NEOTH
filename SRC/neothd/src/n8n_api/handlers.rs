@@ -971,7 +971,11 @@ mod tests {
             .is_some(),
             "remote Ollama must not inherit the loopback consent bypass"
         );
-        crate::consent::grant(home.path(), ProviderKind::LocalOllama).unwrap();
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::ConsentRoute::new(ProviderKind::LocalOllama, Some(remote)),
+        )
+        .unwrap();
         assert!(
             cloud_egress_gate(
                 AutonomyLevel::Standard,

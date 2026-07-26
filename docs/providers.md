@@ -97,6 +97,65 @@ identify as `ollama_remote` and cross the same paid-provider authorization
 boundary as other remote inference. Selecting the Ollama provider kind does
 not by itself make a remote endpoint local or free.
 
+### Remote Ollama consent
+
+Remote Ollama consent is bound to the canonical endpoint origin, not merely to
+the `local_ollama` provider kind. A grant for endpoint A never authorizes
+endpoint B. Changing the endpoint therefore makes the old grant stale and
+requires a new decision before any provider transport is constructed. Stale
+grants remain visible and revocable through `neoth consent`; malformed,
+oversized, symlinked, or future-format marker files fail closed.
+
+`Allow once` is an exact-route, command-scoped capability. It is not written as
+a durable grant and cannot be reused by a later CLI, GUI, Buddy, daemon, retry,
+fallback, or post-reply provider call. `Allow always` and revocation use the
+same transactional mutation service across CLI, slash commands, onboarding,
+GUI, and Buddy. The service binds the configured route set, writes the
+pre-mutation intent before changing authority, commits the marker change
+atomically, and retains retryable audit evidence across crashes or a temporarily
+unavailable WAL service.
+
+GUI and Buddy first-send consent use a private, expiring challenge. The
+challenge is bound to the exact config hash and canonical route set; the secret
+and a resulting one-shot token travel over standard input, never process
+arguments or logs. A config or endpoint change between preflight and decision
+invalidates the challenge. Consent status exposes configured, granted, stale,
+invalid, and audit-pending state instead of retaining an optimistic green state
+after an error.
+
+### Endpoint-bound cloud consent
+
+Configurable OpenAI, OpenAI-compatible, Azure OpenAI, and AWS Bedrock routes
+are authorized by their canonical runtime destination, not only by provider
+name. Bedrock consent is bound to the effective region's exact runtime origin
+(`https://bedrock-runtime.<region>.amazonaws.com`). A grant for one endpoint,
+Azure resource, or Bedrock region never authorizes another. Primary, role,
+subrole, learn, utility, teacher, discovery, and enabled fallback routes all
+use the same route derivation as the concrete transport.
+
+### RecursiveMAS requires two independent gates
+
+RecursiveMAS executes operator-installed third-party code whose upstream
+license is unresolved, and that sidecar inherits the host's network access.
+NEOTH therefore keeps code execution acknowledgement and prompt egress
+authority separate:
+
+```bash
+# 1. Review and acknowledge the operator-installed third-party sidecar.
+neoth rmas consent --acknowledge
+
+# 2. Grant revocable prompt egress for the RecursiveMAS provider.
+neoth consent grant recursive_mas
+```
+
+`neoth rmas consent` shows both live states and the exact missing command. The
+first marker never implies or creates provider authority. Egress can be removed
+without changing the code acknowledgement:
+
+```bash
+neoth consent revoke recursive_mas
+```
+
 The `known` catalogue and a configurable OpenAI-compatible URL are discovery
 and transport substrate, not a claim of OpenClaw-class provider parity. Auth,
 OAuth, region/project fields, capability/model discovery, tool/image/thinking

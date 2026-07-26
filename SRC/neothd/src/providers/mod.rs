@@ -1038,7 +1038,7 @@ async fn from_config_for_role_inner(
         if let Some(home) = home {
             apply_instance_catalog_default(&mut selected, home);
         }
-        return from_config(&selected).await;
+        return from_config_for_instance(&selected, home).await;
     };
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
@@ -1063,7 +1063,7 @@ async fn from_config_for_role_inner(
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
-    from_config(&synthetic).await
+    from_config_for_instance(&synthetic, home).await
 }
 
 /// SPEC-03b — build the chat provider WITH its 429 fallback chain. The
@@ -1085,30 +1085,56 @@ async fn from_config_for_role_inner(
 /// kinds (`local_qwen`/`local_ouro`) always pass via [`crate::consent::is_granted`].
 pub(crate) fn consented_fallback_slots<'a>(
     home: &std::path::Path,
-    slots: &'a [crate::config::inference::HemisphereSlot],
+    config: &'a FreedomConfig,
 ) -> Vec<(
     &'a crate::config::inference::HemisphereSlot,
     crate::config::inference::InferenceProvider,
 )> {
-    slots
+    fallback_slots_allowed_by(home, config, None)
+}
+
+fn fallback_slots_allowed_by<'a>(
+    home: &std::path::Path,
+    config: &'a FreedomConfig,
+    ephemeral_consent: Option<&crate::consent::EphemeralConsent>,
+) -> Vec<(
+    &'a crate::config::inference::HemisphereSlot,
+    crate::config::inference::InferenceProvider,
+)> {
+    if config.fallback.max_hops == 0 {
+        return Vec::new();
+    }
+    config
+        .fallback
+        .chain
         .iter()
         .filter_map(|slot| match slot.provider {
             None => {
                 tracing::warn!("fallback slot has no provider set; skipping");
                 None
             }
-            Some(inf)
-                if crate::consent::is_route_granted(
-                    home,
-                    &crate::consent::ConsentRoute::new(
-                        inf.to_provider_kind(),
-                        slot.endpoint.as_deref(),
-                    ),
-                ) =>
-            {
-                Some((slot, inf))
-            }
             Some(inf) => {
+                let route = crate::consent::route_for_provider_config(
+                    inf.to_provider_kind(),
+                    slot.endpoint.as_deref(),
+                    slot.region.as_deref().or(config.provider_region.as_deref()),
+                );
+                let durable = crate::consent::is_route_granted(home, &route);
+                let ephemeral = ephemeral_consent
+                    .map(|consent| match consent.permits_route(&route) {
+                        Ok(permitted) => permitted,
+                        Err(_) => {
+                            tracing::warn!(
+                                provider = inf.as_str(),
+                                "fallback slot skipped: one-shot consent route is invalid"
+                            );
+                            false
+                        }
+                    })
+                    .unwrap_or(false);
+                if durable || ephemeral {
+                    return Some((slot, inf));
+                }
                 tracing::warn!(
                     provider = inf.as_str(),
                     "fallback slot skipped: cloud-egress consent not granted \
@@ -1125,10 +1151,31 @@ pub async fn fallback_chain_from_config(
     home: &std::path::Path,
     wal_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<Box<dyn Provider>> {
+    fallback_chain_from_config_inner(config, home, wal_writer, None).await
+}
+
+/// Interactive chat builder. It may construct a fallback leaf authorized by
+/// this command's exact one-shot capability, but does not consume that
+/// capability. The concrete leaf authorizer remains the only consumer.
+pub(crate) async fn fallback_chain_from_config_interactive(
+    config: &FreedomConfig,
+    home: &std::path::Path,
+    wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ephemeral_consent: &crate::consent::EphemeralConsent,
+) -> Result<Box<dyn Provider>> {
+    fallback_chain_from_config_inner(config, home, wal_writer, Some(ephemeral_consent)).await
+}
+
+async fn fallback_chain_from_config_inner(
+    config: &FreedomConfig,
+    home: &std::path::Path,
+    wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ephemeral_consent: Option<&crate::consent::EphemeralConsent>,
+) -> Result<Box<dyn Provider>> {
     let primary =
         from_config_for_role_at(config, crate::config::inference::HemisphereRole::Left, home)
             .await?;
-    if config.fallback.chain.is_empty() {
+    if config.fallback.chain.is_empty() || config.fallback.max_hops == 0 {
         return Ok(primary);
     }
     let mut configured_models = vec![provider_default_wire_model(primary.as_ref())];
@@ -1137,7 +1184,7 @@ pub async fn fallback_chain_from_config(
     // `consented_fallback_slots` — a regression there would leak operator
     // text to an un-consented cloud provider on every 429, so it is a pure
     // tested seam rather than an inline branch.
-    for (slot, inf_provider) in consented_fallback_slots(home, &config.fallback.chain) {
+    for (slot, inf_provider) in fallback_slots_allowed_by(home, config, ephemeral_consent) {
         let kind = inf_provider.to_provider_kind();
         let mut synthetic = config.clone();
         synthetic.provider_kind = Some(kind);
@@ -1151,7 +1198,7 @@ pub async fn fallback_chain_from_config(
             synthetic.provider_api_version = Some(ver);
         }
         apply_instance_catalog_default(&mut synthetic, home);
-        match from_config(&synthetic).await {
+        match from_config_for_instance(&synthetic, Some(home)).await {
             Ok(p) => {
                 let wire_model = provider_default_wire_model(p.as_ref());
                 chain.push(p);
@@ -1237,7 +1284,7 @@ async fn from_config_for_sub_role_inner(
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
-    from_config(&synthetic).await
+    from_config_for_instance(&synthetic, home).await
 }
 
 /// V10-07 (Session 21) — construct the provider the post-reply
@@ -1536,6 +1583,15 @@ fn apply_instance_catalog_default(config: &mut FreedomConfig, home: &Path) {
 }
 
 pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    from_config_for_instance(config, None).await
+}
+
+async fn from_config_for_instance(
+    config: &FreedomConfig,
+    instance_home: Option<&Path>,
+) -> Result<Box<dyn Provider>> {
+    #[cfg(not(feature = "recursive-mas"))]
+    let _ = instance_home;
     // GOLD-ADAPT-JV-MISC (model-alias map) — resolve the operator's alias ONCE
     // at the single provider chokepoint so every per-kind arm below sees the
     // real model id. Unknown tokens pass through (additive map).
@@ -1729,12 +1785,7 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             // fallback to AWS_REGION/AWS_DEFAULT_REGION env, then to
             // `us-east-1`. Credentials walk the closed chain (explicit
             // → env vars → ~/.aws/credentials [default]).
-            let region = config
-                .provider_region
-                .clone()
-                .or_else(|| std::env::var("AWS_REGION").ok())
-                .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
-                .unwrap_or_else(|| "us-east-1".to_string());
+            let region = aws_bedrock::effective_region(config.provider_region.as_deref())?;
             let model = config.provider_model.clone().ok_or_else(|| {
                 anyhow::anyhow!(
                     "aws_bedrock requires a model id in freedom.yaml \
@@ -1816,9 +1867,14 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
         // only exists behind the `recursive-mas` feature; the runtime gate
         // (enabled + VRAM + checkout present) runs inside spawn().
         #[cfg(feature = "recursive-mas")]
-        ProviderKind::RecursiveMas => Ok(Box::new(
-            recursive_mas_adapter::RecursiveMasAdapter::spawn(&config.recursive_mas)?,
-        )),
+        ProviderKind::RecursiveMas => {
+            Ok(Box::new(recursive_mas_adapter::RecursiveMasAdapter::spawn(
+                &config.recursive_mas,
+                &instance_home
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(FreedomConfig::default_neoth_home),
+            )?))
+        }
         #[cfg(not(feature = "recursive-mas"))]
         ProviderKind::RecursiveMas => {
             anyhow::bail!(
@@ -1842,7 +1898,7 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
 pub async fn from_config_at(config: &FreedomConfig, home: &Path) -> Result<Box<dyn Provider>> {
     let mut selected = config.clone();
     apply_instance_catalog_default(&mut selected, home);
-    from_config(&selected).await
+    from_config_for_instance(&selected, Some(home)).await
 }
 
 async fn from_config_with_optional_home(
@@ -2197,6 +2253,31 @@ mod tests {
             catalog_flagship_model_at(second.path(), "openai_api").as_deref(),
             Some("gpt-instance-two")
         );
+    }
+
+    #[cfg(feature = "recursive-mas")]
+    #[tokio::test]
+    async fn recursive_mas_builder_uses_the_selected_instance_home_for_code_acknowledgement() {
+        let acknowledged_home = tempfile::tempdir().unwrap();
+        let selected_home = tempfile::tempdir().unwrap();
+        crate::cli::rmas::write_rmas_consent_marker(acknowledged_home.path()).unwrap();
+        let config = FreedomConfig {
+            provider_kind: Some(ProviderKind::RecursiveMas),
+            recursive_mas: crate::config::RecursiveMasConfig {
+                enabled: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let error = from_config_at(&config, selected_home.path())
+            .await
+            .err()
+            .expect("another instance's acknowledgement must not authorize this one");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("code acknowledgement is missing"));
+        assert!(rendered.contains(&format!("{:?}", selected_home.path())));
+        assert!(!rendered.contains(&format!("{:?}", acknowledged_home.path())));
     }
 
     #[test]
@@ -2579,16 +2660,22 @@ mod tests {
     // flipping the `!`, mis-mapping the kind) would route operator text to
     // an un-consented cloud provider on every 429. These pin the contract.
 
+    fn config_with_fallback(slots: Vec<HemisphereSlot>) -> FreedomConfig {
+        let mut config = FreedomConfig::default();
+        config.fallback.chain = slots;
+        config
+    }
+
     #[test]
     fn consented_slots_drops_unconsented_cloud_slot() {
         let tmp = tempfile::tempdir().unwrap();
-        let slots = vec![HemisphereSlot {
+        let config = config_with_fallback(vec![HemisphereSlot {
             provider: Some(InferenceProvider::OpenAi),
             ..Default::default()
-        }];
+        }]);
         // No `.granted` marker written → OpenAI (cloud) must be dropped.
         assert!(
-            consented_fallback_slots(tmp.path(), &slots).is_empty(),
+            consented_fallback_slots(tmp.path(), &config).is_empty(),
             "un-consented cloud fallback slot must never be built"
         );
     }
@@ -2597,11 +2684,11 @@ mod tests {
     fn consented_slots_keeps_consented_cloud_slot() {
         let tmp = tempfile::tempdir().unwrap();
         crate::consent::grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
-        let slots = vec![HemisphereSlot {
+        let config = config_with_fallback(vec![HemisphereSlot {
             provider: Some(InferenceProvider::OpenAi),
             ..Default::default()
-        }];
-        let kept = consented_fallback_slots(tmp.path(), &slots);
+        }]);
+        let kept = consented_fallback_slots(tmp.path(), &config);
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].1, InferenceProvider::OpenAi);
     }
@@ -2610,12 +2697,12 @@ mod tests {
     fn consented_slots_local_provider_always_passes() {
         let tmp = tempfile::tempdir().unwrap();
         // No marker, no grant — local_qwen is non-cloud so it passes the gate.
-        let slots = vec![HemisphereSlot {
+        let config = config_with_fallback(vec![HemisphereSlot {
             provider: Some(InferenceProvider::LocalQwen),
             ..Default::default()
-        }];
+        }]);
         assert_eq!(
-            consented_fallback_slots(tmp.path(), &slots).len(),
+            consented_fallback_slots(tmp.path(), &config).len(),
             1,
             "local provider needs no consent"
         );
@@ -2624,7 +2711,7 @@ mod tests {
     #[test]
     fn consented_slots_treats_ollama_by_endpoint_not_variant_name() {
         let tmp = tempfile::tempdir().unwrap();
-        let slots = vec![
+        let config = config_with_fallback(vec![
             HemisphereSlot {
                 provider: Some(InferenceProvider::LocalOllama),
                 endpoint: Some("http://127.0.0.1:11434".into()),
@@ -2635,8 +2722,8 @@ mod tests {
                 endpoint: Some("http://192.168.1.25:11434".into()),
                 ..Default::default()
             },
-        ];
-        let kept = consented_fallback_slots(tmp.path(), &slots);
+        ]);
+        let kept = consented_fallback_slots(tmp.path(), &config);
         assert_eq!(
             kept.len(),
             1,
@@ -2647,9 +2734,16 @@ mod tests {
             Some("http://127.0.0.1:11434")
         );
 
-        crate::consent::grant(tmp.path(), ProviderKind::LocalOllama).unwrap();
+        crate::consent::grant_route(
+            tmp.path(),
+            &crate::consent::ConsentRoute::new(
+                ProviderKind::LocalOllama,
+                Some("http://192.168.1.25:11434"),
+            ),
+        )
+        .unwrap();
         assert_eq!(
-            consented_fallback_slots(tmp.path(), &slots).len(),
+            consented_fallback_slots(tmp.path(), &config).len(),
             2,
             "explicit Ollama marker authorizes the remote fallback"
         );
@@ -2658,11 +2752,11 @@ mod tests {
     #[test]
     fn consented_slots_drops_slot_without_provider() {
         let tmp = tempfile::tempdir().unwrap();
-        let slots = vec![HemisphereSlot {
+        let config = config_with_fallback(vec![HemisphereSlot {
             provider: None,
             ..Default::default()
-        }];
-        assert!(consented_fallback_slots(tmp.path(), &slots).is_empty());
+        }]);
+        assert!(consented_fallback_slots(tmp.path(), &config).is_empty());
     }
 
     #[test]
@@ -2671,7 +2765,7 @@ mod tests {
         crate::consent::grant(tmp.path(), ProviderKind::GeminiApi).unwrap();
         // openai (cloud, NOT granted) dropped; gemini (cloud, granted) kept;
         // local_qwen (non-cloud) kept — relative order preserved.
-        let slots = vec![
+        let config = config_with_fallback(vec![
             HemisphereSlot {
                 provider: Some(InferenceProvider::OpenAi),
                 ..Default::default()
@@ -2684,11 +2778,101 @@ mod tests {
                 provider: Some(InferenceProvider::LocalQwen),
                 ..Default::default()
             },
-        ];
-        let kept = consented_fallback_slots(tmp.path(), &slots);
+        ]);
+        let kept = consented_fallback_slots(tmp.path(), &config);
         assert_eq!(
             kept.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
             vec![InferenceProvider::Gemini, InferenceProvider::LocalQwen]
         );
+    }
+
+    #[test]
+    fn bedrock_fallback_consent_is_bound_to_effective_slot_region() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = config_with_fallback(vec![HemisphereSlot {
+            provider: Some(InferenceProvider::AwsBedrock),
+            region: Some("eu-central-1".into()),
+            ..Default::default()
+        }]);
+        config.provider_region = Some("us-east-1".into());
+        crate::consent::grant_route(
+            tmp.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("us-east-1"),
+            ),
+        )
+        .unwrap();
+        assert!(
+            consented_fallback_slots(tmp.path(), &config).is_empty(),
+            "a default-region grant must not authorize the slot's EU route"
+        );
+
+        crate::consent::grant_route(
+            tmp.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("eu-central-1"),
+            ),
+        )
+        .unwrap();
+        assert_eq!(consented_fallback_slots(tmp.path(), &config).len(), 1);
+    }
+
+    #[test]
+    fn interactive_fallback_selection_views_exact_one_shot_without_consuming_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = config_with_fallback(vec![
+            HemisphereSlot {
+                provider: Some(InferenceProvider::AwsBedrock),
+                region: Some("eu-central-1".into()),
+                ..Default::default()
+            },
+            HemisphereSlot {
+                provider: Some(InferenceProvider::AwsBedrock),
+                region: Some("ap-southeast-2".into()),
+                ..Default::default()
+            },
+        ]);
+        config.provider_kind = Some(ProviderKind::AwsBedrock);
+        config.provider_region = Some("us-east-1".into());
+        let primary = crate::consent::route_for_provider_config(
+            ProviderKind::AwsBedrock,
+            None,
+            config.provider_region.as_deref(),
+        );
+        let fallback = crate::consent::route_for_provider_config(
+            ProviderKind::AwsBedrock,
+            None,
+            config.fallback.chain[0].region.as_deref(),
+        );
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&primary).unwrap();
+        ephemeral.allow_route(&fallback).unwrap();
+
+        let kept = fallback_slots_allowed_by(tmp.path(), &config, Some(&ephemeral));
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].0.region.as_deref(), Some("eu-central-1"));
+        assert!(ephemeral.permits_route(&primary).unwrap());
+        assert!(ephemeral.permits_route(&fallback).unwrap());
+        assert!(ephemeral.consume_route(&primary).unwrap());
+        assert!(!ephemeral.consume_route(&primary).unwrap());
+        assert!(
+            ephemeral.permits_route(&fallback).unwrap(),
+            "spending the primary route must not consume a distinct fallback"
+        );
+    }
+
+    #[test]
+    fn zero_hop_config_never_selects_fallback_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = config_with_fallback(vec![HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        }]);
+        config.fallback.max_hops = 0;
+        assert!(consented_fallback_slots(tmp.path(), &config).is_empty());
     }
 }

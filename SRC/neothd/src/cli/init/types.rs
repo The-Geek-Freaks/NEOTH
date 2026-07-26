@@ -75,9 +75,10 @@ pub enum ProviderKind {
     /// local provider for quota / privacy / WAL audit gating.
     LocalOllama,
     /// GOLD-ADAPT-RMAS-03 — EXPERIMENTAL RecursiveMAS Python sidecar
-    /// (latent-recursion council refinement). Local-only, VRAM-gated,
-    /// default-off; adapter behind the `recursive-mas` Cargo feature.
-    /// Operator-installed checkout — NEOTH never downloads it.
+    /// (latent-recursion council refinement). VRAM-gated and default-off;
+    /// adapter behind the `recursive-mas` Cargo feature. The operator-installed
+    /// process inherits host network access, so standard live provider consent
+    /// is required in addition to the separate third-party-code acknowledgement.
     #[serde(rename = "recursive_mas")]
     #[value(name = "recursive_mas")]
     RecursiveMas,

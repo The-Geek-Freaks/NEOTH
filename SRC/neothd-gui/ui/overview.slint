@@ -47,6 +47,10 @@ export struct CalEvent {
 export struct ConsentEntry {
     provider: string,
     granted: bool,
+    detail: string,
+    status: string,
+    grantable: bool,
+    revokable: bool,
 }
 
 /// One row in the COST & USAGE top-sessions table.
@@ -97,10 +101,13 @@ export component OverviewView inherits Rectangle {
     // CONSENT card
     in property <[ConsentEntry]> ov-consent-entries: [];
     in property <string> ov-smart-approve: "";
+    in property <bool> consent-busy: false;
 
     // shared refresh timestamp & refresh trigger
     in property <string> ov-refreshed-at: "";
     callback overview-refresh-clicked();
+    callback consent-grant(string);
+    callback consent-revoke(string);
 
     // COST & USAGE card
     in property <[CostSessionRow]> ov-cost-sessions: [];
@@ -834,11 +841,11 @@ export component OverviewView inherits Rectangle {
                                 Kicker { label: "CONSENT"; }
 
                                 for entry in root.ov-consent-entries: Rectangle {
-                                    height: 30px;
+                                    height: 74px;
                                     border-radius: Theme.radius-sm;
-                                    background: entry.granted ? Theme.consent-tint : Theme.surface-1;
+                                    background: entry.granted && entry.status == "granted" ? Theme.consent-tint : Theme.surface-1;
                                     border-width: 1px;
-                                    border-color: entry.granted ? Theme.consent : Theme.border-subtle;
+                                    border-color: entry.granted && entry.status == "granted" ? Theme.consent : Theme.border-subtle;
 
                                     HorizontalLayout {
                                         padding-left: 10px;
@@ -846,27 +853,57 @@ export component OverviewView inherits Rectangle {
                                         alignment: start;
                                         spacing: 8px;
                                         Led {
-                                            state: entry.granted ? "live" : "off";
+                                            state: entry.granted && entry.status == "granted" ? "live" : (entry.status == "invalid" ? "error" : "off");
                                             dot-size: 6px;
                                             // Led color: "live"=memory-green, "off"=text-disabled.
                                             // Consent semantics (pink) expressed via parent bg-tint above.
                                         }
-                                        Text {
-                                            text: entry.provider;
-                                            overflow: elide;
-                                            color: entry.granted ? Theme.consent : Theme.text-tertiary;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-xs;
-                                            vertical-alignment: center;
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            spacing: 3px;
+                                            alignment: center;
+                                            HorizontalLayout {
+                                                Text {
+                                                    text: entry.provider;
+                                                    overflow: elide;
+                                                    color: entry.granted && entry.status == "granted" ? Theme.consent : Theme.text-tertiary;
+                                                    font-family: Theme.font-mono;
+                                                    font-size: Theme.font-size-xs;
+                                                    horizontal-stretch: 1;
+                                                    vertical-alignment: center;
+                                                }
+                                                Text {
+                                                    text: entry.status;
+                                                    color: entry.granted && entry.status == "granted" ? Theme.consent : Theme.text-disabled;
+                                                    font-family: Theme.font-mono;
+                                                    font-size: Theme.font-size-2xs;
+                                                    letter-spacing: Theme.letter-spacing-wide;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                            Text {
+                                                text: entry.detail;
+                                                color: entry.status == "invalid" ? Theme.consent : Theme.text-dim;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                wrap: word-wrap;
+                                                max-height: 36px;
+                                            }
                                         }
-                                        Rectangle { horizontal-stretch: 1; }
-                                        Text {
-                                            text: entry.granted ? "GRANTED" : "PENDING";
-                                            color: entry.granted ? Theme.consent : Theme.text-disabled;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-2xs;
-                                            letter-spacing: Theme.letter-spacing-wide;
-                                            vertical-alignment: center;
+                                        if entry.grantable: NeothButton {
+                                            label: "Grant";
+                                            primary: true;
+                                            size: "sm";
+                                            enabled: !root.consent-busy;
+                                            clicked => { root.consent-grant(entry.provider); }
+                                        }
+                                        if entry.revokable: NeothButton {
+                                            label: "Revoke";
+                                            primary: false;
+                                            danger: true;
+                                            size: "sm";
+                                            enabled: !root.consent-busy;
+                                            clicked => { root.consent-revoke(entry.provider); }
                                         }
                                     }
                                 }

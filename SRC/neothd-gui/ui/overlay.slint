@@ -332,7 +332,6 @@ export component MiniOverlay inherits Window {
                                     accepted => {
                                         if (self.text != "") {
                                             root.send-clicked(self.text);
-                                            root.overlay-input = "";
                                         }
                                     }
 
@@ -693,7 +692,6 @@ export component MiniOverlay inherits Window {
                         accepted(t) => {
                             if t != "" {
                                 root.send-clicked(t);
-                                root.overlay-input = "";
                             }
                         }
                     }
@@ -705,7 +703,6 @@ export component MiniOverlay inherits Window {
                         clicked => {
                             if root.overlay-input != "" {
                                 root.send-clicked(root.overlay-input);
-                                root.overlay-input = "";
                             }
                         }
                     }

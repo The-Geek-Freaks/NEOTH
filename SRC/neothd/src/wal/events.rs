@@ -1225,8 +1225,10 @@ pub const EVENT_TYPE_COUNCIL_DIVERSITY_WARNING: u8 = 0x64;
 /// P-02 (Session 24) — operator's consent-gate decision. Fires on
 /// every `ensure_granted_or_prompt_tri` call that took an operator
 /// answer (skips re-prompts on already-granted state to keep the
-/// audit log signal-to-noise). Payload:
-/// `{kind, decision, source, ts_unix}`. `decision` ∈
+/// audit log signal-to-noise). Versioned payload:
+/// `{schema_version, kind, decision, source, endpoint_origin, ts_unix}`.
+/// `endpoint_origin` is the canonical remote-Ollama authority or null for a
+/// provider-wide cloud route. `decision` ∈
 /// `allow_once | allow_always | deny`. `allow_always` persists a
 /// marker file; the other two leave operator state untouched but
 /// still produce the audit anchor so an operator denying once can
@@ -2292,8 +2294,12 @@ pub const EVENT_TYPE_PRESET_APPLIED: u8 = 0xDA;
 /// security-relevant privilege change — like `neoth autonomy set`, the marker
 /// path previously mutated permission state with NO forensic WAL record
 /// (`EVENT_TYPE_CONSENT_DECISION 0x65` covers only the in-chat decision prompt,
-/// not the deliberate CLI grant/revoke). Config-lifecycle band. Payload (JSON):
-/// `{provider, source, ts_unix}` — the provider slug only, never a key/secret.
+/// not the deliberate CLI grant/revoke). Config-lifecycle band. The versioned
+/// transaction payload carries operation/audit ids, action/source, exact
+/// endpoint-origin delta, source/target marker SHA-256 bindings, `required_audit`
+/// and `phase`. Only `phase=committed` proves the grant became effective;
+/// `prepared` is durable intent and `aborted` proves rollback. No key/secret or
+/// raw marker bytes are included.
 ///
 /// Naming: SR-017 is the consent-audit gap; the GOLD-SEC-30 task text borrowed
 /// the `SUDOMODE_*` names from the separate `neoth sudomode` CLI feature
@@ -2305,8 +2311,10 @@ pub const EVENT_TYPE_CONSENT_GRANTED: u8 = 0xDB;
 /// [`EVENT_TYPE_CONSENT_GRANTED`]: `neoth consent revoke <provider>` removed a
 /// cloud-provider consent marker, so the next cloud-bound call re-prompts (or
 /// bails in non-interactive contexts). Revocation is the security-positive
-/// direction and is equally worth a forensic record. Config-lifecycle band.
-/// Payload (JSON): `{provider, source, ts_unix}`.
+/// direction and is equally worth a forensic record. It uses the same
+/// phase-bound transaction payload as `CONSENT_GRANTED`; only
+/// `phase=committed` proves removal, while `prepared`/`aborted` retain intent
+/// and recovery evidence.
 pub const EVENT_TYPE_CONSENT_REVOKED: u8 = 0xDC;
 
 /// `0xDD SUDOMODE_PRESET_APPLIED` — GOLD-FEAT-01c. `neoth autonomy full-auto`

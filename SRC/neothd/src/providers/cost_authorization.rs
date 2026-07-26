@@ -1131,10 +1131,40 @@ pub struct ProviderCallAuthorizer {
     usage_home: Option<PathBuf>,
     usage_automated: bool,
     council_daily_budget: Option<crate::council::daily_budget::DailyBudgetPolicy>,
+    ephemeral_consent: crate::consent::EphemeralConsent,
     #[cfg(test)]
     allow_missing_writer: bool,
     #[cfg(test)]
     allow_unproven_ceiling: bool,
+}
+
+fn validate_spent_ephemeral_after_durable_miss(
+    home: &Path,
+    route: &crate::consent::ConsentRoute,
+) -> Result<()> {
+    // A mutation can enter Prepared between the first journal check and the
+    // route read. Never reinterpret that fail-closed state as an AllowOnce
+    // miss: re-check both journal and marker coherence immediately before
+    // accepting the spent permit.
+    match crate::cli::consent_outbox::blocks_provider_use(home, route.kind) {
+        Ok(false) => {}
+        Ok(true) => {
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(
+                "provider live-consent gate found a concurrent pending consent mutation".into(),
+            )));
+        }
+        Err(error) => {
+            return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider live-consent gate could not revalidate mutation state: {error}"
+            ))));
+        }
+    }
+    crate::consent::list_route_grants_for_kind(home, route.kind).map_err(|error| {
+        anyhow::anyhow!(ProviderAuthorizationError(format!(
+            "provider live-consent gate could not revalidate durable state: {error}"
+        )))
+    })?;
+    Ok(())
 }
 
 impl ProviderCallAuthorizer {
@@ -1156,6 +1186,9 @@ impl ProviderCallAuthorizer {
         let Some(route) = route else {
             return Ok(());
         };
+        if !crate::consent::route_requires_consent(route.kind, route.endpoint.as_deref()) {
+            return Ok(());
+        }
         let Some(home) = self.usage_home.as_deref() else {
             #[cfg(test)]
             return Ok(());
@@ -1164,11 +1197,44 @@ impl ProviderCallAuthorizer {
                 "provider live-consent gate has no instance home; dispatch is blocked".into(),
             )));
         };
-        crate::consent::ensure_route_still_granted(home, route).map_err(|error| {
+        match crate::cli::consent_outbox::blocks_provider_use(home, route.kind) {
+            Ok(false) => {}
+            Ok(true) => {
+                return Err(anyhow::anyhow!(ProviderAuthorizationError(
+                    "provider live-consent gate found a pending consent mutation".into(),
+                )));
+            }
+            Err(error) => {
+                return Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider live-consent gate could not validate mutation state: {error}"
+                ))));
+            }
+        }
+        // Validate the durable store before touching a one-shot capability.
+        // Once the store is known coherent, atomically spend a matching permit
+        // on the first matching leaf attempt even when durable authority also
+        // exists. Otherwise grant -> send -> revoke could resurrect the stale
+        // one-shot permit for a second send.
+        crate::consent::list_route_grants_for_kind(home, route.kind).map_err(|error| {
             anyhow::anyhow!(ProviderAuthorizationError(format!(
-                "provider live-consent gate blocked dispatch: {error}"
+                "provider live-consent gate rejected malformed durable state: {error}"
             )))
-        })
+        })?;
+        let spent_ephemeral = self
+            .ephemeral_consent
+            .consume_route(route)
+            .map_err(|error| {
+                anyhow::anyhow!(ProviderAuthorizationError(format!(
+                    "provider live-consent gate could not consume one-shot authority: {error}"
+                )))
+            })?;
+        match crate::consent::ensure_route_still_granted(home, route) {
+            Ok(()) => Ok(()),
+            Err(_) if spent_ephemeral => validate_spent_ephemeral_after_durable_miss(home, route),
+            Err(durable_error) => Err(anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider live-consent gate blocked dispatch: {durable_error}"
+            )))),
+        }
     }
 
     /// Build an interactive authorizer with its own collision-resistant WAL
@@ -1234,6 +1300,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: false,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1257,6 +1324,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1284,6 +1352,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1308,6 +1377,7 @@ impl ProviderCallAuthorizer {
             usage_home: default_usage_home(),
             usage_automated: true,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1337,6 +1407,7 @@ impl ProviderCallAuthorizer {
             usage_home: Some(usage_home.into()),
             usage_automated: true,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1362,6 +1433,7 @@ impl ProviderCallAuthorizer {
             usage_home: Some(usage_home.into()),
             usage_automated: true,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             #[cfg(test)]
             allow_missing_writer: false,
             #[cfg(test)]
@@ -1386,6 +1458,7 @@ impl ProviderCallAuthorizer {
             usage_home: None,
             usage_automated: false,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -1401,6 +1474,7 @@ impl ProviderCallAuthorizer {
             usage_home: None,
             usage_automated: false,
             council_daily_budget: None,
+            ephemeral_consent: crate::consent::EphemeralConsent::default(),
             allow_missing_writer: true,
             allow_unproven_ceiling: true,
         }
@@ -1454,6 +1528,17 @@ impl ProviderCallAuthorizer {
     /// This is also the hermetic test seam for terminal metering.
     pub fn with_usage_home(mut self, home: impl Into<PathBuf>) -> Self {
         self.usage_home = Some(home.into());
+        self
+    }
+
+    /// Attach the exact process-local routes approved by audited `AllowOnce`
+    /// decisions for this command invocation. The capability is copied into
+    /// decorator/fallback authorizer clones but is never persisted or global.
+    pub(crate) fn with_ephemeral_consent(
+        mut self,
+        consent: crate::consent::EphemeralConsent,
+    ) -> Self {
+        self.ephemeral_consent = consent;
         self
     }
 
@@ -2126,6 +2211,129 @@ mod tests {
 
     fn test_input_token_cap() -> u32 {
         crate::config::TokensConfig::default_max_per_request()
+    }
+
+    #[test]
+    fn ephemeral_consent_is_exact_and_shared_single_use_across_clones() {
+        let home = tempfile::TempDir::new().unwrap();
+        let route_a = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::LocalOllama,
+            Some("http://ollama-a.example:11434/api"),
+        );
+        let route_b = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::LocalOllama,
+            Some("http://ollama-b.example:11434/api"),
+        );
+        let base = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_usage_home(home.path().to_path_buf());
+        assert!(base.ensure_live_consent(Some(&route_a)).is_err());
+
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route_a).unwrap();
+        let scoped = base.with_ephemeral_consent(ephemeral);
+        let retry_or_helper = scoped.clone();
+
+        scoped.ensure_live_consent(Some(&route_a)).unwrap();
+        assert!(
+            retry_or_helper.ensure_live_consent(Some(&route_a)).is_err(),
+            "an authorizer clone must share and consume the same one-shot authority"
+        );
+        assert!(scoped.ensure_live_consent(Some(&route_b)).is_err());
+        assert!(
+            ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                .with_usage_home(home.path().to_path_buf())
+                .ensure_live_consent(Some(&route_a))
+                .is_err(),
+            "a later authorizer must not inherit AllowOnce authority"
+        );
+    }
+
+    #[test]
+    fn ephemeral_consent_does_not_bypass_malformed_durable_marker() {
+        let home = tempfile::TempDir::new().unwrap();
+        let route =
+            crate::consent::ConsentRoute::new(crate::cli::init::ProviderKind::OpenaiApi, None);
+        std::fs::create_dir_all(crate::consent::consent_dir(home.path())).unwrap();
+        std::fs::write(
+            crate::consent::marker_path(home.path(), crate::cli::init::ProviderKind::OpenaiApi),
+            b"not-a-timestamp",
+        )
+        .unwrap();
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).unwrap();
+
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_usage_home(home.path().to_path_buf())
+            .with_ephemeral_consent(ephemeral);
+        assert!(authorizer.ensure_live_consent(Some(&route)).is_err());
+    }
+
+    #[test]
+    fn durable_first_send_discards_one_shot_before_later_revoke() {
+        let home = tempfile::TempDir::new().unwrap();
+        let route = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        crate::consent::grant_route(home.path(), &route).unwrap();
+        let mut ephemeral = crate::consent::EphemeralConsent::default();
+        ephemeral.allow_route(&route).unwrap();
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_usage_home(home.path().to_path_buf())
+            .with_ephemeral_consent(ephemeral);
+
+        authorizer.ensure_live_consent(Some(&route)).unwrap();
+        crate::consent::revoke(home.path(), route.kind).unwrap();
+        assert!(
+            authorizer.ensure_live_consent(Some(&route)).is_err(),
+            "revocation must not expose a stale one-shot permit after the first durable send"
+        );
+    }
+
+    #[test]
+    fn consent_free_loopback_route_ignores_unrelated_malformed_remote_marker() {
+        let home = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(crate::consent::consent_dir(home.path())).unwrap();
+        std::fs::write(
+            crate::consent::marker_path(home.path(), crate::cli::init::ProviderKind::LocalOllama),
+            b"malformed remote marker",
+        )
+        .unwrap();
+        let loopback = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::LocalOllama,
+            Some("http://127.0.0.1:11434"),
+        );
+        ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_usage_home(home.path().to_path_buf())
+            .ensure_live_consent(Some(&loopback))
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn spent_one_shot_cannot_bypass_concurrent_prepared_mutation() {
+        let home = tempfile::TempDir::new().unwrap();
+        let route = crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::OpenaiApi,
+            Some("https://api.openai.com"),
+        );
+        let update =
+            crate::consent::prepare_grant_routes(home.path(), std::slice::from_ref(&route))
+                .unwrap();
+        let _pending = crate::cli::consent_outbox::begin(
+            home.path(),
+            &update,
+            crate::cli::consent_outbox::ConsentMutationAction::Grant,
+            crate::cli::consent::ConsentMutationSource::Cli,
+            Vec::new(),
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            validate_spent_ephemeral_after_durable_miss(home.path(), &route).is_err(),
+            "a Prepared mutation must remain fail-closed after a one-shot permit is spent"
+        );
     }
 
     struct ScriptedRetryProvider {

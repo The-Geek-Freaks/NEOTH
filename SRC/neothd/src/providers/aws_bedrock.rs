@@ -43,6 +43,8 @@ use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControl
 /// AWS service name used in the SigV4 credential scope. **Not**
 /// `bedrock-runtime` — the runtime data plane signs under `bedrock`.
 const SERVICE_NAME: &str = "bedrock";
+pub(crate) const DEFAULT_REGION: &str = "us-east-1";
+pub(crate) const DEFAULT_ENDPOINT_ORIGIN: &str = "https://bedrock-runtime.us-east-1.amazonaws.com";
 
 /// Adapter for Bedrock Runtime.
 pub struct AwsBedrockAdapter {
@@ -72,13 +74,8 @@ impl AwsBedrockAdapter {
         credentials: AwsCredentials,
         default_model: impl Into<String>,
     ) -> Result<Self> {
-        let region = normalise_region(region.into());
-        if region.is_empty() {
-            anyhow::bail!(
-                "aws_bedrock: empty region — set `provider_region: us-east-1` in freedom.yaml \
-                 (or AWS_REGION env var) before selecting the aws_bedrock provider"
-            );
-        }
+        let region = region.into();
+        let region = canonical_region(&region)?;
         let default_model = default_model.into();
         if default_model.is_empty() {
             anyhow::bail!(
@@ -121,6 +118,76 @@ impl AwsBedrockAdapter {
     }
 }
 
+/// Resolve the exact region the runtime will put on the wire.
+///
+/// A configured value wins even when it is invalid; validation then fails
+/// closed instead of silently falling through to an environment variable.
+/// This mirrors the synthetic-config precedence used by hemisphere and
+/// fallback slots (`slot.region` is copied into `provider_region` first).
+pub(crate) fn effective_region(configured: Option<&str>) -> Result<String> {
+    let env_region = std::env::var("AWS_REGION").ok();
+    let env_default_region = std::env::var("AWS_DEFAULT_REGION").ok();
+    effective_region_from_candidates(
+        configured,
+        env_region.as_deref(),
+        env_default_region.as_deref(),
+    )
+}
+
+pub(crate) fn effective_region_from_candidates(
+    configured: Option<&str>,
+    env_region: Option<&str>,
+    env_default_region: Option<&str>,
+) -> Result<String> {
+    canonical_region(
+        configured
+            .or(env_region)
+            .or(env_default_region)
+            .unwrap_or(DEFAULT_REGION),
+    )
+}
+
+pub(crate) fn endpoint_origin_for_region(region: &str) -> Result<String> {
+    let region = canonical_region(region)?;
+    Ok(format!("https://bedrock-runtime.{region}.amazonaws.com"))
+}
+
+pub(crate) fn effective_endpoint_origin(configured_region: Option<&str>) -> Result<String> {
+    endpoint_origin_for_region(&effective_region(configured_region)?)
+}
+
+/// Accept only the AWS Bedrock Runtime hostname shape and return its canonical
+/// HTTPS origin. Raw input is deliberately absent from every error because a
+/// malformed config value can contain credential material.
+pub(crate) fn canonical_endpoint_origin(endpoint: &str) -> Result<String> {
+    let url = url::Url::parse(endpoint)
+        .map_err(|_| anyhow::anyhow!("aws_bedrock: invalid Bedrock Runtime endpoint"))?;
+    if url.scheme() != "https"
+        || url.username() != ""
+        || url.password().is_some()
+        || url.port().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !matches!(url.path(), "" | "/")
+    {
+        anyhow::bail!("aws_bedrock: invalid Bedrock Runtime endpoint");
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("aws_bedrock: invalid Bedrock Runtime endpoint"))?;
+    let region = host
+        .strip_prefix("bedrock-runtime.")
+        .and_then(|value| value.strip_suffix(".amazonaws.com"))
+        .ok_or_else(|| anyhow::anyhow!("aws_bedrock: invalid Bedrock Runtime endpoint"))?;
+    let canonical = endpoint_origin_for_region(region)?;
+    if url.origin().ascii_serialization() != canonical
+        || (endpoint != canonical && endpoint != format!("{canonical}/"))
+    {
+        anyhow::bail!("aws_bedrock: non-canonical Bedrock Runtime endpoint");
+    }
+    Ok(canonical)
+}
+
 #[async_trait]
 impl Provider for AwsBedrockAdapter {
     fn name(&self) -> &'static str {
@@ -133,6 +200,13 @@ impl Provider for AwsBedrockAdapter {
 
     fn default_model(&self) -> Option<&str> {
         Some(&self.default_model)
+    }
+
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        Some(crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::AwsBedrock,
+            Some(&format!("https://{}", self.endpoint_host())),
+        ))
     }
 
     fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
@@ -321,7 +395,19 @@ fn map_bedrock_error(status: reqwest::StatusCode, body: &str, region: &str) -> a
 /// Trim trailing slashes + whitespace + any path suffix an operator
 /// might have pasted accidentally (e.g. they paste a Bedrock console
 /// URL instead of the region code).
-fn normalise_region(raw: String) -> String {
+fn canonical_region(raw: &str) -> Result<String> {
+    let region = normalise_region(raw);
+    if region.is_empty() {
+        anyhow::bail!(
+            "aws_bedrock: empty region — set `provider_region: us-east-1` in freedom.yaml \
+             (or AWS_REGION env var) before selecting the aws_bedrock provider"
+        );
+    }
+    validate_region(&region)?;
+    Ok(region)
+}
+
+fn normalise_region(raw: &str) -> String {
     raw.trim()
         .trim_end_matches('/')
         .trim_start_matches("https://")
@@ -329,6 +415,22 @@ fn normalise_region(raw: String) -> String {
         .trim_end_matches(".amazonaws.com")
         .trim_start_matches("bedrock-runtime.")
         .to_string()
+}
+
+fn validate_region(region: &str) -> Result<()> {
+    if region.len() > 63
+        || region.starts_with('-')
+        || region.ends_with('-')
+        || !region
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        || !region.contains('-')
+    {
+        anyhow::bail!(
+            "aws_bedrock: invalid region; expected a lowercase AWS region id such as `us-east-1`"
+        );
+    }
+    Ok(())
 }
 
 fn build_converse_body(req: &Request) -> ConverseRequest {
@@ -512,6 +614,13 @@ mod tests {
         .expect("construct");
         assert_eq!(a.name(), "aws_bedrock");
         assert_eq!(a.region, "us-east-1");
+        assert_eq!(
+            a.consent_route(),
+            Some(crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::AwsBedrock,
+                Some("https://bedrock-runtime.us-east-1.amazonaws.com"),
+            ))
+        );
     }
 
     #[test]
@@ -519,6 +628,19 @@ mod tests {
         let err = AwsBedrockAdapter::new("", dummy_creds(), "amazon.titan-text-express-v1")
             .expect_err("must reject");
         assert!(err.to_string().contains("empty region"));
+    }
+
+    #[test]
+    fn region_cannot_rewrite_the_bedrock_host() {
+        for region in [
+            "us-east-1.evil.example",
+            "us-east-1/path",
+            "US-EAST-1",
+            "-us-east-1",
+        ] {
+            let error = AwsBedrockAdapter::new(region, dummy_creds(), "test-model").unwrap_err();
+            assert!(error.to_string().contains("invalid region"));
+        }
     }
 
     #[test]
@@ -531,11 +653,62 @@ mod tests {
     fn normalise_region_strips_url_prefixes() {
         // Operator paste-error: full hostname instead of region code.
         assert_eq!(
-            normalise_region("https://bedrock-runtime.eu-central-1.amazonaws.com".to_string()),
+            normalise_region("https://bedrock-runtime.eu-central-1.amazonaws.com"),
             "eu-central-1"
         );
-        assert_eq!(normalise_region("us-east-1/".to_string()), "us-east-1");
-        assert_eq!(normalise_region(" eu-west-2 ".to_string()), "eu-west-2");
+        assert_eq!(normalise_region("us-east-1/"), "us-east-1");
+        assert_eq!(normalise_region(" eu-west-2 "), "eu-west-2");
+    }
+
+    #[test]
+    fn effective_region_precedence_is_config_then_environment_then_default() {
+        assert_eq!(
+            effective_region_from_candidates(
+                Some("eu-central-1"),
+                Some("ap-southeast-2"),
+                Some("us-west-2"),
+            )
+            .unwrap(),
+            "eu-central-1"
+        );
+        assert_eq!(
+            effective_region_from_candidates(None, Some("ap-southeast-2"), Some("us-west-2"),)
+                .unwrap(),
+            "ap-southeast-2"
+        );
+        assert_eq!(
+            effective_region_from_candidates(None, None, Some("us-west-2")).unwrap(),
+            "us-west-2"
+        );
+        assert_eq!(
+            effective_region_from_candidates(None, None, None).unwrap(),
+            DEFAULT_REGION
+        );
+        assert!(effective_region_from_candidates(Some(""), Some("us-east-1"), None).is_err());
+    }
+
+    #[test]
+    fn bedrock_endpoint_origins_are_region_bound_and_fail_closed() {
+        assert_eq!(
+            endpoint_origin_for_region("eu-central-1").unwrap(),
+            "https://bedrock-runtime.eu-central-1.amazonaws.com"
+        );
+        assert_eq!(
+            canonical_endpoint_origin("https://bedrock-runtime.eu-central-1.amazonaws.com/")
+                .unwrap(),
+            "https://bedrock-runtime.eu-central-1.amazonaws.com"
+        );
+        for endpoint in [
+            "http://bedrock-runtime.us-east-1.amazonaws.com",
+            "https://bedrock-runtime.US-EAST-1.amazonaws.com",
+            "https://bedrock-runtime.us-east-1.amazonaws.com:443",
+            "https://bedrock-runtime.us-east-1.amazonaws.com/model/x",
+            "https://bedrock-runtime.us-east-1.amazonaws.com.evil.example",
+            "https://operator:secret@bedrock-runtime.us-east-1.amazonaws.com",
+        ] {
+            let error = canonical_endpoint_origin(endpoint).unwrap_err();
+            assert!(!format!("{error:#}").contains("secret"));
+        }
     }
 
     #[test]

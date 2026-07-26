@@ -86,6 +86,12 @@ pub struct ChatArgs {
     #[arg(skip)]
     pub stream: bool,
 
+    /// Private GUI bridge: read a short-lived one-time consent token from
+    /// stdin before any provider is constructed. The token is never accepted
+    /// in argv and is atomically consumed.
+    #[arg(long, hide = true)]
+    pub gui_consent_token_stdin: bool,
+
     /// Sampling temperature for providers that support it. Range [0.0, 2.0];
     /// Cohere, Bedrock, and legacy Anthropic cap it at 1.0, while Anthropic
     /// models after Opus 4.6 accept only 1.0. An unsupported selected provider
@@ -196,10 +202,10 @@ fn persist_chat_onboarding_complete(config_path: &std::path::Path) -> Result<()>
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
     let neoth_home = chat_neoth_home(args.config.as_deref());
-    let config = match &args.config {
-        Some(p) => FreedomConfig::load_from_path(p)?,
-        None => FreedomConfig::load_from_default_path()?,
-    };
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(FreedomConfig::default_path);
     // V03-08 + A-2 preflight: gate every cloud provider the chat invocation
     // could reach behind first-run consent. Covers the legacy single-mode
     // `provider_kind` AND the per-hemisphere providers in
@@ -208,9 +214,29 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // primary claude_cli). Runs before any provider is built so a declined
     // operator never sees a half-spun adapter. Bypass via
     // `NEOTH_CONSENT_BYPASS=1` for CI / scripted reruns.
-    {
-        crate::consent::ensure_all_granted_or_prompt(&neoth_home, &config)?;
-    }
+    let (config, ephemeral_consent) = if args.gui_consent_token_stdin {
+        anyhow::ensure!(
+            args.message.is_some(),
+            "`--gui-consent-token-stdin` requires the chat message in argv; stdin is reserved for the private token"
+        );
+        let consumed = crate::cli::consent_challenge::consume_chat_token_from_stdin(
+            &neoth_home,
+            &config_path,
+        )?;
+        (consumed.config, consumed.ephemeral)
+    } else {
+        let config = match &args.config {
+            Some(path) => FreedomConfig::load_from_path(path)?,
+            None => FreedomConfig::load_from_default_path()?,
+        };
+        let ephemeral = crate::cli::consent::ensure_all_granted_or_prompt_at(
+            &neoth_home,
+            &config,
+            crate::cli::consent::ConsentMutationSource::Tty,
+        )
+        .await?;
+        (config, ephemeral)
+    };
     // CH-04: chat dispatch routes through the Left hemisphere (analytic /
     // structured reasoning). In Single mode `from_config_for_role` falls
     // through to the same default-slot adapter `from_config` would build,
@@ -223,7 +249,13 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // below this provider build), and the operator is present to see a 429
     // failover in the logs. The daemon path threads its writer for the
     // durable `0x25 PROVIDER_FALLBACK_ATTEMPTED` audit frame.
-    let provider = providers::fallback_chain_from_config(&config, &neoth_home, None).await?;
+    let provider = providers::fallback_chain_from_config_interactive(
+        &config,
+        &neoth_home,
+        None,
+        &ephemeral_consent,
+    )
+    .await?;
     // GOLD-ADAPT-HARNESS-03: wrap with history-compaction middleware when enabled.
     // CLI path has no WAL writer yet (writer is opened inside run_chat_with),
     // so WAL audit frames are skipped here (wal=None). The inner provider retains
@@ -242,7 +274,7 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     } else {
         provider
     };
-    run_chat_with(args, config, provider.as_ref()).await
+    run_chat_with_consent(args, config, provider.as_ref(), ephemeral_consent).await
 }
 
 /// Inner entry point that takes a pre-built `Provider`. Used by `run_chat`
@@ -1685,6 +1717,7 @@ async fn enforce_preflight(
     // PreProviderCall within the same session. Arc-backed so it is cheaply
     // Clone and safe to pass by shared ref across stages.
     once_guard: &crate::hooks::SessionOnceGuard,
+    ephemeral_consent: &crate::consent::EphemeralConsent,
 ) -> Result<PreflightOutcome> {
     // Resolve sub-agent dispatch once and reuse it for prompt + model routing.
     // The PaidProviderCall decision now happens at each real provider leaf,
@@ -1960,6 +1993,7 @@ async fn enforce_preflight(
                                 config.tokens.max_per_request,
                             )
                             .with_usage_home(home.to_path_buf())
+                            .with_ephemeral_consent(ephemeral_consent.clone())
                             .with_audit_context(
                                 crate::providers::cost_authorization::ProviderCallAuditContext {
                                     source: Some("chat"),
@@ -2435,17 +2469,13 @@ async fn dispatch_provider(
     // Per-turn metadata copied into every concrete provider-leaf lifecycle
     // frame. Exact provider/model/request hashes are added centrally.
     provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
+    ephemeral_consent: &crate::consent::EphemeralConsent,
 ) -> Result<DispatchOutput> {
-    // Startup prompting proves consent only at provider construction time.
-    // Re-read the durable markers at the final one-shot dispatch boundary so
-    // a concurrent `neoth consent revoke` cannot leave this invocation holding
-    // a stale capability. The live gate intentionally ignores the startup-only
-    // NEOTH_CONSENT_BYPASS escape hatch.
-    if let Err(error) = crate::consent::ensure_all_still_granted(home, config) {
-        drop(writer);
-        let _ = writer_join.await;
-        return Err(error).context("chat provider consent was revoked before dispatch");
-    }
+    // Consent is revalidated by ProviderCallAuthorizer immediately before
+    // every concrete provider leaf. That gate checks the current durable
+    // marker plus this command-scoped exact-route capability. A second
+    // durable-only aggregate check here would incorrectly reject AllowOnce
+    // before the leaf authorizer could consume it.
     let provider_name = provider.name();
     // ── Provider call (sync OR stream) ────────────────────────────────────
     // R-04 2026-05-17: clone final_prompt + final_system here rather
@@ -2516,6 +2546,7 @@ async fn dispatch_provider(
             config.tokens.max_per_request,
         )
         .with_usage_home(home.to_path_buf())
+        .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(provider_audit_context);
     let authorized_provider = crate::providers::cost_authorization::CostAuthorizingProvider::new(
         &token_capped_provider,
@@ -3660,6 +3691,7 @@ async fn run_post_reply_pipelines(
     // hook stage so WAL/recall never see placeholder text.
     // Empty vec when no BlockFilter hooks fired this turn (no-op).
     pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
+    ephemeral_consent: &crate::consent::EphemeralConsent,
 ) -> Result<()> {
     let first_tour_home = instance_paths.home.clone();
     // ODY-16: auto-scale token cap from discovered model context window
@@ -3702,6 +3734,7 @@ async fn run_post_reply_pipelines(
             config.tokens.max_per_request,
         )
         .with_usage_home(first_tour_home.clone())
+        .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
                 source: Some("chat"),
@@ -4243,7 +4276,8 @@ async fn run_post_reply_pipelines(
                         Some(writer.clone()),
                         config.tokens.max_per_request,
                     )
-                    .with_usage_home(first_tour_home.clone()),
+                    .with_usage_home(first_tour_home.clone())
+                    .with_ephemeral_consent(ephemeral_consent.clone()),
                     None,
                     "profile_learning_round",
                 );
@@ -4514,6 +4548,7 @@ async fn run_post_reply_pipelines(
             &first_tour_home,
             &current_session_id,
             &prompt,
+            ephemeral_consent,
         )
         .await;
     }
@@ -4630,9 +4665,24 @@ async fn run_post_reply_pipelines(
 }
 
 pub async fn run_chat_with(
+    args: ChatArgs,
+    config: FreedomConfig,
+    provider: &dyn crate::providers::Provider,
+) -> Result<()> {
+    run_chat_with_consent(
+        args,
+        config,
+        provider,
+        crate::consent::EphemeralConsent::default(),
+    )
+    .await
+}
+
+async fn run_chat_with_consent(
     mut args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
+    ephemeral_consent: crate::consent::EphemeralConsent,
 ) -> Result<()> {
     info!(provider = provider.name(), "neoth chat");
     let selected_config_path = args
@@ -5093,6 +5143,7 @@ pub async fn run_chat_with(
         // B22-TWEAKS-MODEL-01 — tweaks loaded fail-loud above; propagate here.
         tweaks.model_default.clone(),
         &once_guard,
+        &ephemeral_consent,
     )
     .await?
     {
@@ -5224,6 +5275,7 @@ pub async fn run_chat_with(
         skill_effort,
         model_source,
         provider_audit_context,
+        &ephemeral_consent,
     )
     .await?;
 
@@ -5264,6 +5316,7 @@ pub async fn run_chat_with(
         // hooks; restored inside run_post_reply_pipelines after PostProviderCall
         // hook stage so WAL/recall never see placeholders.
         pending_block_restorations,
+        &ephemeral_consent,
     )
     .await
 }
@@ -5280,6 +5333,7 @@ async fn name_session_best_effort(
     home: &std::path::Path,
     session_id: &str,
     opening: &str,
+    ephemeral_consent: &crate::consent::EphemeralConsent,
 ) {
     let provider = match crate::providers::from_config_for_utility_at(config, home).await {
         Ok(p) => p,
@@ -5306,6 +5360,7 @@ async fn name_session_best_effort(
             config.tokens.max_per_request,
         )
         .with_usage_home(home.to_path_buf())
+        .with_ephemeral_consent(ephemeral_consent.clone())
         .with_audit_context(
             crate::providers::cost_authorization::ProviderCallAuditContext {
                 source: Some("chat"),
@@ -9917,6 +9972,9 @@ mod tests {
             provider_kind: Some(ProviderKind::OpenaiApi),
             provider_model: Some("gpt-4o".into()),
             language_primary: Some("en".into()),
+            // Reach the live-consent recheck rather than failing earlier on a
+            // non-interactive PaidProviderCall confirmation.
+            autonomy: crate::permissions::AutonomyLevel::Full,
             ..Default::default()
         };
         let provider = ConsentCountingProvider::default();
@@ -9929,6 +9987,7 @@ mod tests {
             config: Some(config_path),
             wal_segment: Some(segment),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -9942,7 +10001,10 @@ mod tests {
         let error = run_chat_with(args, config, &provider)
             .await
             .expect_err("missing live consent marker must stop the final dispatch");
-        assert!(error.to_string().contains("consent"));
+        assert!(
+            error.to_string().contains("consent"),
+            "unexpected pre-dispatch error: {error:#}"
+        );
         assert_eq!(
             provider.calls.load(std::sync::atomic::Ordering::SeqCst),
             0,
@@ -9972,6 +10034,7 @@ mod tests {
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10087,6 +10150,7 @@ mod tests {
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10264,6 +10328,7 @@ mod tests {
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10386,6 +10451,7 @@ mod tests {
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10546,6 +10612,7 @@ mod tests {
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: true,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10711,6 +10778,7 @@ mod tests {
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -10876,6 +10944,7 @@ mod tests {
             config: Some(dir.path().join("freedom.yaml")),
             wal_segment: Some(seg.clone()),
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -12802,6 +12871,7 @@ mod tests {
             config: None,
             wal_segment: None,
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -12826,6 +12896,7 @@ mod tests {
         };
         let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
         let mcp_servers = crate::mcp::McpServers::default();
+        let ephemeral_consent = crate::consent::EphemeralConsent::default();
         let result = dispatch_provider(
             "test prompt".to_string(),
             None,
@@ -12850,6 +12921,7 @@ mod tests {
             None,
             authorized_source,
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
+            &ephemeral_consent,
         )
         .await;
 
@@ -12941,6 +13013,7 @@ mod tests {
             config: None,
             wal_segment: None,
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -12955,6 +13028,7 @@ mod tests {
         let (writer, writer_join) =
             wal_spawn(dir.path().join("authorization-failure.wal")).expect("wal_spawn");
         let mcp_servers = crate::mcp::McpServers::default();
+        let ephemeral_consent = crate::consent::EphemeralConsent::default();
 
         let dispatch = dispatch_provider(
             "blocked prompt".to_string(),
@@ -12979,6 +13053,7 @@ mod tests {
             None,
             "cli",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
+            &ephemeral_consent,
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
@@ -13057,6 +13132,7 @@ mod tests {
             config: None,
             wal_segment: None,
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,
@@ -13071,6 +13147,7 @@ mod tests {
         config.autonomy = crate::permissions::AutonomyLevel::Full;
         let (writer, writer_join) = wal_spawn(seg).expect("wal_spawn");
         let mcp_servers = crate::mcp::McpServers::default();
+        let ephemeral_consent = crate::consent::EphemeralConsent::default();
         let result = dispatch_provider(
             "effort test".to_string(),
             None,
@@ -13094,6 +13171,7 @@ mod tests {
             override_effort,
             "provider_default",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
+            &ephemeral_consent,
         )
         .await;
 
@@ -13569,6 +13647,7 @@ mod attach_tests {
             config: None,
             wal_segment: None,
             stream: false,
+            gui_consent_token_stdin: false,
             temperature: None,
             top_p: None,
             sampling_seed: None,

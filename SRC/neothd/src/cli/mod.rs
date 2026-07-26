@@ -47,6 +47,9 @@ pub mod completions;
 pub mod computer_use;
 pub mod connect;
 pub mod consent;
+#[doc(hidden)]
+pub mod consent_challenge;
+pub(crate) mod consent_outbox;
 pub mod cost;
 pub mod council;
 pub mod credential;
@@ -145,7 +148,7 @@ pub mod release;
 pub mod reload;
 pub mod review;
 pub mod risk_confirm;
-/// ZF-04 — `neoth rmas consent [--acknowledge]` RecursiveMAS consent gate.
+/// ZF-04 — RecursiveMAS code acknowledgement and revocable provider-egress gates.
 pub mod rmas;
 pub mod rollback;
 pub mod schema;
@@ -856,10 +859,7 @@ pub enum Commands {
     /// canonical `autonomy sovereign` and `security set` policy paths.
     Buddy(buddy::BuddyArgs),
 
-    /// ZF-04 — RecursiveMAS consent gate + status inspector. `consent`
-    /// prints license notice + marker state; `consent --acknowledge` writes
-    /// the marker (idempotent). Only this command creates the marker —
-    /// the wizard and preset code never do.
+    /// Inspect both RecursiveMAS gates: code acknowledgement via `neoth rmas consent --acknowledge`; prompt egress via `neoth consent grant recursive_mas` / `neoth consent revoke recursive_mas`.
     Rmas(rmas::RmasArgs),
 
     /// HMAC key management — show / rotate / list archived keys. Phase 33b

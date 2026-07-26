@@ -15,10 +15,11 @@
 //! the gate deliberately takes only the VRAM slice, not the whole
 //! `HardwareReport`, so it unit-tests without a hardware probe.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::RecursiveMasConfig;
 use crate::daemon::resource_watch::VramReading;
+use anyhow::{Context, Result};
 
 /// Consent marker file name under `~/.neoth/`. Defined here (not in the
 /// feature-gated `recursive_mas_adapter`) so the always-compiled
@@ -26,6 +27,64 @@ use crate::daemon::resource_watch::VramReading;
 /// otherwise the write path and the spawn-time check drift apart and the
 /// consent gate becomes unsatisfiable.
 pub const CONSENT_MARKER: &str = "rmas_consent_acknowledged";
+/// Canonical `YYYY-MM-DDTHH:MM:SSZ` acknowledgement payload length.
+pub const CONSENT_MARKER_BYTES: usize = 20;
+
+pub fn consent_marker_path(home: &Path) -> PathBuf {
+    home.join(CONSENT_MARKER)
+}
+
+/// Validate the instance-bound third-party-code acknowledgement without
+/// following a symlink/reparse point or trusting path metadata captured before
+/// the read. The shared bounded reader also requires one regular, single-link
+/// file and verifies the opened handle against the exact namespace entry.
+pub fn code_acknowledgement_present(home: &Path) -> Result<bool> {
+    let marker = consent_marker_path(home);
+    let bytes = match crate::updater::self_update::read_control_file_bounded_nofollow(
+        home,
+        &marker,
+        CONSENT_MARKER_BYTES,
+        "RecursiveMAS code acknowledgement",
+    ) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+            }) =>
+        {
+            return Ok(false);
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "validate RecursiveMAS code acknowledgement {}",
+                    marker.display()
+                )
+            });
+        }
+    };
+
+    anyhow::ensure!(
+        bytes.len() == CONSENT_MARKER_BYTES,
+        "RecursiveMAS code acknowledgement has invalid canonical length"
+    );
+    let text = std::str::from_utf8(&bytes)
+        .context("RecursiveMAS code acknowledgement is not valid UTF-8")?;
+    let parsed = chrono::DateTime::parse_from_rfc3339(text)
+        .context("RecursiveMAS code acknowledgement timestamp is malformed")?;
+    anyhow::ensure!(
+        parsed.offset().local_minus_utc() == 0
+            && parsed
+                .with_timezone(&chrono::Utc)
+                .format("%Y-%m-%dT%H:%M:%SZ")
+                .to_string()
+                == text,
+        "RecursiveMAS code acknowledgement is not canonical UTC"
+    );
+    Ok(true)
+}
 
 /// Typed refusal reason — callers surface this verbatim to the operator
 /// (actionable: which knob to turn), never a bare bool.

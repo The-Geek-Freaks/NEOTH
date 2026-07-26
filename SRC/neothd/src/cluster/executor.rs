@@ -725,7 +725,14 @@ mod tests {
             "no provider bytes dispatched"
         );
 
-        crate::consent::grant(home.path(), crate::cli::init::ProviderKind::LocalOllama).unwrap();
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::LocalOllama,
+                Some("http://192.168.1.25:11434"),
+            ),
+        )
+        .unwrap();
         let allowed = run_one_task(
             Some(provider),
             job("private delegated text"),

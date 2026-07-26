@@ -4260,6 +4260,52 @@ pub(crate) fn spawn_self_dev_outbox(
     handle
 }
 
+/// Retry the single durable consent-mutation journal through the daemon-owned
+/// WAL writer. Startup performs one strict recovery before provider
+/// construction; this loop covers optional audit delivery failures created
+/// while the daemon is already running.
+pub(crate) fn spawn_consent_outbox_recovery(
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+) -> JoinHandle<()> {
+    let home = home.to_path_buf();
+    let writer = writer.clone();
+    tokio::spawn(async move {
+        const DRAIN_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(DRAIN_INTERVAL).await;
+            match crate::cli::consent_outbox::recover_pending_with_writer(&home, &writer).await {
+                Ok(crate::cli::consent_outbox::RecoveryOutcome::None) => {}
+                Ok(crate::cli::consent_outbox::RecoveryOutcome::Recovered {
+                    operation_id,
+                    phase,
+                    delivery,
+                }) => {
+                    if delivery.is_pending() {
+                        warn!(
+                            %operation_id,
+                            phase = phase.as_str(),
+                            "consent audit retry remains pending"
+                        );
+                    } else {
+                        info!(
+                            %operation_id,
+                            phase = phase.as_str(),
+                            "consent mutation journal recovered"
+                        );
+                    }
+                }
+                Err(error) => {
+                    warn!(
+                        %error,
+                        "consent mutation journal recovery failed; state retained fail-closed"
+                    );
+                }
+            }
+        }
+    })
+}
+
 /// Cluster audit-sidecar ingester (cluster feature only). Polls
 /// `~/.neoth/pending_audit/cluster_*.json` every 5s, appends the WAL 0xE6/0xE7
 /// frame, removes the consumed file. Bare `JoinHandle<()>` (always spawns under
@@ -6221,8 +6267,19 @@ pub(crate) async fn prime_runtime_services(
     // bails with an actionable error if any cloud provider in the operator's
     // freedom.yaml is not yet consented (covers single-mode `provider_kind` AND
     // the per-hemisphere providers). `NEOTH_CONSENT_BYPASS=1` skips it for CI.
-    crate::consent::ensure_all_granted_or_prompt(neoth_home, config)
-        .context("consent gate (V03-08 + A-2)")?;
+    let ephemeral_consent = crate::cli::consent::ensure_all_granted_or_prompt_at(
+        neoth_home,
+        config,
+        crate::cli::consent::ConsentMutationSource::Tty,
+    )
+    .await
+    .context("consent gate (V03-08 + A-2)")?;
+    if !ephemeral_consent.is_empty() {
+        anyhow::bail!(
+            "daemon startup cannot retain Allow Once consent; use `neoth consent grant <provider>` \
+             for each required route before starting `neoth serve`"
+        );
+    }
 
     // E-22 chat-route: prime the process-wide SkillRegistry + start its
     // filesystem watcher BEFORE any request-handling task spawns, so operator
@@ -6371,6 +6428,7 @@ pub(crate) struct BackgroundHandles {
     pub credentials_import_task: JoinHandle<()>,
     pub detect_complete_task: JoinHandle<()>,
     pub self_dev_outbox_task: JoinHandle<()>,
+    pub consent_outbox_task: JoinHandle<()>,
     pub indexer_task: Option<JoinHandle<()>>,
     pub reload_task: JoinHandle<()>,
     pub audit_rpc_task: Option<JoinHandle<anyhow::Result<()>>>,
@@ -6494,6 +6552,7 @@ pub(crate) async fn shutdown_background_tasks(
         credentials_import_task,
         detect_complete_task,
         self_dev_outbox_task,
+        consent_outbox_task,
         indexer_task,
         reload_task,
         audit_rpc_task,
@@ -6672,6 +6731,35 @@ pub(crate) async fn shutdown_background_tasks(
         }
     }
     crate::cli::serve_tasks::abort_join(self_dev_outbox_task).await;
+    crate::cli::serve_tasks::abort_join(consent_outbox_task).await;
+    match crate::cli::consent_outbox::recover_pending_with_writer(home, &writer).await {
+        Ok(crate::cli::consent_outbox::RecoveryOutcome::None) => {}
+        Ok(crate::cli::consent_outbox::RecoveryOutcome::Recovered {
+            operation_id,
+            phase,
+            delivery,
+        }) => {
+            if delivery.is_pending() {
+                warn!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent audit remains queued after shutdown drain"
+                );
+            } else {
+                info!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent mutation journal final-drained on shutdown"
+                );
+            }
+        }
+        Err(error) => {
+            warn!(
+                %error,
+                "consent mutation journal final-drain failed; state retained for next start"
+            );
+        }
+    }
 
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
     // start picks up from `wal_cursor`.

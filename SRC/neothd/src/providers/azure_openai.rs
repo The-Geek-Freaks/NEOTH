@@ -163,6 +163,13 @@ impl Provider for AzureOpenAiAdapter {
         Some(&self.deployment_name)
     }
 
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        Some(crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::AzureOpenAi,
+            Some(&self.endpoint),
+        ))
+    }
+
     fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
         Some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
     }
@@ -411,6 +418,13 @@ mod tests {
         .expect("construct");
         assert_eq!(a.name(), "azure_openai");
         assert_eq!(a.api_version, DEFAULT_API_VERSION);
+        assert_eq!(
+            a.consent_route(),
+            Some(crate::consent::ConsentRoute::new(
+                crate::cli::init::ProviderKind::AzureOpenAi,
+                Some("https://my-resource.openai.azure.com"),
+            ))
+        );
     }
 
     #[test]

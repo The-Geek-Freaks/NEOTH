@@ -581,14 +581,29 @@ mod tests {
                 .join(crate::config::reload::RELOAD_SENTINEL_NAME)
                 .exists()
         );
-        assert!(selected_home.join("wal").join("000001.wal").exists());
+        assert!(
+            std::fs::read_dir(selected_home.join("wal"))
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .any(|entry| {
+                    entry.path().extension().and_then(|ext| ext.to_str()) == Some("wal")
+                })
+        );
         assert!(selected_home.join("wal").join("hmac.key").exists());
         assert!(
             !decoy_default_home
                 .join(crate::config::reload::RELOAD_SENTINEL_NAME)
                 .exists()
         );
-        assert!(!decoy_default_home.join("wal").join("000001.wal").exists());
+        assert!(
+            !decoy_default_home.join("wal").exists()
+                || !std::fs::read_dir(decoy_default_home.join("wal"))
+                    .unwrap()
+                    .filter_map(|entry| entry.ok())
+                    .any(|entry| {
+                        entry.path().extension().and_then(|ext| ext.to_str()) == Some("wal")
+                    })
+        );
         assert!(!decoy_default_home.join("wal").join("hmac.key").exists());
 
         let reload_sentinel = selected_home.join(crate::config::reload::RELOAD_SENTINEL_NAME);

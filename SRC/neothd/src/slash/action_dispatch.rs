@@ -92,7 +92,7 @@ async fn dispatch_action_at(
         SlashAction::SkillRegistry => handle_skill(trimmed, home).await,
         SlashAction::PluginRegistry => handle_plugin(trimmed, home),
         SlashAction::MemoryView => handle_memory(trimmed, home).await,
-        SlashAction::ConsentManage => handle_consent(trimmed, home).await,
+        SlashAction::ConsentManage => handle_consent(trimmed, config, home).await,
         SlashAction::ReloadConfig => handle_reload(home),
         SlashAction::AutonomyLevel => handle_autonomy(trimmed, config, home).await,
         SlashAction::Quit => ActionOutcome::Exit,
@@ -795,25 +795,60 @@ async fn handle_memory(args: &str, home: &Path) -> ActionOutcome {
     }
 }
 
-async fn handle_consent(args: &str, home: &Path) -> ActionOutcome {
+async fn handle_consent(args: &str, config: &FreedomConfig, home: &Path) -> ActionOutcome {
     let tokens: Vec<&str> = args.split_whitespace().collect();
     let sub = tokens.first().copied().unwrap_or("list");
     match sub {
-        "list" if tokens.len() <= 1 => match crate::consent::list_grants(home) {
-            Ok(grants) if grants.is_empty() => ActionOutcome::Handled {
-                text: "No cloud-provider consent grants recorded.".into(),
-            },
-            Ok(grants) => ActionOutcome::Handled {
-                text: grants
-                    .into_iter()
-                    .map(|(provider, timestamp)| {
-                        format!("{}  granted_at={timestamp}", crate::consent::slug(provider))
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            },
-            Err(error) => failed("/consent list", error),
-        },
+        "list" if tokens.len() <= 1 => {
+            match crate::cli::consent::consent_status_rows(home, Some(config)) {
+                Ok(rows) if rows.is_empty() => ActionOutcome::Handled {
+                    text: "No configured or recorded outbound-provider consent routes.".into(),
+                },
+                Ok(rows) => ActionOutcome::Handled {
+                    text: rows
+                        .into_iter()
+                        .map(|row| {
+                            let configured = (!row.configured_endpoint_origins.is_empty())
+                                .then(|| {
+                                    format!(
+                                        " configured=[{}]",
+                                        row.configured_endpoint_origins.join(", ")
+                                    )
+                                })
+                                .unwrap_or_default();
+                            let granted = (!row.granted_endpoint_origins.is_empty())
+                                .then(|| {
+                                    format!(
+                                        " granted=[{}]",
+                                        row.granted_endpoint_origins.join(", ")
+                                    )
+                                })
+                                .unwrap_or_default();
+                            let stale = (!row.stale_endpoint_origins.is_empty())
+                                .then(|| {
+                                    format!(" stale=[{}]", row.stale_endpoint_origins.join(", "))
+                                })
+                                .unwrap_or_default();
+                            let audit = row
+                                .audit_pending
+                                .then_some(" audit=pending")
+                                .unwrap_or_default();
+                            let error = row
+                                .error
+                                .as_deref()
+                                .map(|error| format!(" error={error}"))
+                                .unwrap_or_default();
+                            format!(
+                                "{}: {}{configured}{granted}{stale}{audit}{error}",
+                                row.provider, row.status
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                },
+                Err(error) => failed("/consent list", error),
+            }
+        }
         "grant" | "revoke" if tokens.len() == 2 => {
             let Some(provider) = crate::consent::kind_from_slug(tokens[1]) else {
                 return ActionOutcome::InvalidArgs {
@@ -821,11 +856,27 @@ async fn handle_consent(args: &str, home: &Path) -> ActionOutcome {
                 };
             };
             let grant = sub == "grant";
-            match crate::cli::consent::change_consent_at(home, provider, grant).await {
-                Ok(was_granted) => ActionOutcome::Handled {
+            match crate::cli::consent::change_consent_with_config_at(
+                home,
+                provider,
+                grant,
+                config,
+                crate::cli::consent::ConsentMutationSource::Slash,
+            )
+            .await
+            {
+                Ok(change) => ActionOutcome::Handled {
                     text: if grant {
-                        format!("Consent granted for `{}`.", crate::consent::slug(provider))
-                    } else if was_granted {
+                        let routes = if change.endpoint_origins.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Routes: {}.", change.endpoint_origins.join(", "))
+                        };
+                        format!(
+                            "Consent granted for `{}`.{routes}",
+                            crate::consent::slug(provider)
+                        )
+                    } else if change.was_granted {
                         format!("Consent revoked for `{}`.", crate::consent::slug(provider))
                     } else {
                         format!(
@@ -1219,7 +1270,7 @@ mod tests {
         let malformed = b"audit_rpc: [broken\n";
         std::fs::write(&path, malformed).unwrap();
 
-        let out = handle_consent("grant openai_api", dir.path()).await;
+        let out = handle_consent("grant openai_api", &FreedomConfig::default(), dir.path()).await;
 
         assert!(matches!(out, ActionOutcome::Failed { .. }));
         assert_eq!(std::fs::read(path).unwrap(), malformed);

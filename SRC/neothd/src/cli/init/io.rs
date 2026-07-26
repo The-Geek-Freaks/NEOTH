@@ -13,8 +13,7 @@ use tracing::{debug, info, warn};
 #[cfg(feature = "wizard")]
 use super::spawn_daemon_detached;
 use super::{
-    InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, try_inline_consent_grant,
-    write_first_tour_marker,
+    InitArgs, OperatorRole, ProviderKind, WizardState, WizardStep, write_first_tour_marker,
 };
 
 /// Defaults owned by the onboarding contract rather than by `FreedomConfig`.
@@ -289,33 +288,14 @@ pub(crate) fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<
             p.display()
         );
     }
-    // Pick #34 (Session 14, operator-flow audit-fix Flow#1): surface
-    // the consent-gate requirement BEFORE the operator runs `neoth
-    // chat` and hits the consent-prompt cold. The gate exists for
-    // every cloud provider (V03-08 + A-2 hard rule) — operators who
-    // never read the docs reach `chat` first, see a consent-failure
-    // error with no context, and don't know which command unblocks
-    // them. The hint here connects wizard → consent → chat in one
-    // operator-visible breath.
-    // Canonical cloud classifier (GOLD-SEC-09 / A-25) — the prior inline
-    // set MISSED AnthropicApi + Cohere, so operators picking those got no
-    // inline consent pre-grant and hit an opaque consent-failure on first
-    // `neoth chat`. Route through `consent::is_cloud` (the single source).
-    let cloud_provider = state.provider_kind.is_some_and(crate::consent::is_cloud);
-    if cloud_provider {
-        // V03-08 — don't just PRINT the consent command (a noob ignores
-        // it, runs `neoth chat`, hits an opaque consent-failure, and
-        // stops). Offer to grant it inline now so first chat just works.
-        // Interactive TTY only; non-interactive / decline / no-wizard
-        // falls back to the printed hint. `consent::grant` is idempotent.
-        let granted_inline = try_inline_consent_grant(args, state.provider_kind, provider_display);
-        if !granted_inline {
-            println!(
-                "\n  Consent gate (V03-08): `neoth chat` will prompt you to grant cloud-egress consent\n  \
-                 for `{provider_display}` on first run. Pre-grant with:\n  \
-                 `neoth consent grant {provider_display}`"
-            );
-        }
+    if state
+        .provider_kind
+        .is_some_and(crate::consent::is_consent_managed_kind)
+    {
+        println!(
+            "\n  Consent gate: after the final configuration is written, NEOTH will offer\n  \
+             to authorize each exact remote egress route for `{provider_display}`."
+        );
     }
     if !args.dry_run {
         println!("\nNext: neoth chat  |  neothd  |  neoth profile show");

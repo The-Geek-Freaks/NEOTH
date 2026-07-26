@@ -280,11 +280,29 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
             return;
         }
     };
-    if let Some(route) = crate::consent::route_for_utility(&config)
-        && let Err(error) = crate::consent::ensure_route_granted_or_prompt(home, &route)
-    {
-        eprintln!("diagnose: provider consent refused ({error}); skipping LLM pass.");
-        return;
+    let mut ephemeral_consent = crate::consent::EphemeralConsent::default();
+    if let Some(route) = crate::consent::route_for_utility(&config) {
+        match crate::cli::consent::ensure_route_granted_or_prompt_at(
+            home,
+            &route,
+            &config,
+            crate::cli::consent::ConsentMutationSource::Tty,
+        )
+        .await
+        {
+            Ok(consent) => {
+                if let Err(error) = ephemeral_consent.extend(consent) {
+                    eprintln!(
+                        "diagnose: provider consent capability failed ({error}); skipping LLM pass."
+                    );
+                    return;
+                }
+            }
+            Err(error) => {
+                eprintln!("diagnose: provider consent refused ({error}); skipping LLM pass.");
+                return;
+            }
+        }
     }
     let provider = match crate::providers::from_config_for_utility_at(&config, home).await {
         Ok(p) => {
@@ -295,7 +313,9 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome], home: &Path) {
                 &wal_dir,
                 config.tokens.max_per_request,
             ) {
-                Ok(authorizer) => authorizer,
+                Ok(authorizer) => {
+                    authorizer.with_ephemeral_consent(ephemeral_consent.clone())
+                }
                 Err(error) => {
                     eprintln!("diagnose: cannot open provider-call audit WAL ({error}); skipping LLM pass.");
                     return;

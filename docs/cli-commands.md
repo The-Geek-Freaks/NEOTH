@@ -617,15 +617,35 @@ UX-01 — discover messaging channels + how to connect them. Read-only post-wiza
 
 Manage first-run outbound-LLM consent (V03-08). `list` shows recorded grants, `show <provider>` reports state for one provider, `grant <provider>` records consent, `revoke <provider>` removes it. Cloud-bound provider calls bail until consent is recorded
 
+### `neoth consent decide-chat` _(hidden)_
+
+Private GUI decision endpoint. The challenge secret is read from stdin
+
+- `--challenge-id <CHALLENGE_ID>`
+- `--decision <DECISION>`
+- `--source <SOURCE>`
+
 ### `neoth consent grant`
 
-Record consent for sending operator text to a cloud provider
+Record consent for the provider's configured remote egress routes
 
 - `<PROVIDER>`
 
 ### `neoth consent list`
 
 List recorded consent grants under `~/.neoth/consent/`
+
+### `neoth consent mutation-binding` _(hidden)_
+
+Private read-only config/route binding for GUI grant and revoke
+
+- `--source <SOURCE>`
+
+### `neoth consent preflight-chat` _(hidden)_
+
+Private GUI preflight for a config- and route-bound chat challenge
+
+- `--source <SOURCE>`
 
 ### `neoth consent revoke`
 
@@ -2967,13 +2987,13 @@ GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next risk-gate-b
 
 ## `neoth rmas`
 
-ZF-04 — RecursiveMAS consent gate + status inspector. `consent` prints license notice + marker state; `consent --acknowledge` writes the marker (idempotent). Only this command creates the marker — the wizard and preset code never do
+Inspect both RecursiveMAS gates: code acknowledgement via `neoth rmas consent --acknowledge`; prompt egress via `neoth consent grant recursive_mas` / `neoth consent revoke recursive_mas`
 
 ### `neoth rmas consent`
 
-Show RecursiveMAS license/consent status; optionally write the consent marker with `--acknowledge`
+Show both gates: code uses `neoth rmas consent --acknowledge`; egress uses `neoth consent grant recursive_mas` / `neoth consent revoke recursive_mas`
 
-- `--acknowledge` — Write the consent marker. Idempotent — safe to run multiple times
+- `--acknowledge` — Acknowledge third-party code. Egress consent remains separate
 
 ## `neoth rollback`
 

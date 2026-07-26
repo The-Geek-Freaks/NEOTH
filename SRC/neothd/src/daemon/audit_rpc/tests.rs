@@ -33,7 +33,7 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 34);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 35);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(
@@ -48,8 +48,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             "{c:#x} (calendar) must be allowed"
         );
     }
-    // SR-017 / GOLD-SEC-30 consent grant/revoke marker audits.
-    for c in [0xDBu8, 0xDC] {
+    // Interactive decision + SR-017 / GOLD-SEC-30 grant/revoke audits.
+    for c in [0x65u8, 0xDB, 0xDC] {
         assert!(
             is_allowed_client_event(c),
             "{c:#x} (consent) must be allowed"

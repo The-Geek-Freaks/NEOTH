@@ -3869,45 +3869,267 @@ pub fn parse_calendar_next(json: &str, n: usize) -> (bool, Vec<(String, String)>
     (true, parsed)
 }
 
-/// Parse `neoth consent list --output json` into Vec<(provider, granted)>.
-/// Also returns a smart-approve hint string (empty if not set).
-pub fn parse_consent(json: &str) -> (Vec<(String, bool)>, String) {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
+/// Authoritative row emitted by `neoth consent list --output json`.
+///
+/// `current_route_granted` is deliberately separate from marker presence:
+/// endpoint-bound providers can retain a stale grant for host A while the live
+/// configuration already targets host B. Both GUI consent surfaces consume
+/// this exact type so they cannot disagree about that state.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentUiRow {
+    pub provider: String,
+    pub consent_required: bool,
+    pub current_route_granted: bool,
+    pub configured_endpoint_origins: Vec<String>,
+    pub granted_endpoint_origins: Vec<String>,
+    pub stale_endpoint_origins: Vec<String>,
+    pub granted_unix_ts: Option<String>,
+    pub grantable: bool,
+    pub revokable: bool,
+    pub status: String,
+    pub error: Option<String>,
+    // Temporary compatibility fields retained while the CLI removes its old
+    // aliases. They never override the authoritative fields above.
+    #[serde(default)]
+    endpoint_origins: Vec<String>,
+    #[serde(default)]
+    granted: Option<bool>,
+}
 
-    let arr = v
-        .as_array()
-        .or_else(|| v.get("consents").and_then(|x| x.as_array()))
-        .cloned()
-        .unwrap_or_default();
+impl ConsentUiRow {
+    pub fn unavailable(error: impl Into<String>) -> Self {
+        Self {
+            provider: "consent_status".to_string(),
+            consent_required: false,
+            current_route_granted: false,
+            configured_endpoint_origins: Vec::new(),
+            granted_endpoint_origins: Vec::new(),
+            stale_endpoint_origins: Vec::new(),
+            granted_unix_ts: None,
+            grantable: false,
+            revokable: false,
+            status: "invalid".to_string(),
+            error: Some(error.into()),
+            endpoint_origins: Vec::new(),
+            granted: Some(false),
+        }
+    }
 
-    let entries: Vec<(String, bool)> = arr
-        .iter()
-        .filter_map(|item| {
-            let provider = item
-                .get("provider")
-                .or_else(|| item.get("name"))
-                .and_then(|x| x.as_str())?
-                .to_string();
-            // Try "granted" bool field first; fall back to "status" == "granted".
-            let granted = if let Some(b) = item.get("granted").and_then(|x| x.as_bool()) {
-                b
+    fn validate(&self) -> Result<(), String> {
+        if self.provider.is_empty()
+            || self.provider.trim() != self.provider
+            || self.provider.chars().any(char::is_control)
+        {
+            return Err("consent row contains an invalid provider slug".to_string());
+        }
+        if !matches!(
+            self.status.as_str(),
+            "granted" | "pending" | "stale" | "not_required" | "invalid"
+        ) {
+            return Err(format!(
+                "consent row `{}` has unknown status `{}`",
+                self.provider, self.status
+            ));
+        }
+        for (label, origins) in [
+            (
+                "configured_endpoint_origins",
+                &self.configured_endpoint_origins,
+            ),
+            ("granted_endpoint_origins", &self.granted_endpoint_origins),
+            ("stale_endpoint_origins", &self.stale_endpoint_origins),
+            ("endpoint_origins", &self.endpoint_origins),
+        ] {
+            let mut unique = std::collections::BTreeSet::new();
+            for origin in origins {
+                if origin.is_empty()
+                    || origin.trim() != origin
+                    || origin.chars().any(char::is_control)
+                {
+                    return Err(format!(
+                        "consent row `{}` has an invalid {label} value",
+                        self.provider
+                    ));
+                }
+                if !unique.insert(origin) {
+                    return Err(format!(
+                        "consent row `{}` repeats a {label} value",
+                        self.provider
+                    ));
+                }
+            }
+        }
+        let configured: std::collections::BTreeSet<_> =
+            self.configured_endpoint_origins.iter().cloned().collect();
+        let granted: std::collections::BTreeSet<_> =
+            self.granted_endpoint_origins.iter().cloned().collect();
+        let stale: std::collections::BTreeSet<_> =
+            self.stale_endpoint_origins.iter().cloned().collect();
+        let endpoint_bound = matches!(
+            self.provider.as_str(),
+            "local_ollama" | "openai_api" | "openai_compat" | "aws_bedrock" | "azure_openai"
+        );
+        if !endpoint_bound
+            && (!configured.is_empty()
+                || !granted.is_empty()
+                || !stale.is_empty()
+                || !self.endpoint_origins.is_empty())
+        {
+            return Err(format!(
+                "provider-wide consent row `{}` unexpectedly reports endpoint-scoped state",
+                self.provider
+            ));
+        }
+        let expected_stale: std::collections::BTreeSet<_> =
+            granted.difference(&configured).cloned().collect();
+        if stale != expected_stale {
+            return Err(format!(
+                "consent row `{}` does not report the exact stale-origin set",
+                self.provider
+            ));
+        }
+        if endpoint_bound && self.consent_required != !self.configured_endpoint_origins.is_empty() {
+            return Err(format!(
+                "consent row `{}` does not derive endpoint-bound consent requirement from configured origins",
+                self.provider
+            ));
+        }
+        if !granted.is_empty() && !self.revokable {
+            return Err(format!(
+                "consent row `{}` reports persisted endpoint grants as non-revokable",
+                self.provider
+            ));
+        }
+        let derived_current = if endpoint_bound {
+            self.error.is_none()
+                && self.consent_required
+                && !configured.is_empty()
+                && configured.is_subset(&granted)
+        } else {
+            self.error.is_none() && self.consent_required && self.revokable
+        };
+        if self.current_route_granted != derived_current {
+            return Err(format!(
+                "consent row `{}` does not derive current-route truth from persisted consent state",
+                self.provider
+            ));
+        }
+        if self.current_route_granted
+            && (!self.consent_required || !self.revokable || self.error.is_some())
+        {
+            return Err(format!(
+                "consent row `{}` has an inconsistent current-route grant",
+                self.provider
+            ));
+        }
+        let expected_grantable =
+            self.consent_required && !self.current_route_granted && self.error.is_none();
+        if self.grantable != expected_grantable {
+            return Err(format!(
+                "consent row `{}` has an inconsistent grantable flag",
+                self.provider
+            ));
+        }
+        let expected_status = if self.error.is_some() {
+            "invalid"
+        } else if self.current_route_granted {
+            "granted"
+        } else if self.consent_required {
+            "pending"
+        } else if self.revokable {
+            "stale"
+        } else {
+            "not_required"
+        };
+        if self.status != expected_status {
+            return Err(format!(
+                "consent row `{}` has status `{}`, expected `{expected_status}`",
+                self.provider, self.status
+            ));
+        }
+        if let Some(granted) = self.granted
+            && granted != self.current_route_granted
+        {
+            return Err(format!(
+                "consent row `{}` disagrees with its legacy granted alias",
+                self.provider
+            ));
+        }
+        if !self.endpoint_origins.is_empty()
+            && self.endpoint_origins != self.granted_endpoint_origins
+        {
+            return Err(format!(
+                "consent row `{}` disagrees with its legacy endpoint alias",
+                self.provider
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn detail(&self) -> String {
+        if let Some(error) = self.error.as_deref() {
+            return format!("Error: {error}");
+        }
+        let mut parts = Vec::new();
+        if !self.configured_endpoint_origins.is_empty() {
+            parts.push(format!(
+                "Current: {}",
+                self.configured_endpoint_origins.join(", ")
+            ));
+        }
+        if !self.granted_endpoint_origins.is_empty() {
+            parts.push(format!(
+                "Granted: {}",
+                self.granted_endpoint_origins.join(", ")
+            ));
+        }
+        if !self.stale_endpoint_origins.is_empty() {
+            parts.push(format!("Stale: {}", self.stale_endpoint_origins.join(", ")));
+        }
+        if parts.is_empty() {
+            if self.consent_required {
+                "Provider-wide cloud egress consent.".to_string()
             } else {
-                item.get("status")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s == "granted")
-                    .unwrap_or(false)
-            };
-            Some((provider, granted))
-        })
+                "No configured egress route requires consent.".to_string()
+            }
+        } else {
+            parts.join(" · ")
+        }
+    }
+}
+
+pub fn validate_consent_rows(rows: &[ConsentUiRow]) -> Result<(), String> {
+    let mut providers = std::collections::BTreeSet::new();
+    for row in rows {
+        row.validate()?;
+        if !providers.insert(row.provider.as_str()) {
+            return Err(format!(
+                "consent list contains duplicate provider `{}`",
+                row.provider
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn parse_consent_rows(json: &str) -> Result<Vec<ConsentUiRow>, String> {
+    let rows: Vec<ConsentUiRow> = serde_json::from_str(json)
+        .map_err(|error| format!("invalid consent-list JSON: {error}"))?;
+    validate_consent_rows(&rows)?;
+    Ok(rows)
+}
+
+/// Compatibility projection for older overview tests and callers.
+#[cfg(test)]
+pub fn parse_consent(json: &str) -> (Vec<(String, bool)>, String) {
+    let entries = parse_consent_rows(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| (row.provider, row.current_route_granted))
         .collect();
-
-    let smart_approve = v
-        .get("smart_approve")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-
-    (entries, smart_approve)
+    (entries, String::new())
 }
 
 // ── Design Wave 4a helpers ────────────────────────────────────────────────────
@@ -5508,39 +5730,14 @@ pub fn parse_autonomy_mode(json: &str) -> String {
         .to_string()
 }
 
-/// Parse `neoth consent list --output json` → Vec<(provider, granted)> for the
-/// chat consent strip popover.
-/// JSON shape: array of `{"provider":"<slug>","granted_unix_ts":<ts>}`.
-/// A row is "granted" when it appears in the array (any `granted_unix_ts` value).
-/// Also handles the generic `{"granted":bool}` field shape used by `parse_consent`.
+/// Compatibility projection for callers that only need the provider/current
+/// route pair. The actual decode and validation lives in `parse_consent_rows`.
+#[cfg(test)]
 pub fn parse_chat_consent_grants(json: &str) -> Vec<(String, bool)> {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let arr = v
-        .as_array()
-        .or_else(|| v.get("grants").and_then(|x| x.as_array()))
-        .cloned()
-        .unwrap_or_default();
-    arr.iter()
-        .filter_map(|item| {
-            let provider = item
-                .get("provider")
-                .or_else(|| item.get("name"))
-                .and_then(|x| x.as_str())?
-                .to_string();
-            // `granted_unix_ts` present → the marker file exists → granted.
-            // Fall back to explicit `"granted": bool` for the show-single shape.
-            let granted = if item.get("granted_unix_ts").is_some() {
-                true
-            } else if let Some(b) = item.get("granted").and_then(|x| x.as_bool()) {
-                b
-            } else {
-                item.get("status")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s == "granted")
-                    .unwrap_or(false)
-            };
-            Some((provider, granted))
-        })
+    parse_consent_rows(json)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| (row.provider, row.current_route_granted))
         .collect()
 }
 
@@ -7899,17 +8096,46 @@ mod tests {
 
     #[test]
     fn parse_consent_entries_and_smart_approve() {
-        let json = r#"{"consents":[{"provider":"claude_cli","granted":true},{"provider":"gemini","granted":false}],"smart_approve":"standard"}"#;
+        let json = r#"[
+            {
+                "provider":"claude_cli",
+                "consent_required":true,
+                "current_route_granted":true,
+                "configured_endpoint_origins":[],
+                "granted_endpoint_origins":[],
+                "stale_endpoint_origins":[],
+                "granted_unix_ts":"1720000000",
+                "grantable":false,
+                "revokable":true,
+                "status":"granted",
+                "error":null,
+                "granted":true
+            },
+            {
+                "provider":"gemini_api",
+                "consent_required":true,
+                "current_route_granted":false,
+                "configured_endpoint_origins":[],
+                "granted_endpoint_origins":[],
+                "stale_endpoint_origins":[],
+                "granted_unix_ts":null,
+                "grantable":true,
+                "revokable":false,
+                "status":"pending",
+                "error":null,
+                "granted":false
+            }
+        ]"#;
         let (entries, sa) = super::parse_consent(json);
         assert_eq!(entries.len(), 2);
         assert!(entries[0].1, "claude_cli should be granted");
         assert!(!entries[1].1, "gemini should be pending");
-        assert_eq!(sa, "standard");
+        assert!(sa.is_empty());
     }
 
     #[test]
     fn parse_consent_empty() {
-        let (entries, sa) = super::parse_consent("{}");
+        let (entries, sa) = super::parse_consent("[]");
         assert!(entries.is_empty());
         assert!(sa.is_empty());
     }
@@ -8327,25 +8553,264 @@ mod tests {
     // ── parse_chat_consent_grants ────────────────────────────────────────────
 
     #[test]
-    fn parse_chat_consent_grants_granted_unix_ts_means_granted() {
-        let json = r#"[{"provider":"anthropic_api","granted_unix_ts":1720000000},{"provider":"openai","granted_unix_ts":1720001000}]"#;
+    fn parse_chat_consent_grants_uses_current_route_truth() {
+        let json = r#"[
+            {
+                "provider":"anthropic_api",
+                "consent_required":true,
+                "current_route_granted":true,
+                "configured_endpoint_origins":[],
+                "granted_endpoint_origins":[],
+                "stale_endpoint_origins":[],
+                "granted_unix_ts":"1720000000",
+                "grantable":false,
+                "revokable":true,
+                "status":"granted",
+                "error":null,
+                "granted":true
+            },
+            {
+                "provider":"openai_api",
+                "consent_required":true,
+                "current_route_granted":true,
+                "configured_endpoint_origins":["https://api.openai.com"],
+                "granted_endpoint_origins":["https://api.openai.com"],
+                "stale_endpoint_origins":[],
+                "granted_unix_ts":"1720001000",
+                "grantable":false,
+                "revokable":true,
+                "status":"granted",
+                "error":null,
+                "endpoint_origins":["https://api.openai.com"],
+                "granted":true
+            }
+        ]"#;
         let grants = super::parse_chat_consent_grants(json);
         assert_eq!(grants.len(), 2);
         assert_eq!(grants[0].0, "anthropic_api");
         assert!(grants[0].1);
-        assert_eq!(grants[1].0, "openai");
+        assert_eq!(grants[1].0, "openai_api");
         assert!(grants[1].1);
     }
 
     #[test]
-    fn parse_chat_consent_grants_explicit_bool_field() {
-        // `granted: false` row — marker absent, so not granted.
-        let json =
-            r#"[{"provider":"gemini","granted":false},{"provider":"mistral","granted":true}]"#;
+    fn parse_consent_rows_configured_pending_provider_is_grantable() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":true,
+            "current_route_granted":false,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":[],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":null,
+            "grantable":true,
+            "revokable":false,
+            "status":"pending",
+            "error":null,
+            "endpoint_origins":[],
+            "granted":false
+        }]"#;
+        let rows = super::parse_consent_rows(json).unwrap();
+        assert_eq!(
+            rows[0].configured_endpoint_origins,
+            ["http://ollama-b.example:11434"]
+        );
+        assert!(rows[0].grantable);
+        assert!(!rows[0].revokable);
+    }
+
+    #[test]
+    fn parse_consent_rows_treats_bedrock_as_endpoint_bound() {
+        let json = r#"[{
+            "provider":"aws_bedrock",
+            "consent_required":true,
+            "current_route_granted":true,
+            "configured_endpoint_origins":["https://bedrock-runtime.eu-central-1.amazonaws.com"],
+            "granted_endpoint_origins":["https://bedrock-runtime.eu-central-1.amazonaws.com"],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":"1720000000",
+            "grantable":false,
+            "revokable":true,
+            "status":"granted",
+            "error":null,
+            "endpoint_origins":["https://bedrock-runtime.eu-central-1.amazonaws.com"],
+            "granted":true
+        }]"#;
+        let rows = super::parse_consent_rows(json).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].current_route_granted);
+        assert_eq!(
+            rows[0].configured_endpoint_origins,
+            ["https://bedrock-runtime.eu-central-1.amazonaws.com"]
+        );
+    }
+
+    #[test]
+    fn parse_chat_consent_grants_endpoint_status_overrides_old_marker() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":true,
+            "current_route_granted":false,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":["http://ollama-a.example:11434"],
+            "stale_endpoint_origins":["http://ollama-a.example:11434"],
+            "granted_unix_ts":"1720000000",
+            "grantable":true,
+            "revokable":true,
+            "status":"pending",
+            "error":null,
+            "endpoint_origins":["http://ollama-a.example:11434"],
+            "granted":false
+        }]"#;
         let grants = super::parse_chat_consent_grants(json);
-        assert_eq!(grants.len(), 2);
-        assert!(!grants[0].1);
-        assert!(grants[1].1);
+        assert_eq!(grants, vec![("local_ollama".to_string(), false)]);
+        let rows = super::parse_consent_rows(json).unwrap();
+        assert!(rows[0].detail().contains("Current: http://ollama-b"));
+        assert!(rows[0].detail().contains("Stale: http://ollama-a"));
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_green_when_only_another_endpoint_is_granted() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":true,
+            "current_route_granted":true,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":["http://ollama-a.example:11434"],
+            "stale_endpoint_origins":["http://ollama-a.example:11434"],
+            "granted_unix_ts":"1720000000",
+            "grantable":false,
+            "revokable":true,
+            "status":"granted",
+            "error":null,
+            "endpoint_origins":["http://ollama-a.example:11434"],
+            "granted":true
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
+    }
+
+    #[test]
+    fn parse_consent_rows_stale_loopback_grant_is_revokable_not_green() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":false,
+            "current_route_granted":false,
+            "configured_endpoint_origins":[],
+            "granted_endpoint_origins":["http://127.0.0.1:11434"],
+            "stale_endpoint_origins":["http://127.0.0.1:11434"],
+            "granted_unix_ts":"1720000000",
+            "grantable":false,
+            "revokable":true,
+            "status":"stale",
+            "error":null,
+            "endpoint_origins":["http://127.0.0.1:11434"],
+            "granted":false
+        }]"#;
+        let rows = super::parse_consent_rows(json).unwrap();
+        assert!(!rows[0].current_route_granted);
+        assert!(!rows[0].grantable);
+        assert!(rows[0].revokable);
+        assert_eq!(rows[0].status, "stale");
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_inconsistent_marker_alias() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":true,
+            "current_route_granted":false,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":["http://ollama-a.example:11434"],
+            "stale_endpoint_origins":["http://ollama-a.example:11434"],
+            "granted_unix_ts":"1720000000",
+            "grantable":true,
+            "revokable":true,
+            "status":"pending",
+            "error":null,
+            "endpoint_origins":["http://ollama-a.example:11434"],
+            "granted":true
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_cloud_pending_with_persisted_marker() {
+        let json = r#"[{
+            "provider":"anthropic_api",
+            "consent_required":true,
+            "current_route_granted":false,
+            "configured_endpoint_origins":[],
+            "granted_endpoint_origins":[],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":"1720000000",
+            "grantable":true,
+            "revokable":true,
+            "status":"pending",
+            "error":null,
+            "endpoint_origins":[],
+            "granted":false
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_endpoint_grants_marked_non_revokable() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":true,
+            "current_route_granted":true,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":["http://ollama-b.example:11434"],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":"1720000000",
+            "grantable":false,
+            "revokable":false,
+            "status":"granted",
+            "error":null,
+            "endpoint_origins":["http://ollama-b.example:11434"],
+            "granted":true
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_local_config_without_required_consent() {
+        let json = r#"[{
+            "provider":"local_ollama",
+            "consent_required":false,
+            "current_route_granted":false,
+            "configured_endpoint_origins":["http://ollama-b.example:11434"],
+            "granted_endpoint_origins":[],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":null,
+            "grantable":false,
+            "revokable":false,
+            "status":"not_required",
+            "error":null,
+            "endpoint_origins":[],
+            "granted":false
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
+    }
+
+    #[test]
+    fn parse_consent_rows_rejects_endpoint_scope_for_cloud_provider() {
+        let json = r#"[{
+            "provider":"anthropic_api",
+            "consent_required":true,
+            "current_route_granted":true,
+            "configured_endpoint_origins":["https://api.anthropic.com"],
+            "granted_endpoint_origins":["https://api.anthropic.com"],
+            "stale_endpoint_origins":[],
+            "granted_unix_ts":"1720000000",
+            "grantable":false,
+            "revokable":true,
+            "status":"granted",
+            "error":null,
+            "endpoint_origins":["https://api.anthropic.com"],
+            "granted":true
+        }]"#;
+        assert!(super::parse_consent_rows(json).is_err());
     }
 
     #[test]

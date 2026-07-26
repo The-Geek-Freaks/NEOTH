@@ -260,6 +260,71 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
                 }
             }
         }
+        #[cfg(feature = "wizard")]
+        if interactive {
+            let final_config =
+                crate::config::FreedomConfig::load_from_path(&neoth_dir.join("freedom.yaml"))
+                    .context("reload final wizard config before consent offer")?;
+            let mut consent_providers = Vec::new();
+            for route in crate::consent::required_consent_routes(&final_config) {
+                if !consent_providers.contains(&route.kind) {
+                    consent_providers.push(route.kind);
+                }
+            }
+            if !consent_providers.is_empty() {
+                let grant_now =
+                    dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                        .with_prompt(
+                            "Authorize the configured remote AI routes now so first chat is ready?",
+                        )
+                        .default(true)
+                        .interact()
+                        .unwrap_or(false);
+                if grant_now {
+                    for provider in consent_providers {
+                        match crate::cli::consent::change_consent_with_config_at(
+                            &neoth_dir,
+                            provider,
+                            true,
+                            &final_config,
+                            crate::cli::consent::ConsentMutationSource::Wizard,
+                        )
+                        .await
+                        {
+                            Ok(receipt) => {
+                                println!(
+                                    "  ✓ consent {} for `{}`{}",
+                                    if receipt.changed {
+                                        "granted"
+                                    } else {
+                                        "already granted"
+                                    },
+                                    crate::consent::slug(provider),
+                                    if receipt.audit_pending {
+                                        " (audit delivery queued)"
+                                    } else {
+                                        ""
+                                    }
+                                );
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    %error,
+                                    provider = crate::consent::slug(provider),
+                                    "post-write wizard consent grant failed"
+                                );
+                                println!(
+                                    "  ! consent for `{}` was not granted: {error}\n    \
+                                     Retry with `neoth consent grant {}`.",
+                                    crate::consent::slug(provider),
+                                    crate::consent::slug(provider),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         write_initialized_marker(&neoth_dir, &state)?;
         // R-04: wizard reached the `.initialized` marker — the
         // checkpoint is no longer needed. Clear it so the next

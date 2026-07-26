@@ -1,13 +1,13 @@
 //! Wizard autonomy + finalization steps (GOLD-ARCH-05): step7 autonomy
 //! level, step7b auto-update, step7c wasm plugin activation, step7d
-//! supervisor, inline consent grant. Split out of `cli/init.rs`.
+//! supervisor. Split out of `cli/init.rs`.
 
 #[cfg(feature = "wizard")]
 use anyhow::Context as _;
 use anyhow::Result;
 use tracing::{debug, info, warn};
 
-use super::{InitArgs, ProviderKind, WizardState, WizardStep};
+use super::{InitArgs, WizardState, WizardStep};
 
 /// Step 7 — operator picks an autonomy level (Phase 28b R-23).
 ///
@@ -484,61 +484,6 @@ pub(crate) fn install_supervisor_now() -> Result<crate::config::SupervisorKind> 
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| home.join(".config"));
     crate::daemon::supervisor::install(&exe, &config_home, &home)
-}
-
-/// V03-08 — offer to grant cloud-egress consent inline at wizard end so
-/// the operator's first `neoth chat` doesn't hit a cold consent-failure.
-/// Returns `true` when consent was granted in-process (caller then skips
-/// the printed pre-grant hint). Interactive-TTY + `wizard`-feature only;
-/// every other path returns `false` (caller prints the hint).
-#[cfg(feature = "wizard")]
-pub(crate) fn try_inline_consent_grant(
-    args: &InitArgs,
-    provider_kind: Option<ProviderKind>,
-    provider_display: &str,
-) -> bool {
-    use std::io::IsTerminal;
-    let interactive = !args.non_interactive && std::io::stdin().is_terminal();
-    if !interactive {
-        return false;
-    }
-    let Some(pk) = provider_kind else {
-        return false;
-    };
-    let grant_now = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-        .with_prompt(format!(
-            "Grant cloud-egress consent for `{provider_display}` now? \
-             (so your first `neoth chat` just works)"
-        ))
-        .default(true)
-        .interact()
-        .unwrap_or(false);
-    if !grant_now {
-        return false;
-    }
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    match crate::consent::grant(&home, pk) {
-        Ok(()) => {
-            println!("  ✓ cloud-egress consent granted for `{provider_display}`");
-            true
-        }
-        Err(e) => {
-            println!(
-                "  ! consent grant failed: {e} — run \
-                 `neoth consent grant {provider_display}` before chatting"
-            );
-            false
-        }
-    }
-}
-
-#[cfg(not(feature = "wizard"))]
-pub(crate) fn try_inline_consent_grant(
-    _args: &InitArgs,
-    _provider_kind: Option<ProviderKind>,
-    _provider_display: &str,
-) -> bool {
-    false
 }
 
 /// GOLD-FEAT-01b + ZF-01 — the operating-style picker (built-in presets).

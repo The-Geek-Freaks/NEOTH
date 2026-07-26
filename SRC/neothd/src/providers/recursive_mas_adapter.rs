@@ -18,8 +18,9 @@
 //!
 //! Upstream RecursiveMAS has no resolved license → NEOTH never vendors,
 //! downloads, or updates it. `spawn` additionally requires a one-time
-//! operator acknowledgement marker (`~/.neoth/rmas_consent_acknowledged`)
-//! so enabling the flag alone can't silently execute third-party code.
+//! operator acknowledgement marker in the exact active NEOTH instance home,
+//! so enabling the flag or acknowledging a different instance cannot silently
+//! execute third-party code.
 
 use std::io::{BufRead, BufReader, Write};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -59,8 +60,7 @@ struct SidecarIo {
 
 impl RecursiveMasAdapter {
     /// Gate + consent-check + spawn. Errors are operator-actionable.
-    pub fn spawn(cfg: &RecursiveMasConfig) -> Result<Self> {
-        let home = crate::config::FreedomConfig::default_neoth_home();
+    pub fn spawn(cfg: &RecursiveMasConfig, home: &std::path::Path) -> Result<Self> {
         if !cfg.enabled {
             anyhow::bail!(
                 "recursive_mas unavailable: {}",
@@ -70,14 +70,14 @@ impl RecursiveMasAdapter {
         // Consent BEFORE the hardware probe (error-hunt wave s4): the
         // probe shells out to nvidia-smi/rocm-smi — no subprocess work
         // until the operator has acknowledged running third-party code.
-        let marker = home.join(CONSENT_MARKER);
-        if !marker.exists() {
+        if !crate::providers::recursive_mas::code_acknowledgement_present(home)? {
             anyhow::bail!(
-                "RecursiveMAS consent marker missing. This runs OPERATOR-INSTALLED \
+                "RecursiveMAS code acknowledgement is missing. This runs OPERATOR-INSTALLED \
                  third-party code with an unresolved upstream license — review the \
-                 upstream repository yourself, then create the empty file {} to \
-                 acknowledge. NEOTH never downloads or updates the sidecar.",
-                marker.display()
+                 upstream repository yourself, then run \
+                 `neoth rmas consent --acknowledge --home {:?}` for this exact instance. \
+                 NEOTH never downloads or updates the sidecar.",
+                home
             );
         }
         let vram = crate::daemon::hardware::probe(&home)?.vram;
@@ -177,6 +177,13 @@ impl Provider for RecursiveMasAdapter {
         Some("recursive_mas")
     }
 
+    fn consent_route(&self) -> Option<crate::consent::ConsentRoute> {
+        Some(crate::consent::ConsentRoute::new(
+            crate::cli::init::ProviderKind::RecursiveMas,
+            None,
+        ))
+    }
+
     async fn complete_raw(
         &self,
         req: Request,
@@ -252,11 +259,31 @@ mod tests {
     #[test]
     fn spawn_refuses_when_disabled() {
         let cfg = RecursiveMasConfig::default();
-        let err = RecursiveMasAdapter::spawn(&cfg)
+        let home = tempfile::tempdir().unwrap();
+        let err = RecursiveMasAdapter::spawn(&cfg, home.path())
             .err()
             .expect("default config must refuse")
             .to_string();
         assert!(err.contains("disabled"), "got: {err}");
+    }
+
+    #[test]
+    fn spawn_does_not_inherit_acknowledgement_from_another_instance() {
+        let acknowledged_home = tempfile::tempdir().unwrap();
+        let selected_home = tempfile::tempdir().unwrap();
+        crate::cli::rmas::write_rmas_consent_marker(acknowledged_home.path()).unwrap();
+        let cfg = RecursiveMasConfig {
+            enabled: true,
+            ..RecursiveMasConfig::default()
+        };
+
+        let error = RecursiveMasAdapter::spawn(&cfg, selected_home.path())
+            .err()
+            .expect("the selected instance has no code acknowledgement");
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("code acknowledgement is missing"));
+        assert!(rendered.contains(&format!("{:?}", selected_home.path())));
+        assert!(!rendered.contains(&format!("{:?}", acknowledged_home.path())));
     }
 
     #[test]

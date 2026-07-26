@@ -54,6 +54,26 @@ static BG_JOBS_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 static CHAT_HISTORY_REFRESH_REVISION: std::sync::atomic::AtomicU64 =
     std::sync::atomic::AtomicU64::new(0);
 
+// Consent appears on both Chat and Overview. Separate revisions prevent an
+// older asynchronous probe from repainting either surface after a verified
+// mutation (or its fail-closed invalidation) has advanced the UI state.
+static CHAT_CONSENT_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static OVERVIEW_CONSENT_UI_REVISION: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuiChatSurface {
+    Main,
+    Buddy,
+}
+
+struct PendingGuiChatConsent {
+    surface: GuiChatSurface,
+    body: String,
+    preflight: gui_action::VerifiedConsentChatPreflight,
+}
+
 #[cfg(windows)]
 mod win_private {
     use std::fs::File;
@@ -2157,6 +2177,15 @@ fn main() -> Result<()> {
     let chat_last_chunk_ms = std::sync::Arc::new(std::sync::atomic::AtomicI64::new(-1));
     let chat_auto_nudge_budget = std::sync::Arc::new(std::sync::atomic::AtomicU8::new(0));
     let chat_auto_in_progress = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let chat_consent_flow_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let pending_gui_chat_consent: std::sync::Arc<std::sync::Mutex<Option<PendingGuiChatConsent>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+    let main_chat_consent_token: std::sync::Arc<
+        std::sync::Mutex<Option<zeroize::Zeroizing<Vec<u8>>>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(None));
+    let buddy_chat_consent_token: std::sync::Arc<
+        std::sync::Mutex<Option<zeroize::Zeroizing<Vec<u8>>>>,
+    > = std::sync::Arc::new(std::sync::Mutex::new(None));
 
     // GOLD-ADAPT-ODY-03 — pending attachment paths; the strip shows the
     // file names, the send worker consumes the paths as `--attach` args.
@@ -2377,21 +2406,269 @@ fn main() -> Result<()> {
         });
     }
 
+    // GUI chat is non-interactive, so it must never rely on the CLI's TTY
+    // prompt. Keep the draft and attachments intact until this typed preflight
+    // either proves every exact route ready or the operator resolves the
+    // config/route-bound challenge.
+    {
+        let weak_chat_preflight = window.as_weak();
+        let pending = pending_gui_chat_consent.clone();
+        let flow_active = chat_consent_flow_active.clone();
+        let auto_flag = chat_auto_in_progress.clone();
+        window.on_chat_send_clicked(move |text| {
+            let body = text.trim().to_string();
+            if body.is_empty() {
+                return;
+            }
+            let Some(w) = weak_chat_preflight.upgrade() else {
+                return;
+            };
+            if w.get_chat_history_active()
+                && !auto_flag.load(std::sync::atomic::Ordering::Acquire)
+            {
+                w.set_status_line("Return to Local CLI before sending a new message.".into());
+                return;
+            }
+            if w.get_chat_send_in_flight()
+                || flow_active
+                    .compare_exchange(
+                        false,
+                        true,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    )
+                    .is_err()
+            {
+                w.set_status_line(
+                    "A chat send or consent decision is already in progress.".into(),
+                );
+                return;
+            }
+
+            w.set_chat_send_in_flight(true);
+            w.set_status_line("Checking exact provider consent routes…".into());
+            let weak = w.as_weak();
+            let pending = pending.clone();
+            let flow_active = flow_active.clone();
+            std::thread::spawn(move || {
+                let preflight = preflight_chat_consent_verified();
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else {
+                        flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        return;
+                    };
+                    match preflight {
+                        Ok(preflight) if preflight.missing_routes.is_empty() => {
+                            w.set_chat_send_in_flight(false);
+                            w.invoke_chat_send_approved(body.into());
+                        }
+                        Ok(preflight) => {
+                            let routes = consent_route_summary(&preflight.missing_routes);
+                            let mut slot = match pending.lock() {
+                                Ok(slot) => slot,
+                                Err(_) => {
+                                    flow_active
+                                        .store(false, std::sync::atomic::Ordering::Release);
+                                    w.set_chat_send_in_flight(false);
+                                    w.set_status_line(
+                                        "Consent state lock failed; message was not sent.".into(),
+                                    );
+                                    return;
+                                }
+                            };
+                            *slot = Some(PendingGuiChatConsent {
+                                surface: GuiChatSurface::Main,
+                                body,
+                                preflight,
+                            });
+                            w.set_chat_consent_prompt_routes(routes.into());
+                            w.set_chat_consent_prompt_busy(false);
+                            w.set_chat_consent_prompt_open(true);
+                            w.set_status_line(
+                                "Provider egress consent is required before this message can leave the device."
+                                    .into(),
+                            );
+                        }
+                        Err(error) => {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            w.set_chat_send_in_flight(false);
+                            w.set_status_line(
+                                format!("Consent preflight failed; message retained: {error}")
+                                    .into(),
+                            );
+                            push_toast(
+                                &weak,
+                                "error",
+                                "Message not sent",
+                                &format!("Consent preflight failed: {error}"),
+                            );
+                        }
+                    }
+                });
+            });
+        });
+    }
+
+    {
+        let weak_consent_decision = window.as_weak();
+        let pending = pending_gui_chat_consent.clone();
+        let flow_active = chat_consent_flow_active.clone();
+        let main_token = main_chat_consent_token.clone();
+        let buddy_token = buddy_chat_consent_token.clone();
+        window.on_chat_consent_prompt_decision(move |decision| {
+            let decision = decision.to_string();
+            if !matches!(decision.as_str(), "deny" | "allow-once" | "allow-always") {
+                if let Some(w) = weak_consent_decision.upgrade() {
+                    w.set_status_line("Unknown consent decision; message was not sent.".into());
+                }
+                return;
+            }
+            let Some(w) = weak_consent_decision.upgrade() else {
+                return;
+            };
+            if w.get_chat_consent_prompt_busy() {
+                return;
+            }
+            let pending_send = match pending.lock() {
+                Ok(mut slot) => slot.take(),
+                Err(_) => None,
+            };
+            let Some(pending_send) = pending_send else {
+                flow_active.store(false, std::sync::atomic::Ordering::Release);
+                w.set_chat_consent_prompt_open(false);
+                w.set_chat_send_in_flight(false);
+                w.set_status_line("Consent challenge is no longer available; retry send.".into());
+                return;
+            };
+
+            w.set_chat_consent_prompt_busy(true);
+            w.set_status_line("Applying the consent decision…".into());
+            let weak = w.as_weak();
+            let flow_active = flow_active.clone();
+            let main_token = main_token.clone();
+            let buddy_token = buddy_token.clone();
+            std::thread::spawn(move || {
+                let surface = pending_send.surface;
+                let body = pending_send.body;
+                let result = decide_chat_consent_verified(pending_send.preflight, &decision);
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else {
+                        flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        return;
+                    };
+                    w.set_chat_consent_prompt_busy(false);
+                    w.set_chat_consent_prompt_open(false);
+                    w.set_chat_send_in_flight(false);
+
+                    match result {
+                        Ok(verified) if verified.decision == "deny" => {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            w.set_status_line(
+                                "Message not sent. Draft and attachments were retained.".into(),
+                            );
+                            if surface == GuiChatSurface::Buddy {
+                                w.invoke_buddy_chat_send_cancelled(
+                                    "not sent — consent denied".into(),
+                                );
+                            }
+                        }
+                        Ok(mut verified) => {
+                            let verified_decision = verified.decision.as_str();
+                            let authority = verified.gui_consent_token.take();
+                            let token_slot = if surface == GuiChatSurface::Main {
+                                &main_token
+                            } else {
+                                &buddy_token
+                            };
+                            match token_slot.lock() {
+                                Ok(mut slot) => *slot = authority,
+                                Err(_) => {
+                                    flow_active
+                                        .store(false, std::sync::atomic::Ordering::Release);
+                                    w.set_status_line(
+                                        "Private consent token could not be retained; message was not sent."
+                                            .into(),
+                                    );
+                                    if surface == GuiChatSurface::Buddy {
+                                        w.invoke_buddy_chat_send_cancelled(
+                                            "not sent — consent hand-off failed".into(),
+                                        );
+                                    }
+                                    return;
+                                }
+                            }
+                            if verified_decision == "allow_always" {
+                                w.invoke_chat_consent_refresh();
+                            }
+                            if verified.audit_pending {
+                                w.set_status_line(
+                                    "Consent accepted; durable WAL delivery is pending.".into(),
+                                );
+                            }
+                            match surface {
+                                GuiChatSurface::Main => w.invoke_chat_send_approved(body.into()),
+                                GuiChatSurface::Buddy => {
+                                    w.invoke_buddy_chat_send_approved(body.into())
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            w.set_status_line(
+                                format!("Consent decision failed; message retained: {error}")
+                                    .into(),
+                            );
+                            push_toast(
+                                &weak,
+                                "error",
+                                "Message not sent",
+                                &format!("Consent decision failed: {error}"),
+                            );
+                            if surface == GuiChatSurface::Buddy {
+                                w.invoke_buddy_chat_send_cancelled(
+                                    "not sent — consent decision failed".into(),
+                                );
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     let weak_chat_send = window.as_weak();
-    window.on_chat_send_clicked(move |text| {
+    let main_chat_consent_token_for_send = main_chat_consent_token.clone();
+    let chat_consent_flow_for_send = chat_consent_flow_active.clone();
+    window.on_chat_send_approved(move |text| {
         let body = text.trim().to_string();
         if body.is_empty() {
+            chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
         }
         let Some(w) = weak_chat_send.upgrade() else {
+            chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             return;
         };
         if w.get_chat_history_active()
             && !chat_auto_flag_for_send.load(std::sync::atomic::Ordering::Acquire)
         {
+            if let Ok(mut slot) = main_chat_consent_token_for_send.lock() {
+                slot.take();
+            }
+            chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
             w.set_status_line("Return to Local CLI before sending a new message.".into());
             return;
         }
+        let consent_token = match main_chat_consent_token_for_send.lock() {
+            Ok(mut slot) => slot.take(),
+            Err(_) => {
+                chat_consent_flow_for_send.store(false, std::sync::atomic::Ordering::Release);
+                w.set_status_line(
+                    "Private consent hand-off failed; draft and attachments were retained.".into(),
+                );
+                return;
+            }
+        };
         // ODY-10: only accepted live sends enter the recall buffer. Historical
         // callbacks must not mutate draft/recall state before this guard.
         if let Ok(mut last) = last_operator_input_for_send.lock() {
@@ -2451,6 +2728,7 @@ fn main() -> Result<()> {
         let last_chunk = chat_last_chunk_for_send.clone();
         let nudge_budget = chat_budget_for_send.clone();
         let auto_flag = chat_auto_flag_for_send.clone();
+        let flow_active = chat_consent_flow_for_send.clone();
         let weak_worker = w.as_weak();
         std::thread::spawn(move || {
             // Chat-feel #3: live token streaming. `neoth chat --stream`
@@ -2468,6 +2746,8 @@ fn main() -> Result<()> {
                 (String, StreamStats, Vec<(String, String, String)>),
                 String,
             > = (|| {
+                use zeroize::Zeroize as _;
+
                 let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
                 let mut cmd = spawn_neothd_plain(&bin);
                 let stream_control_token = new_stream_control_token()?;
@@ -2485,6 +2765,13 @@ fn main() -> Result<()> {
                 for p in &attach_paths {
                     cmd.arg("--attach").arg(p);
                 }
+                let mut consent_token = consent_token;
+                if consent_token.is_some() {
+                    cmd.arg("--gui-consent-token-stdin")
+                        .stdin(std::process::Stdio::piped());
+                } else {
+                    cmd.stdin(std::process::Stdio::null());
+                }
                 let mut child = cmd
                     // Terminate clap's flag scan so a message starting with
                     // '-' (e.g. "-h", "--foo") is treated as the positional
@@ -2492,7 +2779,7 @@ fn main() -> Result<()> {
                     .arg("--")
                     .arg(&body)
                     .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::piped())
                     .spawn()
                     .map_err(|e| {
                         format!(
@@ -2500,20 +2787,60 @@ fn main() -> Result<()> {
                              Verify `neothd --version` works from a terminal."
                         )
                     })?;
+                let stderr = child
+                    .stderr
+                    .take()
+                    .ok_or_else(|| "stream stderr unavailable".to_string())?;
+                let weak_stderr = weak_worker.clone();
+                let stderr_reader = spawn_chat_stderr_reader(stderr, move |diagnostic| {
+                    let weak = weak_stderr.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_status_line(format!("NEOTH: {diagnostic}").into());
+                        }
+                    });
+                });
+                if let Some(mut token) = consent_token.take() {
+                    let write_result = child
+                        .stdin
+                        .take()
+                        .ok_or_else(|| "private chat consent stdin unavailable".to_string())
+                        .and_then(|mut stdin| {
+                            stdin.write_all(token.as_slice()).map_err(|error| {
+                                format!("could not send private chat consent token: {error}")
+                            })
+                        });
+                    token.zeroize();
+                    if let Err(error) = write_result {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let diagnostic = stderr_reader.join().unwrap_or_default();
+                        return Err(with_chat_diagnostic(error, &diagnostic));
+                    }
+                }
                 let mut stdout = child
                     .stdout
                     .take()
                     .ok_or_else(|| "stream stdout unavailable".to_string())?;
                 // ODY-04 — park the child so the stall banner's Stop can
                 // kill it from the UI thread.
-                if let Ok(mut slot) = child_slot.lock() {
-                    *slot = Some(child);
+                match child_slot.lock() {
+                    Ok(mut slot) => *slot = Some(child),
+                    Err(_) => {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        let diagnostic = stderr_reader.join().unwrap_or_default();
+                        return Err(with_chat_diagnostic(
+                            "chat supervision state is unavailable",
+                            &diagnostic,
+                        ));
+                    }
                 }
                 let mut acc: Vec<u8> = Vec::new();
                 let mut buf = [0u8; 512];
-                loop {
+                let read_error = loop {
                     match stdout.read(&mut buf) {
-                        Ok(0) => break, // EOF
+                        Ok(0) => break None, // EOF
                         Ok(n) => {
                             acc.extend_from_slice(&buf[..n]);
                             // ODY-04 — feed the watchdog clock.
@@ -2544,33 +2871,74 @@ fn main() -> Result<()> {
                                 }
                             });
                         }
-                        Err(e) => return Err(format!("stream read error: {e}")),
+                        Err(error) => break Some(error),
                     }
-                }
+                };
                 // Reclaim the parked child for the exit wait (Stop may
                 // already have taken + killed it — then wait() is a no-op
                 // on a None slot and status stays None).
-                let status = child_slot
+                let mut parked_child = child_slot
                     .lock()
-                    .ok()
-                    .and_then(|mut slot| slot.take())
-                    .and_then(|mut c| c.wait().ok());
+                    .map_err(|_| "chat supervision state is unavailable".to_string())?
+                    .take();
+                if read_error.is_some()
+                    && let Some(child) = parked_child.as_mut()
+                {
+                    let _ = child.kill();
+                }
+                let status = parked_child
+                    .map(|mut child| {
+                        child
+                            .wait()
+                            .map_err(|error| format!("chat subprocess wait failed: {error}"))
+                    })
+                    .transpose()?;
+                let stderr_diagnostic = stderr_reader.join().unwrap_or_default();
+                if let Some(error) = read_error {
+                    return Err(with_chat_diagnostic(
+                        format!("stream read error: {error}"),
+                        &stderr_diagnostic,
+                    ));
+                }
                 let raw = String::from_utf8_lossy(&acc);
                 let (reply, done, stats) =
                     parse_stream_sentinel_with_token(&raw, &stream_control_token);
                 if reply.is_empty() {
-                    return Err("Provider returned an empty reply. Check `neoth doctor` + \
-                                `~/.neoth/freedom.yaml` provider settings."
-                        .to_string());
+                    return Err(with_chat_diagnostic(
+                        "Provider returned an empty reply. Check `neoth doctor` + \
+                         `~/.neoth/freedom.yaml` provider settings.",
+                        &stderr_diagnostic,
+                    ));
                 }
                 if !done {
                     // EOF without the sentinel → the stream was truncated
                     // (provider error / crash mid-reply). Surface what we
                     // got so the operator isn't left guessing.
-                    let code = status.and_then(|s| s.code()).unwrap_or(-1);
-                    return Err(format!(
-                        "Stream ended before completion (exit {code}). Partial reply:\n\n{reply}"
+                    let code = status.as_ref().and_then(|status| status.code()).unwrap_or(-1);
+                    return Err(with_chat_diagnostic(
+                        format!(
+                            "Stream ended before completion (exit {code}). Partial reply:\n\n{reply}"
+                        ),
+                        &stderr_diagnostic,
                     ));
+                }
+                match status.as_ref() {
+                    Some(status) if status.success() => {}
+                    Some(status) => {
+                        return Err(with_chat_diagnostic(
+                            format!(
+                                "Chat subprocess exited {} after its completion marker.",
+                                status.code().unwrap_or(-1)
+                            ),
+                            &stderr_diagnostic,
+                        ));
+                    }
+                    None => {
+                        return Err(with_chat_diagnostic(
+                            "Chat was stopped before its supervised process could commit success.",
+                            &stderr_diagnostic,
+                        ));
+                    }
                 }
                 // ODY-12/14 — deep-link chips ride the same sentinel line.
                 let links = parse_stream_links_with_token(&raw, &stream_control_token);
@@ -2578,6 +2946,7 @@ fn main() -> Result<()> {
             })();
             // Stream over (either way) — disarm the watchdog clock.
             last_chunk.store(-1, std::sync::atomic::Ordering::Relaxed);
+            flow_active.store(false, std::sync::atomic::Ordering::Release);
 
             let weak_for_loop = weak_worker.clone();
             let _ = slint::invoke_from_event_loop(move || {
@@ -8882,8 +9251,8 @@ fn main() -> Result<()> {
     });
 
     // ── Chat-surface consent strip wiring ─────────────────────────────────────
-    // Three callbacks + one startup fire. The refresh fn is also called after
-    // any mode/revoke action so the strip stays in sync.
+    // Four callbacks + one startup fire. The refresh fn is also called after
+    // any mode/grant/revoke action so the strip stays in sync.
 
     // Initial populate — fires immediately so the strip shows real data on first
     // chat view without requiring a manual refresh.
@@ -8983,43 +9352,128 @@ fn main() -> Result<()> {
         });
     });
 
-    // chat-consent-revoke — Revoke button clicked for a provider.
-    let weak_cc_revoke = window.as_weak();
-    window.on_chat_consent_revoke(move |provider| {
-        let weak = weak_cc_revoke.clone();
+    // Grant/Revoke share one in-process guard. Both surfaces route through
+    // these callbacks, so no stale row can launch competing consent writes.
+    let consent_mutation_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+    // chat-consent-grant — Grant button clicked for the currently configured
+    // provider route. Success requires the typed receipt and an exact list
+    // readback; the UI never paints an optimistic green state.
+    let weak_cc_grant = window.as_weak();
+    let grant_active = consent_mutation_active.clone();
+    window.on_chat_consent_grant(move |provider| {
+        let weak = weak_cc_grant.clone();
         let provider = provider.to_string();
-        std::thread::spawn(move || {
-            // Revoking a cloud-egress grant is a security-posture mutation:
-            // typed receipt (provider echo + revoked|noop) + a `consent list`
-            // readback proving the marker really is gone.
-            let outcome = run_neothd_json_action::<gui_action::ConsentRevokeAck>(
-                &["consent", "revoke", &provider],
-                "Consent revoke",
+        if grant_active
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
             )
-            .and_then(|ack| ack.verify(&provider))
-            .and_then(|()| read_back_consent_absent(&provider));
+            .is_err()
+        {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line("another consent change is already in progress".into());
+            }
+            return;
+        }
+        let Some(w) = weak.upgrade() else {
+            grant_active.store(false, std::sync::atomic::Ordering::Release);
+            return;
+        };
+        w.set_consent_mutation_busy(true);
+        let _ = advance_consent_ui_revisions();
+        drop(w);
+        let active = grant_active.clone();
+        std::thread::spawn(move || {
+            let outcome = grant_consent_verified(&provider);
             let ok = outcome.is_ok();
-            let msg = outcome.err().unwrap_or_default();
+            let message = match outcome {
+                Ok(summary) => summary.success_message("Granted consent"),
+                Err(error) => error,
+            };
+            let invalid_message = message.clone();
             let provider2 = provider.clone();
             let weak2 = weak.clone();
+            active.store(false, std::sync::atomic::Ordering::Release);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak2.upgrade() {
+                    w.set_consent_mutation_busy(false);
                     if ok {
-                        push_toast(
-                            &w.as_weak(),
-                            "info",
-                            "Consent",
-                            &format!("Revoked consent for {provider2}."),
-                        );
+                        push_toast(&w.as_weak(), "success", "Consent", &message);
                     } else {
                         w.set_status_line(
-                            format!("consent revoke {provider2} failed: {msg}").into(),
+                            format!("consent grant {provider2} failed: {message}").into(),
                         );
                     }
                 }
             });
             if ok {
-                refresh_chat_consent(weak);
+                refresh_chat_consent(weak.clone());
+                refresh_overview(weak);
+            } else {
+                invalidate_consent_models(weak, &invalid_message);
+            }
+        });
+    });
+
+    // chat-consent-revoke — Revoke button clicked for a provider.
+    let weak_cc_revoke = window.as_weak();
+    let revoke_active = consent_mutation_active.clone();
+    window.on_chat_consent_revoke(move |provider| {
+        let weak = weak_cc_revoke.clone();
+        let provider = provider.to_string();
+        if revoke_active
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            )
+            .is_err()
+        {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line("another consent change is already in progress".into());
+            }
+            return;
+        }
+        let Some(w) = weak.upgrade() else {
+            revoke_active.store(false, std::sync::atomic::Ordering::Release);
+            return;
+        };
+        w.set_consent_mutation_busy(true);
+        let _ = advance_consent_ui_revisions();
+        drop(w);
+        let active = revoke_active.clone();
+        std::thread::spawn(move || {
+            let outcome = revoke_consent_verified(&provider);
+            let ok = outcome.is_ok();
+            let message = match outcome {
+                Ok(summary) => summary.success_message("Revoked consent"),
+                Err(error) => error,
+            };
+            let invalid_message = message.clone();
+            let provider2 = provider.clone();
+            let weak2 = weak.clone();
+            active.store(false, std::sync::atomic::Ordering::Release);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak2.upgrade() {
+                    w.set_consent_mutation_busy(false);
+                    if ok {
+                        push_toast(&w.as_weak(), "info", "Consent", &message);
+                    } else {
+                        w.set_status_line(
+                            format!("consent revoke {provider2} failed: {message}").into(),
+                        );
+                    }
+                }
+            });
+            if ok {
+                refresh_chat_consent(weak.clone());
+                refresh_overview(weak);
+            } else {
+                invalidate_consent_models(weak, &invalid_message);
             }
         });
     });
@@ -10994,135 +11448,350 @@ fn main() -> Result<()> {
             win.show().unwrap_or(());
         });
 
-        // overlay send-clicked → replicate the minimal neothd chat --stream path.
-        // We do NOT invoke_chat_send_clicked on the main window because the main
-        // window is hidden; instead we run the same subprocess directly and feed
-        // the reply snippet into the overlay's recent-lines (capped at 6).
-        let overlay_weak_for_send = overlay.as_weak();
-        overlay.on_send_clicked(move |text| {
-            let body = text.trim().to_string();
-            if body.is_empty() {
-                return;
-            }
-            let Some(ov) = overlay_weak_for_send.upgrade() else {
-                return;
-            };
+        // Buddy uses the same typed, config/route-bound preflight as the main
+        // composer. The overlay draft is kept until the approved continuation
+        // below; the modal itself lives in the main window.
+        {
+            let overlay_weak = overlay.as_weak();
+            let window_weak = window.as_weak();
+            window.on_buddy_chat_consent_prompt_required(move || {
+                let Some(ov) = overlay_weak.upgrade() else {
+                    return;
+                };
+                let Some(win) = window_weak.upgrade() else {
+                    return;
+                };
+                save_overlay_pos(&ov);
+                ov.hide().unwrap_or(());
+                win.show().unwrap_or(());
+            });
+        }
 
-            // Buddy goes thinking while we wait for the reply.
-            ov.set_buddy_mood("thinking".into());
-            ov.set_status_text("thinking…".into());
+        {
+            let overlay_weak = overlay.as_weak();
+            let window_weak = window.as_weak();
+            window.on_buddy_chat_send_cancelled(move |status| {
+                let Some(ov) = overlay_weak.upgrade() else {
+                    return;
+                };
+                let Some(win) = window_weak.upgrade() else {
+                    return;
+                };
+                win.hide().unwrap_or(());
+                ov.set_buddy_mood("idle".into());
+                ov.set_status_text(status);
+                ov.show().unwrap_or(());
+                resize_overlay(&ov);
+            });
+        }
 
-            // Append the operator line to recent-lines immediately.
-            {
-                use slint::{Model, ModelRc, VecModel};
-                let mut lines: Vec<slint::SharedString> = ov.get_recent_lines().iter().collect();
-                lines.push(format!("▶ {body}").into());
-                // Cap at 6 — oldest drop off.
-                if lines.len() > 6 {
-                    let drain_count = lines.len() - 6;
-                    lines.drain(..drain_count);
+        {
+            let overlay_weak = overlay.as_weak();
+            let window_weak = window.as_weak();
+            let pending = pending_gui_chat_consent.clone();
+            let flow_active = chat_consent_flow_active.clone();
+            overlay.on_send_clicked(move |text| {
+                let body = text.trim().to_string();
+                if body.is_empty() {
+                    return;
                 }
-                ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
-            }
+                let Some(ov) = overlay_weak.upgrade() else {
+                    return;
+                };
+                let Some(win) = window_weak.upgrade() else {
+                    return;
+                };
+                if win.get_chat_send_in_flight()
+                    || flow_active
+                        .compare_exchange(
+                            false,
+                            true,
+                            std::sync::atomic::Ordering::AcqRel,
+                            std::sync::atomic::Ordering::Acquire,
+                        )
+                        .is_err()
+                {
+                    ov.set_status_text("another chat send is already active".into());
+                    return;
+                }
 
-            let ov_weak = ov.as_weak();
-            let body_clone = body.clone();
-            std::thread::spawn(move || {
-                use std::io::Read as _;
-                let result: std::result::Result<String, String> = (|| {
-                    let bin = which_neothd().ok_or_else(|| "neothd not on PATH".to_string())?;
-                    let mut cmd = spawn_neothd_plain(&bin);
-                    let stream_control_token = new_stream_control_token()?;
-                    cmd.arg("chat").arg("--stream").arg("--").arg(&body_clone);
-                    cmd.env("NEOTH_STREAM_CONTROL_TOKEN", &stream_control_token);
-                    let mut child = cmd
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::null())
-                        .spawn()
-                        .map_err(|e| format!("spawn failed: {e}"))?;
-                    let Some(mut stdout) = child.stdout.take() else {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err("no stdout".to_string());
-                    };
-                    let mut acc: Vec<u8> = Vec::new();
-                    let mut buf = [0u8; 512];
-                    let read_error = loop {
-                        match stdout.read(&mut buf) {
-                            Ok(0) => break None,
-                            Ok(n) => acc.extend_from_slice(&buf[..n]),
-                            Err(error) => break Some(error),
+                win.set_chat_send_in_flight(true);
+                ov.set_buddy_mood("thinking".into());
+                ov.set_status_text("checking provider consent…".into());
+                let ov_weak = ov.as_weak();
+                let win_weak = win.as_weak();
+                let pending = pending.clone();
+                let flow_active = flow_active.clone();
+                std::thread::spawn(move || {
+                    let preflight = preflight_chat_consent_verified();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        let Some(ov) = ov_weak.upgrade() else {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            return;
+                        };
+                        let Some(win) = win_weak.upgrade() else {
+                            flow_active.store(false, std::sync::atomic::Ordering::Release);
+                            return;
+                        };
+                        match preflight {
+                            Ok(preflight) if preflight.missing_routes.is_empty() => {
+                                win.set_chat_send_in_flight(false);
+                                win.invoke_buddy_chat_send_approved(body.into());
+                            }
+                            Ok(preflight) => {
+                                let routes = consent_route_summary(&preflight.missing_routes);
+                                let mut slot = match pending.lock() {
+                                    Ok(slot) => slot,
+                                    Err(_) => {
+                                        flow_active
+                                            .store(false, std::sync::atomic::Ordering::Release);
+                                        win.set_chat_send_in_flight(false);
+                                        ov.set_buddy_mood("error".into());
+                                        ov.set_status_text(
+                                            "consent state failed; draft retained".into(),
+                                        );
+                                        return;
+                                    }
+                                };
+                                *slot = Some(PendingGuiChatConsent {
+                                    surface: GuiChatSurface::Buddy,
+                                    body,
+                                    preflight,
+                                });
+                                win.set_chat_consent_prompt_routes(routes.into());
+                                win.set_chat_consent_prompt_busy(false);
+                                win.set_chat_consent_prompt_open(true);
+                                win.invoke_buddy_chat_consent_prompt_required();
+                            }
+                            Err(error) => {
+                                flow_active.store(false, std::sync::atomic::Ordering::Release);
+                                win.set_chat_send_in_flight(false);
+                                ov.set_buddy_mood("error".into());
+                                ov.set_status_text(
+                                    format!("consent check failed; draft retained: {error}").into(),
+                                );
+                            }
                         }
-                    };
-                    if read_error.is_some() {
-                        let _ = child.kill();
-                    }
-                    let status = child
-                        .wait()
-                        .map_err(|error| format!("Buddy chat subprocess wait failed: {error}"))?;
-                    if let Some(error) = read_error {
-                        return Err(format!("Buddy chat stream read failed: {error}"));
-                    }
-                    let raw = String::from_utf8_lossy(&acc).into_owned();
-                    let (reply, done, _) =
-                        parse_stream_sentinel_with_token(&raw, &stream_control_token);
-                    if !done {
-                        return Err(format!(
-                            "Buddy chat stream ended before completion (exit {}).",
-                            status.code().unwrap_or(-1)
-                        ));
-                    }
-                    if !status.success() {
-                        return Err(format!(
-                            "Buddy chat subprocess exited {} after its completion marker.",
-                            status.code().unwrap_or(-1)
-                        ));
-                    }
-                    let reply = reply.trim();
-                    if reply.is_empty() {
-                        return Err("Buddy chat provider returned an empty reply.".to_string());
-                    }
-                    Ok(reply.to_string())
-                })();
+                    });
+                });
+            });
+        }
 
-                let _ = slint::invoke_from_event_loop(move || {
+        {
+            let overlay_weak = overlay.as_weak();
+            let window_weak = window.as_weak();
+            let buddy_token = buddy_chat_consent_token.clone();
+            let flow_active = chat_consent_flow_active.clone();
+            window.on_buddy_chat_send_approved(move |text| {
+                let body = text.trim().to_string();
+                if body.is_empty() {
+                    flow_active.store(false, std::sync::atomic::Ordering::Release);
+                    return;
+                }
+                let Some(ov) = overlay_weak.upgrade() else {
+                    flow_active.store(false, std::sync::atomic::Ordering::Release);
+                    return;
+                };
+                let Some(win) = window_weak.upgrade() else {
+                    flow_active.store(false, std::sync::atomic::Ordering::Release);
+                    return;
+                };
+                let consent_token = match buddy_token.lock() {
+                    Ok(mut slot) => slot.take(),
+                    Err(_) => {
+                        flow_active.store(false, std::sync::atomic::Ordering::Release);
+                        win.set_chat_send_in_flight(false);
+                        ov.set_buddy_mood("error".into());
+                        ov.set_status_text(
+                            "private consent hand-off failed; draft retained".into(),
+                        );
+                        return;
+                    }
+                };
+
+                win.hide().unwrap_or(());
+                ov.show().unwrap_or(());
+                ov.set_overlay_input("".into());
+                ov.set_buddy_mood("thinking".into());
+                ov.set_status_text("thinking…".into());
+                win.set_chat_send_in_flight(true);
+
+                {
                     use slint::{Model, ModelRc, VecModel};
-                    let Some(ov) = ov_weak.upgrade() else { return };
-                    let (mood, caption, snippet) = match result {
-                        Ok(ref reply) if !reply.is_empty() => {
-                            // Truncate to 120 chars for the compact scrollback.
-                            let prefix = utf8_prefix(reply, 120);
-                            let snip = if prefix.len() < reply.len() {
-                                format!("{prefix}…")
-                            } else {
-                                reply.clone()
-                            };
-                            ("success", "done ✓", snip)
-                        }
-                        Ok(_) => ("idle", "ready", "—".to_string()),
-                        Err(ref e) => ("error", "error", format!("⚠ {e}")),
-                    };
-                    ov.set_buddy_mood(mood.into());
-                    ov.set_status_text(caption.into());
-                    // Append the reply snippet to recent-lines, cap at 6.
-                    let bubble_snip = snippet.clone();
                     let mut lines: Vec<slint::SharedString> =
                         ov.get_recent_lines().iter().collect();
-                    lines.push(snippet.into());
+                    lines.push(format!("▶ {body}").into());
                     if lines.len() > 6 {
                         let drain_count = lines.len() - 6;
                         lines.drain(..drain_count);
                     }
                     ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
-                    // Compact pill: the reply surfaces as a speech bubble
-                    // above the orb; the window grows to fit it.
-                    if ov.get_compact() {
-                        ov.set_bubble_text(bubble_snip.as_str().into());
-                        resize_overlay(&ov);
-                    }
+                }
+
+                let ov_weak = ov.as_weak();
+                let win_weak = win.as_weak();
+                let flow_active = flow_active.clone();
+                std::thread::spawn(move || {
+                    use std::io::Read as _;
+                    use zeroize::Zeroize as _;
+
+                    let result: std::result::Result<String, String> = (|| {
+                        let bin = which_neothd().ok_or_else(|| "neothd not on PATH".to_string())?;
+                        let mut cmd = spawn_neothd_plain(&bin);
+                        let stream_control_token = new_stream_control_token()?;
+                        cmd.arg("chat").arg("--stream");
+                        cmd.env("NEOTH_STREAM_CONTROL_TOKEN", &stream_control_token);
+                        let mut consent_token = consent_token;
+                        if consent_token.is_some() {
+                            cmd.arg("--gui-consent-token-stdin")
+                                .stdin(std::process::Stdio::piped());
+                        } else {
+                            cmd.stdin(std::process::Stdio::null());
+                        }
+                        cmd.arg("--").arg(&body);
+                        let mut child = cmd
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .spawn()
+                            .map_err(|error| format!("Buddy chat spawn failed: {error}"))?;
+                        let stderr = child
+                            .stderr
+                            .take()
+                            .ok_or_else(|| "Buddy chat stderr unavailable".to_string())?;
+                        let weak_stderr = ov_weak.clone();
+                        let stderr_reader = spawn_chat_stderr_reader(stderr, move |diagnostic| {
+                            let weak = weak_stderr.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ov) = weak.upgrade() {
+                                    ov.set_status_text(format!("NEOTH: {diagnostic}").into());
+                                }
+                            });
+                        });
+                        if let Some(mut token) = consent_token.take() {
+                            let write_result = child
+                                .stdin
+                                .take()
+                                .ok_or_else(|| {
+                                    "Buddy private consent stdin unavailable".to_string()
+                                })
+                                .and_then(|mut stdin| {
+                                    stdin.write_all(token.as_slice()).map_err(|error| {
+                                        format!(
+                                            "could not send Buddy private consent token: {error}"
+                                        )
+                                    })
+                                });
+                            token.zeroize();
+                            if let Err(error) = write_result {
+                                let _ = child.kill();
+                                let _ = child.wait();
+                                let diagnostic = stderr_reader.join().unwrap_or_default();
+                                return Err(with_chat_diagnostic(error, &diagnostic));
+                            }
+                        }
+                        let Some(mut stdout) = child.stdout.take() else {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            let diagnostic = stderr_reader.join().unwrap_or_default();
+                            return Err(with_chat_diagnostic(
+                                "Buddy chat stdout unavailable",
+                                &diagnostic,
+                            ));
+                        };
+                        let mut acc: Vec<u8> = Vec::new();
+                        let mut buf = [0u8; 512];
+                        let read_error = loop {
+                            match stdout.read(&mut buf) {
+                                Ok(0) => break None,
+                                Ok(n) => acc.extend_from_slice(&buf[..n]),
+                                Err(error) => break Some(error),
+                            }
+                        };
+                        if read_error.is_some() {
+                            let _ = child.kill();
+                        }
+                        let status = child.wait().map_err(|error| {
+                            format!("Buddy chat subprocess wait failed: {error}")
+                        })?;
+                        let diagnostic = stderr_reader.join().unwrap_or_default();
+                        if let Some(error) = read_error {
+                            return Err(with_chat_diagnostic(
+                                format!("Buddy chat stream read failed: {error}"),
+                                &diagnostic,
+                            ));
+                        }
+                        let raw = String::from_utf8_lossy(&acc).into_owned();
+                        let (reply, done, _) =
+                            parse_stream_sentinel_with_token(&raw, &stream_control_token);
+                        if !done {
+                            return Err(with_chat_diagnostic(
+                                format!(
+                                    "Buddy chat stream ended before completion (exit {}).",
+                                    status.code().unwrap_or(-1)
+                                ),
+                                &diagnostic,
+                            ));
+                        }
+                        if !status.success() {
+                            return Err(with_chat_diagnostic(
+                                format!(
+                                    "Buddy chat subprocess exited {} after its completion marker.",
+                                    status.code().unwrap_or(-1)
+                                ),
+                                &diagnostic,
+                            ));
+                        }
+                        let reply = reply.trim();
+                        if reply.is_empty() {
+                            return Err(with_chat_diagnostic(
+                                "Buddy chat provider returned an empty reply.",
+                                &diagnostic,
+                            ));
+                        }
+                        Ok(reply.to_string())
+                    })();
+                    flow_active.store(false, std::sync::atomic::Ordering::Release);
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        use slint::{Model, ModelRc, VecModel};
+                        if let Some(win) = win_weak.upgrade() {
+                            win.set_chat_send_in_flight(false);
+                        }
+                        let Some(ov) = ov_weak.upgrade() else {
+                            return;
+                        };
+                        let (mood, caption, snippet) = match result {
+                            Ok(ref reply) if !reply.is_empty() => {
+                                let prefix = utf8_prefix(reply, 120);
+                                let snippet = if prefix.len() < reply.len() {
+                                    format!("{prefix}…")
+                                } else {
+                                    reply.clone()
+                                };
+                                ("success", "done ✓", snippet)
+                            }
+                            Ok(_) => ("idle", "ready", "—".to_string()),
+                            Err(ref error) => ("error", "error", format!("⚠ {error}")),
+                        };
+                        ov.set_buddy_mood(mood.into());
+                        ov.set_status_text(caption.into());
+                        let bubble_snip = snippet.clone();
+                        let mut lines: Vec<slint::SharedString> =
+                            ov.get_recent_lines().iter().collect();
+                        lines.push(snippet.into());
+                        if lines.len() > 6 {
+                            let drain_count = lines.len() - 6;
+                            lines.drain(..drain_count);
+                        }
+                        ov.set_recent_lines(ModelRc::new(VecModel::from(lines)));
+                        if ov.get_compact() {
+                            ov.set_bubble_text(bubble_snip.as_str().into());
+                            resize_overlay(&ov);
+                        }
+                    });
                 });
             });
-        });
+        }
     } // end companion overlay wiring
 
     let gui_ready_failure = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
@@ -13299,6 +13968,118 @@ where
     gui_action::run_json(&mut command, action)
 }
 
+fn run_neothd_json_action_with_private_stdin<T>(
+    args: &[&str],
+    action: &str,
+    stdin_body: &mut [u8],
+) -> std::result::Result<T, String>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let mut command = neothd_json_command(args)?;
+    gui_action::run_json_with_private_stdin(&mut command, action, stdin_body)
+}
+
+fn now_unix_secs() -> std::result::Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .map_err(|error| format!("system clock is before the Unix epoch: {error}"))
+}
+
+fn preflight_chat_consent_verified()
+-> std::result::Result<gui_action::VerifiedConsentChatPreflight, String> {
+    let acknowledgement = run_neothd_json_action::<gui_action::ConsentChatPreflightAck>(
+        &["consent", "preflight-chat", "--source", "gui"],
+        "Chat consent preflight",
+    )?;
+    acknowledgement.verify(now_unix_secs()?)
+}
+
+fn decide_chat_consent_verified(
+    mut preflight: gui_action::VerifiedConsentChatPreflight,
+    decision: &str,
+) -> std::result::Result<gui_action::VerifiedConsentChatDecision, String> {
+    let challenge_id = preflight
+        .challenge_id
+        .clone()
+        .ok_or_else(|| "chat consent preflight omitted its challenge id".to_string())?;
+    let mut challenge_token = preflight
+        .challenge_token
+        .take()
+        .ok_or_else(|| "chat consent preflight omitted its private challenge token".to_string())?;
+    let args = [
+        "consent",
+        "decide-chat",
+        "--challenge-id",
+        challenge_id.as_str(),
+        "--decision",
+        decision,
+        "--source",
+        "gui",
+    ];
+    let acknowledgement =
+        run_neothd_json_action_with_private_stdin::<gui_action::ConsentChatDecisionAck>(
+            &args,
+            "Chat consent decision",
+            challenge_token.as_mut_slice(),
+        )?;
+    acknowledgement.verify(&preflight, decision, now_unix_secs()?)
+}
+
+fn consent_route_summary(routes: &[gui_action::ConsentRouteBinding]) -> String {
+    routes
+        .iter()
+        .map(|route| match route.endpoint_origin.as_deref() {
+            Some(origin) => format!("{} @ {origin}", route.provider),
+            None => route.provider.clone(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn spawn_chat_stderr_reader<F>(
+    stderr: std::process::ChildStderr,
+    on_diagnostic: F,
+) -> std::thread::JoinHandle<String>
+where
+    F: Fn(String) + Send + 'static,
+{
+    std::thread::spawn(move || {
+        use std::io::BufRead as _;
+
+        const MAX_CAPTURED_CHARS: usize = 8_192;
+        let mut captured = String::new();
+        for line in std::io::BufReader::new(stderr).lines() {
+            let Ok(line) = line else {
+                break;
+            };
+            let Some(diagnostic) = gui_action::operator_diagnostic(line.as_bytes()) else {
+                continue;
+            };
+            on_diagnostic(diagnostic.clone());
+            if captured.chars().count() < MAX_CAPTURED_CHARS {
+                if !captured.is_empty() {
+                    captured.push('\n');
+                }
+                let remaining = MAX_CAPTURED_CHARS.saturating_sub(captured.chars().count());
+                captured.extend(diagnostic.chars().take(remaining));
+            }
+        }
+        captured
+    })
+}
+
+fn with_chat_diagnostic(base: impl Into<String>, diagnostic: &str) -> String {
+    let base = base.into();
+    let diagnostic = diagnostic.trim();
+    if diagnostic.is_empty() || base.contains(diagnostic) {
+        base
+    } else {
+        format!("{base}\n{diagnostic}")
+    }
+}
+
 fn run_neothd_json_action_receipt<T>(
     args: &[&str],
     action: &str,
@@ -13499,20 +14280,218 @@ fn read_back_autonomy(
     Ok(())
 }
 
-/// Post-revoke readback: the provider must no longer hold a recorded grant.
-/// `consent list` only emits granted providers, so presence = failure.
-fn read_back_consent_absent(provider: &str) -> std::result::Result<(), String> {
-    let grants =
-        run_neothd_json_action::<Vec<serde_json::Value>>(&["consent", "list"], "Consent readback")?;
-    let still_granted = grants
+#[derive(Debug)]
+struct VerifiedConsentMutation {
+    provider: String,
+    changed_origins: Vec<String>,
+    audit_pending: bool,
+}
+
+impl VerifiedConsentMutation {
+    fn success_message(&self, prefix: &str) -> String {
+        let mut message = format!("{prefix} for `{}`.", self.provider);
+        if !self.changed_origins.is_empty() {
+            message.push_str(&format!(" Endpoints: {}.", self.changed_origins.join(", ")));
+        }
+        if self.audit_pending {
+            message.push_str(" The durable audit record is queued for WAL delivery.");
+        }
+        message
+    }
+}
+
+fn read_consent_ui_rows() -> std::result::Result<Vec<panel_logic::ConsentUiRow>, String> {
+    let rows = run_neothd_json_action::<Vec<panel_logic::ConsentUiRow>>(
+        &["consent", "list"],
+        "Consent readback",
+    )?;
+    panel_logic::validate_consent_rows(&rows)?;
+    Ok(rows)
+}
+
+fn read_consent_mutation_binding()
+-> std::result::Result<gui_action::VerifiedConsentMutationBinding, String> {
+    run_neothd_json_action::<gui_action::ConsentMutationBindingAck>(
+        &["consent", "mutation-binding", "--source", "gui"],
+        "Consent mutation binding",
+    )
+    .and_then(gui_action::ConsentMutationBindingAck::verify)
+}
+
+fn consent_ui_row(
+    rows: &[panel_logic::ConsentUiRow],
+    provider: &str,
+) -> std::result::Result<panel_logic::ConsentUiRow, String> {
+    rows.iter()
+        .find(|row| row.provider == provider)
+        .cloned()
+        .ok_or_else(|| {
+            format!("consent list has no configured or persisted row for provider `{provider}`")
+        })
+}
+
+fn verify_consent_row_binding(
+    expected: &panel_logic::ConsentUiRow,
+    binding: &gui_action::VerifiedConsentMutationBinding,
+) -> std::result::Result<(), String> {
+    let provider_routes = binding
+        .required_routes
         .iter()
-        .any(|grant| grant.get("provider").and_then(|p| p.as_str()) == Some(provider));
-    if still_granted {
+        .filter(|route| route.provider == expected.provider)
+        .collect::<Vec<_>>();
+    if expected.consent_required != !provider_routes.is_empty() {
         return Err(format!(
-            "consent readback still lists `{provider}` as granted — the marker was not removed"
+            "consent UI snapshot for `{}` no longer matches the bound required route set",
+            expected.provider
+        ));
+    }
+
+    if expected.provider == "local_ollama" {
+        let bound_origins = provider_routes
+            .iter()
+            .filter_map(|route| route.endpoint_origin.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected_origins = expected
+            .configured_endpoint_origins
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        if bound_origins != expected_origins {
+            return Err(format!(
+                "consent UI snapshot for `{}` no longer matches its bound endpoint origins",
+                expected.provider
+            ));
+        }
+    } else if provider_routes
+        .iter()
+        .any(|route| route.endpoint_origin.is_some())
+    {
+        return Err(format!(
+            "provider-wide consent binding for `{}` unexpectedly contains endpoint scope",
+            expected.provider
+        ));
+    }
+
+    let bound_current_grant = !provider_routes.is_empty()
+        && provider_routes.iter().all(|route| {
+            binding.readback.iter().any(|row| {
+                row.provider == route.provider
+                    && row.endpoint_origin == route.endpoint_origin
+                    && row.granted
+            })
+        });
+    if bound_current_grant != expected.current_route_granted {
+        return Err(format!(
+            "consent UI snapshot for `{}` no longer matches the bound grant readback",
+            expected.provider
         ));
     }
     Ok(())
+}
+
+fn grant_consent_verified(provider: &str) -> std::result::Result<VerifiedConsentMutation, String> {
+    let before = read_consent_ui_rows()?;
+    let expected = consent_ui_row(&before, provider)?;
+    if !expected.grantable && !expected.current_route_granted {
+        return Err(format!(
+            "provider `{provider}` is not grantable (status `{}`)",
+            expected.status
+        ));
+    }
+    let expected_origins = expected.configured_endpoint_origins.clone();
+    let binding = read_consent_mutation_binding()?;
+    verify_consent_row_binding(&expected, &binding)?;
+
+    let args = [
+        "consent",
+        "grant",
+        provider,
+        "--source",
+        "gui",
+        "--expected-config-sha256",
+        binding.config_sha256.as_str(),
+        "--expected-route-set-sha256",
+        binding.route_set_sha256.as_str(),
+    ];
+    let ack = run_neothd_json_action::<gui_action::ConsentGrantAck>(&args, "Consent grant")?;
+    let verified = ack.verify(
+        provider,
+        &expected_origins,
+        &expected.granted_endpoint_origins,
+        expected.current_route_granted,
+        &binding.config_sha256,
+        &binding.route_set_sha256,
+    )?;
+
+    let after = read_consent_ui_rows()?;
+    let current = consent_ui_row(&after, provider)?;
+    if current.configured_endpoint_origins != expected_origins {
+        return Err(format!(
+            "consent readback for `{provider}` changed configured origins from {:?} to {:?}; refusing a stale success state",
+            expected_origins, current.configured_endpoint_origins
+        ));
+    }
+    if !current.current_route_granted {
+        return Err(format!(
+            "consent readback for `{provider}` does not grant the current route"
+        ));
+    }
+    let expected_final: std::collections::BTreeSet<_> = expected
+        .granted_endpoint_origins
+        .iter()
+        .chain(expected_origins.iter())
+        .cloned()
+        .collect();
+    let current_final: std::collections::BTreeSet<_> =
+        current.granted_endpoint_origins.iter().cloned().collect();
+    if current_final != expected_final
+        || verified
+            .endpoint_origins
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>()
+            != expected_final
+    {
+        return Err(format!(
+            "consent readback for `{provider}` does not match the exact expected final origin set"
+        ));
+    }
+
+    Ok(VerifiedConsentMutation {
+        provider: provider.to_string(),
+        changed_origins: verified.added_endpoint_origins,
+        audit_pending: verified.audit_pending,
+    })
+}
+
+fn revoke_consent_verified(provider: &str) -> std::result::Result<VerifiedConsentMutation, String> {
+    // Revocation is an emergency authority-reduction path. It must remain
+    // available even when freedom.yaml is corrupt/missing, so it intentionally
+    // carries no config binding and relies on Core's exact marker/audit receipt.
+    let args = ["consent", "revoke", provider, "--source", "gui"];
+    let ack = run_neothd_json_action::<gui_action::ConsentRevokeAck>(&args, "Consent revoke")?;
+    let verified = ack.verify_emergency(provider)?;
+
+    // When config parsing still works, add the independent list readback. A
+    // broken config cannot invalidate a successful, authority-free revoke ACK.
+    if let Ok(after) = read_consent_ui_rows()
+        && let Some(current) = after.iter().find(|row| row.provider == provider)
+    {
+        if current.current_route_granted
+            || current.revokable
+            || !current.granted_endpoint_origins.is_empty()
+        {
+            return Err(format!(
+                "consent readback for `{provider}` still reports a persisted grant"
+            ));
+        }
+    }
+
+    Ok(VerifiedConsentMutation {
+        provider: provider.to_string(),
+        changed_origins: verified.removed_endpoint_origins,
+        audit_pending: verified.audit_pending,
+    })
 }
 
 /// GR-RESID-D34 — mint the single-use, short-TTL FULL-AUTO token from the
@@ -17751,9 +18730,64 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
 // Shells two JSON subcommands (`autonomy show` + `consent list`), parses via
 // panel_logic pure-fns, then writes chat-consent-mode and chat-consent-grants
 // in one invoke_from_event_loop call.  Must be called from a worker thread.
+fn chat_consent_ui_row(row: &panel_logic::ConsentUiRow) -> ConsentGrant {
+    ConsentGrant {
+        provider: row.provider.as_str().into(),
+        granted: row.current_route_granted,
+        detail: row.detail().into(),
+        status: row.status.as_str().into(),
+        grantable: row.grantable,
+        revokable: row.revokable,
+    }
+}
+
+fn overview_consent_ui_row(row: &panel_logic::ConsentUiRow) -> ConsentEntry {
+    ConsentEntry {
+        provider: row.provider.as_str().into(),
+        granted: row.current_route_granted,
+        detail: row.detail().into(),
+        status: row.status.as_str().into(),
+        grantable: row.grantable,
+        revokable: row.revokable,
+    }
+}
+
+fn advance_consent_ui_revisions() -> (u64, u64) {
+    let chat = CHAT_CONSENT_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    let overview =
+        OVERVIEW_CONSENT_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+    (chat, overview)
+}
+
+fn invalidate_consent_models(weak: slint::Weak<MainWindow>, error: &str) {
+    use slint::VecModel;
+
+    let (chat_revision, overview_revision) = advance_consent_ui_revisions();
+    let error = neothd::security::redact::sanitize_tool_output(error);
+    let row = panel_logic::ConsentUiRow::unavailable(error);
+    let chat_rows = vec![chat_consent_ui_row(&row)];
+    let overview_rows = vec![overview_consent_ui_row(&row)];
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(w) = weak.upgrade() else { return };
+        if CHAT_CONSENT_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == chat_revision {
+            w.set_chat_consent_grants(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                chat_rows,
+            ))));
+        }
+        if OVERVIEW_CONSENT_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+            == overview_revision
+        {
+            w.set_ov_consent_entries(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                overview_rows,
+            ))));
+        }
+    });
+}
+
 fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
 
+    let revision = CHAT_CONSENT_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
     let run = |args: &[&str]| -> String {
         which_neothd()
             .and_then(|bin| spawn_neothd_plain(&bin).args(args).output().ok())
@@ -17763,21 +18797,20 @@ fn refresh_chat_consent(weak: slint::Weak<MainWindow>) {
     };
 
     let autonomy_json = run(&["autonomy", "show", "--output", "json"]);
-    let consent_json = run(&["consent", "list", "--output", "json"]);
-
     let mode = panel_logic::parse_autonomy_mode(&autonomy_json);
-    let grants = panel_logic::parse_chat_consent_grants(&consent_json);
+    let grants = read_consent_ui_rows().unwrap_or_else(|error| {
+        vec![panel_logic::ConsentUiRow::unavailable(
+            neothd::security::redact::sanitize_tool_output(&error),
+        )]
+    });
 
     let _ = slint::invoke_from_event_loop(move || {
+        if CHAT_CONSENT_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
         let Some(w) = weak.upgrade() else { return };
         w.set_chat_consent_mode(mode.as_str().into());
-        let grant_rows: Vec<ConsentGrant> = grants
-            .into_iter()
-            .map(|(provider, granted)| ConsentGrant {
-                provider: provider.into(),
-                granted,
-            })
-            .collect();
+        let grant_rows: Vec<ConsentGrant> = grants.iter().map(chat_consent_ui_row).collect();
         w.set_chat_consent_grants(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             grant_rows,
         ))));
@@ -17852,14 +18885,27 @@ fn refresh_overview_cost(weak: slint::Weak<MainWindow>) {
 }
 
 fn refresh_overview(weak: slint::Weak<MainWindow>) {
+    let consent_revision =
+        OVERVIEW_CONSENT_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
     let bin = match which_neothd() {
         Some(b) => b,
         None => {
+            let consent_rows = vec![overview_consent_ui_row(
+                &panel_logic::ConsentUiRow::unavailable("neothd binary not found"),
+            )];
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     w.set_ov_operating_mode("neothd not found".into());
                     w.set_ov_daemon_state("error".into());
                     w.set_ov_refreshed_at("binary missing".into());
+                    if OVERVIEW_CONSENT_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+                        == consent_revision
+                    {
+                        use slint::VecModel;
+                        w.set_ov_consent_entries(
+                            std::rc::Rc::new(VecModel::from(consent_rows)).into(),
+                        );
+                    }
                 }
             });
             return;
@@ -17887,7 +18933,6 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
     let skills_json = run(&["skills", "list", "--output", "json"]);
     let plugin_json = run(&["plugin", "list", "--output", "json"]);
     let cal_json = run(&["calendar", "list", "--output", "json"]);
-    let consent_json = run(&["consent", "list", "--output", "json"]);
 
     // Parse — all pure fns in panel_logic.
     let (mode, autonomy, ch_health, wal_bytes, tier_counts, daemon_state) =
@@ -17898,7 +18943,11 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
     let (skills_count, skill_names) = panel_logic::parse_overview_skills(&skills_json);
     let (plugins_count, plugin_names) = panel_logic::parse_overview_skills(&plugin_json);
     let (cal_configured, cal_events) = panel_logic::parse_calendar_next(&cal_json, 3);
-    let (consent_entries, smart_approve) = panel_logic::parse_consent(&consent_json);
+    let consent_entries = read_consent_ui_rows().unwrap_or_else(|error| {
+        vec![panel_logic::ConsentUiRow::unavailable(
+            neothd::security::redact::sanitize_tool_output(&error),
+        )]
+    });
 
     // Timestamp.
     let ts = {
@@ -17982,18 +19031,17 @@ fn refresh_overview(weak: slint::Weak<MainWindow>) {
         }
 
         // CONSENT
+        if OVERVIEW_CONSENT_UI_REVISION.load(std::sync::atomic::Ordering::Acquire)
+            == consent_revision
         {
             use slint::VecModel;
             let rows: Vec<ConsentEntry> = consent_entries
-                .into_iter()
-                .map(|(provider, granted)| ConsentEntry {
-                    provider: provider.into(),
-                    granted,
-                })
+                .iter()
+                .map(overview_consent_ui_row)
                 .collect();
             w.set_ov_consent_entries(std::rc::Rc::new(VecModel::from(rows)).into());
+            w.set_ov_smart_approve("".into());
         }
-        w.set_ov_smart_approve(smart_approve.into());
 
         // Timestamp
         w.set_ov_refreshed_at(ts.into());

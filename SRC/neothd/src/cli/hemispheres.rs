@@ -814,12 +814,28 @@ async fn run_test(
     .await
     .with_context(|| format!("build provider for role {}", role.as_str()))?;
     let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
+    let mut ephemeral_consent = crate::consent::EphemeralConsent::default();
+    if question.is_some()
+        && let Some(route) = crate::consent::route_for_role(cfg, role)
+    {
+        let home = FreedomConfig::default_neoth_home();
+        ephemeral_consent.extend(
+            crate::cli::consent::ensure_route_granted_or_prompt_at(
+                &home,
+                &route,
+                cfg,
+                crate::cli::consent::ConsentMutationSource::Tty,
+            )
+            .await?,
+        )?;
+    }
     let provider = crate::providers::cost_authorization::AuthorizedProvider::from_box(
         provider,
         crate::providers::cost_authorization::ProviderCallAuthorizer::interactive_one_shot(
             cfg.autonomy_policy(),
             cfg.tokens.max_per_request,
-        )?,
+        )?
+        .with_ephemeral_consent(ephemeral_consent),
         default_model,
         "hemispheres.test",
     );
@@ -830,14 +846,6 @@ async fn run_test(
     // circuits the actual `provider.complete` so cost-sensitive operators
     // can verify routing without paying for a token.
     let live = if let Some(q) = question {
-        // V03-08 / A-2 contract: consent must be granted for the
-        // specific hemisphere's provider before any live call. The
-        // hemispheres test surface is a fresh entry-point, not covered
-        // by the chat/serve pre-flight, so it gates explicitly here.
-        if let Some(route) = crate::consent::route_for_role(cfg, role) {
-            let home = FreedomConfig::default_neoth_home();
-            crate::consent::ensure_route_granted_or_prompt(&home, &route)?;
-        }
         if dry_run {
             Some(LiveResult::dry_run(q))
         } else {

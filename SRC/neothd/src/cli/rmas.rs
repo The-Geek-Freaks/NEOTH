@@ -1,11 +1,13 @@
-//! `neoth rmas consent [--acknowledge]` — ZF-04 RecursiveMAS consent gate.
+//! `neoth rmas consent [--acknowledge]` — ZF-04 RecursiveMAS code gate.
 //!
 //! ## What this command does
 //!
-//! - Without `--acknowledge`: prints the RecursiveMAS license/consent status
-//!   (marker present/absent, marker path, license name) and exits 0.
-//! - With `--acknowledge`: writes the consent marker if absent (idempotent —
-//!   already-present marker prints a friendly notice and exits 0 cleanly).
+//! - Without `--acknowledge`: prints both independent RecursiveMAS gates:
+//!   third-party code acknowledgement and revocable provider egress consent.
+//! - With `--acknowledge`: writes only the third-party code marker if absent
+//!   (idempotent), then prints the provider-consent state and exact next step.
+//! - Outbound prompt egress remains separately gated by
+//!   `neoth consent grant recursive_mas`.
 //!
 //! ## Marker path
 //!
@@ -34,14 +36,15 @@
 //!  The operator is responsible for compliance with the RecursiveMAS \
 //!  upstream license."
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
+use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
+use crate::consent::{self, ConsentRoute};
 
 // ── License text (canonical) ──────────────────────────────────────────────────
 
@@ -64,40 +67,115 @@ at the path set via `recursive_mas.sidecar_repo` in freedom.yaml.";
 /// `CONSENT_MARKER` constant — the same filename `RecursiveMasAdapter::spawn`
 /// checks — so `--acknowledge` actually satisfies the gate it claims to.
 pub fn rmas_marker_path(home: &Path) -> PathBuf {
-    home.join(crate::providers::recursive_mas::CONSENT_MARKER)
+    crate::providers::recursive_mas::consent_marker_path(home)
 }
 
-/// True iff the consent marker exists.
-pub fn is_rmas_consent_acknowledged(home: &Path) -> bool {
-    rmas_marker_path(home).exists()
+/// True iff the exact instance contains a canonical, regular, single-link,
+/// no-follow acknowledgement marker.
+pub fn is_rmas_consent_acknowledged(home: &Path) -> Result<bool> {
+    crate::providers::recursive_mas::code_acknowledgement_present(home)
 }
 
-/// Write the consent marker (idempotent — overwrites timestamp on each call).
+/// Create the acknowledgement marker once with private permissions and a
+/// durable directory-entry commit. An existing path is accepted only after the
+/// same handle-bound validation used by the runtime gate.
 ///
 /// # Errors
-/// Returns an error only if the home directory cannot be created or the
-/// marker file cannot be written.
+/// Returns an error if the home cannot be created, the new marker cannot be
+/// committed, or an existing marker is malformed, linked, or not a regular
+/// single-link file.
 pub fn write_rmas_consent_marker(home: &Path) -> Result<()> {
-    fs::create_dir_all(home).with_context(|| format!("create neoth home {}", home.display()))?;
+    std::fs::create_dir_all(home)
+        .with_context(|| format!("create neoth home {}", home.display()))?;
     let marker = rmas_marker_path(home);
-    // Store a human-readable UTC timestamp so operators can audit when they
-    // acknowledged by hand (`cat ~/.neoth/rmas_consent_acknowledged`).
     let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    fs::write(&marker, ts.as_bytes())
-        .with_context(|| format!("write RMAS consent marker {}", marker.display()))?;
-    Ok(())
+    debug_assert_eq!(
+        ts.len(),
+        crate::providers::recursive_mas::CONSENT_MARKER_BYTES
+    );
+    match crate::util::atomic_write::write_private_create_new_durable(&marker, ts.as_bytes()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            anyhow::ensure!(
+                is_rmas_consent_acknowledged(home)?,
+                "RecursiveMAS code acknowledgement disappeared during validation; retry"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("create RMAS consent marker {}", marker.display()))
+        }
+    }
+}
+
+/// Render both independent RecursiveMAS gates without mutating either one.
+///
+/// The code acknowledgement permits execution of operator-installed,
+/// unresolved-license third-party code. Provider consent separately permits
+/// that sidecar to use the host's network for prompt egress. Keeping both
+/// states in one renderer prevents CLI help and post-ack output from implying
+/// that the code acknowledgement alone makes the provider ready.
+fn render_consent_status(home: &Path) -> Result<String> {
+    let code_acknowledged = is_rmas_consent_acknowledged(home)?;
+    let provider_route = ConsentRoute::new(ProviderKind::RecursiveMas, None);
+    let provider_consent_granted = consent::is_route_granted(home, &provider_route);
+    let marker = rmas_marker_path(home);
+
+    let mut output = format!(
+        "--- RecursiveMAS Readiness ---\n\
+         Third-party code acknowledgement: {}\n\
+         Provider egress consent:          {}\n\
+         Code marker:                      {}\n\
+         License:                          {}\n\
+         \n\
+         {}",
+        if code_acknowledged {
+            "ACKNOWLEDGED"
+        } else {
+            "NOT acknowledged"
+        },
+        if provider_consent_granted {
+            "GRANTED"
+        } else {
+            "NOT granted"
+        },
+        marker.display(),
+        RMAS_LICENSE_NAME,
+        RMAS_LICENSE_NOTICE,
+    );
+
+    if !code_acknowledged {
+        output.push_str(
+            "\n\nTo acknowledge the operator-installed third-party code:\n\
+             \x20 neoth rmas consent --acknowledge",
+        );
+    }
+    if !provider_consent_granted {
+        output.push_str(
+            "\n\nTo grant revocable prompt egress for the RecursiveMAS sidecar:\n\
+             \x20 neoth consent grant recursive_mas",
+        );
+    } else {
+        output.push_str(
+            "\n\nTo revoke RecursiveMAS prompt egress:\n\
+             \x20 neoth consent revoke recursive_mas",
+        );
+    }
+
+    Ok(output)
 }
 
 // ── Clap args ─────────────────────────────────────────────────────────────────
 
-/// ZF-04 — RecursiveMAS consent gate + status inspector.
+/// Inspect both RecursiveMAS gates: code acknowledgement via `neoth rmas consent --acknowledge`; prompt egress via `neoth consent grant recursive_mas` / `neoth consent revoke recursive_mas`.
 ///
-/// Without `--acknowledge`: shows the license notice, current marker state,
-/// and marker path. Exit 0 regardless.
+/// `consent` shows both required gates: the unresolved-license code
+/// acknowledgement and the separate revocable provider egress consent.
 ///
-/// With `--acknowledge`: writes the consent marker (idempotent). Prints a
-/// friendly notice if the marker already exists and exits 0. Only this
-/// explicit command creates the marker — the wizard and preset code never do.
+/// `consent --acknowledge` writes only the code marker (idempotent). Prompt
+/// egress must still be granted with `neoth consent grant recursive_mas`.
+/// Only this explicit command creates the code marker — the wizard and preset
+/// code never do.
 #[derive(Args, Debug, Clone)]
 pub struct RmasArgs {
     #[command(subcommand)]
@@ -106,10 +184,9 @@ pub struct RmasArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum RmasAction {
-    /// Show RecursiveMAS license/consent status; optionally write the
-    /// consent marker with `--acknowledge`.
+    /// Show both gates: code uses `neoth rmas consent --acknowledge`; egress uses `neoth consent grant recursive_mas` / `neoth consent revoke recursive_mas`.
     Consent {
-        /// Write the consent marker. Idempotent — safe to run multiple times.
+        /// Acknowledge third-party code. Egress consent remains separate.
         #[arg(long)]
         acknowledge: bool,
 
@@ -135,50 +212,17 @@ pub fn run_rmas(args: RmasArgs, _output: OutputFormat) -> Result<()> {
 }
 
 fn run_consent(home: &Path, acknowledge: bool) -> Result<()> {
-    let marker = rmas_marker_path(home);
-    let already = is_rmas_consent_acknowledged(home);
+    let already = is_rmas_consent_acknowledged(home)?;
 
     if acknowledge {
         if already {
-            println!(
-                "RMAS consent already acknowledged.\n\
-                 Marker: {}\n\
-                 License: {}",
-                marker.display(),
-                RMAS_LICENSE_NAME
-            );
-            return Ok(());
-        }
-        write_rmas_consent_marker(home)?;
-        println!(
-            "RMAS consent acknowledged.\n\
-             Marker written: {}\n\
-             License: {}",
-            marker.display(),
-            RMAS_LICENSE_NAME
-        );
-    } else {
-        // Status-only path.
-        println!(
-            "--- RecursiveMAS Consent Status ---\n\
-             Status:  {}\n\
-             Marker:  {}\n\
-             License: {}\n\
-             \n\
-             {}",
-            if already {
-                "ACKNOWLEDGED"
-            } else {
-                "NOT acknowledged"
-            },
-            marker.display(),
-            RMAS_LICENSE_NAME,
-            RMAS_LICENSE_NOTICE,
-        );
-        if !already {
-            println!("\nTo acknowledge, run:\n  neoth rmas consent --acknowledge");
+            println!("RecursiveMAS third-party code was already acknowledged.");
+        } else {
+            write_rmas_consent_marker(home)?;
+            println!("RecursiveMAS third-party code acknowledged.");
         }
     }
+    println!("{}", render_consent_status(home)?);
     Ok(())
 }
 
@@ -194,7 +238,7 @@ mod tests {
     #[test]
     fn marker_absent_by_default() {
         let dir = TempDir::new().unwrap();
-        assert!(!is_rmas_consent_acknowledged(dir.path()));
+        assert!(!is_rmas_consent_acknowledged(dir.path()).unwrap());
         assert!(!rmas_marker_path(dir.path()).exists());
     }
 
@@ -202,7 +246,7 @@ mod tests {
     fn write_marker_creates_file_and_is_acknowledged() {
         let dir = TempDir::new().unwrap();
         write_rmas_consent_marker(dir.path()).unwrap();
-        assert!(is_rmas_consent_acknowledged(dir.path()));
+        assert!(is_rmas_consent_acknowledged(dir.path()).unwrap());
         assert!(rmas_marker_path(dir.path()).exists());
     }
 
@@ -210,9 +254,14 @@ mod tests {
     fn write_marker_is_idempotent() {
         let dir = TempDir::new().unwrap();
         write_rmas_consent_marker(dir.path()).unwrap();
-        // Second call must not error.
+        let original = std::fs::read(rmas_marker_path(dir.path())).unwrap();
+        // The create-new collision is safely revalidated, not overwritten.
         write_rmas_consent_marker(dir.path()).unwrap();
-        assert!(is_rmas_consent_acknowledged(dir.path()));
+        assert!(is_rmas_consent_acknowledged(dir.path()).unwrap());
+        assert_eq!(
+            std::fs::read(rmas_marker_path(dir.path())).unwrap(),
+            original
+        );
     }
 
     #[test]
@@ -246,7 +295,82 @@ mod tests {
         let dir = TempDir::new().unwrap();
         write_rmas_consent_marker(dir.path()).unwrap();
         let content = std::fs::read_to_string(rmas_marker_path(dir.path())).unwrap();
-        assert!(!content.is_empty(), "marker must contain timestamp");
+        assert_eq!(
+            content.len(),
+            crate::providers::recursive_mas::CONSENT_MARKER_BYTES
+        );
+        chrono::DateTime::parse_from_rfc3339(&content).unwrap();
+    }
+
+    #[test]
+    fn malformed_and_oversized_markers_fail_closed() {
+        for payload in [
+            b"not-a-timestamp".as_slice(),
+            b"2026-07-26T12:00:00+00:00".as_slice(),
+            &[b'x'; crate::providers::recursive_mas::CONSENT_MARKER_BYTES + 1],
+        ] {
+            let dir = TempDir::new().unwrap();
+            std::fs::write(rmas_marker_path(dir.path()), payload).unwrap();
+            assert!(is_rmas_consent_acknowledged(dir.path()).is_err());
+            assert!(write_rmas_consent_marker(dir.path()).is_err());
+        }
+    }
+
+    #[test]
+    fn directory_and_hard_link_markers_fail_closed_without_mutation() {
+        let directory_home = TempDir::new().unwrap();
+        std::fs::create_dir(rmas_marker_path(directory_home.path())).unwrap();
+        assert!(is_rmas_consent_acknowledged(directory_home.path()).is_err());
+        assert!(write_rmas_consent_marker(directory_home.path()).is_err());
+        assert!(rmas_marker_path(directory_home.path()).is_dir());
+
+        let linked_home = TempDir::new().unwrap();
+        let original = linked_home.path().join("original.txt");
+        let original_bytes = b"2026-07-26T12:00:00Z";
+        std::fs::write(&original, original_bytes).unwrap();
+        std::fs::hard_link(&original, rmas_marker_path(linked_home.path())).unwrap();
+        assert!(is_rmas_consent_acknowledged(linked_home.path()).is_err());
+        assert!(write_rmas_consent_marker(linked_home.path()).is_err());
+        assert_eq!(std::fs::read(original).unwrap(), original_bytes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_marker_is_rejected_without_touching_its_target() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target.txt");
+        std::fs::write(&target, b"must stay unchanged").unwrap();
+        symlink(&target, rmas_marker_path(dir.path())).unwrap();
+
+        assert!(is_rmas_consent_acknowledged(dir.path()).is_err());
+        assert!(write_rmas_consent_marker(dir.path()).is_err());
+        assert_eq!(std::fs::read(target).unwrap(), b"must stay unchanged");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reparse_point_marker_is_rejected_without_touching_its_target() {
+        let dir = TempDir::new().unwrap();
+        let target = dir.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        let sentinel = target.join("sentinel.txt");
+        std::fs::write(&sentinel, b"must stay unchanged").unwrap();
+        let marker = rmas_marker_path(dir.path());
+        let status = std::process::Command::new("cmd")
+            .arg("/c")
+            .arg("mklink")
+            .arg("/J")
+            .arg(&marker)
+            .arg(&target)
+            .status()
+            .unwrap();
+        assert!(status.success(), "mklink /J must create the test fixture");
+
+        assert!(is_rmas_consent_acknowledged(dir.path()).is_err());
+        assert!(write_rmas_consent_marker(dir.path()).is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"must stay unchanged");
     }
 
     // ── run_consent status path ───────────────────────────────────────────────
@@ -265,14 +389,46 @@ mod tests {
         run_consent(dir.path(), false).unwrap();
     }
 
+    #[test]
+    fn status_exposes_both_independent_gates_and_exact_commands() {
+        let dir = TempDir::new().unwrap();
+        let status = render_consent_status(dir.path()).unwrap();
+        assert!(status.contains("Third-party code acknowledgement: NOT acknowledged"));
+        assert!(status.contains("Provider egress consent:          NOT granted"));
+        assert!(status.contains("neoth rmas consent --acknowledge"));
+        assert!(status.contains("neoth consent grant recursive_mas"));
+    }
+
+    #[test]
+    fn acknowledgement_does_not_claim_provider_egress_authority() {
+        let dir = TempDir::new().unwrap();
+        write_rmas_consent_marker(dir.path()).unwrap();
+        let status = render_consent_status(dir.path()).unwrap();
+        assert!(status.contains("Third-party code acknowledgement: ACKNOWLEDGED"));
+        assert!(status.contains("Provider egress consent:          NOT granted"));
+        assert!(!status.contains("neoth rmas consent --acknowledge"));
+        assert!(status.contains("neoth consent grant recursive_mas"));
+    }
+
+    #[test]
+    fn provider_consent_is_reported_and_revokable_independently() {
+        let dir = TempDir::new().unwrap();
+        let route = ConsentRoute::new(ProviderKind::RecursiveMas, None);
+        consent::grant_route(dir.path(), &route).unwrap();
+        let status = render_consent_status(dir.path()).unwrap();
+        assert!(status.contains("Provider egress consent:          GRANTED"));
+        assert!(status.contains("neoth consent revoke recursive_mas"));
+        assert!(!status.contains("neoth consent grant recursive_mas"));
+    }
+
     // ── acknowledge path ──────────────────────────────────────────────────────
 
     #[test]
     fn acknowledge_writes_marker_and_exits_ok() {
         let dir = TempDir::new().unwrap();
-        assert!(!is_rmas_consent_acknowledged(dir.path()));
+        assert!(!is_rmas_consent_acknowledged(dir.path()).unwrap());
         run_consent(dir.path(), true).unwrap();
-        assert!(is_rmas_consent_acknowledged(dir.path()));
+        assert!(is_rmas_consent_acknowledged(dir.path()).unwrap());
     }
 
     #[test]
@@ -281,7 +437,7 @@ mod tests {
         run_consent(dir.path(), true).unwrap();
         // Second call must still exit 0 with friendly notice.
         run_consent(dir.path(), true).unwrap();
-        assert!(is_rmas_consent_acknowledged(dir.path()));
+        assert!(is_rmas_consent_acknowledged(dir.path()).unwrap());
     }
 
     // ── wizard/preset safety evidence ────────────────────────────────────────
@@ -305,7 +461,7 @@ mod tests {
         // The wizard RecursiveMas arm only prints descriptive text — it never
         // calls write_rmas_consent_marker, so a pristine home has no marker.
         assert!(
-            !is_rmas_consent_acknowledged(dir.path()),
+            !is_rmas_consent_acknowledged(dir.path()).unwrap(),
             "marker must NOT exist unless --acknowledge was passed explicitly"
         );
     }

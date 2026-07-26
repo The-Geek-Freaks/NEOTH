@@ -34,7 +34,7 @@ use super::sources::openai::OpenAiSource;
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
 use crate::config::inference::{HemisphereRole, HemisphereSlot, InferenceProvider};
-use crate::consent::{ConsentRoute, is_route_granted};
+use crate::consent::is_route_granted;
 use crate::providers::aws_credentials;
 use crate::secret::SecretString;
 
@@ -299,11 +299,7 @@ impl RouteBinding {
                     && self.key.as_ref().map(SecretString::expose_secret)
                         == other.key.as_ref().map(SecretString::expose_secret)
             }
-            ProviderKind::AwsBedrock => {
-                self.kind == other.kind
-                    && effective_bedrock_region(self.region.as_deref())
-                        == effective_bedrock_region(other.region.as_deref())
-            }
+            ProviderKind::AwsBedrock => self.kind == other.kind && self.region == other.region,
             ProviderKind::GeminiApi => {
                 self.kind == other.kind
                     && self.key.as_ref().map(SecretString::expose_secret)
@@ -707,7 +703,7 @@ fn effective_route_bindings(
     // an otherwise runnable provider group as a discovery failure.
     if config.fallback.max_hops > 0 {
         let fallbacks: Vec<_> = match home {
-            Some(home) => crate::providers::consented_fallback_slots(home, &config.fallback.chain),
+            Some(home) => crate::providers::consented_fallback_slots(home, config),
             None => config
                 .fallback
                 .chain
@@ -757,15 +753,21 @@ fn push_top_level_binding(
     let Some(kind) = config.provider_kind else {
         return;
     };
+    let region = binding_region(kind, config.provider_region.as_deref());
     push_binding(
         bindings,
         RouteBinding {
             kind,
             key: nonempty_key(config.provider_key.as_ref()),
             endpoint: nonempty(config.provider_endpoint.as_deref()),
-            region: nonempty(config.provider_region.as_deref()),
+            region: region.clone(),
             binary: nonempty(config.provider_binary.as_deref()),
-            consented: route_consented(home, kind, config.provider_endpoint.as_deref()),
+            consented: route_consented(
+                home,
+                kind,
+                config.provider_endpoint.as_deref(),
+                region.as_deref(),
+            ),
             runtime_rejected: kind == ProviderKind::Skip,
         },
     );
@@ -782,6 +784,7 @@ fn push_auxiliary_binding(
     let endpoint = same_vendor
         .then(|| nonempty(config.provider_endpoint.as_deref()))
         .flatten();
+    let region = binding_region(kind, config.provider_region.as_deref());
     push_binding(
         bindings,
         RouteBinding {
@@ -790,9 +793,9 @@ fn push_auxiliary_binding(
                 .then(|| nonempty_key(config.provider_key.as_ref()))
                 .flatten(),
             endpoint: endpoint.clone(),
-            region: nonempty(config.provider_region.as_deref()),
+            region: region.clone(),
             binary: nonempty(config.provider_binary.as_deref()),
-            consented: route_consented(home, kind, endpoint.as_deref()),
+            consented: route_consented(home, kind, endpoint.as_deref(), region.as_deref()),
             runtime_rejected,
         },
     );
@@ -807,16 +810,19 @@ fn push_explicit_binding(
     home: Option<&Path>,
 ) {
     let endpoint = nonempty(slot.endpoint.as_deref());
+    let region = binding_region(
+        kind,
+        slot.region.as_deref().or(config.provider_region.as_deref()),
+    );
     push_binding(
         bindings,
         RouteBinding {
             kind,
             key: nonempty_key(slot.key.as_ref()),
             endpoint: endpoint.clone(),
-            region: nonempty(slot.region.as_deref())
-                .or_else(|| nonempty(config.provider_region.as_deref())),
+            region: region.clone(),
             binary: nonempty(config.provider_binary.as_deref()),
-            consented: route_consented(home, kind, endpoint.as_deref()),
+            consented: route_consented(home, kind, endpoint.as_deref(), region.as_deref()),
             runtime_rejected,
         },
     );
@@ -831,11 +837,31 @@ fn push_binding(bindings: &mut Vec<RouteBinding>, binding: RouteBinding) {
     }
 }
 
-fn route_consented(home: Option<&Path>, kind: ProviderKind, endpoint: Option<&str>) -> bool {
+fn route_consented(
+    home: Option<&Path>,
+    kind: ProviderKind,
+    endpoint: Option<&str>,
+    region: Option<&str>,
+) -> bool {
     match home {
-        Some(home) => is_route_granted(home, &ConsentRoute::new(kind, endpoint)),
+        Some(home) => is_route_granted(
+            home,
+            &crate::consent::route_for_provider_config(kind, endpoint, region),
+        ),
         None => true,
     }
+}
+
+const INVALID_BEDROCK_BINDING_REGION: &str = "__invalid_aws_bedrock_region__";
+
+fn binding_region(kind: ProviderKind, configured: Option<&str>) -> Option<String> {
+    if kind == ProviderKind::AwsBedrock {
+        return Some(
+            crate::providers::aws_bedrock::effective_region(configured)
+                .unwrap_or_else(|_| INVALID_BEDROCK_BINDING_REGION.to_string()),
+        );
+    }
+    nonempty(configured)
 }
 
 fn nonempty(value: Option<&str>) -> Option<String> {
@@ -863,14 +889,8 @@ fn effective_models_endpoint(kind: ProviderKind, endpoint: Option<&str>) -> Resu
     }
 }
 
-fn effective_bedrock_region(region: Option<&str>) -> String {
-    region
-        .map(str::trim)
-        .filter(|region| !region.is_empty())
-        .map(str::to_owned)
-        .or_else(|| std::env::var("AWS_REGION").ok())
-        .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
-        .unwrap_or_else(|| "us-east-1".to_string())
+fn effective_bedrock_region(region: Option<&str>) -> Result<String> {
+    crate::providers::aws_bedrock::effective_region(region)
 }
 
 fn catalog_binding_hmac(key: &[u8], provider: &str, fields: &[(&str, &str)]) -> String {
@@ -897,7 +917,7 @@ fn resolve_bedrock_credentials_for_discovery(
     config: &FreedomConfig,
     binding_key: &[u8],
 ) -> Result<(Box<dyn ModelSource>, String)> {
-    let region = effective_bedrock_region(config.provider_region.as_deref());
+    let region = effective_bedrock_region(config.provider_region.as_deref())?;
     let resolved = aws_credentials::resolve_chain(None, &aws_credentials::env_var_getter, None)?;
     let source = format!("{:?}", resolved.source);
     let session_token = resolved
@@ -1965,6 +1985,56 @@ mod tests {
             .into_execution();
         assert!(disabled.configured.is_empty());
         assert!(sources.is_empty());
+    }
+
+    #[test]
+    fn bedrock_fallback_discovery_uses_exact_effective_region_route() {
+        let home = tempdir().unwrap();
+        let mut config = base_config();
+        config.provider_region = Some("us-east-1".into());
+        config.fallback.chain.push(HemisphereSlot {
+            provider: Some(InferenceProvider::AwsBedrock),
+            region: Some("eu-central-1".into()),
+            ..Default::default()
+        });
+
+        let bedrock_binding = |config: &FreedomConfig| {
+            effective_route_bindings(config, Some(home.path()))
+                .0
+                .into_iter()
+                .find(|binding| binding.kind == ProviderKind::AwsBedrock)
+        };
+        assert!(
+            bedrock_binding(&config).is_none(),
+            "unconsented fallback must be excluded before discovery"
+        );
+
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("us-east-1"),
+            ),
+        )
+        .unwrap();
+        assert!(
+            bedrock_binding(&config).is_none(),
+            "default-region authority must not authorize the EU fallback"
+        );
+
+        crate::consent::grant_route(
+            home.path(),
+            &crate::consent::route_for_provider_config(
+                ProviderKind::AwsBedrock,
+                None,
+                Some("eu-central-1"),
+            ),
+        )
+        .unwrap();
+        let granted = bedrock_binding(&config).expect("consented Bedrock fallback binding");
+        assert!(granted.consented);
+        assert_eq!(granted.region.as_deref(), Some("eu-central-1"));
     }
 
     #[test]

@@ -1504,31 +1504,914 @@ impl FullautoTokenAck {
     }
 }
 
-/// Exact `neoth consent revoke <provider> --output json` acknowledgement.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRouteBinding {
+    pub provider: String,
+    pub endpoint_origin: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRouteReadback {
+    pub provider: String,
+    pub endpoint_origin: Option<String>,
+    pub granted: bool,
+    #[serde(default)]
+    pub marker_authority_persisted: bool,
+}
+
+fn validate_consent_route_bindings(
+    routes: &[ConsentRouteBinding],
+    field: &str,
+) -> Result<std::collections::BTreeSet<ConsentRouteBinding>, String> {
+    let mut unique = std::collections::BTreeSet::new();
+    let mut previous_key: Option<String> = None;
+    for route in routes {
+        if route.provider.is_empty()
+            || route.provider.trim() != route.provider
+            || !route
+                .provider
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(format!("{field} contains an invalid provider slug"));
+        }
+        let endpoint_bound = matches!(
+            route.provider.as_str(),
+            "local_ollama" | "openai_api" | "openai_compat" | "aws_bedrock" | "azure_openai"
+        );
+        match (endpoint_bound, route.endpoint_origin.as_deref()) {
+            (true, Some(origin))
+                if !origin.is_empty()
+                    && origin.trim() == origin
+                    && !origin.chars().any(char::is_control) => {}
+            (true, _) => {
+                return Err(format!(
+                    "{field} contains endpoint-bound `{}` without a canonical origin",
+                    route.provider
+                ));
+            }
+            (false, None) => {}
+            (false, Some(_)) => {
+                return Err(format!(
+                    "{field} gives provider-wide `{}` an endpoint origin",
+                    route.provider
+                ));
+            }
+        }
+        let sort_key = format!(
+            "{}\0{}",
+            route.provider,
+            route.endpoint_origin.as_deref().unwrap_or("provider")
+        );
+        if previous_key
+            .as_ref()
+            .is_some_and(|previous| previous >= &sort_key)
+        {
+            return Err(format!("{field} is not in strict canonical route order"));
+        }
+        previous_key = Some(sort_key);
+        if !unique.insert(route.clone()) {
+            return Err(format!("{field} contains a duplicate route"));
+        }
+    }
+    Ok(unique)
+}
+
+fn validate_consent_route_hash(
+    routes: &[ConsentRouteBinding],
+    route_set_sha256: &str,
+) -> Result<std::collections::BTreeSet<ConsentRouteBinding>, String> {
+    if !valid_sha256(route_set_sha256) {
+        return Err("consent acknowledgement has an invalid route-set SHA-256".to_string());
+    }
+    let canonical = validate_consent_route_bindings(routes, "required_routes")?;
+    let encoded = serde_json::to_vec(routes)
+        .map_err(|error| format!("could not encode consent route binding: {error}"))?;
+    if sha256_hex(&encoded) != route_set_sha256 {
+        return Err(
+            "consent acknowledgement route-set hash does not match required_routes".to_string(),
+        );
+    }
+    Ok(canonical)
+}
+
+fn validate_consent_readback(
+    readback: &[ConsentRouteReadback],
+    required: &std::collections::BTreeSet<ConsentRouteBinding>,
+) -> Result<(), String> {
+    let routes = readback
+        .iter()
+        .map(|row| ConsentRouteBinding {
+            provider: row.provider.clone(),
+            endpoint_origin: row.endpoint_origin.clone(),
+        })
+        .collect::<Vec<_>>();
+    let actual = validate_consent_route_bindings(&routes, "consent readback")?;
+    if actual != *required {
+        return Err("consent readback does not cover the exact required route set".to_string());
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentChatPreflightAck {
+    pub status: String,
+    pub config_sha256: String,
+    pub route_set_sha256: String,
+    pub required_routes: Vec<ConsentRouteBinding>,
+    pub missing_routes: Vec<ConsentRouteBinding>,
+    pub challenge_id: Option<String>,
+    pub challenge_token: Option<String>,
+    pub expires_unix: Option<u64>,
+}
+
+pub struct VerifiedConsentChatPreflight {
+    pub config_sha256: String,
+    pub route_set_sha256: String,
+    pub required_routes: Vec<ConsentRouteBinding>,
+    pub missing_routes: Vec<ConsentRouteBinding>,
+    pub challenge_id: Option<String>,
+    pub challenge_token: Option<zeroize::Zeroizing<Vec<u8>>>,
+}
+
+impl ConsentChatPreflightAck {
+    pub fn verify(mut self, now_unix: u64) -> Result<VerifiedConsentChatPreflight, String> {
+        if !valid_sha256(&self.config_sha256) {
+            return Err("consent preflight has an invalid config SHA-256".to_string());
+        }
+        let required = validate_consent_route_hash(&self.required_routes, &self.route_set_sha256)?;
+        let missing = validate_consent_route_bindings(&self.missing_routes, "missing_routes")?;
+        if !missing.is_subset(&required) {
+            return Err(
+                "consent preflight missing_routes is not a subset of required_routes".to_string(),
+            );
+        }
+        let needs_consent = !missing.is_empty();
+        if self.status
+            != if needs_consent {
+                "consent_required"
+            } else {
+                "ready"
+            }
+        {
+            return Err("consent preflight status contradicts its missing route set".to_string());
+        }
+        if needs_consent {
+            let challenge_id = self
+                .challenge_id
+                .as_deref()
+                .ok_or_else(|| "consent preflight omitted challenge_id".to_string())?;
+            if !valid_uuid_v7(challenge_id) {
+                return Err("consent preflight has an invalid challenge_id".to_string());
+            }
+            let challenge_token = self
+                .challenge_token
+                .as_deref()
+                .ok_or_else(|| "consent preflight omitted challenge_token".to_string())?;
+            if !valid_sha256(challenge_token) {
+                return Err("consent preflight has an invalid challenge_token".to_string());
+            }
+            let expires = self
+                .expires_unix
+                .ok_or_else(|| "consent preflight omitted expiry".to_string())?;
+            if expires <= now_unix {
+                return Err("consent preflight challenge is already expired".to_string());
+            }
+        } else if self.challenge_id.is_some()
+            || self.challenge_token.is_some()
+            || self.expires_unix.is_some()
+        {
+            return Err("ready consent preflight unexpectedly returned a challenge".to_string());
+        }
+        Ok(VerifiedConsentChatPreflight {
+            config_sha256: self.config_sha256,
+            route_set_sha256: self.route_set_sha256,
+            required_routes: self.required_routes,
+            missing_routes: self.missing_routes,
+            challenge_id: self.challenge_id,
+            challenge_token: self
+                .challenge_token
+                .take()
+                .map(String::into_bytes)
+                .map(zeroize::Zeroizing::new),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentMutationBindingAck {
+    pub config_sha256: String,
+    pub route_set_sha256: String,
+    pub required_routes: Vec<ConsentRouteBinding>,
+    pub readback: Vec<ConsentRouteReadback>,
+}
+
+#[derive(Clone, Debug)]
+pub struct VerifiedConsentMutationBinding {
+    pub config_sha256: String,
+    pub route_set_sha256: String,
+    pub required_routes: Vec<ConsentRouteBinding>,
+    pub readback: Vec<ConsentRouteReadback>,
+}
+
+impl ConsentMutationBindingAck {
+    pub fn verify(self) -> Result<VerifiedConsentMutationBinding, String> {
+        if !valid_sha256(&self.config_sha256) {
+            return Err("consent mutation binding has an invalid config SHA-256".to_string());
+        }
+        let required = validate_consent_route_hash(&self.required_routes, &self.route_set_sha256)?;
+        validate_consent_readback(&self.readback, &required)?;
+        Ok(VerifiedConsentMutationBinding {
+            config_sha256: self.config_sha256,
+            route_set_sha256: self.route_set_sha256,
+            required_routes: self.required_routes,
+            readback: self.readback,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentDecisionReceipt {
+    pub provider: String,
+    pub was_granted: bool,
+    pub changed: bool,
+    pub configured_endpoint_origins: Vec<String>,
+    pub endpoint_origins: Vec<String>,
+    pub added_endpoint_origins: Vec<String>,
+    pub removed_endpoint_origins: Vec<String>,
+    pub endpoint_delta_known: bool,
+    pub marker_source_malformed: bool,
+    pub audit_pending: bool,
+    pub operation_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentChatDecisionAck {
+    pub status: String,
+    pub decision: String,
+    pub config_sha256: String,
+    pub route_set_sha256: String,
+    pub receipts: Vec<ConsentDecisionReceipt>,
+    pub readback: Vec<ConsentRouteReadback>,
+    pub authority_persisted: bool,
+    pub failure: Option<String>,
+    pub gui_consent_token: Option<String>,
+    pub token_expires_unix: Option<u64>,
+}
+
+pub struct VerifiedConsentChatDecision {
+    pub decision: String,
+    pub gui_consent_token: Option<zeroize::Zeroizing<Vec<u8>>>,
+    pub audit_pending: bool,
+}
+
+impl ConsentChatDecisionAck {
+    pub fn verify(
+        mut self,
+        preflight: &VerifiedConsentChatPreflight,
+        expected_decision: &str,
+        now_unix: u64,
+    ) -> Result<VerifiedConsentChatDecision, String> {
+        if self.decision != expected_decision.replace('-', "_")
+            || self.config_sha256 != preflight.config_sha256
+            || self.route_set_sha256 != preflight.route_set_sha256
+        {
+            return Err(
+                "consent decision acknowledgement does not match its exact preflight".to_string(),
+            );
+        }
+        let completion_error = classify_chat_decision_completion(
+            &self.status,
+            self.authority_persisted,
+            self.failure.as_deref(),
+        )?;
+        let required =
+            validate_consent_route_hash(&preflight.required_routes, &self.route_set_sha256)?;
+        validate_consent_readback(&self.readback, &required)?;
+        let missing = validate_consent_route_bindings(&preflight.missing_routes, "missing_routes")?;
+        let readback = self
+            .readback
+            .iter()
+            .map(|row| {
+                (
+                    ConsentRouteBinding {
+                        provider: row.provider.clone(),
+                        endpoint_origin: row.endpoint_origin.clone(),
+                    },
+                    row.granted,
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let persisted_readback = self
+            .readback
+            .iter()
+            .map(|row| {
+                (
+                    ConsentRouteBinding {
+                        provider: row.provider.clone(),
+                        endpoint_origin: row.endpoint_origin.clone(),
+                    },
+                    row.marker_authority_persisted,
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if self
+            .readback
+            .iter()
+            .any(|row| row.granted && !row.marker_authority_persisted)
+            || (completion_error.is_none()
+                && self
+                    .readback
+                    .iter()
+                    .any(|row| row.granted != row.marker_authority_persisted))
+            || self.authority_persisted
+                != missing
+                    .iter()
+                    .any(|route| persisted_readback.get(route).copied() == Some(true))
+        {
+            return Err(
+                "consent decision acknowledgement has inconsistent durable-authority readback"
+                    .to_string(),
+            );
+        }
+        if let Some(error) = completion_error {
+            return Err(error);
+        }
+        match expected_decision {
+            "deny" | "allow-once" => {
+                if !self.receipts.is_empty()
+                    || missing
+                        .iter()
+                        .any(|route| readback.get(route).copied() != Some(false))
+                {
+                    return Err(
+                        "non-persistent consent decision reported a durable grant".to_string()
+                    );
+                }
+            }
+            "allow-always" => {
+                if required
+                    .iter()
+                    .any(|route| readback.get(route).copied() != Some(true))
+                {
+                    return Err(
+                        "allow-always consent decision failed exact route readback".to_string()
+                    );
+                }
+                let expected_providers = missing
+                    .iter()
+                    .map(|route| route.provider.as_str())
+                    .collect::<std::collections::BTreeSet<_>>();
+                let actual_providers = self
+                    .receipts
+                    .iter()
+                    .map(|receipt| receipt.provider.as_str())
+                    .collect::<std::collections::BTreeSet<_>>();
+                if expected_providers != actual_providers
+                    || self.receipts.len() != actual_providers.len()
+                {
+                    return Err(
+                        "allow-always receipt set does not match pending providers".to_string()
+                    );
+                }
+                for receipt in &self.receipts {
+                    if !receipt.changed
+                        || !receipt.endpoint_delta_known
+                        || receipt.marker_source_malformed
+                        || !receipt.removed_endpoint_origins.is_empty()
+                    {
+                        return Err("allow-always returned an invalid provider mutation receipt"
+                            .to_string());
+                    }
+                    validate_consent_operation(
+                        "granted",
+                        "granted",
+                        "noop",
+                        true,
+                        receipt.operation_id.as_deref(),
+                        receipt.audit_pending,
+                    )?;
+                    let expected_origins = missing
+                        .iter()
+                        .filter(|route| route.provider == receipt.provider)
+                        .filter_map(|route| route.endpoint_origin.clone())
+                        .collect::<Vec<_>>();
+                    let configured = validate_consent_origins(
+                        &receipt.configured_endpoint_origins,
+                        "configured_endpoint_origins",
+                    )?;
+                    let added = validate_consent_origins(
+                        &receipt.added_endpoint_origins,
+                        "added_endpoint_origins",
+                    )?;
+                    let expected_origins =
+                        validate_consent_origins(&expected_origins, "expected endpoint origin")?;
+                    if configured != expected_origins || added != expected_origins {
+                        return Err(
+                            "allow-always receipt does not bind exact pending endpoint origins"
+                                .to_string(),
+                        );
+                    }
+                    validate_consent_origins(&receipt.endpoint_origins, "endpoint_origins")?;
+                    let _was_granted = receipt.was_granted;
+                }
+            }
+            _ => return Err("unknown GUI consent decision".to_string()),
+        }
+        match expected_decision {
+            "allow-once" => {
+                let token = self
+                    .gui_consent_token
+                    .as_deref()
+                    .ok_or_else(|| "allow-once decision omitted GUI consent token".to_string())?;
+                let (id, secret) = token
+                    .split_once('.')
+                    .ok_or_else(|| "GUI consent token has an invalid wire form".to_string())?;
+                if !valid_uuid_v7(id) || !valid_sha256(secret) {
+                    return Err("GUI consent token has an invalid wire form".to_string());
+                }
+                if self
+                    .token_expires_unix
+                    .is_none_or(|expires| expires <= now_unix)
+                {
+                    return Err("GUI consent token is already expired".to_string());
+                }
+            }
+            _ if self.gui_consent_token.is_some() || self.token_expires_unix.is_some() => {
+                return Err(
+                    "non-once consent decision unexpectedly returned an authority token"
+                        .to_string(),
+                );
+            }
+            _ => {}
+        }
+        Ok(VerifiedConsentChatDecision {
+            decision: self.decision,
+            gui_consent_token: self
+                .gui_consent_token
+                .take()
+                .map(String::into_bytes)
+                .map(zeroize::Zeroizing::new),
+            audit_pending: self.receipts.iter().any(|receipt| receipt.audit_pending),
+        })
+    }
+}
+
+fn classify_chat_decision_completion(
+    status: &str,
+    authority_persisted: bool,
+    failure: Option<&str>,
+) -> Result<Option<String>, String> {
+    match status {
+        "decided" if failure.is_none() => Ok(None),
+        "decided" => Err(
+            "successful consent decision acknowledgement unexpectedly reported a failure"
+                .to_string(),
+        ),
+        "committed_partial" | "committed_but_binding_stale" => {
+            let safe_failure = failure.filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 1024
+                    && value.trim() == *value
+                    && !value.chars().any(char::is_control)
+            });
+            Ok(Some(format!(
+                "consent decision ended as `{status}` (authority persisted: {authority_persisted}): {}",
+                safe_failure.unwrap_or("Core omitted a valid redacted failure")
+            )))
+        }
+        other => Err(format!(
+            "consent decision acknowledgement reported unsupported status `{other}`"
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentAckRoute {
+    pub endpoint_origin: String,
+}
+
+fn validate_consent_origins(
+    values: &[String],
+    field: &str,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let mut unique = std::collections::BTreeSet::new();
+    for value in values {
+        if value.is_empty() || value.trim() != value || value.chars().any(char::is_control) {
+            return Err(format!(
+                "consent acknowledgement has an invalid {field} value"
+            ));
+        }
+        if !unique.insert(value.clone()) {
+            return Err(format!("consent acknowledgement repeats a {field} value"));
+        }
+    }
+    Ok(unique)
+}
+
+fn verify_consent_identity(provider: &str, expected_provider: &str) -> Result<(), String> {
+    if provider != expected_provider {
+        return Err(format!(
+            "consent acknowledgement reported provider `{provider}`, expected `{expected_provider}`"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_consent_operation(
+    action: &str,
+    changed_action: &str,
+    noop_action: &str,
+    expected_changed: bool,
+    operation_id: Option<&str>,
+    audit_pending: bool,
+) -> Result<(), String> {
+    let expected_action = if expected_changed {
+        changed_action
+    } else {
+        noop_action
+    };
+    if action != expected_action {
+        return Err(format!(
+            "consent acknowledgement reported action `{action}`, expected `{expected_action}`"
+        ));
+    }
+    if expected_changed {
+        let operation_id = operation_id
+            .ok_or_else(|| "changed consent acknowledgement omitted operation_id".to_string())?;
+        if operation_id.is_empty()
+            || operation_id.trim() != operation_id
+            || operation_id.chars().any(char::is_control)
+        {
+            return Err("consent acknowledgement has an invalid operation_id".to_string());
+        }
+    } else if operation_id.is_some() || audit_pending {
+        return Err(
+            "noop consent acknowledgement reported an operation or pending audit".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_consent_completion(
+    status: &str,
+    authority_persisted: bool,
+    failure: Option<&str>,
+    expected_authority_persisted: bool,
+) -> Result<(), String> {
+    match status {
+        "applied" => {
+            if authority_persisted != expected_authority_persisted || failure.is_some() {
+                return Err(
+                    "consent acknowledgement has inconsistent applied-state readback".to_string(),
+                );
+            }
+            Ok(())
+        }
+        "committed_but_binding_stale" => {
+            let failure = failure.filter(|value| {
+                !value.is_empty() && value.trim() == *value && !value.chars().any(char::is_control)
+            });
+            Err(format!(
+                "consent mutation committed while its GUI binding changed (authority persisted: {authority_persisted}): {}",
+                failure.unwrap_or("Core omitted a valid redacted failure")
+            ))
+        }
+        other => Err(format!(
+            "consent acknowledgement reported unsupported completion status `{other}`"
+        )),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentGrantAck {
+    pub provider: String,
+    pub action: String,
+    pub status: String,
+    pub marker_path: String,
+    pub configured_endpoint_origins: Vec<String>,
+    pub endpoint_origins: Vec<String>,
+    pub added_endpoint_origins: Vec<String>,
+    pub removed_endpoint_origins: Vec<String>,
+    pub endpoint_delta_known: bool,
+    pub marker_source_malformed: bool,
+    pub audit_pending: bool,
+    pub operation_id: Option<String>,
+    pub authority_persisted: bool,
+    pub failure: Option<String>,
+    pub config_sha256: Option<String>,
+    pub route_set_sha256: Option<String>,
+    pub routes: Vec<ConsentAckRoute>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct VerifiedConsentAck {
+    pub endpoint_origins: Vec<String>,
+    pub added_endpoint_origins: Vec<String>,
+    pub removed_endpoint_origins: Vec<String>,
+    pub audit_pending: bool,
+}
+
+impl ConsentGrantAck {
+    pub fn verify(
+        &self,
+        expected_provider: &str,
+        expected_configured_origins: &[String],
+        before_granted_origins: &[String],
+        before_current_route_granted: bool,
+        expected_config_sha256: &str,
+        expected_route_set_sha256: &str,
+    ) -> Result<VerifiedConsentAck, String> {
+        let expected_configured =
+            validate_consent_origins(expected_configured_origins, "expected configured origin")?;
+        let before_granted =
+            validate_consent_origins(before_granted_origins, "pre-mutation granted origin")?;
+        let expected_added: std::collections::BTreeSet<_> = expected_configured
+            .difference(&before_granted)
+            .cloned()
+            .collect();
+        let expected_final: std::collections::BTreeSet<_> = before_granted
+            .union(&expected_configured)
+            .cloned()
+            .collect();
+
+        verify_consent_identity(&self.provider, expected_provider)?;
+        validate_consent_completion(
+            &self.status,
+            self.authority_persisted,
+            self.failure.as_deref(),
+            true,
+        )?;
+        if self.config_sha256.as_deref() != Some(expected_config_sha256)
+            || self.route_set_sha256.as_deref() != Some(expected_route_set_sha256)
+            || !valid_sha256(expected_config_sha256)
+            || !valid_sha256(expected_route_set_sha256)
+        {
+            return Err(
+                "consent grant acknowledgement does not match the GUI preflight binding"
+                    .to_string(),
+            );
+        }
+        validate_consent_operation(
+            &self.action,
+            "granted",
+            "noop",
+            !before_current_route_granted,
+            self.operation_id.as_deref(),
+            self.audit_pending,
+        )?;
+        if self.marker_path.trim().is_empty() {
+            return Err("consent grant acknowledgement omitted marker_path".to_string());
+        }
+        let configured = validate_consent_origins(
+            &self.configured_endpoint_origins,
+            "configured_endpoint_origins",
+        )?;
+        let endpoint_origins =
+            validate_consent_origins(&self.endpoint_origins, "endpoint_origins")?;
+        let added =
+            validate_consent_origins(&self.added_endpoint_origins, "added_endpoint_origins")?;
+        let removed =
+            validate_consent_origins(&self.removed_endpoint_origins, "removed_endpoint_origins")?;
+        let route_values: Vec<String> = self
+            .routes
+            .iter()
+            .map(|route| route.endpoint_origin.clone())
+            .collect();
+        let routes = validate_consent_origins(&route_values, "route endpoint origin")?;
+        if configured != expected_configured
+            || endpoint_origins != expected_final
+            || routes != endpoint_origins
+            || added != expected_added
+            || !removed.is_empty()
+        {
+            return Err(
+                "consent grant acknowledgement does not bind the exact pre/configured/final origin sets"
+                    .to_string(),
+            );
+        }
+        if !self.endpoint_delta_known || self.marker_source_malformed {
+            return Err(
+                "consent grant acknowledgement reported an unknown or malformed source delta"
+                    .to_string(),
+            );
+        }
+        if before_current_route_granted
+            && (!added.is_empty()
+                || !removed.is_empty()
+                || self.operation_id.is_some()
+                || self.audit_pending)
+        {
+            return Err("noop consent grant acknowledgement reported mutation effects".to_string());
+        }
+        Ok(VerifiedConsentAck {
+            endpoint_origins: self.endpoint_origins.clone(),
+            added_endpoint_origins: self.added_endpoint_origins.clone(),
+            removed_endpoint_origins: self.removed_endpoint_origins.clone(),
+            audit_pending: self.audit_pending,
+        })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConsentRevokeAck {
     pub provider: String,
     pub action: String,
+    pub status: String,
+    pub configured_endpoint_origins: Vec<String>,
+    pub endpoint_origins: Vec<String>,
+    pub added_endpoint_origins: Vec<String>,
+    pub removed_endpoint_origins: Vec<String>,
+    pub endpoint_delta_known: bool,
+    pub marker_source_malformed: bool,
+    pub audit_pending: bool,
+    pub operation_id: Option<String>,
+    pub authority_persisted: bool,
+    pub failure: Option<String>,
+    pub config_sha256: Option<String>,
+    pub route_set_sha256: Option<String>,
 }
 
 impl ConsentRevokeAck {
-    /// Confirm the daemon revoked (or had never granted) exactly the
-    /// requested provider. `noop` = idempotent success: no grant existed.
-    pub fn verify(&self, expected_provider: &str) -> Result<(), String> {
-        if self.provider != expected_provider {
-            return Err(format!(
-                "consent revoke acknowledged provider `{}`, expected `{expected_provider}`",
-                self.provider
-            ));
+    pub fn verify(
+        &self,
+        expected_provider: &str,
+        expected_configured_origins: &[String],
+        before_granted_origins: &[String],
+        before_revokable: bool,
+        expected_config_sha256: &str,
+        expected_route_set_sha256: &str,
+    ) -> Result<VerifiedConsentAck, String> {
+        let expected_configured =
+            validate_consent_origins(expected_configured_origins, "expected configured origin")?;
+        let before_granted =
+            validate_consent_origins(before_granted_origins, "pre-mutation granted origin")?;
+
+        verify_consent_identity(&self.provider, expected_provider)?;
+        validate_consent_completion(
+            &self.status,
+            self.authority_persisted,
+            self.failure.as_deref(),
+            false,
+        )?;
+        if self.config_sha256.as_deref() != Some(expected_config_sha256)
+            || self.route_set_sha256.as_deref() != Some(expected_route_set_sha256)
+            || !valid_sha256(expected_config_sha256)
+            || !valid_sha256(expected_route_set_sha256)
+        {
+            return Err(
+                "consent revoke acknowledgement does not match the GUI preflight binding"
+                    .to_string(),
+            );
         }
-        if self.action != "revoked" && self.action != "noop" {
-            return Err(format!(
-                "consent revoke acknowledged unknown action `{}`",
-                self.action
-            ));
+        validate_consent_operation(
+            &self.action,
+            "revoked",
+            "noop",
+            before_revokable,
+            self.operation_id.as_deref(),
+            self.audit_pending,
+        )?;
+        let configured = validate_consent_origins(
+            &self.configured_endpoint_origins,
+            "configured_endpoint_origins",
+        )?;
+        let endpoint_origins =
+            validate_consent_origins(&self.endpoint_origins, "endpoint_origins")?;
+        let added =
+            validate_consent_origins(&self.added_endpoint_origins, "added_endpoint_origins")?;
+        let removed =
+            validate_consent_origins(&self.removed_endpoint_origins, "removed_endpoint_origins")?;
+        if configured != expected_configured || !added.is_empty() {
+            return Err(
+                "consent revoke acknowledgement does not bind the configured/prior origin sets"
+                    .to_string(),
+            );
         }
-        Ok(())
+        if self.endpoint_delta_known {
+            if self.marker_source_malformed
+                || endpoint_origins != before_granted
+                || removed != before_granted
+            {
+                return Err(
+                    "consent revoke acknowledgement does not bind the exact removed origins"
+                        .to_string(),
+                );
+            }
+        } else if !self.marker_source_malformed
+            || !endpoint_origins.is_empty()
+            || !removed.is_empty()
+        {
+            return Err(
+                "consent revoke acknowledgement has an invalid unknown-delta binding".to_string(),
+            );
+        }
+        if !before_revokable
+            && (!removed.is_empty()
+                || self.operation_id.is_some()
+                || self.audit_pending
+                || self.marker_source_malformed)
+        {
+            return Err(
+                "noop consent revoke acknowledgement reported mutation effects".to_string(),
+            );
+        }
+        Ok(VerifiedConsentAck {
+            endpoint_origins: self.endpoint_origins.clone(),
+            added_endpoint_origins: self.added_endpoint_origins.clone(),
+            removed_endpoint_origins: self.removed_endpoint_origins.clone(),
+            audit_pending: self.audit_pending,
+        })
+    }
+
+    /// Fail-safe GUI revoke when freedom.yaml cannot be loaded and therefore
+    /// no config/route binding can be produced. Revocation only removes
+    /// authority, so the exact marker/audit receipt is sufficient.
+    pub fn verify_emergency(&self, expected_provider: &str) -> Result<VerifiedConsentAck, String> {
+        verify_consent_identity(&self.provider, expected_provider)?;
+        validate_consent_completion(
+            &self.status,
+            self.authority_persisted,
+            self.failure.as_deref(),
+            false,
+        )?;
+        if self.config_sha256.is_some() || self.route_set_sha256.is_some() {
+            return Err(
+                "unbound emergency revoke unexpectedly reported a config binding".to_string(),
+            );
+        }
+        let changed = match self.action.as_str() {
+            "revoked" => true,
+            "noop" => false,
+            other => {
+                return Err(format!(
+                    "emergency revoke acknowledgement reported unsupported action `{other}`"
+                ));
+            }
+        };
+        validate_consent_operation(
+            &self.action,
+            "revoked",
+            "noop",
+            changed,
+            self.operation_id.as_deref(),
+            self.audit_pending,
+        )?;
+        let configured = validate_consent_origins(
+            &self.configured_endpoint_origins,
+            "configured_endpoint_origins",
+        )?;
+        let endpoint_origins =
+            validate_consent_origins(&self.endpoint_origins, "endpoint_origins")?;
+        let added =
+            validate_consent_origins(&self.added_endpoint_origins, "added_endpoint_origins")?;
+        let removed =
+            validate_consent_origins(&self.removed_endpoint_origins, "removed_endpoint_origins")?;
+        if !configured.is_empty() || !added.is_empty() {
+            return Err(
+                "unbound emergency revoke reported configured or added authority".to_string(),
+            );
+        }
+        if self.endpoint_delta_known {
+            if self.marker_source_malformed || endpoint_origins != removed {
+                return Err(
+                    "emergency revoke acknowledgement does not bind the exact removed origins"
+                        .to_string(),
+                );
+            }
+        } else if !self.marker_source_malformed
+            || !endpoint_origins.is_empty()
+            || !removed.is_empty()
+        {
+            return Err(
+                "emergency revoke acknowledgement has an invalid unknown-delta binding".to_string(),
+            );
+        }
+        if !changed
+            && (!removed.is_empty()
+                || self.operation_id.is_some()
+                || self.audit_pending
+                || self.marker_source_malformed)
+        {
+            return Err(
+                "noop emergency revoke acknowledgement reported mutation effects".to_string(),
+            );
+        }
+        Ok(VerifiedConsentAck {
+            endpoint_origins: self.endpoint_origins.clone(),
+            added_endpoint_origins: self.added_endpoint_origins.clone(),
+            removed_endpoint_origins: self.removed_endpoint_origins.clone(),
+            audit_pending: self.audit_pending,
+        })
     }
 }
 
@@ -2701,10 +3584,14 @@ pub fn run_json_receipt<T>(command: &mut Command, action: &str) -> Result<JsonRe
 where
     T: DeserializeOwned,
 {
-    let output = command
+    use zeroize::Zeroize as _;
+
+    let mut output = command
         .output()
         .map_err(|error| format!("could not start {action}: {error}"))?;
-    let acknowledgement = decode_json_output(&output, action)?;
+    let acknowledgement = decode_json_output(&output, action);
+    output.stdout.zeroize();
+    let acknowledgement = acknowledgement?;
     let stderr = bounded_text(&output.stderr, MAX_DIAGNOSTIC_CHARS * 2);
     Ok(JsonReceipt {
         acknowledgement,
@@ -2753,10 +3640,14 @@ where
         let _ = child.wait();
         return Err(error);
     }
-    let output = child
+    use zeroize::Zeroize as _;
+
+    let mut output = child
         .wait_with_output()
         .map_err(|error| format!("could not wait for {action}: {error}"))?;
-    decode_json_output(&output, action)
+    let acknowledgement = decode_json_output(&output, action);
+    output.stdout.zeroize();
+    acknowledgement
 }
 
 fn decode_json_output<T>(output: &Output, action: &str) -> Result<T, String>
@@ -2836,6 +3727,13 @@ fn diagnostic(output: &Output) -> String {
         .filter_map(scrub_diagnostic)
         .next()
         .unwrap_or_else(|| "NEOTH reported an error — run neoth doctor for details.".to_string())
+}
+
+pub(crate) fn operator_diagnostic(bytes: &[u8]) -> Option<String> {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(scrub_diagnostic)
+        .next()
 }
 
 /// Turn one raw CLI stderr/stdout line into an operator-safe message, or `None`
@@ -3952,6 +4850,11 @@ mod tests {
     use std::process::{ExitStatus, Output};
 
     use super::*;
+
+    const CONSENT_CONFIG_SHA256: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const CONSENT_ROUTE_SET_SHA256: &str =
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     #[cfg(windows)]
     fn status(code: i32) -> ExitStatus {
@@ -6773,20 +7676,754 @@ mod tests {
         );
     }
 
+    fn consent_route_set_hash(routes: &[ConsentRouteBinding]) -> String {
+        sha256_hex(&serde_json::to_vec(routes).unwrap())
+    }
+
+    fn pending_consent_preflight() -> VerifiedConsentChatPreflight {
+        let required_routes = vec![ConsentRouteBinding {
+            provider: "anthropic_api".to_string(),
+            endpoint_origin: None,
+        }];
+        ConsentChatPreflightAck {
+            status: "consent_required".to_string(),
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: consent_route_set_hash(&required_routes),
+            required_routes: required_routes.clone(),
+            missing_routes: required_routes,
+            challenge_id: Some("01900000-0000-7000-8000-000000000001".to_string()),
+            challenge_token: Some(
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+            ),
+            expires_unix: Some(1_800_000_100),
+        }
+        .verify(1_800_000_000)
+        .unwrap()
+    }
+
+    #[test]
+    fn consent_chat_preflight_binds_exact_routes_status_and_challenge() {
+        let required_routes = vec![
+            ConsentRouteBinding {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+            },
+            ConsentRouteBinding {
+                provider: "local_ollama".to_string(),
+                endpoint_origin: Some("http://127.0.0.1:11434".to_string()),
+            },
+        ];
+        let ready = ConsentChatPreflightAck {
+            status: "ready".to_string(),
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: consent_route_set_hash(&required_routes),
+            required_routes: required_routes.clone(),
+            missing_routes: Vec::new(),
+            challenge_id: None,
+            challenge_token: None,
+            expires_unix: None,
+        }
+        .verify(1_800_000_000)
+        .unwrap();
+        assert_eq!(ready.required_routes, required_routes);
+        assert!(ready.challenge_token.is_none());
+
+        let pending = pending_consent_preflight();
+        assert_eq!(pending.missing_routes.len(), 1);
+        assert!(pending.challenge_token.is_some());
+
+        let wrong_hash = ConsentChatPreflightAck {
+            status: "ready".to_string(),
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: CONSENT_ROUTE_SET_SHA256.to_string(),
+            required_routes: required_routes.clone(),
+            missing_routes: Vec::new(),
+            challenge_id: None,
+            challenge_token: None,
+            expires_unix: None,
+        };
+        assert!(wrong_hash.verify(1_800_000_000).is_err());
+
+        let stale_challenge = ConsentChatPreflightAck {
+            status: "consent_required".to_string(),
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: consent_route_set_hash(&required_routes),
+            required_routes: required_routes.clone(),
+            missing_routes: vec![required_routes[0].clone()],
+            challenge_id: Some("01900000-0000-7000-8000-000000000001".to_string()),
+            challenge_token: Some(
+                "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc".to_string(),
+            ),
+            expires_unix: Some(1_800_000_000),
+        };
+        assert!(stale_challenge.verify(1_800_000_000).is_err());
+
+        assert!(
+            serde_json::from_str::<ConsentChatPreflightAck>(
+                r#"{"status":"ready","config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","required_routes":[],"missing_routes":[],"challenge_id":null,"challenge_token":null,"expires_unix":null,"unexpected":true}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn consent_route_validation_requires_origins_for_configurable_clouds() {
+        for provider in ["openai_api", "openai_compat", "aws_bedrock", "azure_openai"] {
+            let routes = vec![ConsentRouteBinding {
+                provider: provider.to_string(),
+                endpoint_origin: Some("https://operator-endpoint.example".to_string()),
+            }];
+            assert!(validate_consent_route_bindings(&routes, "required_routes").is_ok());
+
+            let missing_origin = vec![ConsentRouteBinding {
+                provider: provider.to_string(),
+                endpoint_origin: None,
+            }];
+            assert!(validate_consent_route_bindings(&missing_origin, "required_routes").is_err());
+        }
+    }
+
+    #[test]
+    fn consent_mutation_binding_requires_exact_readback_and_route_hash() {
+        let required_routes = vec![
+            ConsentRouteBinding {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+            },
+            ConsentRouteBinding {
+                provider: "local_ollama".to_string(),
+                endpoint_origin: Some("http://127.0.0.1:11434".to_string()),
+            },
+        ];
+        let readback = required_routes
+            .iter()
+            .map(|route| ConsentRouteReadback {
+                provider: route.provider.clone(),
+                endpoint_origin: route.endpoint_origin.clone(),
+                granted: route.provider == "anthropic_api",
+                marker_authority_persisted: route.provider == "anthropic_api",
+            })
+            .collect::<Vec<_>>();
+        let verified = ConsentMutationBindingAck {
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: consent_route_set_hash(&required_routes),
+            required_routes: required_routes.clone(),
+            readback,
+        }
+        .verify()
+        .unwrap();
+        assert_eq!(verified.required_routes, required_routes);
+
+        let incomplete = ConsentMutationBindingAck {
+            config_sha256: CONSENT_CONFIG_SHA256.to_string(),
+            route_set_sha256: consent_route_set_hash(&required_routes),
+            required_routes,
+            readback: vec![ConsentRouteReadback {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+                granted: true,
+                marker_authority_persisted: true,
+            }],
+        };
+        assert!(incomplete.verify().is_err());
+    }
+
+    #[test]
+    fn consent_chat_decision_binds_preflight_readback_and_private_token() {
+        let preflight = pending_consent_preflight();
+        let denied: ConsentChatDecisionAck = serde_json::from_value(serde_json::json!({
+            "status": "decided",
+            "decision": "deny",
+            "config_sha256": preflight.config_sha256.clone(),
+            "route_set_sha256": preflight.route_set_sha256.clone(),
+            "receipts": [],
+            "readback": [{
+                "provider": "anthropic_api",
+                "endpoint_origin": null,
+                "granted": false,
+                "marker_authority_persisted": false
+            }],
+            "authority_persisted": false,
+            "failure": null,
+            "gui_consent_token": null,
+            "token_expires_unix": null
+        }))
+        .unwrap();
+        let denied = denied.verify(&preflight, "deny", 1_800_000_000).unwrap();
+        assert_eq!(denied.decision, "deny");
+
+        let once = ConsentChatDecisionAck {
+            status: "decided".to_string(),
+            decision: "allow_once".to_string(),
+            config_sha256: preflight.config_sha256.clone(),
+            route_set_sha256: preflight.route_set_sha256.clone(),
+            receipts: Vec::new(),
+            readback: vec![ConsentRouteReadback {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+                granted: false,
+                marker_authority_persisted: false,
+            }],
+            authority_persisted: false,
+            failure: None,
+            gui_consent_token: Some(
+                "01900000-0000-7000-8000-000000000002.dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                    .to_string(),
+            ),
+            token_expires_unix: Some(1_800_000_100),
+        }
+        .verify(&preflight, "allow-once", 1_800_000_000)
+        .unwrap();
+        assert!(once.gui_consent_token.is_some());
+
+        let always = ConsentChatDecisionAck {
+            status: "decided".to_string(),
+            decision: "allow_always".to_string(),
+            config_sha256: preflight.config_sha256.clone(),
+            route_set_sha256: preflight.route_set_sha256.clone(),
+            receipts: vec![ConsentDecisionReceipt {
+                provider: "anthropic_api".to_string(),
+                was_granted: false,
+                changed: true,
+                configured_endpoint_origins: Vec::new(),
+                endpoint_origins: Vec::new(),
+                added_endpoint_origins: Vec::new(),
+                removed_endpoint_origins: Vec::new(),
+                endpoint_delta_known: true,
+                marker_source_malformed: false,
+                audit_pending: false,
+                operation_id: Some("consent-42".to_string()),
+            }],
+            readback: vec![ConsentRouteReadback {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+                granted: true,
+                marker_authority_persisted: true,
+            }],
+            authority_persisted: true,
+            failure: None,
+            gui_consent_token: None,
+            token_expires_unix: None,
+        }
+        .verify(&preflight, "allow-always", 1_800_000_000)
+        .unwrap();
+        assert_eq!(always.decision, "allow_always");
+
+        let mismatched = ConsentChatDecisionAck {
+            status: "decided".to_string(),
+            decision: "deny".to_string(),
+            config_sha256: CONSENT_ROUTE_SET_SHA256.to_string(),
+            route_set_sha256: preflight.route_set_sha256.clone(),
+            receipts: Vec::new(),
+            readback: vec![ConsentRouteReadback {
+                provider: "anthropic_api".to_string(),
+                endpoint_origin: None,
+                granted: false,
+                marker_authority_persisted: false,
+            }],
+            authority_persisted: false,
+            failure: None,
+            gui_consent_token: None,
+            token_expires_unix: None,
+        };
+        assert!(
+            mismatched
+                .verify(&preflight, "deny", 1_800_000_000)
+                .is_err()
+        );
+
+        for status in ["committed_partial", "committed_but_binding_stale"] {
+            let partial: ConsentChatDecisionAck = serde_json::from_value(serde_json::json!({
+                "status": status,
+                "decision": "allow_always",
+                "config_sha256": preflight.config_sha256.clone(),
+                "route_set_sha256": preflight.route_set_sha256.clone(),
+                "receipts": [],
+                    "readback": [{
+                        "provider": "anthropic_api",
+                        "endpoint_origin": null,
+                        "granted": false,
+                        "marker_authority_persisted": true
+                    }],
+                "authority_persisted": true,
+                "failure": "redacted provider mutation failure",
+                "gui_consent_token": null,
+                "token_expires_unix": null
+            }))
+            .unwrap();
+            let error = match partial.verify(&preflight, "allow-always", 1_800_000_000) {
+                Ok(_) => panic!("{status} acknowledgement unexpectedly verified"),
+                Err(error) => error,
+            };
+            assert!(error.contains(status));
+            assert!(error.contains("authority persisted: true"));
+        }
+    }
+
+    #[test]
+    fn consent_grant_ack_binds_provider_and_current_origins() {
+        let ack: ConsentGrantAck = serde_json::from_str(
+            r#"{
+                "provider":"local_ollama",
+                "action":"granted",
+                "status":"applied",
+                "marker_path":"C:/Users/test/.neoth/consent/local_ollama.granted",
+                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "endpoint_origins":[
+                    "http://ollama-a.example:11434",
+                    "http://ollama-b.example:11434"
+                ],
+                "added_endpoint_origins":["http://ollama-b.example:11434"],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":"consent-42",
+                "authority_persisted":true,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "routes":[
+                    {"endpoint_origin":"http://ollama-a.example:11434"},
+                    {"endpoint_origin":"http://ollama-b.example:11434"}
+                ]
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            ack.verify(
+                "local_ollama",
+                &["http://ollama-b.example:11434".to_string()],
+                &["http://ollama-a.example:11434".to_string()],
+                false,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_ok()
+        );
+        assert!(
+            ack.verify(
+                "openai_api",
+                &[],
+                &[],
+                false,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_err()
+        );
+        assert!(
+            ack.verify(
+                "local_ollama",
+                &["http://ollama-c.example:11434".to_string()],
+                &["http://ollama-a.example:11434".to_string()],
+                false,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn consent_grant_ack_rejects_legacy_routes_only_shape() {
+        assert!(
+            serde_json::from_str::<ConsentGrantAck>(
+                r#"{
+                    "provider":"local_ollama",
+                    "action":"granted",
+                    "marker_path":"C:/Users/test/.neoth/consent/local_ollama.granted",
+                    "routes":[{
+                        "endpoint_origin":"http://ollama-b.example:11434",
+                        "granted_unix_ts":"1720000000"
+                    }]
+                }"#
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_str::<ConsentGrantAck>(
+                r#"{"provider":"openai_api","action":"granted","surprise":true}"#
+            )
+            .is_err()
+        );
+
+        let mut noncanonical_route = serde_json::json!({
+            "provider": "local_ollama",
+            "action": "granted",
+            "status": "applied",
+            "marker_path": "C:/Users/test/.neoth/consent/local_ollama.granted",
+            "configured_endpoint_origins": ["http://ollama-b.example:11434"],
+            "endpoint_origins": ["http://ollama-b.example:11434"],
+            "added_endpoint_origins": ["http://ollama-b.example:11434"],
+            "removed_endpoint_origins": [],
+            "endpoint_delta_known": true,
+            "marker_source_malformed": false,
+            "audit_pending": false,
+            "operation_id": "consent-42",
+            "authority_persisted": true,
+            "failure": null,
+            "config_sha256": CONSENT_CONFIG_SHA256,
+            "route_set_sha256": CONSENT_ROUTE_SET_SHA256,
+            "routes": [{"endpoint_origin": null}]
+        });
+        assert!(serde_json::from_value::<ConsentGrantAck>(noncanonical_route.clone()).is_err());
+        noncanonical_route["routes"] = serde_json::json!([{
+            "endpoint_origin": "http://ollama-b.example:11434",
+            "granted_unix_ts": "1720000000"
+        }]);
+        assert!(serde_json::from_value::<ConsentGrantAck>(noncanonical_route).is_err());
+    }
+
+    #[test]
+    fn consent_grant_ack_rejects_malformed_or_mismatched_receipts() {
+        let noop_with_delta: ConsentGrantAck = serde_json::from_str(
+            r#"{
+                "provider":"local_ollama",
+                "action":"noop",
+                "status":"applied",
+                "marker_path":"C:/Users/test/.neoth/consent/local_ollama.granted",
+                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "endpoint_origins":["http://ollama-b.example:11434"],
+                "added_endpoint_origins":["http://ollama-b.example:11434"],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":null,
+                "authority_persisted":true,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "routes":[{"endpoint_origin":"http://ollama-b.example:11434"}]
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            noop_with_delta
+                .verify(
+                    "local_ollama",
+                    &["http://ollama-b.example:11434".to_string()],
+                    &["http://ollama-b.example:11434".to_string()],
+                    true,
+                    CONSENT_CONFIG_SHA256,
+                    CONSENT_ROUTE_SET_SHA256,
+                )
+                .is_err()
+        );
+        assert!(
+            serde_json::from_str::<ConsentGrantAck>(
+                r#"{
+                    "provider":"local_ollama",
+                    "action":"granted",
+                    "marker_path":"marker",
+                    "configured_endpoint_origins":[],
+                    "endpoint_origins":[],
+                    "added_endpoint_origins":[],
+                    "removed_endpoint_origins":[],
+                    "audit_pending":false,
+                    "operation_id":"op",
+                    "routes":[]
+                }"#
+            )
+            .is_err(),
+            "a partial receipt must fail closed"
+        );
+    }
+
+    #[test]
+    fn consent_grant_ack_surfaces_post_commit_binding_race() {
+        let ack: ConsentGrantAck = serde_json::from_str(
+            r#"{
+                "provider":"anthropic_api",
+                "action":"granted",
+                "status":"committed_but_binding_stale",
+                "marker_path":"marker",
+                "configured_endpoint_origins":[],
+                "endpoint_origins":[],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":"consent-race",
+                "authority_persisted":true,
+                "failure":"freedom.yaml changed after commit",
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "routes":[]
+            }"#,
+        )
+        .unwrap();
+        let error = ack
+            .verify(
+                "anthropic_api",
+                &[],
+                &[],
+                false,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .unwrap_err();
+        assert!(error.contains("binding changed"));
+        assert!(error.contains("authority persisted: true"));
+    }
+
     #[test]
     fn consent_revoke_ack_accepts_revoked_and_noop_only() {
-        let revoked: ConsentRevokeAck =
-            serde_json::from_str(r#"{"provider":"anthropic_api","action":"revoked"}"#).unwrap();
-        assert!(revoked.verify("anthropic_api").is_ok());
+        let revoked: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"anthropic_api",
+                "action":"revoked",
+                "status":"applied",
+                "configured_endpoint_origins":[],
+                "endpoint_origins":[],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":"consent-43",
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            revoked
+                .verify(
+                    "anthropic_api",
+                    &[],
+                    &[],
+                    true,
+                    CONSENT_CONFIG_SHA256,
+                    CONSENT_ROUTE_SET_SHA256,
+                )
+                .is_ok()
+        );
         // Idempotent revoke ("no grant existed") is a benign success.
-        let noop: ConsentRevokeAck =
-            serde_json::from_str(r#"{"provider":"anthropic_api","action":"noop"}"#).unwrap();
-        assert!(noop.verify("anthropic_api").is_ok());
+        let noop: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"anthropic_api",
+                "action":"noop",
+                "status":"applied",
+                "configured_endpoint_origins":[],
+                "endpoint_origins":[],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":null,
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            noop.verify(
+                "anthropic_api",
+                &[],
+                &[],
+                false,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_ok()
+        );
         // Wrong provider echo or an unknown action must fail the bind.
-        assert!(revoked.verify("openai").is_err());
-        let odd: ConsentRevokeAck =
-            serde_json::from_str(r#"{"provider":"anthropic_api","action":"granted"}"#).unwrap();
-        assert!(odd.verify("anthropic_api").is_err());
+        assert!(
+            revoked
+                .verify(
+                    "openai",
+                    &[],
+                    &[],
+                    true,
+                    CONSENT_CONFIG_SHA256,
+                    CONSENT_ROUTE_SET_SHA256,
+                )
+                .is_err()
+        );
+        let odd: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"anthropic_api",
+                "action":"granted",
+                "status":"applied",
+                "configured_endpoint_origins":[],
+                "endpoint_origins":[],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":"consent-odd",
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            odd.verify(
+                "anthropic_api",
+                &[],
+                &[],
+                true,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn consent_revoke_ack_binds_exact_removed_origins() {
+        let ack: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"local_ollama",
+                "action":"revoked",
+                "status":"applied",
+                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "endpoint_origins":[
+                    "http://ollama-a.example:11434",
+                    "http://ollama-b.example:11434"
+                ],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[
+                    "http://ollama-a.example:11434",
+                    "http://ollama-b.example:11434"
+                ],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":true,
+                "operation_id":"consent-44",
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }"#,
+        )
+        .unwrap();
+        let verified = ack
+            .verify(
+                "local_ollama",
+                &["http://ollama-b.example:11434".to_string()],
+                &[
+                    "http://ollama-a.example:11434".to_string(),
+                    "http://ollama-b.example:11434".to_string(),
+                ],
+                true,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .unwrap();
+        assert_eq!(verified.removed_endpoint_origins.len(), 2);
+        assert!(verified.audit_pending);
+    }
+
+    #[test]
+    fn consent_revoke_ack_marks_malformed_source_as_unknown_delta() {
+        let ack: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"local_ollama",
+                "action":"revoked",
+                "status":"applied",
+                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "endpoint_origins":[],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":[],
+                "endpoint_delta_known":false,
+                "marker_source_malformed":true,
+                "audit_pending":false,
+                "operation_id":"consent-45",
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }"#,
+        )
+        .unwrap();
+        assert!(
+            ack.verify(
+                "local_ollama",
+                &["http://ollama-b.example:11434".to_string()],
+                &[],
+                true,
+                CONSENT_CONFIG_SHA256,
+                CONSENT_ROUTE_SET_SHA256,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn consent_revoke_ack_supports_unbound_emergency_path() {
+        let ack: ConsentRevokeAck = serde_json::from_str(
+            r#"{
+                "provider":"local_ollama",
+                "action":"revoked",
+                "status":"applied",
+                "configured_endpoint_origins":[],
+                "endpoint_origins":["http://ollama.example:11434"],
+                "added_endpoint_origins":[],
+                "removed_endpoint_origins":["http://ollama.example:11434"],
+                "endpoint_delta_known":true,
+                "marker_source_malformed":false,
+                "audit_pending":false,
+                "operation_id":"consent-emergency",
+                "authority_persisted":false,
+                "failure":null,
+                "config_sha256":null,
+                "route_set_sha256":null
+            }"#,
+        )
+        .unwrap();
+        let verified = ack.verify_emergency("local_ollama").unwrap();
+        assert_eq!(
+            verified.removed_endpoint_origins,
+            vec!["http://ollama.example:11434"]
+        );
+    }
+
+    #[test]
+    fn consent_gui_mutations_keep_typed_readback_and_failure_invalidation_wired() {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("Chat-surface consent strip wiring")
+            .expect("consent callback block");
+        let end = source[start..]
+            .find("Pick #8 step 4")
+            .map(|offset| start + offset)
+            .expect("callback block end");
+        let callbacks = &source[start..end];
+        assert!(callbacks.contains("grant_consent_verified(&provider)"));
+        assert!(callbacks.contains("revoke_consent_verified(&provider)"));
+        assert_eq!(callbacks.matches("invalidate_consent_models").count(), 2);
+
+        let grant_start = source
+            .find("fn grant_consent_verified(")
+            .expect("grant verifier");
+        let revoke_start = source
+            .find("fn revoke_consent_verified(")
+            .expect("revoke verifier");
+        let readback = &source[grant_start..revoke_start];
+        assert!(readback.contains("gui_action::ConsentGrantAck"));
+        assert!(readback.contains("read_consent_ui_rows()?"));
+        assert!(readback.contains("current.current_route_granted"));
+        let revoke_end = source[revoke_start..]
+            .find("/// GR-RESID-D34")
+            .map(|offset| revoke_start + offset)
+            .expect("revoke verifier end");
+        let revoke = &source[revoke_start..revoke_end];
+        assert!(revoke.contains("gui_action::ConsentRevokeAck"));
+        assert!(revoke.contains("verify_emergency(provider)"));
+        assert!(!revoke.contains("--expected-config-sha256"));
+        assert!(revoke.contains("read_consent_ui_rows()"));
     }
 
     #[test]

@@ -118,6 +118,10 @@ export struct LinkChip {
 export struct ConsentGrant {
     provider: string,
     granted: bool,
+    detail: string,
+    status: string,
+    grantable: bool,
+    revokable: bool,
 }
 
 // ── ChatBubble ───────────────────────────────────────────────────────
@@ -880,11 +884,11 @@ component Composer inherits Rectangle {
                         if (event.modifiers.shift) {
                             return reject;
                         }
-                        // Plain Enter → send (when non-empty) + clear.
+                        // Plain Enter → request send. Rust clears only after
+                        // typed consent preflight accepts this exact draft.
                         // GUI-07: swallowed while a reply is in flight.
                         if (root.send-enabled && root.draft != "" && !root.send-in-flight) {
                             root.send-clicked(root.draft);
-                            root.draft = "";
                         }
                         return accept;
                     }
@@ -917,7 +921,6 @@ component Composer inherits Rectangle {
             clicked => {
                 if (root.draft != "") {
                     root.send-clicked(root.draft);
-                    root.draft = "";
                 }
             }
         }
@@ -1025,8 +1028,12 @@ export component ChatView inherits Rectangle {
     in property <string> consent-mode: "gated";
     /// Per-provider consent grants. Rust sets from `neoth consent list --output json`.
     in property <[ConsentGrant]> consent-grants: [];
+    /// Shared Grant/Revoke in-flight state across Chat and Overview.
+    in property <bool> consent-busy: false;
     /// Operator clicked Gated or Full-Auto pill: fires with "gated" or "full".
     callback consent-set-mode(string);
+    /// Operator clicked Grant for the provider's currently configured route.
+    callback consent-grant(string);
     /// Operator clicked Revoke for a provider.
     callback consent-revoke(string);
     /// Operator asked for a manual refresh of consent data.
@@ -1255,9 +1262,9 @@ export component ChatView inherits Rectangle {
                 // (the outer 34px Rectangle). Named so the button can call
                 // consent-popup.show() without a private bool toggle.
                 consent-popup := PopupWindow {
-                    x: parent.width - 320px;
+                    x: parent.width - 460px;
                     y: parent.height;
-                    width: 320px;
+                    width: 460px;
                     Rectangle {
                         background: Theme.bg-card;
                         border-color: Theme.border-default;
@@ -1297,31 +1304,68 @@ export component ChatView inherits Rectangle {
                                 color: Theme.text-dim;
                                 wrap: word-wrap;
                             }
-                            for g in root.consent-grants: HorizontalLayout {
-                                spacing: Theme.space-tight;
-                                alignment: start;
-                                // Led dot — Rectangle; wrap in a small container
-                                // to centre it within the row height.
-                                Rectangle {
-                                    width: 10px;
-                                    height: 10px;
-                                    Led { state: g.granted ? "live" : "off"; }
-                                }
-                                Text {
-                                    text: g.provider;
-                                    overflow: elide;
-                                    font-family: Theme.font-mono;
-                                    font-size: Theme.font-size-2xs;
-                                    color: g.granted ? Theme.text-primary : Theme.text-disabled;
-                                    horizontal-stretch: 1;
-                                    vertical-alignment: center;
-                                }
-                                if g.granted: NeothButton {
-                                    label: "Revoke";
-                                    primary: false;
-                                    danger: true;
-                                    size: "sm";
-                                    clicked => { root.consent-revoke(g.provider); }
+                            for g in root.consent-grants: Rectangle {
+                                height: 68px;
+                                border-radius: Theme.radius-sm;
+                                background: g.granted && g.status == "granted" ? Theme.consent-tint : Theme.surface-1;
+                                border-width: 1px;
+                                border-color: g.granted && g.status == "granted" ? Theme.consent : Theme.border-subtle;
+
+                                HorizontalLayout {
+                                    padding: Theme.space-tight;
+                                    spacing: Theme.space-tight;
+                                    alignment: start;
+                                    Rectangle {
+                                        width: 10px;
+                                        height: 10px;
+                                        Led { state: g.granted && g.status == "granted" ? "live" : (g.status == "invalid" ? "error" : "off"); }
+                                    }
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        spacing: 2px;
+                                        HorizontalLayout {
+                                            spacing: Theme.space-tight;
+                                            Text {
+                                                text: g.provider;
+                                                overflow: elide;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                color: g.granted && g.status == "granted" ? Theme.text-primary : Theme.text-tertiary;
+                                                horizontal-stretch: 1;
+                                                vertical-alignment: center;
+                                            }
+                                            Text {
+                                                text: g.status;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                color: g.granted && g.status == "granted" ? Theme.consent : (g.status == "invalid" ? Theme.consent : Theme.text-disabled);
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        Text {
+                                            text: g.detail;
+                                            font-family: Theme.font-mono;
+                                            font-size: Theme.font-size-2xs;
+                                            color: g.status == "invalid" ? Theme.consent : Theme.text-dim;
+                                            wrap: word-wrap;
+                                            max-height: 34px;
+                                        }
+                                    }
+                                    if g.grantable: NeothButton {
+                                        label: "Grant";
+                                        primary: true;
+                                        size: "sm";
+                                        enabled: !root.consent-busy;
+                                        clicked => { root.consent-grant(g.provider); }
+                                    }
+                                    if g.revokable: NeothButton {
+                                        label: "Revoke";
+                                        primary: false;
+                                        danger: true;
+                                        size: "sm";
+                                        enabled: !root.consent-busy;
+                                        clicked => { root.consent-revoke(g.provider); }
+                                    }
                                 }
                             }
                         }

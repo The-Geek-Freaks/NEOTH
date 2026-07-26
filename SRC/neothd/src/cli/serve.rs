@@ -291,8 +291,39 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // Runtime-service priming follows the validated startup-hook boundary.
-    // The SkillRegistry watcher handle remains bound for the daemon lifetime.
+    // Recover consent authority before any runtime-service preflight constructs
+    // a provider. A prepared or required-audit journal deliberately blocks
+    // live use; placing recovery after priming would therefore make restart
+    // recovery self-blocking.
+    match crate::cli::consent_outbox::recover_pending_with_writer(&neoth_home, &writer)
+        .await
+        .context("recover pending consent mutation before provider startup")?
+    {
+        crate::cli::consent_outbox::RecoveryOutcome::None => {}
+        crate::cli::consent_outbox::RecoveryOutcome::Recovered {
+            operation_id,
+            phase,
+            delivery,
+        } => {
+            if delivery.is_pending() {
+                warn!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent mutation recovered but its audit remains queued"
+                );
+            } else {
+                info!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent mutation recovered before provider startup"
+                );
+            }
+        }
+    }
+
+    // Runtime-service priming follows the validated startup-hook and recovered
+    // consent boundaries. The SkillRegistry watcher handle remains bound for
+    // the daemon lifetime.
     let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(
         &config,
         &creds,
@@ -1993,6 +2024,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // asynchronously through the daemon.
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let self_dev_outbox_task = crate::cli::serve_tasks::spawn_self_dev_outbox(&neoth_home, &writer);
+    let consent_outbox_task =
+        crate::cli::serve_tasks::spawn_consent_outbox_recovery(&neoth_home, &writer);
 
     // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
     // Replay the failure counters from the prior daemon run so a
@@ -2207,6 +2240,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         credentials_import_task,
         detect_complete_task,
         self_dev_outbox_task,
+        consent_outbox_task,
         indexer_task,
         reload_task,
         audit_rpc_task,

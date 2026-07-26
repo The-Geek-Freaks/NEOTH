@@ -539,13 +539,14 @@ pub(crate) async fn step5_provider(
             state.provider_model = None;
             if interactive {
                 println!(
-                    "  recursive_mas is an EXPERIMENTAL local sidecar (latent \
+                    "  recursive_mas is an EXPERIMENTAL operator-installed sidecar (latent \
                      recursion for council deliberation). It needs: a GPU with \
                      enough VRAM, an operator-installed RecursiveMAS checkout, \
                      and `recursive_mas.enabled: true` + `sidecar_repo` in \
                      freedom.yaml. The binary must be built with the \
-                     `recursive-mas` feature. NEOTH never downloads the \
-                     upstream code or weights."
+                     `recursive-mas` feature. The process inherits host network \
+                     access, so NEOTH also requires revocable provider consent. \
+                     NEOTH never downloads the upstream code or weights."
                 );
             }
         }

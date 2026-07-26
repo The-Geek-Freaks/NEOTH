@@ -1039,6 +1039,14 @@ export component MainWindow inherits Window {
     /// Operator typed + sent a message. Rust dispatches through
     /// `cli::chat::run_chat_with`.
     callback chat-send-clicked(string);
+    /// Internal continuation invoked by Rust only after typed consent preflight.
+    callback chat-send-approved(string);
+    /// Internal Buddy continuation after the same typed consent preflight.
+    callback buddy-chat-send-approved(string);
+    /// Internal Buddy window hand-off while the main window owns the consent modal.
+    callback buddy-chat-consent-prompt-required();
+    /// Internal Buddy restoration when consent is denied or preflight fails.
+    callback buddy-chat-send-cancelled(string);
     /// Operator pressed ArrowUp with an empty composer — Rust writes the
     /// last operator body back into `chat-composer-draft`.
     callback chat-composer-recall-requested();
@@ -1050,8 +1058,18 @@ export component MainWindow inherits Window {
     /// Per-provider consent grants for the consent strip popover.
     /// Rust sets from `neoth consent list --output json`.
     in property <[ConsentGrant]> chat-consent-grants: [];
+    /// One shared mutation lock drives both Chat and Overview controls.
+    in property <bool> consent-mutation-busy: false;
+    /// Native first-send egress decision. Rust retains the private challenge;
+    /// Slint receives only the operator-visible exact route labels.
+    in-out property <bool> chat-consent-prompt-open: false;
+    in property <string> chat-consent-prompt-routes: "";
+    in property <bool> chat-consent-prompt-busy: false;
+    callback chat-consent-prompt-decision(string);
     /// Operator switched mode from the chat strip: "gated" | "full".
     callback chat-consent-set-mode(string);
+    /// Operator granted consent for the provider's currently configured route.
+    callback chat-consent-grant(string);
     /// Operator revoked a provider from the chat strip.
     callback chat-consent-revoke(string);
     /// Chat strip requests a consent data refresh.
@@ -3646,7 +3664,9 @@ export component MainWindow inherits Window {
                     // Chat-surface consent strip wiring
                     consent-mode: root.chat-consent-mode;
                     consent-grants: root.chat-consent-grants;
+                    consent-busy: root.consent-mutation-busy;
                     consent-set-mode(m) => { root.chat-consent-set-mode(m); }
+                    consent-grant(p) => { root.chat-consent-grant(p); }
                     consent-revoke(p) => { root.chat-consent-revoke(p); }
                     consent-refresh => { root.chat-consent-refresh(); }
                     // Wave 5 — message hover actions + scroll FAB + starters.
@@ -3692,8 +3712,11 @@ export component MainWindow inherits Window {
                     ov-calendar-configured: root.ov-calendar-configured;
                     ov-consent-entries: root.ov-consent-entries;
                     ov-smart-approve: root.ov-smart-approve;
+                    consent-busy: root.consent-mutation-busy;
                     ov-refreshed-at: root.ov-refreshed-at;
                     overview-refresh-clicked => { root.overview-refresh-clicked(); }
+                    consent-grant(p) => { root.chat-consent-grant(p); }
+                    consent-revoke(p) => { root.chat-consent-revoke(p); }
                     // Wave 8 — cost & usage card (C7/H5).
                     ov-cost-sessions: root.ov-cost-sessions;
                     ov-usage-days: root.ov-usage-days;
@@ -4457,6 +4480,114 @@ export component MainWindow inherits Window {
             root.gt-revoke-clicked(root.gt-revoke-id);
         }
         cancelled => { root.gt-revoke-confirm-open = false; }
+    }
+
+    // First-send outbound-LLM consent. "Once" is an exact one-shot
+    // capability; "Always" persists only the preflight-bound current routes.
+    if root.chat-consent-prompt-open: Rectangle {
+        width: root.width;
+        height: root.height;
+        background: Theme.scrim;
+        accessible-role: text;
+        accessible-label: "Outbound provider consent";
+
+        consent-focus := FocusScope {
+            key-pressed(event) => {
+                if event.text == "\u{1b}" && !root.chat-consent-prompt-busy {
+                    root.chat-consent-prompt-decision("deny");
+                    return accept;
+                }
+                return reject;
+            }
+        }
+
+        consent-card := Rectangle {
+            width: min(600px, root.width - 32px);
+            height: min(390px, root.height - 32px);
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: Theme.surface-2;
+            border-width: 1px;
+            border-color: Theme.consent;
+            border-radius: Theme.radius-lg;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: Theme.bg-void.with-alpha(0.70);
+
+            init => { consent-focus.focus(); }
+            TouchArea { }
+
+            VerticalLayout {
+                padding: Theme.space-loose;
+                spacing: Theme.space-base;
+
+                Text {
+                    text: "Allow this message to leave the device?";
+                    color: Theme.text-primary;
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-h2;
+                    font-weight: Theme.weight-semibold;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "NEOTH resolved these exact outbound routes. Your draft and attachments stay untouched until you choose.";
+                    color: Theme.text-secondary;
+                    font-family: Theme.font-sans;
+                    font-size: Theme.font-size-body;
+                    wrap: word-wrap;
+                }
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 92px;
+                    background: Theme.surface-1;
+                    border-width: 1px;
+                    border-color: Theme.border-subtle;
+                    border-radius: Theme.radius-sm;
+                    Text {
+                        x: 12px;
+                        y: 10px;
+                        width: parent.width - 24px;
+                        height: parent.height - 20px;
+                        text: root.chat-consent-prompt-routes;
+                        color: Theme.text-secondary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-xs;
+                        wrap: word-wrap;
+                    }
+                }
+                Text {
+                    text: root.chat-consent-prompt-busy
+                        ? "Recording and verifying your decision…"
+                        : "Allow once expires after this exact chat launch. Always allow persists only these current routes.";
+                    color: root.chat-consent-prompt-busy ? Theme.warning : Theme.text-tertiary;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-xs;
+                    wrap: word-wrap;
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-tight;
+                    alignment: end;
+                    NeothButton {
+                        label: "Deny";
+                        primary: false;
+                        danger: true;
+                        enabled: !root.chat-consent-prompt-busy;
+                        clicked => { root.chat-consent-prompt-decision("deny"); }
+                    }
+                    NeothButton {
+                        label: "Allow once";
+                        primary: false;
+                        enabled: !root.chat-consent-prompt-busy;
+                        clicked => { root.chat-consent-prompt-decision("allow-once"); }
+                    }
+                    NeothButton {
+                        label: "Always allow";
+                        primary: true;
+                        enabled: !root.chat-consent-prompt-busy;
+                        clicked => { root.chat-consent-prompt-decision("allow-always"); }
+                    }
+                }
+            }
+        }
     }
 
     // B4 — Buddy quick-action menu, anchored above the docked orb.

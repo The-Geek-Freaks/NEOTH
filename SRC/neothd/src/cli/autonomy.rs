@@ -1020,7 +1020,6 @@ mod tests {
     #[tokio::test]
     async fn sudomode_preset_emits_0xdd_wal_frame() {
         let tmp = tempfile::TempDir::new().unwrap();
-        let segment = tmp.path().join("wal").join("000001.wal");
         let binding = ConfigAuditBinding::new(false, "a".repeat(64), "b".repeat(64));
         emit_sudomode_preset_applied(
             AutonomyLevel::Standard,
@@ -1031,6 +1030,12 @@ mod tests {
         )
         .await
         .unwrap();
+        let segment = std::fs::read_dir(tmp.path().join("wal"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("wal"))
+            .expect("standalone WAL segment written");
         let bytes = std::fs::read(&segment).expect("wal segment written");
         let mut found = 0usize;
         let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {

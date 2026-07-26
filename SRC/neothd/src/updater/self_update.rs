@@ -2662,10 +2662,27 @@ fn open_relative_nofollow(
             )
         };
         if status < 0 || handle.is_null() {
-            anyhow::bail!(
-                "open {label} path component without following reparse points {}: NTSTATUS {status:#010x}",
-                path.display()
-            );
+            const STATUS_NO_SUCH_FILE: u32 = 0xC000_000F;
+            const STATUS_ACCESS_DENIED: u32 = 0xC000_0022;
+            const STATUS_OBJECT_NAME_NOT_FOUND: u32 = 0xC000_0034;
+            const STATUS_OBJECT_PATH_NOT_FOUND: u32 = 0xC000_003A;
+            const STATUS_NOT_A_DIRECTORY: u32 = 0xC000_0103;
+            let kind = match status as u32 {
+                STATUS_NO_SUCH_FILE
+                | STATUS_OBJECT_NAME_NOT_FOUND
+                | STATUS_OBJECT_PATH_NOT_FOUND => std::io::ErrorKind::NotFound,
+                STATUS_ACCESS_DENIED => std::io::ErrorKind::PermissionDenied,
+                STATUS_NOT_A_DIRECTORY => std::io::ErrorKind::NotADirectory,
+                _ => std::io::ErrorKind::Other,
+            };
+            return Err(std::io::Error::new(
+                kind,
+                format!(
+                    "open {label} path component without following reparse points {}: NTSTATUS {status:#010x}",
+                    path.display()
+                ),
+            ))
+            .with_context(|| format!("open descriptor-relative {label} path component"));
         }
         // SAFETY: successful NtCreateFile returned a new owned handle.
         unsafe { std::fs::File::from_raw_handle(handle) }
@@ -2962,6 +2979,19 @@ fn read_file_bounded(
     label: &str,
 ) -> Result<Vec<u8>> {
     read_file_bounded_with_policy(trusted_root, path, None, max_bytes, label, false)
+}
+
+/// Read one bounded regular file below a caller-owned trusted root while
+/// binding every descendant lookup to no-follow directory/file handles.
+/// Unlike [`read_private_control_file_bounded`], this compatibility surface
+/// does not reject legacy files solely for group/other permission bits.
+pub(crate) fn read_control_file_bounded_nofollow(
+    trusted_root: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>> {
+    read_file_bounded(trusted_root, path, max_bytes, label)
 }
 
 /// Read one private control file below a caller-owned trusted root while
@@ -4116,6 +4146,36 @@ mod tests {
             format!("{error:#}").contains("hard-linked"),
             "a multiply-linked staged input must fail closed: {error:#}"
         );
+    }
+
+    #[test]
+    fn bounded_reader_rejects_oversized_file_from_the_opened_handle() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("oversized.bin");
+        std::fs::write(&file, vec![b'x'; 65]).unwrap();
+
+        let error = read_control_file_bounded_nofollow(dir.path(), &file, 64, "test control file")
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("64-byte size cap"));
+    }
+
+    #[test]
+    fn bounded_reader_preserves_not_found_for_missing_leaf_and_parent() {
+        let dir = tempdir().unwrap();
+        for path in [
+            dir.path().join("missing.bin"),
+            dir.path().join("missing-parent").join("missing.bin"),
+        ] {
+            let error =
+                read_control_file_bounded_nofollow(dir.path(), &path, 64, "missing control file")
+                    .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<std::io::Error>()
+                    .map(std::io::Error::kind),
+                Some(std::io::ErrorKind::NotFound)
+            );
+        }
     }
 
     #[test]

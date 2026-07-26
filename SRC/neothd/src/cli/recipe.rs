@@ -267,6 +267,7 @@ async fn run_one(
         config: None,
         wal_segment: None,
         stream: matches!(output, OutputFormat::Jsonl),
+        gui_consent_token_stdin: false,
         temperature: rendered.settings.temperature,
         top_p: rendered.settings.top_p,
         sampling_seed: rendered.settings.sampling_seed,

@@ -471,11 +471,10 @@ pub(crate) async fn emit_oneshot_audit_at_with_subtype(
             return Ok(());
         }
 
-        let segment = home.join("wal").join("000001.wal");
-        if let Some(parent) = segment.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create audit WAL directory {}", parent.display()))?;
-        }
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir)
+            .with_context(|| format!("create audit WAL directory {}", wal_dir.display()))?;
+        let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "oneshot-audit");
         let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
             .with_context(|| format!("spawn home-bound writer for {label}"))?;
         let header = crate::wal::HeaderBuilder::new(event_type, &payload)
