@@ -846,13 +846,20 @@ async fn change_consent_with_config_at_inner(
         .into_iter()
         .filter(|route| route.kind == provider)
         .collect();
-    let configured_endpoint_origins = configured_routes
-        .iter()
-        .map(consent::route_endpoint_origin)
-        .collect::<Result<Vec<_>>>()?
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>();
+    let configured_endpoint_origins = if grant {
+        configured_routes
+            .iter()
+            .map(consent::route_endpoint_origin)
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+    } else {
+        // GUI revoke is deliberately config-unbound so it remains available
+        // when freedom.yaml is missing or corrupt. Its receipt must preserve
+        // that same wire contract even when a valid config happens to exist.
+        Vec::new()
+    };
     let routes = if grant {
         if provider == ProviderKind::LocalOllama && configured_routes.is_empty() {
             anyhow::bail!(
@@ -1536,6 +1543,46 @@ mod tests {
             consent::is_granted(tmp.path(), ProviderKind::OpenaiApi),
             "provider-scoped malformed state must not poison an unrelated cloud grant"
         );
+    }
+
+    #[tokio::test]
+    async fn gui_emergency_revoke_receipt_stays_config_unbound_with_valid_endpoint_config() {
+        let tmp = TempDir::new().unwrap();
+        let endpoint = "http://ollama.example:11434";
+        let config = FreedomConfig {
+            provider_kind: Some(ProviderKind::LocalOllama),
+            provider_endpoint: Some(endpoint.into()),
+            ..FreedomConfig::default()
+        };
+        std::fs::write(
+            tmp.path().join("freedom.yaml"),
+            serde_yaml::to_string(&config).unwrap(),
+        )
+        .unwrap();
+        let route = consent::ConsentRoute::new(ProviderKind::LocalOllama, Some(endpoint));
+        consent::grant_route(tmp.path(), &route).unwrap();
+
+        let receipt = change_consent_for_command(
+            tmp.path(),
+            ProviderKind::LocalOllama,
+            false,
+            ConsentCommandSource::Gui,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(receipt.changed);
+        assert!(
+            receipt.configured_endpoint_origins.is_empty(),
+            "the unbound GUI revoke wire must not claim a config binding"
+        );
+        assert_eq!(receipt.endpoint_origins, vec![endpoint]);
+        assert_eq!(receipt.removed_endpoint_origins, vec![endpoint]);
+        assert!(receipt.endpoint_delta_known);
+        assert!(!receipt.marker_source_malformed);
+        assert!(!consent::is_route_granted(tmp.path(), &route));
     }
 
     #[tokio::test]

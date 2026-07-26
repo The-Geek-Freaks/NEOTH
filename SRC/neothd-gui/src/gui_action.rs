@@ -1521,6 +1521,12 @@ pub struct ConsentRouteReadback {
     pub marker_authority_persisted: bool,
 }
 
+pub fn consent_provider_is_endpoint_bound(provider: &str) -> Result<bool, String> {
+    neothd::consent::kind_from_slug(provider)
+        .map(neothd::consent::uses_endpoint_bound_consent)
+        .ok_or_else(|| format!("unknown consent provider slug `{provider}`"))
+}
+
 fn validate_consent_route_bindings(
     routes: &[ConsentRouteBinding],
     field: &str,
@@ -1537,10 +1543,7 @@ fn validate_consent_route_bindings(
         {
             return Err(format!("{field} contains an invalid provider slug"));
         }
-        let endpoint_bound = matches!(
-            route.provider.as_str(),
-            "local_ollama" | "openai_api" | "openai_compat" | "aws_bedrock" | "azure_openai"
-        );
+        let endpoint_bound = consent_provider_is_endpoint_bound(&route.provider)?;
         match (endpoint_bound, route.endpoint_origin.as_deref()) {
             (true, Some(origin))
                 if !origin.is_empty()
@@ -2242,97 +2245,6 @@ pub struct ConsentRevokeAck {
 }
 
 impl ConsentRevokeAck {
-    pub fn verify(
-        &self,
-        expected_provider: &str,
-        expected_configured_origins: &[String],
-        before_granted_origins: &[String],
-        before_revokable: bool,
-        expected_config_sha256: &str,
-        expected_route_set_sha256: &str,
-    ) -> Result<VerifiedConsentAck, String> {
-        let expected_configured =
-            validate_consent_origins(expected_configured_origins, "expected configured origin")?;
-        let before_granted =
-            validate_consent_origins(before_granted_origins, "pre-mutation granted origin")?;
-
-        verify_consent_identity(&self.provider, expected_provider)?;
-        validate_consent_completion(
-            &self.status,
-            self.authority_persisted,
-            self.failure.as_deref(),
-            false,
-        )?;
-        if self.config_sha256.as_deref() != Some(expected_config_sha256)
-            || self.route_set_sha256.as_deref() != Some(expected_route_set_sha256)
-            || !valid_sha256(expected_config_sha256)
-            || !valid_sha256(expected_route_set_sha256)
-        {
-            return Err(
-                "consent revoke acknowledgement does not match the GUI preflight binding"
-                    .to_string(),
-            );
-        }
-        validate_consent_operation(
-            &self.action,
-            "revoked",
-            "noop",
-            before_revokable,
-            self.operation_id.as_deref(),
-            self.audit_pending,
-        )?;
-        let configured = validate_consent_origins(
-            &self.configured_endpoint_origins,
-            "configured_endpoint_origins",
-        )?;
-        let endpoint_origins =
-            validate_consent_origins(&self.endpoint_origins, "endpoint_origins")?;
-        let added =
-            validate_consent_origins(&self.added_endpoint_origins, "added_endpoint_origins")?;
-        let removed =
-            validate_consent_origins(&self.removed_endpoint_origins, "removed_endpoint_origins")?;
-        if configured != expected_configured || !added.is_empty() {
-            return Err(
-                "consent revoke acknowledgement does not bind the configured/prior origin sets"
-                    .to_string(),
-            );
-        }
-        if self.endpoint_delta_known {
-            if self.marker_source_malformed
-                || endpoint_origins != before_granted
-                || removed != before_granted
-            {
-                return Err(
-                    "consent revoke acknowledgement does not bind the exact removed origins"
-                        .to_string(),
-                );
-            }
-        } else if !self.marker_source_malformed
-            || !endpoint_origins.is_empty()
-            || !removed.is_empty()
-        {
-            return Err(
-                "consent revoke acknowledgement has an invalid unknown-delta binding".to_string(),
-            );
-        }
-        if !before_revokable
-            && (!removed.is_empty()
-                || self.operation_id.is_some()
-                || self.audit_pending
-                || self.marker_source_malformed)
-        {
-            return Err(
-                "noop consent revoke acknowledgement reported mutation effects".to_string(),
-            );
-        }
-        Ok(VerifiedConsentAck {
-            endpoint_origins: self.endpoint_origins.clone(),
-            added_endpoint_origins: self.added_endpoint_origins.clone(),
-            removed_endpoint_origins: self.removed_endpoint_origins.clone(),
-            audit_pending: self.audit_pending,
-        })
-    }
-
     /// Fail-safe GUI revoke when freedom.yaml cannot be loaded and therefore
     /// no config/route binding can be produced. Revocation only removes
     /// authority, so the exact marker/audit receipt is sufficient.
@@ -7768,7 +7680,14 @@ mod tests {
 
     #[test]
     fn consent_route_validation_requires_origins_for_configurable_clouds() {
-        for provider in ["openai_api", "openai_compat", "aws_bedrock", "azure_openai"] {
+        for provider in [
+            "local_ollama",
+            "openai_api",
+            "openai_compat",
+            "aws_bedrock",
+            "azure_openai",
+        ] {
+            assert_eq!(consent_provider_is_endpoint_bound(provider), Ok(true));
             let routes = vec![ConsentRouteBinding {
                 provider: provider.to_string(),
                 endpoint_origin: Some("https://operator-endpoint.example".to_string()),
@@ -7781,6 +7700,42 @@ mod tests {
             }];
             assert!(validate_consent_route_bindings(&missing_origin, "required_routes").is_err());
         }
+
+        assert_eq!(
+            consent_provider_is_endpoint_bound("anthropic_api"),
+            Ok(false)
+        );
+        assert!(
+            validate_consent_route_bindings(
+                &[ConsentRouteBinding {
+                    provider: "anthropic_api".to_string(),
+                    endpoint_origin: None,
+                }],
+                "required_routes",
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_consent_route_bindings(
+                &[ConsentRouteBinding {
+                    provider: "anthropic_api".to_string(),
+                    endpoint_origin: Some("https://api.anthropic.com".to_string()),
+                }],
+                "required_routes",
+            )
+            .is_err()
+        );
+        assert!(consent_provider_is_endpoint_bound("future_provider").is_err());
+        assert!(
+            validate_consent_route_bindings(
+                &[ConsentRouteBinding {
+                    provider: "future_provider".to_string(),
+                    endpoint_origin: None,
+                }],
+                "required_routes",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -8186,23 +8141,12 @@ mod tests {
                 "operation_id":"consent-43",
                 "authority_persisted":false,
                 "failure":null,
-                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "config_sha256":null,
+                "route_set_sha256":null
             }"#,
         )
         .unwrap();
-        assert!(
-            revoked
-                .verify(
-                    "anthropic_api",
-                    &[],
-                    &[],
-                    true,
-                    CONSENT_CONFIG_SHA256,
-                    CONSENT_ROUTE_SET_SHA256,
-                )
-                .is_ok()
-        );
+        assert!(revoked.verify_emergency("anthropic_api").is_ok());
         // Idempotent revoke ("no grant existed") is a benign success.
         let noop: ConsentRevokeAck = serde_json::from_str(
             r#"{
@@ -8219,35 +8163,14 @@ mod tests {
                 "operation_id":null,
                 "authority_persisted":false,
                 "failure":null,
-                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "config_sha256":null,
+                "route_set_sha256":null
             }"#,
         )
         .unwrap();
-        assert!(
-            noop.verify(
-                "anthropic_api",
-                &[],
-                &[],
-                false,
-                CONSENT_CONFIG_SHA256,
-                CONSENT_ROUTE_SET_SHA256,
-            )
-            .is_ok()
-        );
+        assert!(noop.verify_emergency("anthropic_api").is_ok());
         // Wrong provider echo or an unknown action must fail the bind.
-        assert!(
-            revoked
-                .verify(
-                    "openai",
-                    &[],
-                    &[],
-                    true,
-                    CONSENT_CONFIG_SHA256,
-                    CONSENT_ROUTE_SET_SHA256,
-                )
-                .is_err()
-        );
+        assert!(revoked.verify_emergency("openai").is_err());
         let odd: ConsentRevokeAck = serde_json::from_str(
             r#"{
                 "provider":"anthropic_api",
@@ -8263,22 +8186,12 @@ mod tests {
                 "operation_id":"consent-odd",
                 "authority_persisted":false,
                 "failure":null,
-                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "config_sha256":null,
+                "route_set_sha256":null
             }"#,
         )
         .unwrap();
-        assert!(
-            odd.verify(
-                "anthropic_api",
-                &[],
-                &[],
-                true,
-                CONSENT_CONFIG_SHA256,
-                CONSENT_ROUTE_SET_SHA256,
-            )
-            .is_err()
-        );
+        assert!(odd.verify_emergency("anthropic_api").is_err());
     }
 
     #[test]
@@ -8288,7 +8201,7 @@ mod tests {
                 "provider":"local_ollama",
                 "action":"revoked",
                 "status":"applied",
-                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "configured_endpoint_origins":[],
                 "endpoint_origins":[
                     "http://ollama-a.example:11434",
                     "http://ollama-b.example:11434"
@@ -8304,24 +8217,12 @@ mod tests {
                 "operation_id":"consent-44",
                 "authority_persisted":false,
                 "failure":null,
-                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "config_sha256":null,
+                "route_set_sha256":null
             }"#,
         )
         .unwrap();
-        let verified = ack
-            .verify(
-                "local_ollama",
-                &["http://ollama-b.example:11434".to_string()],
-                &[
-                    "http://ollama-a.example:11434".to_string(),
-                    "http://ollama-b.example:11434".to_string(),
-                ],
-                true,
-                CONSENT_CONFIG_SHA256,
-                CONSENT_ROUTE_SET_SHA256,
-            )
-            .unwrap();
+        let verified = ack.verify_emergency("local_ollama").unwrap();
         assert_eq!(verified.removed_endpoint_origins.len(), 2);
         assert!(verified.audit_pending);
     }
@@ -8333,7 +8234,7 @@ mod tests {
                 "provider":"local_ollama",
                 "action":"revoked",
                 "status":"applied",
-                "configured_endpoint_origins":["http://ollama-b.example:11434"],
+                "configured_endpoint_origins":[],
                 "endpoint_origins":[],
                 "added_endpoint_origins":[],
                 "removed_endpoint_origins":[],
@@ -8343,22 +8244,12 @@ mod tests {
                 "operation_id":"consent-45",
                 "authority_persisted":false,
                 "failure":null,
-                "config_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "route_set_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                "config_sha256":null,
+                "route_set_sha256":null
             }"#,
         )
         .unwrap();
-        assert!(
-            ack.verify(
-                "local_ollama",
-                &["http://ollama-b.example:11434".to_string()],
-                &[],
-                true,
-                CONSENT_CONFIG_SHA256,
-                CONSENT_ROUTE_SET_SHA256,
-            )
-            .is_ok()
-        );
+        assert!(ack.verify_emergency("local_ollama").is_ok());
     }
 
     #[test]

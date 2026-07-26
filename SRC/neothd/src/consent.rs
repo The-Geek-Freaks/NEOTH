@@ -363,7 +363,13 @@ impl ConsentMarkerUpdate {
     }
 }
 
-pub(crate) fn uses_endpoint_bound_consent(kind: ProviderKind) -> bool {
+/// Whether consent authority is bound to the provider's canonical endpoint
+/// origin instead of a provider-wide marker.
+///
+/// Public GUI/CLI consumers use this canonical policy query after resolving a
+/// stable provider slug with [`kind_from_slug`]; duplicating the match list in
+/// presentation crates can make a valid route impossible to approve.
+pub fn uses_endpoint_bound_consent(kind: ProviderKind) -> bool {
     matches!(
         kind,
         ProviderKind::LocalOllama

@@ -105,7 +105,7 @@ the release gates:
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 0¹ | 185 (all in-plan boxes) |
 | WS-HR Headroom token-compression port (native Rust) | 16 | 1 (HR-00, operator-only) | 15 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
-| WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 18 | **9** | **9** |
+| WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 14 | **13** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **116** | **2** |
 
@@ -633,6 +633,34 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   consume it at every HTTP/Git/npm leaf, bound and sanitize all transport
   diagnostics, and make CLI/GUI/Cron expose the same typed per-lane state.
   R3-18 remains OPEN.
+
+- [x] **GOLD-R3-19 Endpoint-bound remote/configurable-provider consent and
+  interface parity:** every configurable remote route now binds authority to
+  its canonical provider plus endpoint origin (and, for Bedrock, the exact
+  effective region) instead of inheriting a provider-wide marker. The
+  Core-owned scope policy covers `local_ollama`, `openai_api`,
+  `openai_compat`, `aws_bedrock` and `azure_openai`; unknown slugs fail
+  closed, while provider-wide routes cannot smuggle an endpoint origin.
+  Required-route inventory, primary/role/sub-role/learn/utility/teacher
+  factories, fallback selection, model discovery, concrete provider leaves
+  and cost authorization consume the same identity. One-shot decisions are
+  exact-route, single-use and config/route-set hash bound; durable mutations
+  use prepared/committed audit receipts plus crash-recoverable outbox state.
+  RecursiveMAS separately requires a canonical, no-follow, exact-instance
+  code acknowledgement and revocable provider egress consent. CLI and GUI
+  expose typed preflight, grant, partial, stale, revoke and readback states;
+  the GUI grant path now accepts all five endpoint-bound providers through the
+  real Main verifier, and emergency revoke remains config-unbound and
+  authority-reducing even when a valid config exists. The fictional bound
+  revoke verifier was removed instead of left as dead protocol surface.
+  **DONE 2026-07-26** (`7c97d558`, `7dfc4d80`, final closure follow-up):
+  Core consent **148/148**, Bedrock **32/32**, fallback **69/69**,
+  cost-authorization **54/54**, RecursiveMAS feature **16/16**, GUI consent
+  **30/30**, CLI-doc drift **1/1**, final Core RecursiveMAS and GUI
+  `clippy -D warnings`, rustfmt and diff hygiene are green. Independent final
+  code and security reviews report no remaining CRITICAL/HIGH/MEDIUM in this
+  contract. GitHub exact-head CI/Security/CodeQL remains the separate R3-10
+  release gate and is not inferred from these local results.
 
 ### 3.2 WS-R4 — Zero-friction install, GUI parity and public launch
 

@@ -14339,35 +14339,25 @@ fn verify_consent_row_binding(
         .iter()
         .filter(|route| route.provider == expected.provider)
         .collect::<Vec<_>>();
-    if expected.consent_required != !provider_routes.is_empty() {
+    if expected.consent_required == provider_routes.is_empty() {
         return Err(format!(
             "consent UI snapshot for `{}` no longer matches the bound required route set",
             expected.provider
         ));
     }
 
-    if expected.provider == "local_ollama" {
-        let bound_origins = provider_routes
-            .iter()
-            .filter_map(|route| route.endpoint_origin.clone())
-            .collect::<std::collections::BTreeSet<_>>();
-        let expected_origins = expected
-            .configured_endpoint_origins
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
-        if bound_origins != expected_origins {
-            return Err(format!(
-                "consent UI snapshot for `{}` no longer matches its bound endpoint origins",
-                expected.provider
-            ));
-        }
-    } else if provider_routes
+    let bound_origins = provider_routes
         .iter()
-        .any(|route| route.endpoint_origin.is_some())
-    {
+        .filter_map(|route| route.endpoint_origin.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    let expected_origins = expected
+        .configured_endpoint_origins
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    if bound_origins != expected_origins {
         return Err(format!(
-            "provider-wide consent binding for `{}` unexpectedly contains endpoint scope",
+            "consent UI snapshot for `{}` no longer matches its bound endpoint origins",
             expected.provider
         ));
     }
@@ -14476,15 +14466,13 @@ fn revoke_consent_verified(provider: &str) -> std::result::Result<VerifiedConsen
     // broken config cannot invalidate a successful, authority-free revoke ACK.
     if let Ok(after) = read_consent_ui_rows()
         && let Some(current) = after.iter().find(|row| row.provider == provider)
-    {
-        if current.current_route_granted
+        && (current.current_route_granted
             || current.revokable
-            || !current.granted_endpoint_origins.is_empty()
-        {
-            return Err(format!(
-                "consent readback for `{provider}` still reports a persisted grant"
-            ));
-        }
+            || !current.granted_endpoint_origins.is_empty())
+    {
+        return Err(format!(
+            "consent readback for `{provider}` still reports a persisted grant"
+        ));
     }
 
     Ok(VerifiedConsentMutation {
@@ -22226,6 +22214,56 @@ mod tests {
         .expect("decode interface show snapshot");
         assert!(!snap.chosen);
         assert!(snap.preferred.is_none());
+    }
+
+    #[test]
+    fn consent_binding_accepts_every_core_endpoint_bound_provider() {
+        for provider in [
+            "local_ollama",
+            "openai_api",
+            "openai_compat",
+            "aws_bedrock",
+            "azure_openai",
+        ] {
+            let origin = format!("https://{provider}.example");
+            let rows = panel_logic::parse_consent_rows(
+                &serde_json::json!([{
+                    "provider": provider,
+                    "consent_required": true,
+                    "current_route_granted": false,
+                    "configured_endpoint_origins": [origin.clone()],
+                    "granted_endpoint_origins": [],
+                    "stale_endpoint_origins": [],
+                    "granted_unix_ts": null,
+                    "grantable": true,
+                    "revokable": false,
+                    "status": "pending",
+                    "error": null,
+                    "endpoint_origins": [],
+                    "granted": false
+                }])
+                .to_string(),
+            )
+            .unwrap();
+            let binding = gui_action::VerifiedConsentMutationBinding {
+                config_sha256: "a".repeat(64),
+                route_set_sha256: "b".repeat(64),
+                required_routes: vec![gui_action::ConsentRouteBinding {
+                    provider: provider.to_string(),
+                    endpoint_origin: Some(origin.clone()),
+                }],
+                readback: vec![gui_action::ConsentRouteReadback {
+                    provider: provider.to_string(),
+                    endpoint_origin: Some(origin),
+                    granted: false,
+                    marker_authority_persisted: false,
+                }],
+            };
+            assert!(
+                verify_consent_row_binding(&rows[0], &binding).is_ok(),
+                "{provider} must remain grantable through the GUI binding"
+            );
+        }
     }
 
     #[test]

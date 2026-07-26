@@ -3966,10 +3966,7 @@ impl ConsentUiRow {
             self.granted_endpoint_origins.iter().cloned().collect();
         let stale: std::collections::BTreeSet<_> =
             self.stale_endpoint_origins.iter().cloned().collect();
-        let endpoint_bound = matches!(
-            self.provider.as_str(),
-            "local_ollama" | "openai_api" | "openai_compat" | "aws_bedrock" | "azure_openai"
-        );
+        let endpoint_bound = crate::gui_action::consent_provider_is_endpoint_bound(&self.provider)?;
         if !endpoint_bound
             && (!configured.is_empty()
                 || !granted.is_empty()
@@ -3989,7 +3986,7 @@ impl ConsentUiRow {
                 self.provider
             ));
         }
-        if endpoint_bound && self.consent_required != !self.configured_endpoint_origins.is_empty() {
+        if endpoint_bound && self.consent_required == self.configured_endpoint_origins.is_empty() {
             return Err(format!(
                 "consent row `{}` does not derive endpoint-bound consent requirement from configured origins",
                 self.provider

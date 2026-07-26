@@ -3,6 +3,22 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-26
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Endpoint-bound consent closure 2026-07-26 (`7c97d558`, `7dfc4d80`,
+> final closure follow-up; exact-head CI remains separate):** remote
+> LocalOllama, OpenAI API, OpenAI-compatible, AWS Bedrock and Azure OpenAI
+> authority is now bound to one canonical origin/region across runtime,
+> fallback, discovery, cost authorization, CLI and GUI. Exact one-shot
+> decisions, durable audit/outbox recovery, config/route hashes, typed GUI
+> receipts/readback and the independent RecursiveMAS code/egress gates are
+> wired end to end. Final verification is Core consent **148/148**, Bedrock
+> **32/32**, fallback **69/69**, cost authorization **54/54**, RecursiveMAS
+> feature **16/16**, GUI consent **30/30**, CLI-doc drift **1/1**, plus green
+> Core/GUI Clippy, rustfmt and diff hygiene. Final code and security reviews
+> found no remaining CRITICAL/HIGH/MEDIUM in the contract. `GOLD-R3-19` is
+> DONE; a mechanical unique-ID recount makes WS-R3 **13 done / 6 open**.
+> R3-10 still requires the pushed
+> exact-head CI/Security/CodeQL result and is not inherited from local gates.
+>
 > **Installed-Skill authority correction 2026-07-26 (counts unchanged):**
 > external review 4/5 found that the routed Skill MCP gate still treated a
 > matched Skill with an empty/default `tool_allowlist` as unrestricted. That
