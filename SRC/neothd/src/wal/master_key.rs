@@ -55,40 +55,21 @@ pub fn segment_key_at(home: &Path) -> Option<WalSegmentKey> {
     derive_subkey(&master, INFO_WAL_SEGMENT).ok()
 }
 
-/// Process-memoized read of `freedom.yaml::wal.encryption` — `true` when the
-/// operator opted into AES-256-GCM-SIV at-rest. The writer consults this on
-/// seal; the reader does NOT (it decrypts based on the segment's ENC magic,
-/// independent of the flag, so a config that's later turned off still reads
-/// already-encrypted history).
-pub fn wal_encryption_enabled() -> Result<bool> {
-    static EN: OnceLock<std::result::Result<bool, String>> = OnceLock::new();
-    match EN.get_or_init(|| {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        crate::config::wal::load_wal_config(&home.join("freedom.yaml"))
-            .map(|config| config.encryption == crate::config::wal::WalEncryption::Aes256GcmSiv)
-            .map_err(|error| format!("load WAL encryption policy: {error:#}"))
-    }) {
-        Ok(enabled) => Ok(*enabled),
-        Err(message) => anyhow::bail!("{message}"),
-    }
-}
-
 /// Resolve the WAL encryption policy for an explicit daemon instance.
+///
+/// The process-global sibling that read the ambient default home is gone: every
+/// live caller is instance-bound, and a second ambient accessor on a key surface
+/// is how a custom `--config` instance ends up consulting another instance's
+/// policy.
 pub fn wal_encryption_enabled_at(home: &Path) -> Result<bool> {
     crate::config::wal::load_wal_config(&home.join("freedom.yaml"))
         .map(|config| config.encryption == crate::config::wal::WalEncryption::Aes256GcmSiv)
         .context("load instance WAL encryption policy")
 }
 
-/// Config-at-rest subkey (CRYPTO-04 #5) — domain-separated (`INFO_CONFIG`) from
-/// the WAL segment key. **Load-only** for the decrypt/read path; `None` when no
-/// master.key exists.
-pub fn config_subkey() -> Option<WalSegmentKey> {
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    config_subkey_at(&home)
-}
-
-/// Config-at-rest subkey for an explicit daemon instance home.
+/// Config-at-rest subkey (CRYPTO-04 #5) for an explicit daemon instance home —
+/// domain-separated (`INFO_CONFIG`) from the WAL segment key. **Load-only** for
+/// the decrypt/read path; `None` when no master.key exists.
 pub fn config_subkey_at(home: &Path) -> Option<WalSegmentKey> {
     let path = master_key_path(home);
     if !path.exists() {
@@ -100,28 +81,18 @@ pub fn config_subkey_at(home: &Path) -> Option<WalSegmentKey> {
     derive_subkey(&master, INFO_CONFIG).ok()
 }
 
-/// Config-at-rest subkey for the WRITE path: load-OR-INIT the master key, derive
-/// the `INFO_CONFIG` subkey. Creates the key on first encrypted credentials write.
-pub fn config_subkey_ensure() -> Option<WalSegmentKey> {
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    config_subkey_ensure_at(&home)
-}
-
-/// Config-at-rest write subkey for an explicit daemon instance home.
+/// Config-at-rest subkey for the WRITE path at an explicit daemon instance
+/// home: load-OR-INIT the master key, derive the `INFO_CONFIG` subkey. Creates
+/// the key on the first encrypted credentials write.
 pub fn config_subkey_ensure_at(home: &Path) -> Option<WalSegmentKey> {
     let master = load_or_init_master_key(&master_key_path(home)).ok()?;
     derive_subkey(&master, INFO_CONFIG).ok()
 }
 
-/// Writer-side segment subkey: load-OR-INIT the default-home master key
-/// (CREATES + persists it on the first encrypted seal — the writer owns key
-/// creation) and derive the segment subkey. `None` only on RNG/IO failure.
-pub fn writer_segment_key() -> Option<WalSegmentKey> {
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    writer_segment_key_at(&home)
-}
-
-/// Writer-side segment subkey for an explicit daemon instance home.
+/// Writer-side segment subkey for an explicit daemon instance home:
+/// load-OR-INIT that home's master key (CREATES + persists it on the first
+/// encrypted seal — the writer owns key creation) and derive the segment
+/// subkey. `None` only on RNG/IO failure.
 pub fn writer_segment_key_at(home: &Path) -> Option<WalSegmentKey> {
     let master = load_or_init_master_key(&master_key_path(home)).ok()?;
     derive_subkey(&master, INFO_WAL_SEGMENT).ok()

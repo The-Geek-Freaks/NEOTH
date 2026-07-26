@@ -337,17 +337,6 @@ pub(crate) fn snapshot_is_current_locked(
     }
 }
 
-pub fn load_default() -> Result<Option<InterfacePreference>> {
-    load_at(&crate::config::FreedomConfig::default_neoth_home())
-}
-
-pub fn save_default(preferred: InterfacePreference) -> Result<PathBuf> {
-    save_at(
-        &crate::config::FreedomConfig::default_neoth_home(),
-        preferred,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

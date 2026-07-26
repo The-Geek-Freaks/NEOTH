@@ -382,26 +382,6 @@ impl McpServerConfig {
         })
     }
 
-    /// Validate an inheritance-based spawn context, including ambient Node/npm
-    /// variables that could redirect the registry or inject JavaScript. Kept
-    /// for diagnostic/compatibility callers; [`crate::mcp::client::McpClient`]
-    /// does not inherit these variables and instead uses an `env_clear`
-    /// allowlist plus the server's explicit `env` block.
-    pub fn validate_spawn_context(&self) -> Result<McpLauncherPosture> {
-        let posture = self.validate_launcher()?;
-        let command_name = normalise_command_name(&self.command);
-        for (key, _) in std::env::vars_os() {
-            let key = key.to_string_lossy();
-            if forbidden_launcher_env(&command_name, &key) {
-                anyhow::bail!(
-                    "MCP server `{}` spawn blocked by inherited launcher environment `{key}`; clear it or use a directly installed executable",
-                    self.id
-                );
-            }
-        }
-        Ok(posture)
-    }
-
     /// Exact package name without the version, for typo-squat diagnostics.
     pub fn pinned_npx_package(&self) -> Option<&str> {
         if normalise_command_name(&self.command) != "npx" || self.args.len() < 2 {

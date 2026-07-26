@@ -1993,10 +1993,6 @@ impl AuthorizedProvider {
         Self::from_arc(Arc::from(inner), authorizer, default_model, call_scope)
     }
 
-    pub fn into_arc(self) -> Arc<dyn Provider> {
-        Arc::new(self)
-    }
-
     /// Clone this long-lived provider boundary with per-request domain audit
     /// metadata. The provider and policy are shared; only the typed context is
     /// replaced for this invocation.

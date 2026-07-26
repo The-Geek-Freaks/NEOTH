@@ -234,12 +234,6 @@ pub enum StrictManifestScan {
     Unverified { code: StrictScanCode },
 }
 
-impl StrictManifestScan {
-    pub fn is_dependency_policy_clean(&self) -> bool {
-        matches!(self, Self::DependencyPolicyClean { .. })
-    }
-}
-
 /// Stable, non-sensitive failure codes for WAL and model feedback. Parser and
 /// transport details may contain manifest URLs or credentials and must never
 /// cross that boundary.
