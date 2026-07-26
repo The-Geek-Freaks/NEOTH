@@ -15,7 +15,6 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
-use tokio::net::lookup_host;
 
 use crate::permissions::gate::ChannelAsker;
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
@@ -271,7 +270,7 @@ impl ExternalHttpAuthorizer {
         Fut: Future<Output = Result<T>>,
     {
         let parsed = validate_request_url(&request.url)?;
-        let local = classify_local_searxng(&request, &parsed).await?;
+        let local = classify_local_searxng(&request, &parsed)?;
         let request_id = uuid::Uuid::now_v7().to_string();
         let request_binding_sha256 = request.binding_sha256();
         let destination = origin_without_credentials(&parsed)?;
@@ -447,29 +446,40 @@ fn origin_without_credentials(url: &url::Url) -> Result<String> {
     })
 }
 
-async fn classify_local_searxng(request: &ExternalHttpRequest, url: &url::Url) -> Result<bool> {
+/// May this SearXNG request skip the autonomy gate and the WAL audit?
+///
+/// Decided WITHOUT DNS. The previous version resolved the host here and let the
+/// fetch resolve it again independently, so a name that answered with a local
+/// address at classification time and a public one at fetch time produced an
+/// external egress with NO gate and NO audit frame — a DNS-rebinding hole in
+/// the one module whose entire promise is audit integrity.
+///
+/// A decision that cannot be re-decided is the fix: only an address that is
+/// local *by construction* qualifies.
+/// - an IP literal that is loopback/private/link-local (`http://127.0.0.1:8888`,
+///   `http://192.168.1.5:8888`) — nothing to resolve, nothing to rebind;
+/// - the reserved name `localhost`, which resolvers map to loopback and which no
+///   external DNS answer can redirect.
+///
+/// Every other host — including a LAN hostname that happens to resolve
+/// privately — takes the normal gated, audited path. That is the case an
+/// attacker can influence, and skipping the audit for it was never safe.
+fn classify_local_searxng(request: &ExternalHttpRequest, url: &url::Url) -> Result<bool> {
     if request.surface != ExternalHttpSurface::SearchSearxng {
         return Ok(false);
     }
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("SearXNG URL has no host"))?;
-    let port = url
-        .port_or_known_default()
+    // `port_or_known_default` is still required: a URL we cannot address is
+    // rejected here rather than surfacing later as an opaque fetch failure.
+    url.port_or_known_default()
         .ok_or_else(|| anyhow::anyhow!("SearXNG URL has no resolvable port"))?;
-    let mut saw = false;
-    let mut all_local = true;
-    for addr in lookup_host((host, port))
-        .await
-        .with_context(|| format!("resolve SearXNG host {host}"))?
-    {
-        saw = true;
-        all_local &= is_local_ip(addr.ip());
+    match url.host() {
+        Some(url::Host::Ipv4(v4)) => Ok(is_local_ip(IpAddr::V4(v4))),
+        Some(url::Host::Ipv6(v6)) => Ok(is_local_ip(IpAddr::V6(v6))),
+        _ => Ok(host.eq_ignore_ascii_case("localhost")),
     }
-    if !saw {
-        anyhow::bail!("SearXNG host {host} resolved zero addresses");
-    }
-    Ok(all_local)
 }
 
 fn is_local_ip(ip: IpAddr) -> bool {
@@ -517,6 +527,29 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     use super::*;
+
+    /// PR4-021: the gate/audit skip must not depend on a DNS answer, because
+    /// the fetch resolves the host again and the two answers can differ.
+    #[test]
+    fn searxng_local_skip_never_depends_on_dns() {
+        let classify = |url: &str| {
+            let request = ExternalHttpRequest::get(url, ExternalHttpSurface::SearchSearxng);
+            let parsed = validate_request_url(url).expect("valid url");
+            classify_local_searxng(&request, &parsed).expect("classified")
+        };
+
+        // Local by construction: nothing to resolve, nothing to rebind.
+        assert!(classify("http://127.0.0.1:8888"));
+        assert!(classify("http://192.168.1.5:8888"));
+        assert!(classify("http://[::1]:8888"));
+        assert!(classify("http://localhost:8888"));
+        assert!(classify("http://LOCALHOST:8888"));
+
+        // Anything an attacker-influenced DNS answer could move: gated+audited.
+        assert!(!classify("http://searx.example.com:8888"));
+        assert!(!classify("http://searx.internal:8888"));
+        assert!(!classify("http://8.8.8.8:8888"));
+    }
 
     #[derive(Default)]
     struct RecordingSink {
