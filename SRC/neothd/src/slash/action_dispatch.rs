@@ -564,7 +564,7 @@ async fn handle_skill(args: &str, home: &Path) -> ActionOutcome {
                         skill.description(),
                         skill.trigger_keywords().join(", "),
                         if skill.manifest.tool_allowlist.is_empty() {
-                            "unrestricted".into()
+                            "none".into()
                         } else {
                             skill.manifest.tool_allowlist.join(", ")
                         },

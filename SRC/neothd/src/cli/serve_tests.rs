@@ -195,8 +195,7 @@ fn channel_skill_allowlist_none_when_no_skill_matched() {
 #[test]
 fn channel_skill_allowlist_some_empty_for_default_manifest() {
     // A matched skill with the default (empty) allowlist ⇒ Some(empty),
-    // which the gate also treats as "allow all" — distinct from None
-    // but behaviourally equivalent at the gate.
+    // which the gate treats as "no MCP tools" — distinct from None.
     let s = skill_with_allowlist("news", &["news"], &[]);
     assert_eq!(channel_skill_allowlist(Some(&s)), Some(vec![]));
 }

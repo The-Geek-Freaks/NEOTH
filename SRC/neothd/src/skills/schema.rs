@@ -19,8 +19,9 @@ pub struct SkillManifest {
     #[serde(default)]
     pub system_prompt: String,
     /// NEOTH-specific addition: restrict the tool surface this skill may
-    /// call. Empty = no restriction. Names refer to the daemon's tool
-    /// registry (claude-code-style — `recall`, `channel-send`, `fetch`, …).
+    /// call. Empty = no MCP tools; a matched skill must list every tool it may
+    /// invoke explicitly. Names refer to the daemon's tool registry
+    /// (claude-code-style — `recall`, `channel-send`, `fetch`, ...).
     #[serde(default)]
     pub tool_allowlist: Vec<String>,
     /// Skill author for attribution in `neoth skills list`. Optional.

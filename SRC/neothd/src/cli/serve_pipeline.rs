@@ -100,8 +100,8 @@ pub(crate) struct PipelineHandlerDeps {
 
 /// SC-11 — derive the MCP `tool_allowlist` that scopes a single channel
 /// inbound from the routed skill. `None` (no skill matched this turn) lets
-/// the gate allow every tool; `Some(empty)` (the manifest default) also
-/// allows all; `Some(non-empty)` restricts the model to the listed tools.
+/// the gate allow every tool; `Some(empty)` (the manifest default) allows no
+/// MCP tools; `Some(non-empty)` restricts the model to the listed tools.
 /// Extracted from the inline channel-handler derivation so the mapping is
 /// unit-testable in isolation — the handler closure itself is not directly
 /// callable. The same value flows into `run_mcp_dispatch_loop` exactly as
@@ -1581,9 +1581,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // matched skill's `tool_allowlist` into the MCP dispatch loop
             // exactly like `cli/chat.rs`. Previously the channel/daemon
             // path matched a skill for the SYSTEM PROMPT but passed `None`
-            // for the allowlist, so Telegram/Slack/WhatsApp inbound got
-            // ZERO skill-scoped tool restriction — the primary production
-            // deployment model bypassed the gate `neoth chat` enforced.
+            // for the allowlist, so Telegram/Slack/WhatsApp inbound lost the
+            // skill-scoped tool restriction that `neoth chat` enforced.
             // A mode is a behaviour variant of its parent skill, so the
             // PARENT skill's allowlist still applies when a mode is active.
             // GOLD-CCPARITY-MODEL-02: expanded to 4-tuple to capture per-skill

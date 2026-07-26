@@ -602,6 +602,20 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   Until that is implemented, independently reviewed and exact-head green, this
   checkpoint is progress evidence only, not a release-completion claim.
 
+  **External review 4/5 correction 2026-07-26 (narrow R3-17 slice; box remains
+  OPEN):** routed Skills no longer inherit ambiguous MCP authority when their
+  manifest omits `tool_allowlist`. The Skill schema, loader documentation,
+  channel allowlist derivation, MCP gate and `/skill info` output now share one
+  explicit contract: `None` means no Skill matched and therefore no
+  Skill-level tool restriction exists; `Some(empty)` means a Skill matched but
+  grants no MCP tools; `Some(non-empty)` allows only the listed tools. This
+  closes the old "empty is behaviorally unrestricted" ambiguity for routed
+  Skill MCP dispatch while preserving global autonomy, permission, cost, WAL,
+  server and agent deny/allow gates. It does **not** close R3-17 because
+  externally sourced activation receipts, GUI/Buddy decision parity, install/
+  replace/remove intent WAL correlation, rollback/revocation and exact-head CI
+  proof remain the release-blocking authority contract.
+
   **R3-18 recurring-egress correction 2026-07-22:** forensic leaf tracing found
   that the GUI's `auto_update.*` controls do not govern the older generic
   `updater.enabled` CLI auto-apply loop, whose default is enabled at elevated/

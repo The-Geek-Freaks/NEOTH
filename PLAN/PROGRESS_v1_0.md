@@ -1,7 +1,19 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-07-22
+**Created:** 2026-05-24  **Last updated:** 2026-07-26
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+>
+> **Installed-Skill authority correction 2026-07-26 (counts unchanged):**
+> external review 4/5 found that the routed Skill MCP gate still treated a
+> matched Skill with an empty/default `tool_allowlist` as unrestricted. That
+> ambiguity is removed: `None` now means no Skill matched, `Some(empty)` means
+> the matched Skill grants no MCP tools, and `Some(non-empty)` is the only
+> positive per-Skill tool authority. The schema/docs, channel derivation, MCP
+> gate and `/skill info` output are aligned with that contract. This is a
+> narrow R3-17 source slice only; external activation receipts, GUI/Buddy
+> parity, install/replace/remove WAL correlation, rollback/revocation and
+> exact-head CI proof remain open. WS-R3 stays **9 done / 9 open** and WS-R4
+> stays **1 done / 13 open**.
 >
 > **Current WS-LF inventory integrity (2026-07-18):** the original 79
 > archaeological candidate occurrences are now durably accounted for as

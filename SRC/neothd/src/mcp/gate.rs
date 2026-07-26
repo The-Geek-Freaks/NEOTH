@@ -159,8 +159,9 @@ struct AgentToolScope {
 }
 
 impl McpToolScope {
-    /// Build a scope from the matched skill. `None` and `Some(empty)` retain
-    /// the existing skill semantics: no skill-level restriction.
+    /// Build a scope from the matched skill. `None` means no skill matched and
+    /// therefore no skill-level restriction exists. `Some(empty)` means a skill
+    /// matched but grants no MCP tools.
     pub fn from_skill_allowlist(skill_allowlist: Option<Vec<String>>) -> Self {
         Self {
             skill_allowlist,
@@ -724,18 +725,16 @@ async fn emit_readonly_allow(
 /// in addition to the server-level `allow_tools`. Called from the
 /// dispatch loop (where the matched skill is in scope) BEFORE
 /// [`invoke_authorized_with_audit`].
-///
-/// Semantics:
-///   - `None` (no skill matched this turn) ⇒ `Ok(())` — no skill gate.
-///   - `Some(empty)` (skill declares no tool restriction — the default
-///     for skills that don't set `tool_allowlist`) ⇒ `Ok(())`.
-///   - `Some(non-empty)` ⇒ the tool MUST appear in the list, else
-///     `SkillAllowlistBlocked`.
-///
 /// The server-level allowlist in `preflight_with_audit` still runs after
 /// this — both layers must pass. A rejection is audited via the same
 /// `MCP_TOOL_REJECTED` (0xC0) frame as every other gate denial, so the
 /// WAL replay shows skill-scoped blocks alongside server-scoped ones.
+///
+/// Semantics:
+/// - `None`: no routed skill this turn, no skill-level restriction.
+/// - `Some(empty)`: a routed skill declared no tool authority, so every MCP
+///   tool is blocked.
+/// - `Some(non-empty)`: only listed tools are allowed.
 pub async fn enforce_skill_allowlist(
     skill_allowlist: Option<&[String]>,
     server: &str,
@@ -746,7 +745,7 @@ pub async fn enforce_skill_allowlist(
     let Some(list) = skill_allowlist else {
         return Ok(());
     };
-    if list.is_empty() || list.iter().any(|t| t == tool) {
+    if list.iter().any(|t| t == tool) {
         return Ok(());
     }
     if let Some(w) = writer {
@@ -936,21 +935,20 @@ mod tests {
     // decision without a live writer.
 
     #[tokio::test]
-    async fn skill_allowlist_none_or_empty_imposes_no_restriction() {
+    async fn skill_allowlist_none_imposes_no_restriction_but_empty_blocks() {
         // No skill matched this turn.
         assert!(
             enforce_skill_allowlist(None, "srv", "anything", None, 0)
                 .await
                 .is_ok()
         );
-        // Skill matched but declares no tool_allowlist (the default) —
-        // must NOT restrict, else every existing skill breaks.
+        // Skill matched but declares no tool_allowlist (the default):
+        // prompt injection may happen, but MCP tool authority is empty.
         let empty: Vec<String> = vec![];
-        assert!(
-            enforce_skill_allowlist(Some(&empty), "srv", "anything", None, 0)
-                .await
-                .is_ok()
-        );
+        let err = enforce_skill_allowlist(Some(&empty), "srv", "anything", None, 0)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GateError::SkillAllowlistBlocked { .. }));
     }
 
     #[tokio::test]

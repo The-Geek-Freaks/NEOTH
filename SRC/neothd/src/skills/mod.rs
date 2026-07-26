@@ -7,7 +7,7 @@
 //!   - `trigger_keywords` (optional but recommended — Stage-1 router input)
 //!   - `system_prompt` (injected into provider call when activated)
 //!   - `tool_allowlist` (optional — restricts which tools the skill may call;
-//!      NEOTH-specific, Claude Code has no per-skill allowlist)
+//!      omitted/empty means this skill may call no MCP tools)
 //!
 //! Router is a two-stage hybrid:
 //!   Stage 1 — O(1) keyword scan on `trigger_keywords`. Pure-Rust, no model.
