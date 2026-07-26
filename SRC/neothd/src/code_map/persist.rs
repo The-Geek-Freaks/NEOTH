@@ -596,15 +596,41 @@ pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::
 /// can be called across roots), so they need the whole edge set rather
 /// than one root's slice. Deterministic order for stable BFS output.
 pub fn load_all_edges(conn: &Connection) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
-    let mut stmt = conn
-        .prepare(
+    load_edges_filtered(conn, None)
+}
+
+/// Every call/reference edge under ONE persisted root.
+///
+/// The containment boundary that scopes `relevant_files` to the caller's repo is
+/// only real if the call graph honours it too: `load_all_edges` mixes every
+/// indexed repository, so a caller/callee query answered symbols and file paths
+/// from repositories the client never asked about.
+pub fn load_edges_for_root(
+    conn: &Connection,
+    root: &str,
+) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+    load_edges_filtered(conn, Some(root))
+}
+
+fn load_edges_filtered(
+    conn: &Connection,
+    root: Option<&str>,
+) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+    let sql = match root {
+        Some(_) => {
             "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
-             ORDER BY from_file, from_symbol, to_name",
-        )
-        .context("prepare load_all_edges stmt")?;
+             WHERE root = ?1 ORDER BY from_file, from_symbol, to_name"
+        }
+        None => {
+            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+             ORDER BY from_file, from_symbol, to_name"
+        }
+    };
+    let mut stmt = conn.prepare(sql).context("prepare load_edges stmt")?;
+    let params: Vec<String> = root.map(|root| vec![root.to_string()]).unwrap_or_default();
     let mut out = Vec::new();
     let rows = stmt
-        .query_map([], |row| {
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
             let from_file: String = row.get(0)?;
             let from_symbol: String = row.get(1)?;
             let to_name: String = row.get(2)?;

@@ -243,13 +243,28 @@ pub fn dispatch_codegraph_tool(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> ToolCallResult {
+    // The server runs as a stdio child and inherits the client's working
+    // directory; that directory is what decides WHICH indexed repository may
+    // answer. Resolved once here and threaded down, so every tool on this
+    // surface applies the same containment and tests can state the location
+    // explicitly instead of depending on the test runner's cwd.
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    dispatch_codegraph_tool_at(db_path, tool_name, args, &cwd)
+}
+
+pub(crate) fn dispatch_codegraph_tool_at(
+    db_path: &Path,
+    tool_name: &str,
+    args: &serde_json::Value,
+    cwd: &Path,
+) -> ToolCallResult {
     match tool_name {
         "codegraph_extract_identifiers" => tool_extract_identifiers(args),
         "codegraph_path_keywords" => tool_path_keywords(args),
         "codegraph_relevant_files" => tool_relevant_files(db_path, args),
-        "codegraph_callers" => tool_callers(db_path, args),
-        "codegraph_callees" => tool_callees(db_path, args),
-        "codegraph_outline" => tool_outline(db_path, args),
+        "codegraph_callers" => tool_callers(db_path, args, cwd),
+        "codegraph_callees" => tool_callees(db_path, args, cwd),
+        "codegraph_outline" => tool_outline(db_path, args, cwd),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
             TOOL_NAMES.join(", "),
@@ -375,36 +390,46 @@ fn default_bfs_depth() -> u32 {
 /// yet → callers/callees return `[]`, never a hard error — same posture
 /// as `relevant_files`). Reconstructs the graph from the stored
 /// `code_map_edges` table via [`CallGraph::from_edges`] — no source rescan.
-fn graph_from_db(db_path: &Path) -> Result<crate::code_map::graph::CallGraph> {
+fn graph_from_db(db_path: &Path, cwd: &Path) -> Result<crate::code_map::graph::CallGraph> {
     if !db_path.exists() {
         return Ok(crate::code_map::graph::CallGraph::default());
     }
     let conn = crate::code_map::persist::open(db_path)
         .with_context(|| format!("open {}", db_path.display()))?;
-    let edges = crate::code_map::persist::load_all_edges(&conn)?;
+    // GOLD-R3-13 containment, same rule as `relevant_files`: answer only from
+    // the persisted root that contains this server's working directory. Loading
+    // every root's edges made `callers`/`callees` return symbols and file paths
+    // from repositories the client never asked about — inconsistent visibility
+    // across one tool surface, and exactly the cross-repo leak the containment
+    // was introduced to close. An unmapped CWD yields an empty graph, so the
+    // client sees "no results", never another repo's.
+    let Some(active_root) = crate::code_map::recall::resolve_active_root(&conn, cwd) else {
+        return Ok(crate::code_map::graph::CallGraph::default());
+    };
+    let edges = crate::code_map::persist::load_edges_for_root(&conn, &active_root)?;
     Ok(crate::code_map::graph::CallGraph::from_edges(edges))
 }
 
-fn tool_callers(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
+fn tool_callers(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
     let parsed: CallersArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let depth = parsed.depth.clamp(1, 20) as usize;
-    let graph = match graph_from_db(db_path) {
+    let graph = match graph_from_db(db_path, cwd) {
         Ok(g) => g,
         Err(e) => return error_result(format!("codegraph_callers failed: {e:#}")),
     };
     text_result(callers_inner(&graph, &parsed.symbol, depth))
 }
 
-fn tool_callees(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
+fn tool_callees(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
     let parsed: CalleesArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
     let depth = parsed.depth.clamp(1, 20) as usize;
-    let graph = match graph_from_db(db_path) {
+    let graph = match graph_from_db(db_path, cwd) {
         Ok(g) => g,
         Err(e) => return error_result(format!("codegraph_callees failed: {e:#}")),
     };
@@ -467,12 +492,12 @@ struct OutlineArgs {
     path: String,
 }
 
-fn tool_outline(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
+fn tool_outline(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
     let parsed: OutlineArgs = match serde_json::from_value(args.clone()) {
         Ok(p) => p,
         Err(e) => return error_result(format!("bad args: {e}")),
     };
-    let path = match resolve_indexed_outline_path(db_path, &parsed.path) {
+    let path = match resolve_indexed_outline_path(db_path, &parsed.path, cwd) {
         Ok(path) => path,
         Err(error) => return error_result(format!("outline access denied: {error:#}")),
     };
@@ -488,7 +513,7 @@ fn tool_outline(db_path: &Path, args: &serde_json::Value) -> ToolCallResult {
 /// callers can disambiguate duplicate repo-relative paths with an absolute path.
 /// Canonical root containment also rejects indexed symlinks/junctions that now
 /// escape their original repository.
-fn resolve_indexed_outline_path(db_path: &Path, requested: &str) -> Result<PathBuf> {
+fn resolve_indexed_outline_path(db_path: &Path, requested: &str, cwd: &Path) -> Result<PathBuf> {
     let requested = requested.trim();
     if requested.is_empty() {
         anyhow::bail!("path is empty");
@@ -509,11 +534,16 @@ fn resolve_indexed_outline_path(db_path: &Path, requested: &str) -> Result<PathB
 
     let conn = crate::code_map::persist::open(db_path)
         .with_context(|| format!("open {}", db_path.display()))?;
+    // Same containment as `relevant_files` and the call graph: a relative path
+    // that is unique only inside ANOTHER indexed repository used to resolve, and
+    // its outline was served. Membership is decided within the active root only.
+    let active_root = crate::code_map::recall::resolve_active_root(&conn, cwd)
+        .context("the working directory is not inside an indexed repository; build a code map for it before requesting file outlines")?;
     let mut stmt = conn
-        .prepare("SELECT root, path FROM code_map_files ORDER BY root, path")
+        .prepare("SELECT root, path FROM code_map_files WHERE root = ?1 ORDER BY path")
         .context("prepare indexed-outline membership query")?;
     let rows = stmt
-        .query_map([], |row| {
+        .query_map([&active_root], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })
         .context("query indexed-outline membership")?;
@@ -1074,21 +1104,25 @@ fn root() { alpha(); beta(); }
 
     /// Seed a real `code_map.db` (root row + persisted edges) for the
     /// dispatch wiring tests below.
-    fn seed_code_map_db(db: &Path) {
+    /// Seed a call graph under a REAL root directory. The root matters: the
+    /// tools answer only from the root that contains the server's working
+    /// directory, so a test has to say where the server is running.
+    fn seed_code_map_db(db: &Path, root: &Path) {
         let mut conn = crate::code_map::persist::open(db).unwrap();
+        let root = root.canonicalize().unwrap().display().to_string();
         // Edges FK into code_map_roots — seed the root row first.
         conn.execute(
             "INSERT INTO code_map_roots \
              (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped) \
-             VALUES ('x.rs', 0, 1, 0, 3, 0)",
-            [],
+             VALUES (?1, 0, 1, 0, 3, 0)",
+            rusqlite::params![root],
         )
         .unwrap();
         let g = graph_from_rust(
             "x.rs",
             "fn leaf() {}\nfn middle() { leaf(); }\nfn root() { middle(); }\n",
         );
-        crate::code_map::persist::persist_edges(&mut conn, "x.rs", g.edges()).unwrap();
+        crate::code_map::persist::persist_edges(&mut conn, &root, g.edges()).unwrap();
     }
 
     #[test]
@@ -1098,11 +1132,12 @@ fn root() { alpha(); beta(); }
         // callers — not `[]` (the empty-graph stub the follow-up replaced).
         let dir = tempdir().unwrap();
         let db = dir.path().join("code_map.db");
-        seed_code_map_db(&db);
-        let r = dispatch_codegraph_tool(
+        seed_code_map_db(&db, dir.path());
+        let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_callers",
             &serde_json::json!({"symbol": "leaf"}),
+            dir.path(),
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
@@ -1115,17 +1150,50 @@ fn root() { alpha(); beta(); }
     fn dispatch_codegraph_callees_reads_persisted_edges() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("code_map.db");
-        seed_code_map_db(&db);
-        let r = dispatch_codegraph_tool(
+        seed_code_map_db(&db, dir.path());
+        let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_callees",
             &serde_json::json!({"symbol": "root", "file": "x.rs"}),
+            dir.path(),
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
         let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
         let names: Vec<&str> = rows.iter().map(|x| x["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"middle"), "wiring broken — got: {names:?}");
         assert!(names.contains(&"leaf"), "wiring broken — got: {names:?}");
+    }
+
+    /// PR5-016: the call graph must honour the same containment as
+    /// `relevant_files`. A client working outside the indexed root must never
+    /// see another repository's symbols.
+    #[test]
+    fn call_graph_answers_only_from_the_active_root() {
+        let indexed = tempdir().unwrap();
+        let elsewhere = tempdir().unwrap();
+        let db = indexed.path().join("code_map.db");
+        seed_code_map_db(&db, indexed.path());
+
+        let inside = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_callers",
+            &serde_json::json!({"symbol": "leaf"}),
+            indexed.path(),
+        );
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&inside)).unwrap();
+        assert!(!rows.is_empty(), "inside the indexed root it must answer");
+
+        let outside = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_callers",
+            &serde_json::json!({"symbol": "leaf"}),
+            elsewhere.path(),
+        );
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&text_content(&outside)).unwrap();
+        assert!(
+            rows.is_empty(),
+            "an unmapped working directory must not see another repo's symbols: {rows:?}"
+        );
     }
 
     // ── GOLD-ADAPT-CCS-04: codegraph_outline dispatch tests ───────────────
@@ -1187,10 +1255,11 @@ fn root() { alpha(); beta(); }
         let db = dir.path().join("code_map.db");
         seed_indexed_file(&db, dir.path(), "fixture.rs");
 
-        let r = dispatch_codegraph_tool(
+        let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": "fixture.rs"}),
+            dir.path(),
         );
         assert!(!r.is_error, "got: {}", text_content(&r));
 
@@ -1222,10 +1291,11 @@ fn root() { alpha(); beta(); }
         let db = dir.path().join("code_map.db");
         seed_indexed_file(&db, dir.path(), "keys.rs");
 
-        let r = dispatch_codegraph_tool(
+        let r = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": fixture.to_str().unwrap()}),
+            dir.path(),
         );
         assert!(!r.is_error);
         let entries: Vec<serde_json::Value> = serde_json::from_str(&text_content(&r)).unwrap();
@@ -1246,10 +1316,11 @@ fn root() { alpha(); beta(); }
         let db = dir.path().join("code_map.db");
         seed_indexed_file(&db, dir.path(), "indexed.rs");
 
-        let denied = dispatch_codegraph_tool(
+        let denied = dispatch_codegraph_tool_at(
             &db,
             "codegraph_outline",
             &serde_json::json!({"path": secret}),
+            dir.path(),
         );
         assert!(denied.is_error);
         assert!(!text_content(&denied).contains("must_not_leak"));
