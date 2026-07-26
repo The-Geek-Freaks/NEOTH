@@ -1108,7 +1108,10 @@ async fn append_hmac_key_rotated(home: &Path, daemon_live: bool, payload: &[u8])
     let wal_dir = home.join("wal");
     std::fs::create_dir_all(&wal_dir)
         .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
-    let segment = crate::wal::writer::unique_standalone_segment_path(&wal_dir, "hmac-key-rotate");
+    let segment = crate::wal::writer::unique_standalone_segment_path(
+        &wal_dir,
+        crate::wal::writer::HMAC_ROTATION_SURFACE,
+    );
     let (writer, join) = crate::wal::writer::spawn(segment)
         .context("spawn one-shot HMAC-key rotation WAL writer")?;
     let header =

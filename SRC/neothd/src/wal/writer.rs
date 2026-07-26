@@ -38,8 +38,24 @@ pub(crate) fn unique_standalone_segment_path(wal_dir: &Path, surface: &str) -> P
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
         "standalone WAL surface must be a non-empty filesystem-safe identifier"
     );
+    // The writer decides whether to skip compaction-marker emission by looking
+    // for `-hmac-key-rotate-` in the segment file name. That is exact for the
+    // one surface that owns it today, but a future surface whose name merely
+    // CONTAINS it (`hmac-key-rotate-v2`) would silently inherit the skip and
+    // lose tamper evidence for its segment — with no error. Reserve the
+    // substring so that mistake fails here, loudly, at the call site.
+    assert!(
+        !surface.contains(HMAC_ROTATION_SURFACE) || surface == HMAC_ROTATION_SURFACE,
+        "WAL surface `{surface}` reserves the `{HMAC_ROTATION_SURFACE}` marker-skip name; \
+         pick another surface, or thread an explicit flag if the skip is really intended"
+    );
     wal_dir.join(format!("{}-{surface}-000001.wal", uuid::Uuid::now_v7()))
 }
+
+/// The one standalone surface whose writer must NOT emit compaction markers:
+/// the HMAC-key rotation one-shot already holds the rotation transaction lock,
+/// so emitting an old-key marker after that boundary would be wrong.
+pub(crate) const HMAC_ROTATION_SURFACE: &str = "hmac-key-rotate";
 
 /// Workstream F (CT-10/E-20/V1x-06) — per-writer compression policy.
 ///
@@ -1262,11 +1278,13 @@ async fn run_writer(
     // The key lives at `<instance-home>/wal/hmac.key`, generated on first
     // boot. It is security-bearing state: loading or recovering it is a hard
     // startup boundary, never a downgrade to unsigned compaction markers.
+    // Name-based, and safe only because `unique_standalone_segment_path`
+    // reserves the substring: no other surface may contain it.
     let is_hmac_rotation_writer = state
         .path
         .file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| name.contains("-hmac-key-rotate-"));
+        .is_some_and(|name| name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")));
     let hmac_key: Option<Vec<u8>> = if is_hmac_rotation_writer {
         // The rotation command already holds the transaction lock while this
         // one-shot writer persists 0xD9. It must neither recurse into recovery
@@ -1631,6 +1649,26 @@ async fn write_only(file: &mut File, frame: &[u8]) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// PR4-014: the marker-skip is decided by a filename substring, so a future
+    /// surface that merely CONTAINS it would silently lose tamper evidence.
+    #[test]
+    #[should_panic(expected = "reserves the")]
+    fn a_surface_may_not_shadow_the_marker_skip_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let _ = unique_standalone_segment_path(dir.path(), "hmac-key-rotate-v2");
+    }
+
+    #[test]
+    fn the_rotation_surface_itself_is_still_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = unique_standalone_segment_path(dir.path(), HMAC_ROTATION_SURFACE);
+        let name = path.file_name().unwrap().to_str().unwrap().to_string();
+        assert!(
+            name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")),
+            "the writer detects the skip by exactly this shape: {name}"
+        );
+    }
 
     /// A configured-but-unwired storage policy must refuse the writer rather
     /// than silently writing plaintext segments the operator believes are
