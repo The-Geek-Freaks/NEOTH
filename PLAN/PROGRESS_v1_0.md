@@ -3,6 +3,77 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-26
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Typed consumer-adoption checkpoint 2026-07-26 (R3-14 remains OPEN;
+> counts unchanged):** MCP catalogue assembly now returns a dedicated typed
+> value: trusted invocation instructions stay separate from one bounded
+> `McpCatalogue` data envelope across Chat, Channels, sub-agent rebuilds and
+> Cron. The protocol and its envelope share a semantic atomic budget group, so
+> degradation retains both or removes both. Both public budget enforcers
+> validate the exact one-A/one-D group shape before any mutation and return an
+> error with the input unchanged for grouped B/C/E/Conductor, duplicate members
+> or A-only/D-only orphans. Tool identifiers, property counts, required sets and schema summaries
+> are bounded before catalogue allocation.
+> Server IDs match the parser contract, allowlists take precedence exactly as
+> at invocation, and duplicate IDs fail closed both on load and before an
+> update is persisted. The bounded catalogue is a discovery view rather than
+> an authorization grant/deny-list: omission through smart loading or caps
+> changes visibility only; complete operator policy plus live gates remain
+> authoritative. Server/byte totals are capped pre-envelope. One shared
+> six-second deadline covers the bounded four-wide fetch rather than
+> accumulating per-server timeouts; completed servers retain deterministic
+> order and an unfinished batch carries an explicit `PARTIAL` marker. CLI and
+> Channels resolve Council, MCP, refinement and direct routing once before
+> catalogue I/O. Only the exact `McpDispatch` route may fetch/inject the
+> catalogue; streaming, Council, direct and protocol-free refinement routes
+> cannot inherit it. A typed loop-route trigger also preserves matched
+> `loop: true` skills through CLI preflight: ForcedOff/AutoOff MCP runs the same
+> protocol-free, minimum-two-round refinement path as Channels instead of
+> silently degrading to one direct call.
+> Repo-map context plus runtime `.neothhints`/`AGENTS.md` are canonical
+> `RepoHint` data. Hint files are bounded before read/allocation; model/tool
+> path bytes, components and command tokens are capped; canonical paths own
+> dedup/accounting through lossless OS-byte SHA-256 identity; failed paths
+> consume no successful-load budget; temporary drain pressure requeues pending
+> leaves; complete envelopes have per-drain plus per-session wire ceilings; and
+> filesystem work is offloaded from Tokio workers. `HINT_LOADED` separates
+> source, included-payload and exact-wire provenance without storing body bytes.
+> A static adapter treats convention claims as scoped evidence
+> without granting tool, permission or policy authority. Skill `$ARGUMENTS` and
+> slash `{args}` remain exclusively in the current user message rather than
+> being copied into System/B authority.
+> MCP dispatch-loop model replies are raw only for tool parsing and final
+> display; its leaked-call retry, Goal/Grind continuation, goal judging and
+> follow-ups use
+> `ModelOutput` envelopes, and the judge now accepts only an exact `YES`.
+> Goal audit distinguishes a real `not_met` from unavailable/budget failures,
+> preserves terminal `budget_exhausted` across every terminal direct
+> iteration/tool-call exit even after the one-shot goal nudge, and keeps a
+> negative post-nudge judgement working to the cap. Multi-round records carry
+> the exact aggregate outcome and original untruncated goal hash; only a final
+> outer cap/budget exit becomes terminal, historical inner caps cannot emit a
+> contradictory terminal event, and an inner exhausted Goal vetoes accidental
+> outer convergence until a later `Met` or the real outer cap. Confirmed
+> responses bypass post-judge refinement so the returned bytes are the bytes
+> that were judged. Hash divergence, an incomplete judge prompt, and
+> all-dispatches-failed Goal runs are typed non-bypassable errors; the latter two
+> emit exactly one full-hash `input_budget_exceeded`/`unavailable` lifecycle
+> frame before any fallback. Judge-disabled oversized Goals retain the legacy
+> one-shot bounded nudge, while a judge-enabled oversized Goal is rejected before
+> the first paid provider leaf. The outer Channel-Council caller cannot convert
+> a dissent-loop integrity failure into a direct-provider fallback. A confirmed
+> Goal and explicit `--until` criteria are conjunctive, and UUIDv7 loop IDs avoid
+> concurrent WAL/record collisions. If a rejected structural gate causes a
+> later round to replace the judged response, the earlier `Met` is cleared so
+> only the actual final bytes can carry that verdict. CLI plus Channels use the same terminal WAL
+> consumer. Untrusted D
+> blocks cannot suppress either trusted Block-B discipline or clarification
+> protocol.
+> A focused production source tripwire pins the known removed raw signatures;
+> typed APIs and behavior tests enforce the semantic boundary. Remaining R3-14
+> work is attachments, recall/guidance and other memory, coding/compaction,
+> remaining sub-agent/channel/Buddy consumers and every provider/retry/
+> fallback/streaming/cost leaf.
+>
 > **Typed untrusted-context checkpoint 2026-07-26 (R3-14 remains OPEN;
 > counts unchanged):** one canonical typed serializer now owns context class,
 > token-complete bounded source identity, UTF-8-safe class ceilings, fully

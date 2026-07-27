@@ -220,8 +220,10 @@ pub fn wrap_summary(summary: &str) -> String {
 }
 
 /// Marker `dispatch_loop::build_next_prompt` inserts before each iteration's
-/// assistant reply. The last occurrence delimits the most-recent exchange.
-const LAST_EXCHANGE_MARKER: &str = "\n\n[assistant]\n";
+/// typed assistant reply. The last occurrence delimits the most-recent
+/// exchange. This is shared with the producer so compaction cannot silently
+/// drift from the wire format it parses.
+pub const LAST_EXCHANGE_MARKER: &str = "\n\n[assistant output — untrusted data]\n";
 
 /// GR-120 — split `history` into `(older_history, last_exchange)` at the last
 /// [`LAST_EXCHANGE_MARKER`]. When no marker exists (iteration 1 is just the
@@ -238,7 +240,8 @@ pub fn split_last_exchange(history: &str) -> (&str, &str) {
 /// GR-120 — re-attach the verbatim `last_exchange` after a model-produced
 /// summary, under the [`SUMMARY_MARKER`]. Identical to [`wrap_summary`] when
 /// `last_exchange` is empty. `last_exchange` keeps its leading
-/// `\n\n[assistant]\n` so the next `build_next_prompt` append stays well-formed.
+/// [`LAST_EXCHANGE_MARKER`] so the next `build_next_prompt` append stays
+/// well-formed.
 pub fn wrap_summary_with_last_exchange(summary: &str, last_exchange: &str) -> String {
     if last_exchange.is_empty() {
         return wrap_summary(summary);
@@ -350,13 +353,16 @@ mod tests {
 
     #[test]
     fn split_last_exchange_carves_off_most_recent() {
-        let h = "OP PROMPT\n\n[assistant]\nfirst\n\n[tool results]\nR1\n\n[assistant]\nsecond\n\n[tool results]\nR2";
-        let (older, last) = split_last_exchange(h);
+        let h = format!(
+            "OP PROMPT{LAST_EXCHANGE_MARKER}first\n\n[tool results]\nR1\
+             {LAST_EXCHANGE_MARKER}second\n\n[tool results]\nR2"
+        );
+        let (older, last) = split_last_exchange(&h);
         assert!(
             older.ends_with("R1"),
-            "older = everything before the last [assistant]"
+            "older = everything before the last typed assistant marker"
         );
-        assert!(last.starts_with("\n\n[assistant]\nsecond"));
+        assert!(last.starts_with(&format!("{LAST_EXCHANGE_MARKER}second")));
         assert!(last.contains("R2"));
         // No marker (iteration 1) → whole text older, last empty.
         let (o2, l2) = split_last_exchange("just the operator prompt");
@@ -366,8 +372,8 @@ mod tests {
 
     #[test]
     fn wrap_summary_with_last_exchange_keeps_last_verbatim() {
-        let last = "\n\n[assistant]\nlast reply\n\n[tool results]\nVERBATIM_RESULT";
-        let w = wrap_summary_with_last_exchange("summary of older", last);
+        let last = format!("{LAST_EXCHANGE_MARKER}last reply\n\n[tool results]\nVERBATIM_RESULT");
+        let w = wrap_summary_with_last_exchange("summary of older", &last);
         assert!(w.starts_with(SUMMARY_MARKER));
         assert!(w.contains("summary of older"));
         assert!(
@@ -375,7 +381,7 @@ mod tests {
             "last exchange must survive structurally"
         );
         assert!(
-            w.contains("\n\n[assistant]\nlast reply"),
+            w.contains(&format!("{LAST_EXCHANGE_MARKER}last reply")),
             "marker structure preserved"
         );
         // Empty last exchange → identical to plain wrap_summary.

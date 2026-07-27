@@ -769,6 +769,144 @@ fn ensure_provider_backed_channel_slash_consent(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+async fn resolve_channel_turn_route(
+    config: &FreedomConfig,
+    base_req: &Request,
+    home: &std::path::Path,
+    writer: &WalWriterHandle,
+    mcp_servers: &crate::mcp::McpServers,
+    skill_loop_trigger: bool,
+    mcp_catalogue_allowed: bool,
+) -> crate::cli::chat::TurnDispatchRoute {
+    // Trigger topology, cost bound and hard leaf authorization all observe the
+    // immutable per-message reload snapshot passed as `config`.
+    let council_cfg = &config.council;
+    let council_disabled = council_cfg.disabled.unwrap_or(false) || council_cfg.mode.is_single();
+    let council_policy = council_cfg.trigger.to_policy();
+    let council_cost = crate::cli::chat::council_trigger_cost_bound_at(config, base_req, home);
+    // The daily-budget ledger uses a cross-process sleeping file lock. Keep it
+    // off the channel worker while resolving the route.
+    let council_decision = {
+        let trigger_home = home.to_path_buf();
+        let trigger_prompt = base_req.prompt.clone();
+        let trigger_cap = council_cfg.daily_usd_cap;
+        let trigger_policy = council_policy.clone();
+        tokio::task::spawn_blocking(move || match council_cost {
+            Ok((estimated_single_call_usd, estimated_council_cost_usd)) => {
+                crate::cli::chat::evaluate_council_trigger(
+                    &trigger_home,
+                    &trigger_prompt,
+                    estimated_single_call_usd,
+                    estimated_council_cost_usd,
+                    trigger_cap,
+                    council_disabled,
+                    &trigger_policy,
+                )
+            }
+            Err(_)
+                if council_disabled
+                    || std::env::var("NEOTH_COUNCIL_DISABLE").is_ok_and(|value| {
+                        value == "1" || value.eq_ignore_ascii_case("true")
+                    }) =>
+            {
+                crate::cli::chat::evaluate_council_trigger(
+                    &trigger_home,
+                    &trigger_prompt,
+                    0.0,
+                    Some(0.0),
+                    trigger_cap,
+                    council_disabled,
+                    &trigger_policy,
+                )
+            }
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "channel Council cost bound unavailable under active daily cap; smart trigger skipped fail-closed"
+                );
+                crate::council::TriggerDecision::Skip {
+                    reason:
+                        "council cost bound unavailable under active daily cap — fail-closed".into(),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|join| {
+            warn!(error = %join, "council trigger task panicked — fail-closed");
+            crate::council::TriggerDecision::Skip {
+                reason: "council trigger evaluation panicked — fail-closed".into(),
+            }
+        })
+    };
+    let council_mif_message = council_decision
+        .should_convene()
+        .then(|| crate::cli::chat::mif_disambiguation(config, &base_req.prompt))
+        .flatten();
+
+    // Channel turns are autonomous: no force bypass exists for the rolling
+    // convene cap. Admission happens exactly once, before any MCP catalogue I/O.
+    let council_now = crate::council::last_ts::now_unix() as i64;
+    let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message.is_some() {
+        (false, false, Some("mif_conflicted_disambiguation"))
+    } else if council_decision.should_convene() {
+        use crate::council::day_counter::AdmitResult;
+        match crate::council::day_counter::try_admit_convene(home, council_now) {
+            AdmitResult::Admitted => (true, false, None::<&'static str>),
+            AdmitResult::Capped => {
+                warn!(
+                    cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                    "channel council daily convene cap reached — single-provider for this turn"
+                );
+                (false, true, None)
+            }
+            AdmitResult::StateInvalid => {
+                warn!("council day-counter state invalid — fail-closed for this turn");
+                (
+                    false,
+                    true,
+                    Some("council day-counter state invalid — fail-closed"),
+                )
+            }
+        }
+    } else {
+        (false, false, None)
+    };
+    if !council_enable {
+        let prompt_hash = xxhash_rust::xxh3::xxh3_64(base_req.prompt.as_bytes());
+        let reason = if let Some(reason) = council_deny_reason {
+            reason
+        } else if council_cap_hit {
+            "daily convene cap (rolling 24h) reached"
+        } else {
+            council_decision.reason()
+        };
+        let _ = crate::cli::chat::emit_council_skip(writer, prompt_hash, reason).await;
+    }
+
+    let council_route = if let Some(message) = council_mif_message {
+        Some(crate::cli::chat::TurnDispatchRoute::CouncilMif { message })
+    } else if council_enable {
+        Some(crate::cli::chat::TurnDispatchRoute::Council {
+            decision: council_decision,
+        })
+    } else {
+        None
+    };
+    let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
+    let autoroute = mcp_servers.autoroute_decision(autoroute_env.as_deref());
+    let loop_trigger = crate::cli::chat::LoopRouteTrigger::new(
+        skill_loop_trigger,
+        config.loop_config.enabled && config.loop_config.max_rounds > 1,
+    );
+    crate::cli::chat::select_turn_dispatch_route(
+        council_route,
+        autoroute,
+        loop_trigger,
+        mcp_catalogue_allowed,
+    )
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -1592,6 +1730,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // BUG-W2-P1-CHANNEL-DELEGATION: expanded to 6-tuple to capture
             // per-skill `delegate_to` so the channel path honours skill-to-agent
             // routing (previously dropped between routing and provider dispatch).
+            // The final boolean carries the parent/matched skill's `loop: true`
+            // contract independently of its optional audit ID.
             #[allow(clippy::type_complexity)]
             let (
                 mut skill_layer,
@@ -1600,6 +1740,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 channel_skill_model,
                 channel_skill_effort,
                 channel_skill_delegate_to,
+                skill_loop_trigger,
             ): (
                 Option<String>,
                 Option<String>,
@@ -1607,6 +1748,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Option<String>,
                 Option<crate::providers::effort_override::EffortBudget>,
                 Option<String>,
+                bool,
             ) = if let Some(resolved) = mode_hit {
                 let parent = installed_skills
                     .iter()
@@ -1629,6 +1771,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // when a mode is active (mode inherits parent effort setting).
                 let skill_effort = parent.and_then(|s| s.manifest.effort);
                 let skill_delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
+                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(parent);
                 crate::analytics::babel::signals::emit(
                     crate::analytics::babel::signals::SignalKind::SkillMode,
                 );
@@ -1641,6 +1784,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     skill_model,
                     skill_effort,
                     skill_delegate_to,
+                    loop_trigger,
                 )
             } else {
                 // Full-auto mode raises the Stage-1 confidence floor so the
@@ -1712,6 +1856,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let skill_delegate_to = skill_match
                     .as_ref()
                     .and_then(|m| m.skill.manifest.delegate_to.clone());
+                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(
+                    skill_match.as_ref().map(|matched| matched.skill),
+                );
                 let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
                 (
                     layer,
@@ -1720,18 +1867,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     skill_model,
                     skill_effort,
                     skill_delegate_to,
+                    loop_trigger,
                 )
-            };
-
-            let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
-            {
-                None
-            } else {
-                crate::mcp::catalogue::assemble_catalogue_for_prompt(
-                    &channel_mcp_servers,
-                    &sanitized_text,
-                )
-                .await
             };
 
             let channel_persona = channel_tweaks.persona_override.clone();
@@ -1875,7 +2012,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     repo_context_block: channel_repo_context.as_deref(),
                     skill_system_prompt: skill_layer.as_deref(),
                     used_skill_id: used_skill_id.as_deref(),
-                    mcp_catalogue: channel_mcp_catalogue.as_deref(),
+                    // Route selection happens after hooks and Council admission.
+                    // The MCP A/D pair is inserted only for the exact MCP leaf.
+                    mcp_catalogue: None,
                     persona_override: channel_persona.as_deref(),
                     moral_core: channel_moral_core.as_deref(),
                     // GOLD-ADAPT-JV-MODE-01
@@ -1891,13 +2030,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             let channel_enriched_system = channel_enriched.system;
             let channel_used_skill_id = channel_enriched.used_skill_id;
             let mut channel_budget_items = channel_enriched.budget_items;
-            // GOLD-LOOP-06 — a matched `loop: true` skill engages the loop
-            // engine below even when freedom.yaml's loop gate is off (the
-            // skill declares itself inherently iterative).
-            let skill_loop_trigger = channel_used_skill_id
-                .as_deref()
-                .and_then(|id| installed_skills.iter().find(|s| s.manifest.id == id))
-                .is_some_and(|s| s.loop_trigger());
+            let mut channel_mcp_catalogue_slot = Some(
+                crate::cli::chat::McpCatalogueSlot::from_enriched(&channel_budget_items)
+                    .context("capture channel MCP catalogue boundary")?,
+            );
+            // GOLD-LOOP-06 — `skill_loop_trigger` was captured from the exact
+            // matched skill or mode parent above. Do not reconstruct it from
+            // `channel_used_skill_id`: mode activation intentionally has no
+            // standalone skill audit ID.
 
             // ── GOLD-ADAPT-PWF-01: plan-attestation verify (channel) ──────
             // Re-read task_plan.md and verify hash before dispatch. On
@@ -2161,6 +2301,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 args.clone(),
                             ),
                         ];
+                        channel_mcp_catalogue_slot = Some(
+                            crate::cli::chat::McpCatalogueSlot::before_user(&channel_budget_items)
+                                .context("capture channel slash MCP catalogue boundary")?,
+                        );
                         slash_set_system = true;
                         (args, Some(rendered))
                     } else {
@@ -2189,7 +2333,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // unrestricted normal path would silently drop the agent's tool policy.
             // A slash command may keep its rendered system prompt, but it still
             // inherits the delegated agent's allow/deny scope.
-            let system_override = if let Some(ref agent_name) = channel_skill_delegate_to {
+            let mut system_override = if let Some(ref agent_name) = channel_skill_delegate_to {
                 let agents_dir = neoth_home.join("agents");
                 let agents = crate::sub_agents::load_all(&agents_dir)
                     .await
@@ -2208,6 +2352,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 channel_tool_scope.set_agent(agent.tools.clone(), agent.disallowed_tools.clone());
 
                 if slash_set_system {
+                    if agent.omit_mcp_catalogue {
+                        channel_mcp_catalogue_slot = None;
+                    }
                     tracing::debug!(
                         channel = channel_str,
                         skill_agent = %agent_name,
@@ -2232,6 +2379,14 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         &agent.system,
                         current_user_message(&channel_budget_items),
                     );
+                    channel_mcp_catalogue_slot = if agent.omit_mcp_catalogue {
+                        None
+                    } else {
+                        Some(
+                            crate::cli::chat::McpCatalogueSlot::before_user(&channel_budget_items)
+                                .context("capture delegated channel MCP catalogue boundary")?,
+                        )
+                    };
                     Some(agent.system.clone())
                 }
             } else {
@@ -2477,6 +2632,99 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     "[NEOTH] The request could not be assembled safely. Please retry after checking the active prompt configuration.",
                 )));
             }
+            let base_route_request = Request {
+                prompt: final_prompt.clone(),
+                system: system_override.clone(),
+                model: channel_effective_model.clone(),
+                thinking_budget: channel_thinking_budget,
+                ..Default::default()
+            };
+            let channel_route = resolve_channel_turn_route(
+                config_for_handler.as_ref(),
+                &base_route_request,
+                &neoth_home,
+                &writer,
+                &channel_mcp_servers,
+                skill_loop_trigger,
+                channel_mcp_catalogue_slot.is_some(),
+            )
+            .await;
+
+            // Finding 5 (Session 13) — runtime consent re-check per channel
+            // message so a mid-run `neoth consent revoke <provider>` is
+            // honoured WITHOUT daemon restart. Route admission intentionally
+            // remains before this gate to preserve the existing Council ledger
+            // ordering; catalogue process I/O remains after it.
+            if let Err(e) =
+                crate::consent::ensure_all_still_granted(&neoth_home, config_for_handler.as_ref())
+            {
+                warn!(
+                    channel = channel_str,
+                    sender_hash = %sender_hash,
+                    error = %e,
+                    "consent revoked mid-run; dropping inbound"
+                );
+                return Ok(::std::option::Option::Some(reply_to_inbound(
+                    &inbound,
+                    format!("[NEOTH] {e}"),
+                )));
+            }
+
+            // ── Route-bound MCP catalogue (channel path) ───────────────────
+            // The exact leaf is fixed above. Council/MIF/direct and skill-only
+            // refinement therefore never start catalogue discovery processes.
+            let channel_mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue> =
+                if channel_route.uses_mcp_catalogue() && channel_mcp_catalogue_slot.is_some() {
+                    crate::mcp::catalogue::assemble_catalogue_for_prompt(
+                        &channel_mcp_servers,
+                        &final_prompt,
+                    )
+                    .await
+                } else {
+                    None
+                };
+            if let (Some(slot), Some(catalogue)) =
+                (channel_mcp_catalogue_slot, channel_mcp_catalogue.as_ref())
+            {
+                info!(
+                    data_bytes = catalogue.data().as_str().len(),
+                    source_id = catalogue.source_id().as_str(),
+                    "MCP tool catalogue injected into channel system prompt"
+                );
+                if let Err(error) = slot.insert(&mut channel_budget_items, catalogue) {
+                    warn!(
+                        error = %error,
+                        "channel MCP catalogue boundary invalid; turn blocked fail-closed"
+                    );
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
+                    )));
+                }
+                let (typed_prompt, typed_system) = match crate::tokens::budget::render_request(
+                    &channel_budget_items,
+                ) {
+                    Ok(rendered) => rendered,
+                    Err(error) => {
+                        warn!(
+                            error,
+                            "channel MCP catalogue render failed; turn blocked fail-closed"
+                        );
+                        return Ok(Some(reply_to_inbound(
+                            &inbound,
+                            "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
+                        )));
+                    }
+                };
+                if typed_prompt != final_prompt {
+                    warn!("route-bound channel MCP injection changed the user message");
+                    return Ok(Some(reply_to_inbound(
+                        &inbound,
+                        "[NEOTH] The MCP request could not be assembled safely. Please retry after checking the active prompt configuration.",
+                    )));
+                }
+                system_override = typed_system;
+            }
             let budgeted = match crate::cli::chat::finalize_provider_request(
                 channel_budget_items,
                 &final_prompt,
@@ -2543,187 +2791,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     req.model.clone(),
                     "channel_provider_round",
                 );
-            // K-Wire-3 v2 2026-05-17: council smart-trigger for channels.
-            // Same evaluation logic as `cli/chat.rs::run_chat_with` —
-            // promoted via `chat::evaluate_council_trigger`. Operators
-            // on `inference.mode = triplet` or `custom` get a
-            // 3-hemisphere debate on every substantive Telegram /
-            // WhatsApp / Slack message; operators on `single` mode see
-            // no behaviour change because all three hemispheres resolve
-            // to the same provider via `from_config_for_role`.
-            //
-            // Mutually exclusive with MCP autoroute (council debates
-            // many providers, autoroute wraps one). Council wins when
-            // the trigger fires; otherwise the dispatch falls through
-            // to the existing MCP-autoroute / direct branches.
-            //
-            // Trigger topology, cost bound and hard leaf authorization must
-            // observe one accepted reload generation. `config_for_handler` is
-            // the immutable per-turn snapshot; independently reopening YAML
-            // here could combine a new trigger cap with old dispatch routing.
-            let council_cfg = &config_for_handler.council;
-            // GOLD-ADAPT-G-01: OR-in mode=single alongside disabled=true.
-            // Both force the single-hemisphere path; they are orthogonal knobs.
-            // `mode` is read from the reload controller's accepted per-message
-            // snapshot, so no daemon restart is needed after a valid reload.
-            let council_disabled =
-                council_cfg.disabled.unwrap_or(false) || council_cfg.mode.is_single();
-            let council_policy = council_cfg.trigger.to_policy();
-            let council_cost = crate::cli::chat::council_trigger_cost_bound_at(
-                config_for_handler.as_ref(),
-                &req,
-                &neoth_home,
-            );
-            // spawn_blocking: evaluate_council_trigger performs the advisory
-            // daily-budget ledger read, which takes the cross-process file
-            // lock (sleeping retry loop) — must not park the channel worker.
-            let council_decision = {
-                let trigger_home = neoth_home.clone();
-                let trigger_prompt = req.prompt.clone();
-                let trigger_cap = council_cfg.daily_usd_cap;
-                let trigger_policy = council_policy.clone();
-                tokio::task::spawn_blocking(move || match council_cost {
-                    Ok((estimated_single_call_usd, estimated_council_cost_usd)) => {
-                        crate::cli::chat::evaluate_council_trigger(
-                            &trigger_home,
-                            &trigger_prompt,
-                            estimated_single_call_usd,
-                            estimated_council_cost_usd,
-                            trigger_cap,
-                            council_disabled,
-                            &trigger_policy,
-                        )
-                    }
-                    Err(_)
-                        if council_disabled
-                            || std::env::var("NEOTH_COUNCIL_DISABLE").is_ok_and(|value| {
-                                value == "1" || value.eq_ignore_ascii_case("true")
-                            }) =>
-                    {
-                        crate::cli::chat::evaluate_council_trigger(
-                            &trigger_home,
-                            &trigger_prompt,
-                            0.0,
-                            Some(0.0),
-                            trigger_cap,
-                            council_disabled,
-                            &trigger_policy,
-                        )
-                    }
-                    Err(error) => {
-                        warn!(
-                            error = %error,
-                            "channel Council cost bound unavailable under active daily cap; smart trigger skipped fail-closed"
-                        );
-                        crate::council::TriggerDecision::Skip {
-                            reason:
-                                "council cost bound unavailable under active daily cap — fail-closed"
-                                    .into(),
-                        }
-                    }
-                })
-                .await
-                .unwrap_or_else(|join| {
-                    warn!(error = %join, "council trigger task panicked — fail-closed");
-                    crate::council::TriggerDecision::Skip {
-                        reason: "council trigger evaluation panicked — fail-closed".into(),
-                    }
-                })
-            };
-            let council_mif_message = council_decision
-                .should_convene()
-                .then(|| {
-                    crate::cli::chat::mif_disambiguation(config_for_handler.as_ref(), &req.prompt)
-                })
-                .flatten();
-            // GOLD-SEC-32 / B-19: hard rolling-24h convene cap on the channel
-            // (autonomous) path — enforced before convening and independent of
-            // the USD budget gate, so a runaway loop can't fan out council
-            // calls without bound.
-            let council_home = neoth_home.clone();
-            let council_now = crate::council::last_ts::now_unix() as i64;
-            // B-25: atomic OS-locked admission on the channel (autonomous) path.
-            // No council_force on this path — channel path is always autonomous.
-            let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message
-                .is_some()
-            {
-                (false, false, Some("mif_conflicted_disambiguation"))
-            } else if council_decision.should_convene() {
-                use crate::council::day_counter::AdmitResult;
-                match crate::council::day_counter::try_admit_convene(&council_home, council_now) {
-                    AdmitResult::Admitted => (true, false, None::<&'static str>),
-                    AdmitResult::Capped => {
-                        warn!(
-                            cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                            "channel council daily convene cap reached — \
-                                 single-provider for this turn"
-                        );
-                        (false, true, None)
-                    }
-                    AdmitResult::StateInvalid => {
-                        warn!("council day-counter state invalid — fail-closed for this turn");
-                        (
-                            false,
-                            true,
-                            Some("council day-counter state invalid — fail-closed"),
-                        )
-                    }
-                }
-            } else {
-                (false, false, None)
-            };
-            // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
-            // contract as the CLI path: every Skip decision lands in
-            // the WAL so the operator can reconstruct why a channel
-            // message was answered by the single Left hemisphere.
-            if !council_enable {
-                let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-                let reason = if let Some(r) = council_deny_reason {
-                    r
-                } else if council_cap_hit {
-                    "daily convene cap (rolling 24h) reached"
-                } else {
-                    council_decision.reason()
-                };
-                let _ =
-                    crate::cli::chat::emit_council_skip(&writer, prompt_hash_skip, reason).await;
-            }
-            // Finding 5 (Session 13) — runtime consent re-check per channel
-            // message so a mid-run `neoth consent revoke <provider>` is
-            // honoured WITHOUT daemon restart. Closes the TOCTOU gap
-            // where V03-08 + A-2 only gate at startup. Bail surfaces an
-            // operator-actionable error back through the channel adapter
-            // rather than silently fanning out to the no-longer-consented
-            // provider.
-            {
-                if let Err(e) = crate::consent::ensure_all_still_granted(
-                    &neoth_home,
-                    config_for_handler.as_ref(),
-                ) {
-                    warn!(
-                        channel = channel_str,
-                        sender_hash = %sender_hash,
-                        error = %e,
-                        "consent revoked mid-run; dropping inbound"
-                    );
-                    return Ok(::std::option::Option::Some(reply_to_inbound(
-                        &inbound,
-                        format!("[NEOTH] {e}"),
-                    )));
-                }
-            }
-            let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
-            let mcp_servers_for_loop = if council_enable {
-                crate::mcp::McpServers::default()
-            } else {
+            // A skill-only refinement route deliberately receives an empty MCP
+            // registry. Only the exact MCP route can parse or dispatch tool calls.
+            let mcp_servers_for_loop = if matches!(
+                &channel_route,
+                crate::cli::chat::TurnDispatchRoute::McpDispatch { .. }
+            ) {
                 channel_mcp_servers
+            } else {
+                crate::mcp::McpServers::default()
             };
-            let autoroute_decision =
-                mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
-            // GOLD-LOOP-06 — a matched loop-skill engages the loop path even
-            // when MCP autoroute is off (iteration without tool dispatch is
-            // legitimate: pure refine rounds). Council still wins over both.
-            let use_loop = !council_enable && (autoroute_decision.is_on() || skill_loop_trigger);
             // SPEC-11 live delivery is deliberately limited to the direct,
             // native-streaming provider path. Council and MCP/loop replies are
             // multi-hop final products; pretending they are token streams
@@ -2735,9 +2812,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 .any(|hook| hook.stage == crate::hooks::HookStage::PreEgress && hook.is_enabled());
             let mut live_delivery: Option<crate::channels::LiveDelivery> = None;
             let mut live_send_preauthorized = false;
-            let mut completion = if let Some(message) = council_mif_message {
+            let mut completion = if let crate::cli::chat::TurnDispatchRoute::CouncilMif {
+                message,
+            } = &channel_route
+            {
                 crate::providers::Completion {
-                    text: message,
+                    text: message.clone(),
                     identity: crate::providers::CompletionIdentity {
                         provider: "council_mif".into(),
                         wire_model: "deterministic".into(),
@@ -2749,10 +2829,11 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     cache_creation_tokens: None,
                     cache_read_tokens: None,
                 }
-            } else if council_enable {
+            } else if let crate::cli::chat::TurnDispatchRoute::Council { decision } = &channel_route
+            {
                 info!(
                     channel = channel_str,
-                    decision = ?council_decision,
+                    decision = ?decision,
                     "channel council convened — running 3-hemisphere debate",
                 );
                 match crate::cli::chat::dispatch_council_with_recovery(
@@ -2779,6 +2860,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         cache_read_tokens: None,
                     },
                     Err(e) => {
+                        if e.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>()
+                            .is_some()
+                        {
+                            warn!(
+                                error = %e,
+                                "channel council goal integrity failure — aborting without fallback",
+                            );
+                            return Err(e);
+                        }
                         warn!(
                             error = %e,
                             "channel council debate failed — falling back to direct provider call",
@@ -2786,31 +2876,39 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         authorized_provider.complete(req).await?
                     }
                 }
-            } else if use_loop {
-                info!(
-                    reason = %autoroute_decision.reason(),
-                    "channel MCP autoroute enabled — running dispatch loop",
-                );
+            } else if channel_route.uses_loop() {
+                let loop_trigger = channel_route
+                    .loop_trigger()
+                    .expect("loop dispatch routes always carry their typed trigger");
+                if let Some(reason) = channel_route.autoroute_reason() {
+                    info!(
+                        reason,
+                        "channel MCP autoroute enabled — running dispatch loop",
+                    );
+                } else {
+                    info!(
+                        skill = channel_used_skill_id.as_deref().unwrap_or("?"),
+                        "channel skill refinement enabled — running protocol-free loop",
+                    );
+                }
                 // GOLD-LOOP-01: when loop_config is enabled with max_rounds > 1,
                 // route the channel path through the multi-round loop engine.
                 // GOLD-LOOP-06: a matched `loop: true` skill engages it too
                 // (freedom.yaml loop.* still supplies rounds/budget defaults).
                 // Falls back to a single dispatch when neither gate is set.
-                if (config_for_handler.loop_config.enabled
-                    && config_for_handler.loop_config.max_rounds > 1)
-                    || skill_loop_trigger
-                {
+                if loop_trigger.is_active() {
                     let mut loop_cfg = crate::loop_engine::engine::LoopConfig::from_freedom(
                         &config_for_handler.loop_config,
                         config_for_handler.autonomy_policy().level(),
                         vec![], // no --until on the channel path; criteria from freedom.yaml not yet surfaced here
                         neoth_home.clone(),
                     );
-                    if skill_loop_trigger {
+                    loop_cfg.min_rounds = loop_trigger.minimum_rounds();
+                    loop_cfg.max_rounds = loop_cfg.max_rounds.max(loop_cfg.min_rounds);
+                    if loop_trigger.skill_triggered() {
                         // A loop-skill must actually iterate — floor at 2
                         // rounds even when the operator's loop config idles
                         // at max_rounds=1.
-                        loop_cfg.max_rounds = loop_cfg.max_rounds.max(2);
                         info!(
                             skill = channel_used_skill_id.as_deref().unwrap_or("?"),
                             "GOLD-LOOP-06: loop-skill matched — engaging loop engine"
@@ -2844,8 +2942,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 stop_reason = ?record.stop_reason,
                                 "GOLD-LOOP-01: channel loop completed"
                             );
+                            let outcome = record.into_dispatch_outcome();
+                            crate::cli::chat::emit_terminal_goal_outcome(
+                                &writer,
+                                outcome.goal_outcome,
+                                outcome.goal_hash.as_deref(),
+                                "channel",
+                            )
+                            .await;
                             crate::providers::Completion {
-                                text: record.final_text,
+                                text: outcome.final_text,
                                 identity: crate::providers::CompletionIdentity {
                                     provider: "loop_engine".into(),
                                     wire_model: "multi-hop".into(),
@@ -2859,6 +2965,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             }
                         }
                         Err(e) => {
+                            if e.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>()
+                                .is_some()
+                            {
+                                warn!(
+                                    error = %e,
+                                    "GOLD-LOOP-01: channel loop integrity failure — aborting without fallback"
+                                );
+                                return Err(e);
+                            }
                             warn!(
                                 error = %e,
                                 "GOLD-LOOP-01: channel loop engine failed — falling back to direct provider call"
@@ -2942,32 +3057,13 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                                 hit_cap = outcome.hit_cap,
                                 "channel MCP dispatch loop complete",
                             );
-                            // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for
-                            // goal lifecycle outcomes that were NOT already covered by
-                            // the inline judge call (budget_exhausted path only; the
-                            // "met" frame is emitted inside judge_goal_met itself).
-                            {
-                                use crate::mcp::dispatch_loop::GoalOutcome;
-                                let goal_hash = config_for_handler
-                                    .goal
-                                    .goal
-                                    .as_deref()
-                                    .map(|g| {
-                                        format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes()))
-                                    })
-                                    .unwrap_or_default();
-                                match &outcome.goal_outcome {
-                                    GoalOutcome::BudgetExhausted => {
-                                        crate::mcp::goal_judge::emit_goal_judged_wal(
-                                            Some(&writer),
-                                            &goal_hash,
-                                            "budget_exhausted",
-                                        )
-                                        .await;
-                                    }
-                                    GoalOutcome::None | GoalOutcome::Met => {}
-                                }
-                            }
+                            crate::cli::chat::emit_terminal_goal_outcome(
+                                &writer,
+                                outcome.goal_outcome,
+                                outcome.goal_hash.as_deref(),
+                                "channel",
+                            )
+                            .await;
                             crate::providers::Completion {
                                 text: outcome.final_text,
                                 identity: crate::providers::CompletionIdentity {
@@ -2983,6 +3079,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                             }
                         }
                         Err(e) => {
+                            if e.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>()
+                                .is_some()
+                            {
+                                warn!(
+                                    error = %e,
+                                    "channel MCP goal integrity failure — aborting without fallback",
+                                );
+                                return Err(e);
+                            }
                             warn!(
                                 error = %e,
                                 "channel MCP dispatch loop failed — falling back to direct provider call",
@@ -2992,6 +3097,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     }
                 } // end GOLD-LOOP-01 else (single-dispatch path)
             } else {
+                debug_assert!(matches!(
+                    &channel_route,
+                    crate::cli::chat::TurnDispatchRoute::Direct
+                ));
                 let can_stream_live = live_channel.as_ref().is_some_and(|channel| {
                     config_for_handler.live_delivery.edits_enabled
                         && channel.supports_message_edits()

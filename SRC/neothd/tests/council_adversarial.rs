@@ -23,8 +23,8 @@
 //! |   |                                               | empty / contradictory hemisphere inputs.        |
 //! | 4 | `test_fuzz_input_against_council`             | dissent + factual_check never panic on random   |
 //! |   |                                               | byte input.                                     |
-//! | 5 | `test_token_budget_exhaustion`                | enforce_budget never drops A/B/E even when      |
-//! |   |                                               | cap is impossible.                              |
+//! | 5 | `test_token_budget_exhaustion`                | uncoupled A/B/E survive even when cap is        |
+//! |   |                                               | impossible.                                     |
 //! | 6 | `test_prompt_bundle_replay_determinism`       | same BlockA..E content → same hash across       |
 //! |   |                                               | runs + across input orderings.                  |
 //! | 7 | `test_left_dominates_right_unfairly`          | dissent score reflects actual content overlap,  |
@@ -189,7 +189,7 @@ fn test_fuzz_input_against_council() {
 
 #[test]
 fn test_token_budget_exhaustion() {
-    // Pin the "never A/B/E" hard rule under an impossible cap.
+    // Pin the "never remove uncoupled A/B/E" rule under an impossible cap.
     // Operator sets cap = 50 tokens but A + B + E alone sum to
     // 1500 tokens — enforce_budget MUST surface this as a
     // degradation event (Some(detail)) while preserving all
@@ -198,6 +198,7 @@ fn test_token_budget_exhaustion() {
     let mut items = vec![
         BlockItem {
             block: Block::A,
+            atomic_group: None,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,
@@ -205,6 +206,7 @@ fn test_token_budget_exhaustion() {
         },
         BlockItem {
             block: Block::B,
+            atomic_group: None,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,
@@ -212,6 +214,7 @@ fn test_token_budget_exhaustion() {
         },
         BlockItem {
             block: Block::E,
+            atomic_group: None,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,
@@ -219,7 +222,9 @@ fn test_token_budget_exhaustion() {
         },
     ];
 
-    let detail = enforce_budget(&mut items, 50).expect("must trigger");
+    let detail = enforce_budget(&mut items, 50)
+        .expect("valid bundle")
+        .expect("must trigger");
     assert_eq!(items.len(), 3, "A + B + E MUST all survive");
     assert_eq!(detail.dropped_d_count, 0);
     assert_eq!(detail.dropped_c_count, 0);

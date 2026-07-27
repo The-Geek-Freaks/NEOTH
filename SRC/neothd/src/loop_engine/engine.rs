@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
 use crate::council::stop_verifier::{StopConditionVerifier, StopProposal};
+use crate::mcp::dispatch_loop::{GoalOutcome, LoopOutcome};
 use crate::permissions::AutonomyLevel;
 use crate::wal::events::{
     EVENT_TYPE_LOOP_COMPLETED, EVENT_TYPE_LOOP_REFINED, EVENT_TYPE_LOOP_ROUND,
@@ -34,6 +35,9 @@ use crate::wal::writer::WalWriterHandle;
 /// `config::LoopConfig` + optional CLI overrides.
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
+    /// Minimum outer rounds before normal convergence may stop the loop.
+    /// Safety and tool-budget failures remain terminal immediately.
+    pub min_rounds: u32,
     /// Maximum outer rounds. Each round is one full `run_mcp_dispatch_loop`.
     pub max_rounds: u32,
     /// Structural stop criteria passed to `StopConditionVerifier`. Empty means
@@ -65,6 +69,7 @@ impl LoopConfig {
         neoth_home: PathBuf,
     ) -> Self {
         Self {
+            min_rounds: 1,
             max_rounds: cfg.max_rounds,
             until,
             tool_call_budget: cfg.tool_call_budget,
@@ -82,6 +87,7 @@ impl LoopConfig {
         tool_call_budget: Option<u64>,
     ) -> Self {
         Self {
+            min_rounds: 1,
             max_rounds: 1,
             until: Vec::new(),
             tool_call_budget,
@@ -97,6 +103,16 @@ impl LoopConfig {
     pub fn validate_safety(&self) -> Result<()> {
         if self.max_rounds == 0 {
             anyhow::bail!("loop max_rounds must be at least 1");
+        }
+        if self.min_rounds == 0 {
+            anyhow::bail!("loop min_rounds must be at least 1");
+        }
+        if self.min_rounds > self.max_rounds {
+            anyhow::bail!(
+                "loop min_rounds ({}) cannot exceed max_rounds ({})",
+                self.min_rounds,
+                self.max_rounds
+            );
         }
         if self.autonomy == AutonomyLevel::Full
             && self.tool_call_budget.is_none_or(|budget| budget == 0)
@@ -161,10 +177,47 @@ pub struct LoopRunRecord {
     /// `serde(alias)` keeps older `total_tokens_used` records readable.
     #[serde(alias = "total_tokens_used")]
     pub total_tool_calls: Option<u64>,
+    /// Exact aggregated lifecycle outcome for the configured goal. Older
+    /// records predate this field and therefore deserialize as `None`.
+    #[serde(default)]
+    pub goal_outcome: GoalOutcome,
+    /// Stable hash of the original, untruncated goal. Provider prompts may use
+    /// a bounded copy, but persisted lifecycle correlation never does.
+    #[serde(default)]
+    pub goal_hash: Option<String>,
     pub per_round: Vec<LoopRound>,
     pub final_text: String,
     pub ts_start: i64,
     pub ts_end: i64,
+}
+
+impl LoopRunRecord {
+    /// Convert the persisted multi-round envelope to the dispatch surface used
+    /// by both CLI chat and channels. Keeping this mapping here prevents either
+    /// caller from re-inferring terminal goal state from historical round caps.
+    pub fn into_dispatch_outcome(self) -> LoopOutcome {
+        let hit_cap = matches!(
+            self.stop_reason,
+            StopReason::CapHit | StopReason::BudgetExceeded
+        );
+        let successful_calls = self
+            .per_round
+            .iter()
+            .map(|round| round.successful_calls)
+            .sum();
+        let failed_calls = self.per_round.iter().map(|round| round.failed_calls).sum();
+
+        LoopOutcome {
+            final_text: self.final_text,
+            iterations: self.rounds_run,
+            hit_cap,
+            successful_calls,
+            failed_calls,
+            tool_call_records: Vec::new(),
+            goal_outcome: self.goal_outcome,
+            goal_hash: self.goal_hash,
+        }
+    }
 }
 
 /// Mutable state threaded through the loop.
@@ -192,13 +245,58 @@ fn now_unix() -> i64 {
     crate::time::now_unix_i64()
 }
 
-/// Generate a loop_id: `loop_<unix_ts>_<pseudo_random>`.
+/// Generate a time-sortable, process-safe loop id.
 fn new_loop_id() -> String {
-    let ts = crate::time::now_unix_ms_u128();
-    // Use the lower bits of the system time as entropy — sufficient for a
-    // file-system key; not a security primitive.
-    let lo = (ts & 0xFFFF) as u32;
-    format!("loop_{ts}_{lo:04X}")
+    format!("loop_{}", uuid::Uuid::now_v7().simple())
+}
+
+fn aggregate_goal_outcome(
+    configured_goal_hash: Option<&str>,
+    round_goal_hash: Option<&str>,
+    _current: GoalOutcome,
+    round: GoalOutcome,
+) -> Result<GoalOutcome> {
+    if configured_goal_hash != round_goal_hash {
+        return Err(crate::mcp::goal_tracker::GoalIntegrityError::HashMismatch.into());
+    }
+    // The outcome must describe the bytes that can actually become the final
+    // response. A historical Met cannot remain sticky after an explicit
+    // `--until` rejection causes a later round to replace those judged bytes.
+    // Inner caps remain round-local; the final outer cap is applied below.
+    Ok(if round == GoalOutcome::Met {
+        GoalOutcome::Met
+    } else {
+        GoalOutcome::None
+    })
+}
+
+fn finalize_goal_outcome(
+    goal_active: bool,
+    stop_reason: &StopReason,
+    aggregated: GoalOutcome,
+) -> GoalOutcome {
+    if !goal_active {
+        return GoalOutcome::None;
+    }
+    if aggregated == GoalOutcome::Met {
+        return GoalOutcome::Met;
+    }
+    if matches!(stop_reason, StopReason::CapHit | StopReason::BudgetExceeded) {
+        return GoalOutcome::BudgetExhausted;
+    }
+    aggregated
+}
+
+/// Combine the exact-goal lifecycle with the operator's structural stop gate.
+/// An inner cap vetoes the round. A proven goal still cannot bypass explicit
+/// `--until` criteria or the route's minimum-round invariant; with no criteria
+/// the verifier approves by construction.
+fn round_stop_approved(
+    goal_outcome: GoalOutcome,
+    verifier_approved: bool,
+    minimum_rounds_met: bool,
+) -> bool {
+    goal_outcome != GoalOutcome::BudgetExhausted && verifier_approved && minimum_rounds_met
 }
 
 /// Emit a WAL frame best-effort (never fails the loop on WAL error).
@@ -337,8 +435,9 @@ impl crate::providers::Provider for CouncilBudgetedLoopProvider<'_> {
 /// (`config.tool_call_budget`) as an outer safety gate.
 ///
 /// Returns `Ok(LoopRunRecord)` on any normal exit (Converged / CapHit /
-/// BudgetExceeded). Returns `Err` only when the first round itself fails
-/// (so callers get a clean error rather than a record with 0 rounds).
+/// BudgetExceeded). Returns `Err` when a round fails before a truthful record
+/// can be produced or when an integrity binding (such as the goal hash)
+/// diverges. Callers may only fallback for non-integrity errors.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_loop(
     config: &LoopConfig,
@@ -406,6 +505,12 @@ pub async fn run_loop(
     let mut per_round: Vec<LoopRound> = Vec::new();
     let mut final_text = String::new();
     let mut stop_reason = StopReason::CapHit;
+    let configured_goal_hash = freedom
+        .goal
+        .goal
+        .as_deref()
+        .map(crate::mcp::goal_judge::goal_hash);
+    let mut goal_outcome = GoalOutcome::None;
     // This is a per-operator-turn allowance, not a per-round allowance. Every
     // nested MCP loop below borrows the same value so max_rounds cannot
     // multiply paid compaction leaves.
@@ -494,6 +599,14 @@ pub async fn run_loop(
         )
         .await?;
 
+        let goal_met_this_round = outcome.goal_outcome == GoalOutcome::Met;
+        goal_outcome = aggregate_goal_outcome(
+            configured_goal_hash.as_deref(),
+            outcome.goal_hash.as_deref(),
+            goal_outcome,
+            outcome.goal_outcome,
+        )?;
+
         // Accumulate the round's tool-call count (successful + failed). This is a
         // tool-call budget, NOT a token budget — it's an outer safety gate on how
         // much tool work the loop may do, named honestly so the operator isn't
@@ -507,7 +620,8 @@ pub async fn run_loop(
         // --- Self-reflect refine pass (L2+ autonomy + refine_enabled) ---
         let mut refine_fired = false;
         let quality_score = round_quality_score(provider.name(), &outcome.final_text);
-        let round_text = if config.refine_enabled
+        let round_text = if !goal_met_this_round
+            && config.refine_enabled
             && is_elevated_or_full(config.autonomy)
             && crate::council::self_reflect::should_refine(freedom, quality_score, 0)
         {
@@ -574,7 +688,12 @@ pub async fn run_loop(
             claimed_evidence: evidence,
         };
         let judgement = state.stop_verifier.judge(&proposal, config.autonomy);
-        let stop_approved = judgement.is_approved();
+        let minimum_rounds_met = round_num >= config.min_rounds;
+        let stop_approved = round_stop_approved(
+            outcome.goal_outcome,
+            judgement.is_approved(),
+            minimum_rounds_met,
+        );
 
         let round_ts_end = now_unix();
 
@@ -590,6 +709,8 @@ pub async fn run_loop(
                 "successful_calls": outcome.successful_calls,
                 "failed_calls": outcome.failed_calls,
                 "stop_approved": stop_approved,
+                "minimum_rounds": config.min_rounds,
+                "minimum_rounds_met": minimum_rounds_met,
                 "quality_score": quality_score,
                 "ts_unix": round_ts_end,
             }),
@@ -610,6 +731,16 @@ pub async fn run_loop(
         });
 
         final_text = round_text;
+
+        if goal_met_this_round && stop_approved {
+            info!(
+                loop_id = %loop_id,
+                round = round_num,
+                "loop-engine: goal and structural stop criteria confirmed — preserving judged response"
+            );
+            stop_reason = StopReason::Converged;
+            break;
+        }
 
         if tool_budget_reached {
             info!(
@@ -656,6 +787,8 @@ pub async fn run_loop(
 
     let ts_end = now_unix();
     let rounds_run = per_round.len() as u32;
+    goal_outcome =
+        finalize_goal_outcome(configured_goal_hash.is_some(), &stop_reason, goal_outcome);
 
     // --- WAL: LOOP_COMPLETED ---
     // GOLD-LOOP-05 — the budget-escalation audit rides HERE: the WAL byte
@@ -692,6 +825,8 @@ pub async fn run_loop(
         } else {
             None
         },
+        goal_outcome,
+        goal_hash: configured_goal_hash,
         per_round,
         final_text,
         ts_start,
@@ -717,8 +852,8 @@ fn is_elevated_or_full(autonomy: AutonomyLevel) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
 
     struct CountingLoopProvider {
@@ -740,6 +875,74 @@ mod tests {
                 text: "ok".into(),
                 identity: crate::providers::CompletionIdentity {
                     provider: "loop_budget_test".into(),
+                    wire_model: "test-model".into(),
+                },
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    struct FixedLoopProvider {
+        calls: Arc<AtomicUsize>,
+        text: String,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for FixedLoopProvider {
+        fn name(&self) -> &'static str {
+            "fixed_loop_test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            _req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(crate::providers::Completion {
+                text: self.text.clone(),
+                identity: Default::default(),
+                model: "test-model".into(),
+                latency: std::time::Duration::ZERO,
+                input_tokens: None,
+                output_tokens: None,
+                cache_creation_tokens: None,
+                cache_read_tokens: None,
+            })
+        }
+    }
+
+    struct RecordingLoopProvider {
+        prompts: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::Provider for RecordingLoopProvider {
+        fn name(&self) -> &'static str {
+            "recording_loop_test"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("test-model")
+        }
+
+        async fn complete(
+            &self,
+            req: crate::providers::Request,
+        ) -> anyhow::Result<crate::providers::Completion> {
+            self.prompts.lock().unwrap().push(req.prompt);
+            Ok(crate::providers::Completion {
+                text: "round output".into(),
+                identity: crate::providers::CompletionIdentity {
+                    provider: "recording_loop_test".into(),
                     wire_model: "test-model".into(),
                 },
                 model: "test-model".into(),
@@ -778,6 +981,146 @@ mod tests {
         assert!(budget.was_denied());
     }
 
+    #[tokio::test]
+    async fn minimum_rounds_defers_empty_until_convergence_and_feeds_next_prompt() {
+        let home = TempDir::new().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(home.path().join("minimum-rounds.wal")).unwrap();
+        let prompts = Arc::new(Mutex::new(Vec::new()));
+        let provider = RecordingLoopProvider {
+            prompts: Arc::clone(&prompts),
+        };
+        let config = LoopConfig {
+            min_rounds: 2,
+            max_rounds: 2,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        let freedom = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        let record = run_loop(
+            &config,
+            &provider,
+            crate::providers::Request {
+                prompt: "verify the result".into(),
+                model: Some("test-model".into()),
+                ..Default::default()
+            },
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+        )
+        .await
+        .expect("minimum-round loop");
+        drop(writer);
+        join.await.unwrap();
+
+        assert_eq!(record.rounds_run, 2);
+        assert_eq!(record.stop_reason, StopReason::Converged);
+        assert!(!record.per_round[0].stop_approved);
+        assert!(record.per_round[1].stop_approved);
+        let prompts = prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 2);
+        assert_eq!(prompts[0], "verify the result");
+        assert!(prompts[1].contains("Previous round (#1) produced"));
+        assert!(prompts[1].contains("round output"));
+    }
+
+    #[tokio::test]
+    async fn outer_loop_propagates_goal_dispatch_unavailable_without_convergence() {
+        let home = TempDir::new().unwrap();
+        let wal_path = home.path().join("outer-goal-unavailable.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = FixedLoopProvider {
+            calls: Arc::clone(&calls),
+            text: r#"```mcp-tool-call
+{"server":"missing","tool":"read","arguments":{}}
+```"#
+                .into(),
+        };
+        let goal = "complete the unavailable outer-loop operation";
+        let mut freedom = crate::config::FreedomConfig {
+            autonomy: AutonomyLevel::Full,
+            ..Default::default()
+        };
+        freedom.goal.goal = Some(goal.into());
+        freedom.goal.judge_enabled = false;
+        let config = LoopConfig {
+            min_rounds: 1,
+            max_rounds: 2,
+            until: vec![],
+            tool_call_budget: Some(10),
+            autonomy: AutonomyLevel::Full,
+            refine_enabled: false,
+            neoth_home: home.path().to_path_buf(),
+        };
+        let req = crate::providers::Request {
+            prompt: "read it".into(),
+            model: Some("test-model".into()),
+            ..Default::default()
+        };
+
+        let error = run_loop(
+            &config,
+            &provider,
+            req,
+            &crate::mcp::McpServers::default(),
+            &writer,
+            &freedom,
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                AutonomyLevel::Full,
+            ),
+            None,
+            &crate::mcp::McpToolScope::default(),
+            &crate::cli::elicitation::ElicitationHandler::Disabled,
+        )
+        .await
+        .expect_err("an unavailable goal round must not become outer convergence");
+        drop(writer);
+        join.await.unwrap();
+
+        assert!(matches!(
+            error.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>(),
+            Some(crate::mcp::goal_tracker::GoalIntegrityError::DispatchUnavailable)
+        ));
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the outer loop must not retry or fall through after the typed goal failure"
+        );
+
+        let bytes = std::fs::read(wal_path).unwrap();
+        let mut cursor = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut unavailable_hashes = Vec::new();
+        while cursor < bytes.len() {
+            let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+            if frame.header.event_type == crate::wal::events::EVENT_TYPE_GOAL_JUDGED {
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                if payload["kind"] == "unavailable" {
+                    unavailable_hashes
+                        .push(payload["goal_hash"].as_str().unwrap_or_default().to_owned());
+                }
+            }
+            cursor += frame.header.total_len as usize;
+        }
+        assert_eq!(
+            unavailable_hashes,
+            vec![crate::mcp::goal_judge::goal_hash(goal)]
+        );
+    }
+
     #[test]
     fn stop_reason_serialises_correctly() {
         assert_eq!(
@@ -802,6 +1145,8 @@ mod tests {
             rounds_run: 2,
             stop_reason: StopReason::Converged,
             total_tool_calls: Some(42),
+            goal_outcome: GoalOutcome::Met,
+            goal_hash: Some("0123456789abcdef".into()),
             per_round: vec![LoopRound {
                 round_num: 1,
                 iterations: 3,
@@ -823,7 +1168,217 @@ mod tests {
         assert_eq!(back.loop_id, "loop_12345_ABCD");
         assert_eq!(back.rounds_run, 2);
         assert_eq!(back.stop_reason, StopReason::Converged);
+        assert_eq!(back.goal_outcome, GoalOutcome::Met);
+        assert_eq!(back.goal_hash.as_deref(), Some("0123456789abcdef"));
         assert_eq!(back.per_round.len(), 1);
+    }
+
+    #[test]
+    fn later_goal_met_supersedes_an_earlier_inner_cap() {
+        let aggregated = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            GoalOutcome::None,
+            GoalOutcome::Met,
+        )
+        .unwrap();
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::CapHit, aggregated),
+            GoalOutcome::Met,
+            "a historical inner cap must not overwrite a later confirmed goal"
+        );
+
+        let outcome = LoopRunRecord {
+            loop_id: "loop_goal_met".into(),
+            prompt_hash: "deadbeef".into(),
+            rounds_run: 2,
+            stop_reason: StopReason::Converged,
+            total_tool_calls: None,
+            goal_outcome: GoalOutcome::Met,
+            goal_hash: Some("0123456789abcdef".into()),
+            per_round: vec![
+                LoopRound {
+                    round_num: 1,
+                    iterations: 8,
+                    hit_cap: true,
+                    successful_calls: 1,
+                    failed_calls: 0,
+                    stop_approved: false,
+                    refine_fired: false,
+                    quality_score: 0.5,
+                    ts_start: 1,
+                    ts_end: 2,
+                },
+                LoopRound {
+                    round_num: 2,
+                    iterations: 2,
+                    hit_cap: false,
+                    successful_calls: 0,
+                    failed_calls: 0,
+                    stop_approved: true,
+                    refine_fired: false,
+                    quality_score: 1.0,
+                    ts_start: 3,
+                    ts_end: 4,
+                },
+            ],
+            final_text: "done".into(),
+            ts_start: 1,
+            ts_end: 4,
+        }
+        .into_dispatch_outcome();
+
+        assert_eq!(outcome.goal_outcome, GoalOutcome::Met);
+        assert!(!outcome.hit_cap);
+        assert_eq!(outcome.goal_hash.as_deref(), Some("0123456789abcdef"));
+    }
+
+    #[test]
+    fn historical_inner_budget_exhaustion_is_not_terminal_after_convergence() {
+        let after_inner_cap = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            GoalOutcome::None,
+            GoalOutcome::BudgetExhausted,
+        )
+        .unwrap();
+        let after_later_clean_round = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            after_inner_cap,
+            GoalOutcome::None,
+        )
+        .unwrap();
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::Converged, after_later_clean_round,),
+            GoalOutcome::None
+        );
+    }
+
+    #[test]
+    fn historical_met_does_not_certify_replaced_final_bytes() {
+        let after_met = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            GoalOutcome::None,
+            GoalOutcome::Met,
+        )
+        .unwrap();
+        let after_replacement = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            after_met,
+            GoalOutcome::None,
+        )
+        .unwrap();
+
+        assert_eq!(after_replacement, GoalOutcome::None);
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::CapHit, after_replacement),
+            GoalOutcome::BudgetExhausted,
+            "a later unjudged response must not inherit an earlier Met verdict"
+        );
+    }
+
+    #[test]
+    fn inner_goal_budget_exhaustion_vetoes_only_its_own_round() {
+        let verifier_approved = true;
+        let first_round = GoalOutcome::BudgetExhausted;
+        let first_round_stop_approved = round_stop_approved(first_round, verifier_approved, true);
+        assert!(
+            !first_round_stop_approved,
+            "an empty until-list must not hide inner goal budget exhaustion"
+        );
+
+        let after_first_round = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            GoalOutcome::None,
+            first_round,
+        )
+        .unwrap();
+        assert_eq!(after_first_round, GoalOutcome::None);
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::CapHit, after_first_round),
+            GoalOutcome::BudgetExhausted,
+            "outer exhaustion remains terminal when no later round meets the goal"
+        );
+
+        let later_round = GoalOutcome::Met;
+        let later_round_stop_approved = round_stop_approved(later_round, !verifier_approved, true);
+        assert!(
+            !later_round_stop_approved,
+            "a Met verdict must not bypass explicit structural stop criteria"
+        );
+        assert!(
+            round_stop_approved(later_round, verifier_approved, true),
+            "a later Met verdict terminates once the structural gate also approves"
+        );
+        assert!(
+            !round_stop_approved(later_round, verifier_approved, false),
+            "a real goal verdict cannot bypass the route's minimum-round invariant"
+        );
+        let after_later_met = aggregate_goal_outcome(
+            Some("0123456789abcdef"),
+            Some("0123456789abcdef"),
+            after_first_round,
+            later_round,
+        )
+        .unwrap();
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::Converged, after_later_met),
+            GoalOutcome::Met
+        );
+    }
+
+    #[test]
+    fn mismatched_inner_goal_hash_is_rejected() {
+        let error = aggregate_goal_outcome(
+            Some("original"),
+            Some("different"),
+            GoalOutcome::None,
+            GoalOutcome::Met,
+        )
+        .expect_err("a verdict for another goal must fail closed");
+        assert!(matches!(
+            error.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>(),
+            Some(crate::mcp::goal_tracker::GoalIntegrityError::HashMismatch)
+        ));
+        assert!(error.to_string().contains("goal hash mismatch"));
+    }
+
+    #[test]
+    fn final_outer_caps_are_goal_budget_exhaustion() {
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::CapHit, GoalOutcome::None),
+            GoalOutcome::BudgetExhausted
+        );
+        assert_eq!(
+            finalize_goal_outcome(true, &StopReason::BudgetExceeded, GoalOutcome::None,),
+            GoalOutcome::BudgetExhausted
+        );
+        assert_eq!(
+            finalize_goal_outcome(false, &StopReason::CapHit, GoalOutcome::None),
+            GoalOutcome::None
+        );
+    }
+
+    #[test]
+    fn legacy_loop_record_defaults_goal_lifecycle_fields() {
+        let legacy = serde_json::json!({
+            "loop_id": "legacy",
+            "prompt_hash": "deadbeef",
+            "rounds_run": 0,
+            "stop_reason": "cap_hit",
+            "total_tool_calls": null,
+            "per_round": [],
+            "final_text": "",
+            "ts_start": 0,
+            "ts_end": 1
+        });
+        let record: LoopRunRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(record.goal_outcome, GoalOutcome::None);
+        assert_eq!(record.goal_hash, None);
     }
 
     #[test]
@@ -835,6 +1390,8 @@ mod tests {
             rounds_run: 1,
             stop_reason: StopReason::CapHit,
             total_tool_calls: None,
+            goal_outcome: GoalOutcome::BudgetExhausted,
+            goal_hash: Some("fedcba9876543210".into()),
             per_round: vec![],
             final_text: "hello".into(),
             ts_start: 0,
@@ -865,11 +1422,21 @@ mod tests {
 
     #[test]
     fn new_loop_id_is_unique() {
-        let a = new_loop_id();
-        let b = new_loop_id();
-        // May collide in theory (same ms), but format must be correct.
-        assert!(a.starts_with("loop_"), "loop_id must start with loop_");
-        assert!(b.starts_with("loop_"), "loop_id must start with loop_");
+        let handles = (0..8)
+            .map(|_| std::thread::spawn(|| (0..256).map(|_| new_loop_id()).collect::<Vec<_>>()))
+            .collect::<Vec<_>>();
+        let ids = handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("loop-id worker must not panic"))
+            .collect::<Vec<_>>();
+        let unique = ids.iter().collect::<std::collections::HashSet<_>>();
+
+        assert!(ids.iter().all(|id| id.starts_with("loop_")));
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "concurrent loop starts must never share a WAL/file correlation id"
+        );
     }
 
     #[test]
@@ -887,6 +1454,7 @@ mod tests {
             vec!["done".into()],
             PathBuf::from("/tmp/neoth"),
         );
+        assert_eq!(lc.min_rounds, 1);
         assert_eq!(lc.max_rounds, 5);
         assert_eq!(lc.tool_call_budget, Some(1000));
         assert!(lc.refine_enabled);
@@ -900,6 +1468,7 @@ mod tests {
             PathBuf::from("/tmp/neoth"),
             None,
         );
+        assert_eq!(lc.min_rounds, 1);
         assert_eq!(lc.max_rounds, 1);
         assert!(lc.until.is_empty());
         assert!(!lc.refine_enabled);
@@ -909,6 +1478,7 @@ mod tests {
     fn shared_entry_rejects_uncapped_or_zero_budget_full_autonomy() {
         for budget in [None, Some(0)] {
             let cfg = LoopConfig {
+                min_rounds: 1,
                 max_rounds: 1,
                 until: vec![],
                 tool_call_budget: budget,
@@ -920,6 +1490,7 @@ mod tests {
         }
 
         let capped = LoopConfig {
+            min_rounds: 1,
             max_rounds: 1,
             until: vec![],
             tool_call_budget: Some(1),
@@ -933,6 +1504,7 @@ mod tests {
     #[test]
     fn shared_entry_rejects_zero_rounds_for_every_caller() {
         let cfg = LoopConfig {
+            min_rounds: 1,
             max_rounds: 0,
             until: vec![],
             tool_call_budget: None,
@@ -941,6 +1513,25 @@ mod tests {
             neoth_home: PathBuf::from("/tmp"),
         };
         assert!(cfg.validate_safety().is_err());
+    }
+
+    #[test]
+    fn shared_entry_rejects_invalid_minimum_rounds() {
+        for (min_rounds, max_rounds) in [(0, 1), (2, 1)] {
+            let cfg = LoopConfig {
+                min_rounds,
+                max_rounds,
+                until: vec![],
+                tool_call_budget: None,
+                autonomy: AutonomyLevel::Standard,
+                refine_enabled: false,
+                neoth_home: PathBuf::from("/tmp"),
+            };
+            assert!(
+                cfg.validate_safety().is_err(),
+                "min={min_rounds}, max={max_rounds}"
+            );
+        }
     }
 
     #[test]
@@ -974,6 +1565,7 @@ mod tests {
     #[test]
     fn loop_state_no_criteria_always_approves() {
         let cfg = LoopConfig {
+            min_rounds: 1,
             max_rounds: 3,
             until: vec![],
             tool_call_budget: None,
@@ -997,6 +1589,7 @@ mod tests {
     #[test]
     fn loop_state_unmet_criterion_rejects() {
         let cfg = LoopConfig {
+            min_rounds: 1,
             max_rounds: 3,
             until: vec!["build green".into()],
             tool_call_budget: None,

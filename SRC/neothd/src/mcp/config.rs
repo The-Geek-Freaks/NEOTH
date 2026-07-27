@@ -18,7 +18,7 @@
 //! `env: from_env` is a sentinel meaning "read this value from the
 //! NEOTH-process environment at spawn time". Plain values pass through.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -124,6 +124,9 @@ impl McpServers {
             .with_context(|| format!("read MCP config {}", path.display()))?;
         let parsed: Self = serde_yaml::from_str(&body)
             .with_context(|| format!("parse YAML at {}", path.display()))?;
+        parsed
+            .validate_server_ids()
+            .with_context(|| format!("validate MCP config at {}", path.display()))?;
         Ok(parsed)
     }
 
@@ -216,16 +219,39 @@ impl McpServers {
             return Ok(());
         }
 
-        // 5. Validate via serde round-trip before committing to disk.
+        // 5. Reject ambiguous/unaddressable server IDs before persistence.
+        current
+            .validate_server_ids()
+            .with_context(|| format!("validate MCP config for {}", path.display()))?;
+
+        // 6. Validate via serde round-trip before committing to disk.
         let yaml = serde_yaml::to_string(&current)
             .with_context(|| format!("serialise McpServers for {}", path.display()))?;
         serde_yaml::from_str::<McpServers>(&yaml)
             .with_context(|| format!("round-trip validation failed for {}", path.display()))?;
 
-        // 6. Crash-safe atomic write (write tmp → fsync → rename).
+        // 7. Crash-safe atomic write (write tmp → fsync → rename).
         crate::util::atomic_write::atomic_write(path, yaml.as_bytes())
             .with_context(|| format!("write {}", path.display()))?;
 
+        Ok(())
+    }
+
+    fn validate_server_ids(&self) -> Result<()> {
+        let mut seen = HashSet::with_capacity(self.servers.len());
+        for server in &self.servers {
+            if server.id.is_empty()
+                || server.id.len() > crate::mcp::tool_call_parser::MAX_MCP_IDENTIFIER_BYTES
+            {
+                anyhow::bail!(
+                    "MCP server ID must contain 1..={} UTF-8 bytes",
+                    crate::mcp::tool_call_parser::MAX_MCP_IDENTIFIER_BYTES
+                );
+            }
+            if !seen.insert(server.id.as_str()) {
+                anyhow::bail!("duplicate MCP server ID `{}`", server.id);
+            }
+        }
         Ok(())
     }
 }
@@ -293,6 +319,14 @@ impl McpServerConfig {
     /// an `env_clear` baseline and adds only explicitly configured variables,
     /// so ambient Node/npm overrides never enter the MCP child.
     pub fn validate_launcher(&self) -> Result<McpLauncherPosture> {
+        if self.id.is_empty()
+            || self.id.len() > crate::mcp::tool_call_parser::MAX_MCP_IDENTIFIER_BYTES
+        {
+            anyhow::bail!(
+                "MCP server ID must contain 1..={} UTF-8 bytes",
+                crate::mcp::tool_call_parser::MAX_MCP_IDENTIFIER_BYTES
+            );
+        }
         let command = self.command.trim();
         if command.is_empty() || command.contains('\0') {
             anyhow::bail!("MCP server `{}` has an empty or invalid command", self.id);
@@ -1073,6 +1107,24 @@ servers:
     }
 
     #[test]
+    fn load_duplicate_server_ids_fails_closed() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp.yaml");
+        std::fs::write(
+            &path,
+            "servers:\n  - id: duplicate\n    command: first\n  - id: duplicate\n    command: second\n",
+        )
+        .unwrap();
+
+        let err = McpServers::load_from(&path).unwrap_err();
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("duplicate MCP server ID"),
+            "unexpected error: {rendered}"
+        );
+    }
+
+    #[test]
     fn get_enabled_filters_disabled() {
         let s = McpServers {
             smart_loading: true,
@@ -1171,6 +1223,19 @@ servers:
             smart_approve: false,
             autonomy_gate: None,
         }
+    }
+
+    #[test]
+    fn launcher_rejects_server_ids_the_invocation_parser_cannot_address() {
+        let mut cfg = launcher_config("npx", &["--yes", "example-mcp@1.2.3"]);
+        cfg.id.clear();
+        assert!(cfg.validate_launcher().is_err());
+
+        cfg.id = "x".repeat(crate::mcp::tool_call_parser::MAX_MCP_IDENTIFIER_BYTES + 1);
+        assert!(cfg.validate_launcher().is_err());
+
+        cfg.id = "namespace/valid server".to_string();
+        assert!(cfg.validate_launcher().is_ok());
     }
 
     #[test]
@@ -1931,6 +1996,33 @@ servers:
             after.as_slice(),
             bad_yaml,
             "file must be byte-identical after failed load"
+        );
+    }
+
+    #[test]
+    fn update_at_duplicate_id_returns_err_and_leaves_file_unchanged() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        let original = b"servers:\n  - id: existing\n    command: first\n";
+        std::fs::write(&path, original).unwrap();
+
+        let result = McpServers::update_at(&path, |servers| {
+            let mut duplicate = servers.servers[0].clone();
+            duplicate.command = "second".into();
+            servers.servers.push(duplicate);
+            Ok(true)
+        });
+
+        let err = result.expect_err("duplicate ID update must fail closed");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("duplicate MCP server ID"),
+            "unexpected error: {rendered}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            original,
+            "failed validation must not rewrite the file"
         );
     }
 

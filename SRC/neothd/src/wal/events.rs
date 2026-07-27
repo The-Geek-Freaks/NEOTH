@@ -686,7 +686,12 @@ pub const EVENT_TYPE_PROFILE_EXTRACT_TARGET: u8 = 0x2E;
 ///   - `dropped_d_count`: u32 — episode/recall items removed (oldest first)
 ///   - `dropped_c_count`: u32 — profile-context items removed (lowest-importance first)
 ///   - `conductor_truncated`: bool — did we eat into Conductor.plan/spec?
-///   - `request_id`: String — matches the downstream PROVIDER_REQUEST
+///   - `per_block`: array — before/after token and item counts for every block
+///   - `removed_atomic_groups`: string array — optional protocols removed with
+///     their degradable data (currently `mcp_catalogue`)
+///   - `prompt_bundle_hash`: String — pre-degradation content identity
+///   - `budget_policy_hash`: String — ordered pre-degradation block, atomic
+///     group, ranking and content identity
 ///
 /// Pre-condition for KF-08 (token-cap-aware adaptive layering).
 pub const EVENT_TYPE_BUDGET_EXCEEDED: u8 = 0x2F;
@@ -930,11 +935,16 @@ pub const EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE: u8 = 0x57;
 /// `0x58 HINT_LOADED` — GOLD-ADOPT-18. The MCP dispatch loop's
 /// [`crate::mcp::hints::SubdirHintTracker`] loaded a subdirectory's
 /// `.neothhints` / `AGENTS.md` into the agent's context after the agent entered
-/// that dir via a tool-call path arg. Payload `{dir, bytes, ts_unix}` — the dir
-/// path + injected size only, never the hint body. Safety/recovery band (the
-/// 0x40 cron band is full); a context-enrichment event sits fine next to the
-/// other advisory/safety frames. PRIVACY: `dir` is an absolute local path,
-/// subject to the same export/gossip considerations as `0xA8 OS_FILE_READ`.
+/// that dir via a tool-call path arg. Payload records `source_bytes`,
+/// `source_truncated`, canonical `payload_bytes`/`payload_sha256`,
+/// `payload_truncated`, exact `wire_bytes`, `bounded_root_sha256` and
+/// compatible `bytes` (wire size), `sha256` (bounded post-reader root digest,
+/// never a full-source claim) and aggregate `truncated` keys — never the hint
+/// body. Safety/recovery band (the 0x40 cron
+/// band is full); a
+/// context-enrichment event sits fine next to the other advisory/safety frames.
+/// PRIVACY: `dir` is an absolute local path, subject to the same export/gossip
+/// considerations as `0xA8 OS_FILE_READ`.
 pub const EVENT_TYPE_HINT_LOADED: u8 = 0x58;
 
 /// `0x59 WEB_EXTRACT_HIT` — GOLD-ADOPT-04. A CSS selector (operator-supplied or
@@ -1533,12 +1543,12 @@ pub const EVENT_TYPE_BG_SESSION_STARTED: u8 = 0x87;
 /// Payload: `{job_id, label, ts_unix}`.
 pub const EVENT_TYPE_BG_SESSION_DONE: u8 = 0x88;
 
-/// `0x89 GOAL_JUDGED` — HERMES-04. An independent judge LLM call verified
-/// whether the operator's goal was met at a dispatch-loop clean exit.
-/// Audit-critical: records the verdict so the operator can confirm an early
-/// exit was warranted. Privacy: `goal_hash` is xxh3-64 hex of the raw goal
-/// text (never stored in the WAL). Payload: `{goal_hash, verdict, ts_unix}`
-/// where `verdict` is `"met"` or `"not_met"`.
+/// `0x89 GOAL_JUDGED` — HERMES-04. An independent judge LLM call attempted to
+/// verify whether the operator's goal was met at a dispatch-loop clean exit.
+/// Audit-critical: distinguishes a real `met`/`not_met` verdict from
+/// `unavailable`, `input_budget_exceeded`, and dispatch `budget_exhausted`
+/// outcomes. Privacy: `goal_hash` is xxh3-64 hex of the raw goal text (never
+/// stored in the WAL). Payload: `{goal_hash, kind, ts_unix}`.
 pub const EVENT_TYPE_GOAL_JUDGED: u8 = 0x89;
 
 /// `0x8A CRON_JOB_SELF_HEAL_ALERT` — GOLD-ADAPT-HERMES-07. Emitted by

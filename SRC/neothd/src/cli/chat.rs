@@ -283,18 +283,24 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
 ///
 /// Reads operator context + skills (parallel K-Perf-4 load), runs the ARCH-07
 /// pinned-hash integrity gate + eval-session suppression, routes the active
-/// skill/mode (Stage-1 keyword + Stage-2 embedding re-rank), loads the MCP
-/// catalogue + persona + active-preset addendum + repo-context + moral core, and
-/// composes them via `pipeline::build_enriched_request`. Audit emissions remain
-/// best-effort, but an unreadable configured moral core fails the turn before a
-/// provider call. `config`/`prompt`/`home` are threaded back out because the
-/// later phases still consume them.
+/// skill/mode (Stage-1 keyword + Stage-2 embedding re-rank), loads persona +
+/// active-preset addendum + repo-context + moral core, and composes them via
+/// `pipeline::build_enriched_request`. MCP is deliberately absent here: the
+/// exact post-hook turn route is resolved before any catalogue process starts.
+/// Audit emissions remain best-effort, but an unreadable configured moral core
+/// fails the turn before a provider call. `config`/`prompt`/`home` are threaded
+/// back out because the later phases still consume them.
 struct PromptBundle {
     combined_system: Option<String>,
     /// Exact typed A-E/Conductor representation of `combined_system` plus the
     /// single user-message E block.  This survives hooks, slash/agent routing
     /// and output-preset assembly until the final provider Request is built.
     budget_items: Vec<crate::tokens::budget::BlockItem>,
+    /// Typed insertion point for the optional MCP protocol + catalogue pair.
+    /// It is captured from the MCP-free enriched request and adjusted across
+    /// agent/slash rewrites so late route-bound injection cannot guess from
+    /// rendered strings.
+    mcp_catalogue_slot: McpCatalogueSlot,
     skill_tool_allowlist: Option<Vec<String>>,
     /// GOLD-ADAPT-PWF-01: SHA-256 hex of `task_plan.md` at injection time,
     /// or `None` when no plan file was present or the active skill is not
@@ -316,12 +322,215 @@ struct PromptBundle {
     /// default (10 000 tokens). Threaded to `dispatch_provider` which maps
     /// it to `req.thinking_budget` before the provider spawn.
     resolved_effort: Option<crate::providers::effort_override::EffortBudget>,
+    /// Exact matched-skill contract. This survives preflight so a
+    /// `loop: true` skill cannot silently degrade to a single CLI provider
+    /// call after hooks, slash handling, or route resolution.
+    skill_loop_trigger: bool,
+}
+
+/// Typed reason why a non-Council turn must enter the loop engine.
+///
+/// Keeping both bits on the selected route prevents CLI and channel consumers
+/// from recomputing the decision differently after MCP autorouting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct LoopRouteTrigger {
+    skill: bool,
+    requested: bool,
+}
+
+impl LoopRouteTrigger {
+    pub(crate) const fn new(skill: bool, requested: bool) -> Self {
+        Self { skill, requested }
+    }
+
+    pub(crate) const fn is_active(self) -> bool {
+        self.skill || self.requested
+    }
+
+    pub(crate) const fn skill_triggered(self) -> bool {
+        self.skill
+    }
+
+    pub(crate) const fn minimum_rounds(self) -> u32 {
+        if self.is_active() { 2 } else { 1 }
+    }
+}
+
+/// Exact dispatch leaf chosen for one turn before optional MCP catalogue I/O.
+///
+/// `McpDispatch` is the only variant allowed to inject the trusted MCP protocol
+/// and untrusted catalogue data. `RefineLoop` still uses the loop engine, but
+/// receives an empty MCP registry and therefore must stay protocol-free.
+#[derive(Debug, Clone)]
+pub(crate) enum TurnDispatchRoute {
+    Streaming,
+    CouncilMif {
+        message: String,
+    },
+    Council {
+        decision: crate::council::TriggerDecision,
+    },
+    McpDispatch {
+        autoroute: crate::mcp::config::AutorouteDecision,
+        loop_trigger: LoopRouteTrigger,
+    },
+    RefineLoop {
+        loop_trigger: LoopRouteTrigger,
+    },
+    Direct,
+}
+
+impl TurnDispatchRoute {
+    pub(crate) const fn uses_mcp_catalogue(&self) -> bool {
+        matches!(self, Self::McpDispatch { .. })
+    }
+
+    pub(crate) const fn uses_loop(&self) -> bool {
+        matches!(self, Self::McpDispatch { .. } | Self::RefineLoop { .. })
+    }
+
+    pub(crate) const fn loop_trigger(&self) -> Option<LoopRouteTrigger> {
+        match self {
+            Self::McpDispatch { loop_trigger, .. } | Self::RefineLoop { loop_trigger } => {
+                Some(*loop_trigger)
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn autoroute_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::McpDispatch { autoroute, .. } => Some(autoroute.reason()),
+            _ => None,
+        }
+    }
+}
+
+/// Route selection after Council/MIF admission has been resolved exactly once.
+///
+/// A skill-only loop under forced-off/auto-off MCP is a pure refinement loop:
+/// it must not advertise MCP calls and receives no configured MCP servers.
+pub(crate) fn select_turn_dispatch_route(
+    council_route: Option<TurnDispatchRoute>,
+    autoroute: crate::mcp::config::AutorouteDecision,
+    loop_trigger: LoopRouteTrigger,
+    mcp_catalogue_allowed: bool,
+) -> TurnDispatchRoute {
+    if let Some(route) = council_route {
+        return route;
+    }
+    if autoroute.is_on() && mcp_catalogue_allowed {
+        TurnDispatchRoute::McpDispatch {
+            autoroute,
+            loop_trigger,
+        }
+    } else if loop_trigger.is_active() {
+        TurnDispatchRoute::RefineLoop { loop_trigger }
+    } else {
+        TurnDispatchRoute::Direct
+    }
+}
+
+/// Stable position where the MCP A/D atomic pair belongs in a typed request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct McpCatalogueSlot {
+    index: usize,
+}
+
+impl McpCatalogueSlot {
+    /// Capture the catalogue position from a freshly built MCP-free enriched
+    /// request. The non-disclosure clause is builder-owned and, when present,
+    /// must remain after the catalogue just as in `build_enriched_request`.
+    pub(crate) fn from_enriched(
+        items: &[crate::tokens::budget::BlockItem],
+    ) -> anyhow::Result<Self> {
+        use crate::tokens::budget::Block;
+
+        let user_index = single_user_item_index(items)?;
+        let guard = crate::pipeline::enriched_request::PROMPT_NON_DISCLOSURE_CLAUSE;
+        let index = items[..user_index]
+            .iter()
+            .rposition(|item| item.block == Block::B && item.content == guard)
+            .unwrap_or(user_index);
+        Ok(Self { index })
+    }
+
+    /// Capture the simple boundary used by a rewritten agent/slash bundle.
+    pub(crate) fn before_user(items: &[crate::tokens::budget::BlockItem]) -> anyhow::Result<Self> {
+        Ok(Self {
+            index: single_user_item_index(items)?,
+        })
+    }
+
+    fn shifted_for_insert(mut self, index: usize, count: usize) -> Self {
+        if index <= self.index {
+            self.index = self.index.saturating_add(count);
+        }
+        self
+    }
+
+    /// Insert the trusted protocol and untrusted data as one atomic budget
+    /// group. Validation happens before mutation so a stale slot fails closed.
+    pub(crate) fn insert(
+        self,
+        items: &mut Vec<crate::tokens::budget::BlockItem>,
+        catalogue: &crate::mcp::catalogue::McpPromptCatalogue,
+    ) -> anyhow::Result<()> {
+        use crate::tokens::budget::{AtomicGroup, Block, BlockItem};
+
+        let user_index = single_user_item_index(items)?;
+        anyhow::ensure!(
+            self.index <= user_index,
+            "MCP catalogue slot moved past the user-message boundary"
+        );
+        anyhow::ensure!(
+            !items
+                .iter()
+                .any(|item| item.atomic_group == Some(AtomicGroup::McpCatalogue)),
+            "MCP catalogue atomic group already present before route-bound injection"
+        );
+        items.splice(
+            self.index..self.index,
+            [
+                BlockItem::new(Block::A, catalogue.trusted_protocol())
+                    .with_atomic_group(AtomicGroup::McpCatalogue),
+                BlockItem::new(Block::D, catalogue.data().as_str())
+                    .with_atomic_group(AtomicGroup::McpCatalogue),
+            ],
+        );
+        Ok(())
+    }
+}
+
+fn single_user_item_index(items: &[crate::tokens::budget::BlockItem]) -> anyhow::Result<usize> {
+    use crate::tokens::budget::Block;
+
+    let mut users = items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.block == Block::E);
+    let (index, _) = users
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
+    anyhow::ensure!(
+        users.next().is_none(),
+        "token-budget bundle contains multiple Block E items"
+    );
+    Ok(index)
 }
 
 fn routed_skill_tool_allowlist(
     skill: Option<&crate::skills::schema::Skill>,
 ) -> Option<Vec<String>> {
     skill.map(|skill| skill.manifest.tool_allowlist.clone())
+}
+
+/// Shared CLI/channel projection of the matched skill or mode parent.
+///
+/// The audit-facing used-skill ID may intentionally be absent for a mode, so
+/// loop routing must be derived from the resolved parent object itself.
+pub(crate) fn routed_skill_loop_trigger(skill: Option<&crate::skills::schema::Skill>) -> bool {
+    skill.is_some_and(crate::skills::schema::Skill::loop_trigger)
 }
 
 #[derive(Debug)]
@@ -560,6 +769,43 @@ fn prompt_bundle_hash_for_items(items: &[crate::tokens::budget::BlockItem]) -> S
     crate::skills::versioning::prompt_bundle_hash_hex(&entries)
 }
 
+fn budget_policy_hash_for_items(items: &[crate::tokens::budget::BlockItem]) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write as _;
+
+    let mut hasher = Sha256::new();
+    hasher.update(b"neoth.prompt-budget-policy.v1\0");
+    for item in items {
+        let block = match item.block {
+            crate::tokens::budget::Block::A => 0_u8,
+            crate::tokens::budget::Block::B => 1,
+            crate::tokens::budget::Block::C => 2,
+            crate::tokens::budget::Block::D => 3,
+            crate::tokens::budget::Block::E => 4,
+            crate::tokens::budget::Block::Conductor => 5,
+        };
+        let atomic_group = match item.atomic_group {
+            None => 0_u8,
+            Some(crate::tokens::budget::AtomicGroup::McpCatalogue) => 1,
+        };
+        hasher.update([block, atomic_group]);
+        hasher.update(item.importance.to_bits().to_le_bytes());
+        hasher.update(item.ts_ns.to_le_bytes());
+        hasher.update(item.tokens.to_le_bytes());
+        hasher.update(
+            u64::try_from(item.content.len())
+                .unwrap_or(u64::MAX)
+                .to_le_bytes(),
+        );
+        hasher.update(item.content.as_bytes());
+    }
+    let mut out = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        write!(out, "{byte:02x}").expect("writing a SHA-256 digest to String cannot fail");
+    }
+    out
+}
+
 /// Apply the last two dispatch-time prompt mutations (output preset + fixed
 /// preambles), enforce the effective model cap against the real typed bundle,
 /// and render the exact Request pair.  No provider path may assemble additional
@@ -579,7 +825,7 @@ pub(super) async fn finalize_provider_request(
     preflight_system: Option<&str>,
     boundary: ProviderRequestBoundary<'_>,
 ) -> Result<BudgetedProviderRequest> {
-    use crate::tokens::budget::{Block, BlockItem};
+    use crate::tokens::budget::{AtomicGroup, Block, BlockItem};
 
     let ProviderRequestBoundary {
         config,
@@ -612,27 +858,15 @@ pub(super) async fn finalize_provider_request(
     crate::tokens::budget::replace_user_message(&mut items, final_prompt)
         .map_err(anyhow::Error::msg)?;
 
-    if !items.iter().any(|item| {
-        item.block != Block::E && item.content.contains("## Core principles (always apply)")
-    }) {
-        items.insert(
-            0,
-            BlockItem::new(
-                Block::B,
-                crate::providers::context_guards::code_discipline_preamble().trim_end(),
-            ),
-        );
-    }
-    if let Some(protocol) = crate::cli::clarify_chat::protocol_block()
-        && !items
-            .iter()
-            .any(|item| item.block != Block::E && item.content == protocol)
+    let code_discipline = crate::providers::context_guards::code_discipline_preamble().trim_end();
+    if !items
+        .iter()
+        .any(|item| item.block == Block::B && item.content.trim_end() == code_discipline)
     {
-        let e_index = items
-            .iter()
-            .position(|item| item.block == Block::E)
-            .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
-        items.insert(e_index, BlockItem::new(Block::B, protocol));
+        items.insert(0, BlockItem::new(Block::B, code_discipline));
+    }
+    if let Some(protocol) = crate::cli::clarify_chat::protocol_block() {
+        ensure_trusted_clarification_protocol(&mut items, protocol)?;
     }
 
     let primary_cap = crate::tokens::budget::effective_cap(
@@ -658,7 +892,21 @@ pub(super) async fn finalize_provider_request(
     let envelope_reserve = non_content_overhead.saturating_add(separator_reserve);
     let content_cap = cap.saturating_sub(envelope_reserve);
     let hash_before = prompt_bundle_hash_for_items(&items);
-    let detail = crate::tokens::budget::enforce_budget_to_fit(&mut items, content_cap);
+    let budget_policy_hash_before = budget_policy_hash_for_items(&items);
+    let had_mcp_catalogue = items
+        .iter()
+        .any(|item| item.atomic_group == Some(AtomicGroup::McpCatalogue));
+    let detail = crate::tokens::budget::enforce_budget_to_fit(&mut items, content_cap)
+        .map_err(anyhow::Error::msg)?;
+    let mcp_catalogue_atomic_removed = had_mcp_catalogue
+        && !items
+            .iter()
+            .any(|item| item.atomic_group == Some(AtomicGroup::McpCatalogue));
+    let removed_atomic_groups: Vec<&str> = if mcp_catalogue_atomic_removed {
+        vec!["mcp_catalogue"]
+    } else {
+        Vec::new()
+    };
     // Recompute separator reserve from the post-degradation item count.  When
     // enforce_budget_to_fit drops C/D items the rendered system contains only
     // (post_count − 1) "\n\n" separators; the pre-enforcement count above was
@@ -682,6 +930,7 @@ pub(super) async fn finalize_provider_request(
             dropped_d = detail.dropped_d_count,
             dropped_c = detail.dropped_c_count,
             conductor_truncated = detail.conductor_truncated,
+            mcp_catalogue_atomic_removed,
             "final provider request exceeded token cap; typed degradation applied"
         );
         let budget_payload = serde_json::to_vec(&serde_json::json!({
@@ -693,7 +942,10 @@ pub(super) async fn finalize_provider_request(
             "dropped_d_count": detail.dropped_d_count,
             "dropped_c_count": detail.dropped_c_count,
             "conductor_truncated": detail.conductor_truncated,
+            "per_block": &detail.per_block,
+            "removed_atomic_groups": &removed_atomic_groups,
             "prompt_bundle_hash": hash_before,
+            "budget_policy_hash": budget_policy_hash_before,
             "ts_unix": now_unix(),
         }))
         .context("serialize BUDGET_EXCEEDED audit")?;
@@ -737,6 +989,26 @@ pub(super) async fn finalize_provider_request(
         prompt_token_estimate,
         effective_cap: cap,
     })
+}
+
+fn ensure_trusted_clarification_protocol(
+    items: &mut Vec<crate::tokens::budget::BlockItem>,
+    protocol: &str,
+) -> anyhow::Result<()> {
+    use crate::tokens::budget::{Block, BlockItem};
+
+    if items
+        .iter()
+        .any(|item| item.block == Block::B && item.content == protocol)
+    {
+        return Ok(());
+    }
+    let e_index = items
+        .iter()
+        .position(|item| item.block == Block::E)
+        .ok_or_else(|| anyhow::anyhow!("token-budget bundle is missing Block E"))?;
+    items.insert(e_index, BlockItem::new(Block::B, protocol));
+    Ok(())
 }
 
 /// Stable, sorted MCP server ids that define this turn's configured scope.
@@ -792,10 +1064,11 @@ fn restrict_mcp_servers_to_checkpoint(
     Ok(current)
 }
 
-/// GOLD-ADAPT-OH-13 — raw enrichment layer strings, threaded from
+/// GOLD-ADAPT-OH-13 — enrichment layers, threaded from
 /// `build_prompt_bundle` (where they were computed) to `enforce_preflight`
 /// (where the sub-agent dispatch block can selectively apply them via
-/// `AgentOmitFlags`). Also carries `skill_delegate_to` for Part B
+/// `AgentOmitFlags`). MCP retains its typed trusted/data split rather than
+/// degrading back to a raw string. Also carries `skill_delegate_to` for Part B
 /// skill-to-agent auto-synthesis.
 struct AgentRawLayers {
     operator_context: Option<String>,
@@ -803,7 +1076,6 @@ struct AgentRawLayers {
     explicit_system: Option<String>,
     repo_context_block: Option<String>,
     skill_layer: Option<String>,
-    mcp_catalogue: Option<String>,
     persona_override: Option<String>,
     moral_core: Option<String>,
     /// GOLD-R4-11 — compiler-owned, presentation-only communication profile.
@@ -827,7 +1099,6 @@ struct PromptBuildContext<'a> {
     args: &'a ChatArgs,
     prompt_bundle_hash: &'a str,
     writer: &'a crate::wal::writer::WalWriterHandle,
-    mcp_servers: &'a crate::mcp::McpServers,
 }
 
 /// Optional prompt-routing decisions resolved before prompt assembly starts.
@@ -862,7 +1133,6 @@ async fn build_prompt_bundle(
         args,
         prompt_bundle_hash,
         writer,
-        mcp_servers,
     } = context;
     let PromptBuildOptions {
         // GOLD-CCPARITY-SKILLVIS-01 — lowercased skill id for an explicit
@@ -967,12 +1237,13 @@ async fn build_prompt_bundle(
     // composition used:
     //   1. installed_skills (snapshot from registry)
     //   2. mode/skill routing → skill_layer + used_skill_id
-    //   3. mcp_catalogue (async assemble — gated on enabled servers)
-    //   4. persona_override (tweaks.toml)
-    //   5. repo_context_block (K-Repo-Map auto-context)
+    //   3. persona_override (tweaks.toml)
+    //   4. repo_context_block (K-Repo-Map auto-context)
     // Then `pipeline::build_enriched_request` composes them in the
     // canonical layer order (operator_md + explicit_system + repo +
-    // skill + MCP, with persona as a top-line prefix). Channel-side
+    // skill, with persona as a top-line prefix). Route-bound MCP injection
+    // happens after preflight and before the single final budget boundary.
+    // Channel-side
     // `cli/serve.rs::build_pipeline_handler` calls the same helper
     // so every inbound surface reaches the same context layering.
 
@@ -1183,20 +1454,29 @@ async fn build_prompt_bundle(
     // matched skill manifest without requiring a second scan of `skill_match`.
     // GOLD-CCPARITY-MODEL-02: extended to 4-tuple to capture `skill_model`
     // from the matched skill's `manifest.model` field.
-    // GOLD-CCPARITY-EFFORT-03: extended to 5-tuple to capture `skill_effort`
-    // from the matched skill's `manifest.effort` field.
+    // GOLD-CCPARITY-EFFORT-03: extended to capture `skill_effort` from the
+    // matched skill's `manifest.effort` field. The final boolean preserves the
+    // matched skill's `loop: true` runtime contract through CLI preflight.
     #[allow(clippy::type_complexity)]
-    let (skill_layer, used_skill_id, skill_delegate_to, skill_model, skill_effort): (
+    let (
+        skill_layer,
+        used_skill_id,
+        skill_delegate_to,
+        skill_model,
+        skill_effort,
+        skill_loop_trigger,
+    ): (
         Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
         Option<crate::providers::effort_override::EffortBudget>,
+        bool,
     ) = if eval_suppress {
         crate::analytics::babel::signals::emit(
             crate::analytics::babel::signals::SignalKind::SkillSuppressed,
         );
-        (None, None, None, None, None)
+        (None, None, None, None, None, false)
     } else if let Some(resolved) = mode_hit {
         let parent = installed_skills
             .iter()
@@ -1223,6 +1503,7 @@ async fn build_prompt_bundle(
         // security principal. Preserve the parent's delegation boundary just
         // like its model, effort and tool allowlist.
         let delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
+        let loop_trigger = routed_skill_loop_trigger(parent);
         skill_tool_allowlist = routed_skill_tool_allowlist(parent);
         crate::analytics::babel::signals::emit(
             crate::analytics::babel::signals::SignalKind::SkillMode,
@@ -1231,7 +1512,7 @@ async fn build_prompt_bundle(
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
         // `_skill_match` discard).
-        (layer, None, delegate_to, model, effort)
+        (layer, None, delegate_to, model, effort, loop_trigger)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
         // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
@@ -1311,10 +1592,12 @@ async fn build_prompt_bundle(
             .and_then(|m| m.skill.manifest.model.clone());
         // GOLD-CCPARITY-EFFORT-03: capture per-skill effort/reasoning-budget.
         let effort = skill_match.as_ref().and_then(|m| m.skill.manifest.effort);
+        let loop_trigger =
+            routed_skill_loop_trigger(skill_match.as_ref().map(|matched| matched.skill));
         // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
         skill_tool_allowlist =
             routed_skill_tool_allowlist(skill_match.as_ref().map(|matched| matched.skill));
-        (layer, id, delegate, model, effort)
+        (layer, id, delegate, model, effort, loop_trigger)
     };
     // Shadow as mutable so GOLD-ADAPT-PWF-01 can append the fenced plan block.
     let mut skill_layer = skill_layer;
@@ -1343,26 +1626,6 @@ async fn build_prompt_bundle(
         }
     } else {
         None
-    };
-
-    // ── MCP tool catalogue (Step 1 of autonomous routing) ─────────────────
-    // `mcp_servers` is the fail-loud, turn-scoped snapshot loaded by
-    // `run_chat_with`; prompt injection, dispatch and checkpoints all consume
-    // this exact value so a mid-turn file edit cannot create split-brain scope.
-    let mcp_catalogue: Option<String> = if mcp_servers.enabled().is_empty() {
-        None
-    } else {
-        match crate::mcp::catalogue::assemble_catalogue_for_prompt(mcp_servers, &prompt).await {
-            Some(cat) => {
-                info!(
-                    enabled = mcp_servers.enabled().len(),
-                    bytes = cat.len(),
-                    "MCP tool catalogue injected into system prompt"
-                );
-                Some(cat)
-            }
-            None => None,
-        }
     };
 
     // ── C-7 persona layer (tweaks.toml::persona_override) ─────────────────
@@ -1513,7 +1776,9 @@ async fn build_prompt_bundle(
         repo_context_block: repo_context_block.as_deref(),
         skill_system_prompt: skill_layer.as_deref(),
         used_skill_id: used_skill_id.as_deref(),
-        mcp_catalogue: mcp_catalogue.as_deref(),
+        // Route is not exact until post-hook preflight completes. Keep this
+        // base bundle MCP-free and carry its typed insertion slot instead.
+        mcp_catalogue: None,
         persona_override: persona_override.as_deref(),
         moral_core: moral_core.as_deref(),
         identity_anchor: identity_anchor_text,
@@ -1543,6 +1808,7 @@ async fn build_prompt_bundle(
     // string-only value.  EnrichedRequest ends with the sole E item; append
     // chat-only D/A layers immediately before it, then render the legacy string
     // from that same representation so the two views cannot drift.
+    let mcp_catalogue_slot = McpCatalogueSlot::from_enriched(&enriched.budget_items)?;
     let mut budget_items = enriched.budget_items;
     let user_item = budget_items
         .pop()
@@ -1573,10 +1839,11 @@ async fn build_prompt_bundle(
         typed_prompt == prompt,
         "typed prompt bundle diverged from the operator message"
     );
-    // used_skill_id is plumbed through for any downstream audit
-    // consumers; the existing chat path consumes `combined_system`
-    // the same way it did before the helper extraction.
-    let _used_skill_id = enriched.used_skill_id;
+    debug_assert_eq!(
+        enriched.used_skill_id.as_deref(),
+        used_skill_id.as_deref(),
+        "enrichment changed the resolved skill identity"
+    );
 
     // GOLD-ADAPT-OH-13: bundle raw layers so enforce_preflight can rebuild
     // the system prompt per-agent with selective omissions.
@@ -1586,7 +1853,6 @@ async fn build_prompt_bundle(
         explicit_system: args.system.clone(),
         repo_context_block,
         skill_layer,
-        mcp_catalogue,
         persona_override,
         moral_core,
         communication_profile: communication_profile
@@ -1603,12 +1869,14 @@ async fn build_prompt_bundle(
         PromptBundle {
             combined_system,
             budget_items,
+            mcp_catalogue_slot,
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
             resolved_model: skill_model,
             // GOLD-CCPARITY-EFFORT-03: thread the per-skill effort to dispatch_provider.
             resolved_effort: skill_effort,
+            skill_loop_trigger,
         },
         config,
         prompt,
@@ -1655,6 +1923,10 @@ enum PreflightOutcome {
         /// Output-preset and fixed-preamble additions happen once more at the
         /// final budget boundary immediately before Request construction.
         budget_items: Vec<crate::tokens::budget::BlockItem>,
+        /// Route-bound MCP insertion point after agent/slash rewrites.
+        /// `None` means the selected agent explicitly omitted the catalogue,
+        /// so MCP autoroute must not become the dispatch leaf.
+        mcp_catalogue_slot: Option<McpCatalogueSlot>,
     },
 }
 
@@ -1689,6 +1961,7 @@ pub(super) fn resolve_provider_call_wire_model(
 async fn enforce_preflight(
     combined_system: Option<String>,
     budget_items: Vec<crate::tokens::budget::BlockItem>,
+    mcp_catalogue_slot: McpCatalogueSlot,
     prompt: String,
     provider: &dyn crate::providers::Provider,
     args: &ChatArgs,
@@ -1810,13 +2083,14 @@ async fn enforce_preflight(
     // Build a system prompt for `d` using only the layers NOT omitted by its
     // `omit_flags`. Mirrors the layer order in `build_enriched_request`:
     //   moral_core > operator_context > preset_addendum > explicit_system >
-    //   repo_context_block > skill_layer > mcp_catalogue
+    //   repo_context_block > skill_layer
     // then folds guidance_block + recall_block in above that (same order as
     // the main combined_system fold). Returns the rendered system plus the
     // typed bundle that produced it.
     let build_agent_system = |d: &crate::sub_agents::Dispatch| -> Result<(
         Option<String>,
         Vec<crate::tokens::budget::BlockItem>,
+        Option<McpCatalogueSlot>,
     )> {
         use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let f = &d.omit_flags;
@@ -1840,11 +2114,7 @@ async fn enforce_preflight(
             },
             skill_system_prompt: agent_raw_layers.skill_layer.as_deref(),
             used_skill_id: None,
-            mcp_catalogue: if f.mcp_catalogue {
-                None
-            } else {
-                agent_raw_layers.mcp_catalogue.as_deref()
-            },
+            mcp_catalogue: None,
             persona_override: agent_raw_layers.persona_override.as_deref(),
             moral_core: if f.moral_core {
                 None
@@ -1863,6 +2133,9 @@ async fn enforce_preflight(
                 .as_deref()
                 .map(crate::pipeline::CommunicationProfilePrompt::presentation_only),
         });
+        let mut slot = (!f.mcp_catalogue)
+            .then(|| McpCatalogueSlot::from_enriched(&enriched.budget_items))
+            .transpose()?;
         let mut items = enriched.budget_items;
         let user_item = items
             .pop()
@@ -1886,6 +2159,7 @@ async fn enforce_preflight(
                     d.system.trim(),
                 ),
             );
+            slot = slot.map(|slot| slot.shifted_for_insert(insert_pos, 1));
         }
         if !f.recall {
             if let Some(guidance) = agent_raw_layers.guidance_block.as_deref() {
@@ -1906,7 +2180,7 @@ async fn enforce_preflight(
         items.push(user_item);
         let (_, system) =
             crate::tokens::budget::render_request(&items).map_err(anyhow::Error::msg)?;
-        Ok((system, items))
+        Ok((system, items, slot))
     };
 
     // ── Slash command dispatch (Phase 28 R-17 SC-2) ────────────────────────
@@ -1918,76 +2192,84 @@ async fn enforce_preflight(
     // agent with `tools: []` must deny every MCP tool, while no active agent
     // imposes no agent-level restriction.
     let mut agent_tool_policy: Option<(Vec<String>, Vec<String>)> = None;
-    let (final_prompt, final_system, mut final_budget_items) = if let Some(d) = agent_dispatch {
-        info!(agent = %d.agent_name, "sub-agent dispatch");
-        agent_tool_policy = Some((d.allowed_tools.clone(), d.disallowed_tools.clone()));
-        // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
-        {
-            let f = &d.omit_flags;
-            let auto_delegated = agent_raw_layers
-                .skill_delegate_to
-                .as_deref()
-                .map(|s| s.to_string());
-            let payload = serde_json::to_vec(&serde_json::json!({
-                "agent_name": d.agent_name,
-                "omit_flags_mask": {
-                    "operator_context": f.operator_context,
-                    "mcp_catalogue": f.mcp_catalogue,
-                    "moral_core": f.moral_core,
-                    "preset": f.preset,
-                    "recall": f.recall,
-                    "repo_context": f.repo_context,
-                },
-                "auto_delegated_from_skill": auto_delegated,
-                "ts_unix": crate::time::now_unix_secs(),
-            }))
-            .unwrap_or_default();
-            if !payload.is_empty() {
-                let header = crate::wal::HeaderBuilder::new(
-                    crate::wal::events::EVENT_TYPE_AGENT_DISPATCHED,
-                    &payload,
-                )
-                .build();
-                if let Err(e) = writer.append(header, payload).await {
-                    tracing::warn!(error = %e, "WAL append AGENT_DISPATCHED failed (best-effort)");
+    let (final_prompt, final_system, mut final_budget_items, final_mcp_catalogue_slot) =
+        if let Some(d) = agent_dispatch {
+            info!(agent = %d.agent_name, "sub-agent dispatch");
+            agent_tool_policy = Some((d.allowed_tools.clone(), d.disallowed_tools.clone()));
+            // GOLD-ADAPT-OH-13: emit WAL 0xFC AGENT_DISPATCHED with omit-flags mask.
+            {
+                let f = &d.omit_flags;
+                let auto_delegated = agent_raw_layers
+                    .skill_delegate_to
+                    .as_deref()
+                    .map(|s| s.to_string());
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "agent_name": d.agent_name,
+                    "omit_flags_mask": {
+                        "operator_context": f.operator_context,
+                        "mcp_catalogue": f.mcp_catalogue,
+                        "moral_core": f.moral_core,
+                        "preset": f.preset,
+                        "recall": f.recall,
+                        "repo_context": f.repo_context,
+                    },
+                    "auto_delegated_from_skill": auto_delegated,
+                    "ts_unix": crate::time::now_unix_secs(),
+                }))
+                .unwrap_or_default();
+                if !payload.is_empty() {
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_AGENT_DISPATCHED,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(error = %e, "WAL append AGENT_DISPATCHED failed (best-effort)");
+                    }
                 }
             }
-        }
-        let (agent_system, agent_budget_items) = build_agent_system(&d)?;
-        (d.prompt, agent_system, agent_budget_items)
-    } else {
-        match crate::slash::parse_invocation(&prompt) {
-            crate::slash::Invocation::Command {
-                name,
-                args: cmd_args,
-            } => {
-                // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
-                // Short-circuits before the TOML command registry and the LLM
-                // round-trip: runs the multi-step search→read→synthesize loop,
-                // prints the report, and returns Done. No provider call, no
-                // consent gate, no token cost for the outer chat pipeline.
-                if name == "research" {
-                    let topic = cmd_args.trim();
-                    if topic.is_empty() {
-                        println!("Usage: /research <topic>");
-                        return Ok(PreflightOutcome::Done);
-                    }
-                    let search_provider = crate::tools::deep_research::resolve_search_provider();
-                    match crate::tools::deep_research::resolve_search_key(search_provider) {
-                        Err(e) => {
-                            eprintln!("deep-research: {e}");
+            let (agent_system, agent_budget_items, agent_mcp_catalogue_slot) =
+                build_agent_system(&d)?;
+            (
+                d.prompt,
+                agent_system,
+                agent_budget_items,
+                agent_mcp_catalogue_slot,
+            )
+        } else {
+            match crate::slash::parse_invocation(&prompt) {
+                crate::slash::Invocation::Command {
+                    name,
+                    args: cmd_args,
+                } => {
+                    // ── GOLD-ADAPT-ODY-17: `/research <topic>` deep-research engine ──
+                    // Short-circuits before the TOML command registry and the LLM
+                    // round-trip: runs the multi-step search→read→synthesize loop,
+                    // prints the report, and returns Done. No provider call, no
+                    // consent gate, no token cost for the outer chat pipeline.
+                    if name == "research" {
+                        let topic = cmd_args.trim();
+                        if topic.is_empty() {
+                            println!("Usage: /research <topic>");
                             return Ok(PreflightOutcome::Done);
                         }
-                        Ok(search_key) => {
-                            info!(
-                                topic = topic,
-                                "slash /research: starting deep-research engine"
-                            );
-                            // Keep the writer-owning authorizer scoped to the
-                            // one branch that needs it. Preflight abort paths
-                            // can then drain their WAL without a hidden sender
-                            // clone keeping the channel open forever.
-                            let research_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
+                        let search_provider =
+                            crate::tools::deep_research::resolve_search_provider();
+                        match crate::tools::deep_research::resolve_search_key(search_provider) {
+                            Err(e) => {
+                                eprintln!("deep-research: {e}");
+                                return Ok(PreflightOutcome::Done);
+                            }
+                            Ok(search_key) => {
+                                info!(
+                                    topic = topic,
+                                    "slash /research: starting deep-research engine"
+                                );
+                                // Keep the writer-owning authorizer scoped to the
+                                // one branch that needs it. Preflight abort paths
+                                // can then drain their WAL without a hidden sender
+                                // clone keeping the channel open forever.
+                                let research_authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::interactive(
                                 config.autonomy_policy(),
                                 Some(writer.clone()),
                                 config.tokens.max_per_request,
@@ -2008,195 +2290,209 @@ async fn enforce_preflight(
                                     ..Default::default()
                                 },
                             );
-                            let research_provider =
+                                let research_provider =
                                 crate::providers::cost_authorization::CostAuthorizingProvider::new(
                                     provider,
                                     research_authorizer,
                                     effective_model.clone(),
                                     "deep_research_round",
                                 );
-                            let http =
+                                let http =
                                 crate::tools::external_http::ExternalHttpAuthorizer::with_writer(
                                     config.autonomy_policy(),
                                     crate::permissions::Gate::auto_confirm(),
                                     writer.clone(),
                                 );
-                            match crate::tools::deep_research::run_deep_research(
-                                topic,
-                                &research_provider,
-                                &search_key,
-                                search_provider,
-                                &config.deep_research,
-                                &writer,
-                                &http,
-                            )
-                            .await
-                            {
-                                Ok(report) => {
-                                    println!("{}\n", report.article);
-                                    if !report.citations.is_empty() {
-                                        println!("---\nSources:");
-                                        for (i, c) in report.citations.iter().enumerate() {
-                                            println!("[{}] {} — {}", i + 1, c.title, c.url);
+                                match crate::tools::deep_research::run_deep_research(
+                                    topic,
+                                    &research_provider,
+                                    &search_key,
+                                    search_provider,
+                                    &config.deep_research,
+                                    &writer,
+                                    &http,
+                                )
+                                .await
+                                {
+                                    Ok(report) => {
+                                        println!("{}\n", report.article);
+                                        if !report.citations.is_empty() {
+                                            println!("---\nSources:");
+                                            for (i, c) in report.citations.iter().enumerate() {
+                                                println!("[{}] {} — {}", i + 1, c.title, c.url);
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    eprintln!("deep-research error: {e:#}");
+                                    Err(e) => {
+                                        eprintln!("deep-research error: {e:#}");
+                                    }
                                 }
                             }
                         }
+                        return Ok(PreflightOutcome::Done);
                     }
-                    return Ok(PreflightOutcome::Done);
-                }
 
-                // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
-                // Short-circuit before the TOML registry. CLI turns are
-                // one-shot runtimes, so a private detached worker process owns
-                // the durable job and survives after this command exits.
-                if name == "background" || name == "btw" {
-                    let prompt_body = cmd_args.trim().to_string();
-                    if prompt_body.is_empty() {
-                        println!("Usage: /{name} <prompt>");
-                    } else {
-                        let selected_config_path = args
-                            .config
-                            .clone()
-                            .unwrap_or_else(FreedomConfig::default_path);
-                        let queue_result: Result<_> = async {
-                            let mut request_items = budget_items.clone();
-                            crate::tokens::budget::replace_user_message(
-                                &mut request_items,
-                                prompt_body,
-                            )
-                            .map_err(anyhow::Error::msg)?;
-                            let (preflight_prompt, preflight_system) =
-                                crate::tokens::budget::render_request(&request_items)
-                                    .map_err(anyhow::Error::msg)?;
-                            let route_cap = routing_safe_effective_cap_at(
-                                config,
-                                provider.name(),
-                                effective_model.as_deref(),
-                                home,
-                            );
-                            let budgeted = finalize_provider_request(
-                                request_items,
-                                &preflight_prompt,
-                                preflight_system.as_deref(),
-                                ProviderRequestBoundary {
+                    // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
+                    // Short-circuit before the TOML registry. CLI turns are
+                    // one-shot runtimes, so a private detached worker process owns
+                    // the durable job and survives after this command exits.
+                    if name == "background" || name == "btw" {
+                        let prompt_body = cmd_args.trim().to_string();
+                        if prompt_body.is_empty() {
+                            println!("Usage: /{name} <prompt>");
+                        } else {
+                            let selected_config_path = args
+                                .config
+                                .clone()
+                                .unwrap_or_else(FreedomConfig::default_path);
+                            let queue_result: Result<_> = async {
+                                let mut request_items = budget_items.clone();
+                                crate::tokens::budget::replace_user_message(
+                                    &mut request_items,
+                                    prompt_body,
+                                )
+                                .map_err(anyhow::Error::msg)?;
+                                let (preflight_prompt, preflight_system) =
+                                    crate::tokens::budget::render_request(&request_items)
+                                        .map_err(anyhow::Error::msg)?;
+                                let route_cap = routing_safe_effective_cap_at(
                                     config,
+                                    provider.name(),
+                                    effective_model.as_deref(),
                                     home,
-                                    provider_name: provider.name(),
-                                    effective_model: effective_model.as_deref(),
-                                    route_cap: Some(route_cap),
-                                    writer: &writer,
-                                },
-                            )
-                            .await?;
-                            let thinking_budget = skill_effort_for_request
-                                .filter(|_| provider.request_controls().supports_thinking_budget())
-                                .map(crate::providers::effort_override::effort_to_tokens);
-                            let request = Request {
-                                prompt: budgeted.prompt,
-                                system: budgeted.system,
-                                model: effective_model.clone(),
-                                temperature: args.temperature,
-                                top_p: args.top_p,
-                                sampling_seed: args.sampling_seed,
-                                stop_sequences: Vec::new(),
-                                thinking_budget,
-                            };
-                            provider.validate_request_controls(&request)?;
-                            crate::cli::bg_session::spawn_background_process(
-                                &name,
-                                request,
-                                home,
-                                &selected_config_path,
-                                config.clone(),
-                                Some(&writer),
-                            )
-                            .await
-                        }
-                        .await;
-                        match queue_result {
-                            Ok(_) => println!(
-                                "[neoth] /{name}: background session queued — \
+                                );
+                                let budgeted = finalize_provider_request(
+                                    request_items,
+                                    &preflight_prompt,
+                                    preflight_system.as_deref(),
+                                    ProviderRequestBoundary {
+                                        config,
+                                        home,
+                                        provider_name: provider.name(),
+                                        effective_model: effective_model.as_deref(),
+                                        route_cap: Some(route_cap),
+                                        writer: &writer,
+                                    },
+                                )
+                                .await?;
+                                let thinking_budget = skill_effort_for_request
+                                    .filter(|_| {
+                                        provider.request_controls().supports_thinking_budget()
+                                    })
+                                    .map(crate::providers::effort_override::effort_to_tokens);
+                                let request = Request {
+                                    prompt: budgeted.prompt,
+                                    system: budgeted.system,
+                                    model: effective_model.clone(),
+                                    temperature: args.temperature,
+                                    top_p: args.top_p,
+                                    sampling_seed: args.sampling_seed,
+                                    stop_sequences: Vec::new(),
+                                    thinking_budget,
+                                };
+                                provider.validate_request_controls(&request)?;
+                                crate::cli::bg_session::spawn_background_process(
+                                    &name,
+                                    request,
+                                    home,
+                                    &selected_config_path,
+                                    config.clone(),
+                                    Some(&writer),
+                                )
+                                .await
+                            }
+                            .await;
+                            match queue_result {
+                                Ok(_) => println!(
+                                    "[neoth] /{name}: background session queued — \
                                  result at next idle"
-                            ),
-                            Err(e) => eprintln!("/{name}: queue failed: {e:#}"),
+                                ),
+                                Err(e) => eprintln!("/{name}: queue failed: {e:#}"),
+                            }
                         }
-                    }
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Ok(PreflightOutcome::Done);
-                }
-
-                let slash_dir = home.join("commands");
-                let commands = match crate::slash::load_all(&slash_dir).await {
-                    Ok(commands) => commands,
-                    Err(error) => {
                         drop(writer);
-                        if let Err(join_error) = writer_join.await {
-                            warn!(
-                                error = %join_error,
-                                "WAL writer join failed while refusing an invalid slash-command set"
-                            );
-                        }
-                        return Err(error).with_context(|| {
+                        let _ = writer_join.await;
+                        return Ok(PreflightOutcome::Done);
+                    }
+
+                    let slash_dir = home.join("commands");
+                    let commands = match crate::slash::load_all(&slash_dir).await {
+                        Ok(commands) => commands,
+                        Err(error) => {
+                            drop(writer);
+                            if let Err(join_error) = writer_join.await {
+                                warn!(
+                                    error = %join_error,
+                                    "WAL writer join failed while refusing an invalid slash-command set"
+                                );
+                            }
+                            return Err(error).with_context(|| {
                             format!(
                                 "operator slash commands at {} are invalid; refusing partial dispatch",
                                 slash_dir.display()
                             )
                         });
-                    }
-                };
-                if let Some(cmd) = commands.iter().find(|c| c.name == name) {
-                    // Pick #31 — action-based slash short-circuit.
-                    // When the command carries a typed action, dispatch
-                    // it directly + skip the LLM round-trip. Operator
-                    // sees the handler output immediately; no provider
-                    // call, no token cost, no consent gate.
-                    if let Some(action) = cmd.action {
-                        info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
-                        let outcome = crate::slash::dispatch_action(
-                            action,
-                            &cmd_args,
-                            config,
-                            crate::slash::CommandSource::Cli,
-                        )
-                        .await;
-                        println!("{}", outcome.text());
-                        if outcome.should_exit() {
+                        }
+                    };
+                    if let Some(cmd) = commands.iter().find(|c| c.name == name) {
+                        // Pick #31 — action-based slash short-circuit.
+                        // When the command carries a typed action, dispatch
+                        // it directly + skip the LLM round-trip. Operator
+                        // sees the handler output immediately; no provider
+                        // call, no token cost, no consent gate.
+                        if let Some(action) = cmd.action {
+                            info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
+                            let outcome = crate::slash::dispatch_action(
+                                action,
+                                &cmd_args,
+                                config,
+                                crate::slash::CommandSource::Cli,
+                            )
+                            .await;
+                            println!("{}", outcome.text());
+                            if outcome.should_exit() {
+                                return Ok(PreflightOutcome::Done);
+                            }
+                            // Action handled — no LLM call needed for this turn.
                             return Ok(PreflightOutcome::Done);
                         }
-                        // Action handled — no LLM call needed for this turn.
-                        return Ok(PreflightOutcome::Done);
+                        let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
+                        info!(slash_command = %name, "slash dispatch");
+                        let items = vec![
+                            crate::tokens::budget::BlockItem::new(
+                                crate::tokens::budget::Block::B,
+                                rendered.clone(),
+                            ),
+                            crate::tokens::budget::BlockItem::new(
+                                crate::tokens::budget::Block::E,
+                                cmd_args.clone(),
+                            ),
+                        ];
+                        let slot = McpCatalogueSlot::before_user(&items)?;
+                        (cmd_args, Some(rendered), items, Some(slot))
+                    } else {
+                        (
+                            prompt.clone(),
+                            combined_system,
+                            budget_items.clone(),
+                            Some(mcp_catalogue_slot),
+                        )
                     }
-                    let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
-                    info!(slash_command = %name, "slash dispatch");
-                    let items = vec![
-                        crate::tokens::budget::BlockItem::new(
-                            crate::tokens::budget::Block::B,
-                            rendered.clone(),
-                        ),
-                        crate::tokens::budget::BlockItem::new(
-                            crate::tokens::budget::Block::E,
-                            cmd_args.clone(),
-                        ),
-                    ];
-                    (cmd_args, Some(rendered), items)
-                } else {
-                    (prompt.clone(), combined_system, budget_items.clone())
                 }
+                crate::slash::Invocation::Escaped { text } => (
+                    text,
+                    combined_system,
+                    budget_items.clone(),
+                    Some(mcp_catalogue_slot),
+                ),
+                crate::slash::Invocation::NotACommand => (
+                    prompt.clone(),
+                    combined_system,
+                    budget_items.clone(),
+                    Some(mcp_catalogue_slot),
+                ),
             }
-            crate::slash::Invocation::Escaped { text } => {
-                (text, combined_system, budget_items.clone())
-            }
-            crate::slash::Invocation::NotACommand => {
-                (prompt.clone(), combined_system, budget_items.clone())
-            }
-        }
-    };
+        };
 
     // ── TOML hooks: PrePipeline + PreProviderCall (Phase 29 R-15) ─────────
     // Load `~/.neoth/hooks/*.toml` once for this turn. Both stages apply
@@ -2378,6 +2674,7 @@ async fn enforce_preflight(
         agent_tool_policy,
         pending_block_restorations,
         budget_items: final_budget_items,
+        mcp_catalogue_slot: final_mcp_catalogue_slot,
     })
 }
 
@@ -2440,6 +2737,211 @@ impl ProviderDispatchResult {
     }
 }
 
+/// Emit the caller-owned terminal goal lifecycle event. A confirmed `Met`
+/// event is already emitted by the independent judge at the point of proof;
+/// only budget exhaustion remains for CLI/channel callers to append.
+pub(crate) async fn emit_terminal_goal_outcome(
+    writer: &crate::wal::writer::WalWriterHandle,
+    goal_outcome: crate::mcp::dispatch_loop::GoalOutcome,
+    goal_hash: Option<&str>,
+    surface: &'static str,
+) {
+    if goal_outcome != crate::mcp::dispatch_loop::GoalOutcome::BudgetExhausted {
+        return;
+    }
+    if let Some(goal_hash) = goal_hash {
+        crate::mcp::goal_judge::emit_goal_judged_wal(Some(writer), goal_hash, "budget_exhausted")
+            .await;
+    } else {
+        warn!(
+            surface,
+            "goal loop reported budget exhaustion without a lifecycle hash"
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn resolve_chat_turn_route(
+    args: &ChatArgs,
+    config: &FreedomConfig,
+    base_req: &Request,
+    prompt: &str,
+    home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    mcp_servers: &crate::mcp::McpServers,
+    skill_loop_trigger: bool,
+    mcp_catalogue_allowed: bool,
+) -> TurnDispatchRoute {
+    let loop_trigger = LoopRouteTrigger::new(
+        skill_loop_trigger,
+        args.loop_mode || (config.loop_config.enabled && config.loop_config.max_rounds > 1),
+    );
+    if args.stream && !loop_trigger.is_active() {
+        let prompt_hash = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+        let _ = emit_council_skip(writer, prompt_hash, "streaming_mode_disables_council").await;
+        return TurnDispatchRoute::Streaming;
+    }
+
+    let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let council_mode_single = config.council.mode.is_single();
+    let council_disable_cfg = config.council.disabled.unwrap_or(false) || council_mode_single;
+    let council_disable = council_disable_env || council_disable_cfg;
+    let council_cost = council_trigger_cost_bound_at(config, base_req, home);
+    let trigger_decision = if council_disable {
+        crate::council::TriggerDecision::Skip {
+            reason: match (
+                council_disable_env,
+                council_mode_single,
+                config.council.disabled.unwrap_or(false),
+            ) {
+                (true, _, true) => {
+                    "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
+                }
+                (true, _, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
+                (false, true, _) => "freedom.yaml::council.mode=single".into(),
+                (false, false, _) => "freedom.yaml::council.disabled=true".into(),
+            },
+        }
+    } else if let Err(error) = &council_cost {
+        tracing::warn!(
+            error = %error,
+            "Council cost bound unavailable under active daily cap — smart trigger skipped fail-closed"
+        );
+        crate::council::TriggerDecision::Skip {
+            reason: "council cost bound unavailable under active daily cap — fail-closed".into(),
+        }
+    } else if council_force {
+        crate::council::TriggerDecision::Convene {
+            reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
+        }
+    } else {
+        let now_unix = crate::council::last_ts::now_unix();
+        let seconds_since = crate::council::last_ts::seconds_since_last(home, now_unix);
+        let remaining_budget_usd = match config.council.daily_usd_cap {
+            None => Ok(None),
+            Some(cap_usd) => {
+                let snapshot_home = home.to_path_buf();
+                tokio::task::spawn_blocking(move || {
+                    crate::council::daily_budget::remaining_daily_budget_usd(
+                        &snapshot_home,
+                        cap_usd,
+                        now_unix as i64,
+                    )
+                    .map(Some)
+                })
+                .await
+                .unwrap_or_else(|join| {
+                    Err(anyhow::anyhow!(
+                        "daily-budget snapshot task panicked: {join}"
+                    ))
+                })
+            }
+        };
+        match remaining_budget_usd {
+            Ok(remaining_budget_usd) => {
+                let (estimated_single_call_usd, estimated_council_cost_usd) =
+                    council_cost.as_ref().copied().expect("cost checked above");
+                crate::council::should_convene(
+                    prompt,
+                    &crate::council::TriggerContext {
+                        seconds_since_last_council: seconds_since,
+                        remaining_budget_usd,
+                        estimated_single_call_usd,
+                        estimated_council_cost_usd,
+                    },
+                    &config.council.trigger.to_policy(),
+                )
+            }
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "council daily-budget snapshot invalid — smart trigger skipped fail-closed"
+                );
+                crate::council::TriggerDecision::Skip {
+                    reason: "council daily-budget state invalid — fail-closed".into(),
+                }
+            }
+        }
+    };
+    let council_mif_message = trigger_decision
+        .should_convene()
+        .then(|| mif_disambiguation(config, &base_req.prompt))
+        .flatten();
+    let council_now = crate::council::last_ts::now_unix() as i64;
+    let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message.is_some() {
+        (false, false, Some("mif_conflicted_disambiguation"))
+    } else if council_force {
+        (
+            trigger_decision.should_convene(),
+            false,
+            None::<&'static str>,
+        )
+    } else if trigger_decision.should_convene() {
+        use crate::council::day_counter::AdmitResult;
+        match crate::council::day_counter::try_admit_convene(home, council_now) {
+            AdmitResult::Admitted => (true, false, None),
+            AdmitResult::Capped => {
+                tracing::warn!(
+                    cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                    "council daily convene cap reached — single-provider for this turn"
+                );
+                (false, true, None)
+            }
+            AdmitResult::StateInvalid => {
+                tracing::warn!("council day-counter state invalid — fail-closed for this turn");
+                (
+                    false,
+                    true,
+                    Some("council day-counter state invalid — fail-closed"),
+                )
+            }
+        }
+    } else {
+        (false, false, None)
+    };
+    if !council_force && !council_disable {
+        info!(
+            decision = ?trigger_decision,
+            will_convene = council_enable,
+            "council smart-trigger evaluated"
+        );
+    }
+    if !council_enable {
+        let prompt_hash = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+        let reason = if let Some(reason) = council_deny_reason {
+            reason
+        } else if council_cap_hit {
+            "daily convene cap (rolling 24h) reached"
+        } else {
+            trigger_decision.reason()
+        };
+        let _ = emit_council_skip(writer, prompt_hash, reason).await;
+    }
+
+    let council_route = if let Some(message) = council_mif_message {
+        Some(TurnDispatchRoute::CouncilMif { message })
+    } else if council_enable {
+        Some(TurnDispatchRoute::Council {
+            decision: trigger_decision,
+        })
+    } else {
+        None
+    };
+    let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
+    let autoroute = mcp_servers.autoroute_decision(autoroute_env.as_deref());
+    select_turn_dispatch_route(
+        council_route,
+        autoroute,
+        loop_trigger,
+        mcp_catalogue_allowed,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_provider(
     final_prompt: String,
@@ -2452,7 +2954,6 @@ async fn dispatch_provider(
     writer_join: tokio::task::JoinHandle<()>,
     quota_path: std::path::PathBuf,
     quota_tracker: Option<crate::providers::quota::QuotaTracker>,
-    prompt: &str,
     request_token_cap: u32,
     mcp_servers: &crate::mcp::McpServers,
     tool_scope: crate::mcp::McpToolScope,
@@ -2470,6 +2971,7 @@ async fn dispatch_provider(
     // frame. Exact provider/model/request hashes are added centrally.
     provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
     ephemeral_consent: &crate::consent::EphemeralConsent,
+    route: TurnDispatchRoute,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
     // every concrete provider leaf. That gate checks the current durable
@@ -2654,23 +3156,7 @@ async fn dispatch_provider(
     let mut mcp_tool_records: Vec<crate::mcp::dispatch_loop::ToolCallRecord> = Vec::new();
 
     let dispatch_result: Result<ProviderDispatchResult> = async {
-        Ok(if args.stream {
-            // B-1 follow-up (Session 13) — streaming-branch audit gap.
-            // Council never fans out on the streaming path (council needs
-            // sync semantics + dissent scoring across full responses).
-            // Emit a COUNCIL_SKIP audit anyway so the operator's WAL trace
-            // shows every chat turn was reasoned about WRT council, even
-            // when streaming mode forces the light path. Reason is
-            // operator-greppable: `streaming_mode_disables_council`.
-            {
-                let prompt_hash_stream = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-                let _ = emit_council_skip(
-                    &writer,
-                    prompt_hash_stream,
-                    "streaming_mode_disables_council",
-                )
-                .await;
-            }
+        Ok(if matches!(&route, TurnDispatchRoute::Streaming) {
             // QM-10 Phase 2.5: streaming path also consults the breaker.
             // Acquire BEFORE provider.stream so an Open breaker rejects
             // the call without opening a stream we'd have to drain.
@@ -2888,237 +3374,14 @@ async fn dispatch_provider(
             // Non-streaming: existing behavior. START frame already emitted
             // above the branch; END frame fires after both arms converge.
             //
-            // CH-02 council wedge — smart-trigger default (Codex feedback
-            // 2026-05-16): the chat dispatch now consults CH-14's
-            // `should_convene` BY DEFAULT on every call. Tri-state env:
-            //   - `NEOTH_COUNCIL_DISABLE=1`  → never (operator opt-out wins)
-            //   - `NEOTH_COUNCIL_ENABLE=1`   → always (force-convene every
-            //                                  call, bypasses the gates;
-            //                                  expensive — operator's choice)
-            //   - unset / anything else      → AUTO via `should_convene`
-            //                                  (dissent marker + complexity
-            //                                  + rate + budget gates).
-            //                                  `NEOTH_COUNCIL_AUTO=1` is
-            //                                  accepted for backward compat
-            //                                  but no longer required —
-            //                                  the gate fires automatically.
-            //
-            // Takes priority over MCP autoroute when both apply (they're
-            // mutually exclusive — council debates many providers;
-            // autoroute wraps one). Smart-trigger's default-Skip semantic
-            // (no dissent marker → Skip) means casual prompts like "what's
-            // the time" don't convene; "should I use Rust or Go?" does.
-            let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-            let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(false);
-            // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
-            // flag (set via `neoth council suppress`) is the durable twin of
-            // the env override — either one forces the single-hemisphere path.
-            // `config` is fresh per CLI invocation so the flag is always current.
-            // GOLD-ADAPT-G-01: council.mode=single is a named alternative to
-            // council.disabled=true; both force the single-provider path.
-            // They are orthogonal knobs — `disabled` is toggled by
-            // `neoth council suppress`; `mode` is a persistent topology choice.
-            let council_mode_single = config.council.mode.is_single();
-            let council_disable_cfg =
-                config.council.disabled.unwrap_or(false) || council_mode_single;
-            let council_disable = council_disable_env || council_disable_cfg;
-            // Derive the advisory gate from the same concrete Request and
-            // FreedomConfig generation that the hard per-leaf authorizer will
-            // receive. With an active cap, unknown/unbounded paid leaves skip
-            // before even an env-forced fan-out; the hard cap is not bypassable.
-            let council_cost = council_trigger_cost_bound_at(config, &req, home);
-            // Trigger decision is computed even when not used so the WAL
-            // audit (next iteration) can record "council was triggerable
-            // but skipped because operator opted out".
-            let trigger_decision = if council_disable {
-                crate::council::TriggerDecision::Skip {
-                    // Record BOTH sources when co-active so the audit trail
-                    // doesn't hide the persistent suppress behind the env var
-                    // (clearing the env later would otherwise leave no WAL hint
-                    // that `council.disabled=true` is still in effect).
-                    // Priority: env > mode=single > disabled=true.
-                    reason: match (
-                        council_disable_env,
-                        council_mode_single,
-                        config.council.disabled.unwrap_or(false),
-                    ) {
-                        (true, _, true) => {
-                            "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
-                        }
-                        (true, _, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
-                        (false, true, _) => "freedom.yaml::council.mode=single".into(),
-                        (false, false, _) => "freedom.yaml::council.disabled=true".into(),
-                    },
-                }
-            } else if let Err(error) = &council_cost {
-                tracing::warn!(
-                    error = %error,
-                    "Council cost bound unavailable under active daily cap — smart trigger skipped fail-closed"
-                );
-                crate::council::TriggerDecision::Skip {
-                    reason: "council cost bound unavailable under active daily cap — fail-closed"
-                        .into(),
-                }
-            } else if council_force {
-                crate::council::TriggerDecision::Convene {
-                    reason: "NEOTH_COUNCIL_ENABLE=1 (force)".into(),
-                }
-            } else {
-                // B-3 (Session 13) — feed real `seconds_since_last_council`
-                // from `~/.neoth/council_last.json` so Gate 2 (rate cooldown)
-                // is honoured. Missing / malformed file → `u64::MAX` (gate
-                // open), matching prior behaviour for fresh installs.
-                let now_unix_b3 = crate::council::last_ts::now_unix();
-                let secs_since = crate::council::last_ts::seconds_since_last(home, now_unix_b3);
-                let remaining_budget_usd = match config.council.daily_usd_cap {
-                    None => Ok(None),
-                    // spawn_blocking: the advisory budget read takes the
-                    // cross-process ledger file lock (sleeping retry loop).
-                    Some(cap_usd) => {
-                        let snapshot_home = home.to_path_buf();
-                        tokio::task::spawn_blocking(move || {
-                            crate::council::daily_budget::remaining_daily_budget_usd(
-                                &snapshot_home,
-                                cap_usd,
-                                now_unix_b3 as i64,
-                            )
-                            .map(Some)
-                        })
-                        .await
-                        .unwrap_or_else(|join| {
-                            Err(anyhow::anyhow!("daily-budget snapshot task panicked: {join}"))
-                        })
-                    }
-                };
-                match remaining_budget_usd {
-                    Ok(remaining_budget_usd) => {
-                        let (estimated_single_call_usd, estimated_council_cost_usd) =
-                            council_cost.as_ref().copied().expect("cost checked above");
-                        let ctx = crate::council::TriggerContext {
-                            seconds_since_last_council: secs_since,
-                            remaining_budget_usd,
-                            estimated_single_call_usd,
-                            estimated_council_cost_usd,
-                        };
-                        // SPEC-03b: operator-tunable thresholds from
-                        // `freedom.yaml::council.trigger` (defaults reproduce the prior
-                        // hardcoded policy exactly).
-                        crate::council::should_convene(
-                            prompt,
-                            &ctx,
-                            &config.council.trigger.to_policy(),
-                        )
-                    }
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            "council daily-budget snapshot invalid — smart trigger skipped fail-closed"
-                        );
-                        crate::council::TriggerDecision::Skip {
-                            reason: "council daily-budget state invalid — fail-closed".into(),
-                        }
-                    }
-                }
-            };
-            let council_mif_message = trigger_decision
-                .should_convene()
-                .then(|| mif_disambiguation(config, &req.prompt))
-                .flatten();
-            // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
-            // convening and independent of the USD budget gate. Operator-forced
-            // council bypasses it.
-            let council_now = crate::council::last_ts::now_unix() as i64;
-            // B-25: atomic OS-locked admission — fail-closed on any I/O error.
-            // Operator-forced council (council_force=true) bypasses cap entirely.
-            let (council_enable, council_cap_hit, council_deny_reason) = if council_mif_message
-                .is_some()
+            // Council admission and MCP autoroute were resolved before optional
+            // catalogue I/O and final budgeting. Dispatch only consumes that
+            // immutable decision; it never reopens routing policy.
+            if let TurnDispatchRoute::CouncilMif {
+                message: response_text,
+            } = &route
             {
-                (
-                    false,
-                    false,
-                    Some("mif_conflicted_disambiguation"),
-                )
-            } else if council_force {
-                (
-                    trigger_decision.should_convene(),
-                    false,
-                    None::<&'static str>,
-                )
-            } else if trigger_decision.should_convene() {
-                use crate::council::day_counter::AdmitResult;
-                match crate::council::day_counter::try_admit_convene(home, council_now) {
-                    AdmitResult::Admitted => (true, false, None),
-                    AdmitResult::Capped => {
-                        tracing::warn!(
-                            cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
-                            "council daily convene cap reached — single-provider for this turn"
-                        );
-                        (false, true, None)
-                    }
-                    AdmitResult::StateInvalid => {
-                        tracing::warn!(
-                            "council day-counter state invalid — fail-closed for this turn"
-                        );
-                        (
-                            false,
-                            true,
-                            Some("council day-counter state invalid — fail-closed"),
-                        )
-                    }
-                }
-            } else {
-                (false, false, None)
-            };
-            if !council_force && !council_disable {
-                info!(
-                    decision = ?trigger_decision,
-                    will_convene = council_enable,
-                    "council smart-trigger evaluated"
-                );
-            }
-            // B-1 (Session 13) — emit COUNCIL_SKIP audit when the trigger
-            // resolved to Skip so the operator's WAL audit distinguishes
-            // "light path: single hemisphere answered because trigger said
-            // skip" from "council fired but everyone agreed silently".
-            // Reason carries the exact gate (env override, complexity,
-            // rate, budget) so an operator can grep refusal causes per
-            // gate over time.
-            if !council_enable {
-                let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-                let reason = if let Some(r) = council_deny_reason {
-                    r
-                } else if council_cap_hit {
-                    "daily convene cap (rolling 24h) reached"
-                } else {
-                    trigger_decision.reason()
-                };
-                let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
-            }
-            // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
-            // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:
-            //   - NEOTH_MCP_AUTOROUTE=1 / true / on / yes → forced ON
-            //   - NEOTH_MCP_AUTOROUTE=0 / false / off / no → forced OFF
-            //   - unset / empty / other → AUTO (on when servers present)
-            // Decision threaded via `McpServers::autoroute_decision` so the
-            // chat dispatch can log *why* the loop is on/off (operator
-            // opt-in vs auto-derive vs zero-server-default-off).
-            // Council always wins when explicitly enabled — the two paths
-            // are mutually exclusive (council debates many providers,
-            // autoroute wraps one).
-            let mcp_servers_for_loop = if !council_enable {
-                mcp_servers.clone()
-            } else {
-                crate::mcp::McpServers::default()
-            };
-            let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
-            let autoroute_decision =
-                mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
-            let use_loop = !council_enable && autoroute_decision.is_on();
-            if let Some(response_text) = council_mif_message {
+                let response_text = response_text.clone();
                 println!("{response_text}");
                 ProviderDispatchResult::new(
                     response_text,
@@ -3127,7 +3390,10 @@ async fn dispatch_provider(
                     "council_mif".to_string(),
                     "deterministic".to_string(),
                 )
-            } else if council_enable {
+            } else if let TurnDispatchRoute::Council {
+                decision: trigger_decision,
+            } = &route
+            {
                 info!(
                     trigger = ?trigger_decision,
                     "council convened — running 3-hemisphere debate"
@@ -3167,8 +3433,21 @@ async fn dispatch_provider(
                     "council".to_string(),
                     "multi-provider".to_string(),
                 )
-            } else if use_loop {
-                info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
+            } else if route.uses_loop() {
+                let loop_trigger = route
+                    .loop_trigger()
+                    .expect("loop dispatch routes always carry their typed trigger");
+                if let Some(reason) = route.autoroute_reason() {
+                    info!(reason, "MCP autoroute enabled — running dispatch loop");
+                } else {
+                    info!("skill/config refinement enabled — running protocol-free loop");
+                }
+                let protocol_free_mcp_servers = crate::mcp::McpServers::default();
+                let route_mcp_servers = if route.uses_mcp_catalogue() {
+                    mcp_servers
+                } else {
+                    &protocol_free_mcp_servers
+                };
                 // The complete resolved skill/agent scope is immutable for the
                 // turn and is reused by both the single and multi-round paths.
                 // GOLD-ADAPT-MEM-05 — snapshot session state BEFORE the dispatch loop
@@ -3179,7 +3458,14 @@ async fn dispatch_provider(
                 // the turn — pre_compact returns and we ignore the path).
                 if config.compaction.enabled {
                     let mut snap_ctx = std::collections::BTreeMap::new();
-                    snap_ctx.insert("source".to_string(), serde_json::json!("mcp_dispatch_loop"));
+                    snap_ctx.insert(
+                        "source".to_string(),
+                        serde_json::json!(if route.uses_mcp_catalogue() {
+                            "mcp_dispatch_loop"
+                        } else {
+                            "skill_refine_loop"
+                        }),
+                    );
                     snap_ctx.insert(
                         "prompt_chars".to_string(),
                         serde_json::json!(req.prompt.len()),
@@ -3216,7 +3502,7 @@ async fn dispatch_provider(
                             mode: "chat".to_string(),
                             provider_target: provider.name().to_string(),
                             council_mode: council_mode_str,
-                            scoped_mcp_servers: enabled_mcp_scope(&mcp_servers_for_loop),
+                            scoped_mcp_servers: enabled_mcp_scope(route_mcp_servers),
                             mcp_scope_recorded: true,
                             phase: "chat:pre-compact".to_string(),
                             ts_unix: crate::time::now_unix_i64(),
@@ -3232,11 +3518,15 @@ async fn dispatch_provider(
                 // max_rounds > 1 on CLI), route through the loop engine instead of
                 // a bare single dispatch. The loop engine internally calls
                 // `run_mcp_dispatch_loop` per round and handles WAL + record write.
-                let loop_engage = args.loop_mode
-                    || (config.loop_config.enabled && config.loop_config.max_rounds > 1);
+                let loop_engage = loop_trigger.is_active();
                 let outcome = if loop_engage {
+                    let max_rounds = args
+                        .iterations
+                        .unwrap_or(config.loop_config.max_rounds)
+                        .max(loop_trigger.minimum_rounds());
                     let loop_cfg = crate::loop_engine::engine::LoopConfig {
-                        max_rounds: args.iterations.unwrap_or(config.loop_config.max_rounds),
+                        min_rounds: loop_trigger.minimum_rounds(),
+                        max_rounds,
                         until: if !args.until.is_empty() {
                             args.until.clone()
                         } else {
@@ -3259,7 +3549,7 @@ async fn dispatch_provider(
                         // create a forbidden nested authorizer on round one.
                         &token_capped_provider,
                         req.clone(),
-                        &mcp_servers_for_loop,
+                        route_mcp_servers,
                         &writer,
                         config,
                         call_authorizer.clone(),
@@ -3275,30 +3565,7 @@ async fn dispatch_provider(
                     )
                     .await
                     {
-                        Ok(record) => {
-                            // Convert LoopRunRecord into a LoopOutcome-compatible
-                            // surface so the code below (println, mcp_tool_calls)
-                            // works unchanged.
-                            crate::mcp::dispatch_loop::LoopOutcome {
-                                final_text: record.final_text,
-                                iterations: record.rounds_run,
-                                hit_cap: matches!(
-                                    record.stop_reason,
-                                    crate::loop_engine::engine::StopReason::CapHit
-                                        | crate::loop_engine::engine::StopReason::BudgetExceeded
-                                ),
-                                successful_calls: record
-                                    .per_round
-                                    .iter()
-                                    .map(|r| r.successful_calls)
-                                    .sum(),
-                                failed_calls: record.per_round.iter().map(|r| r.failed_calls).sum(),
-                                tool_call_records: vec![],
-                                // GOLD-TASK-05 — loop_engine path has no goal judge;
-                                // goal_outcome is always None here.
-                                goal_outcome: crate::mcp::dispatch_loop::GoalOutcome::None,
-                            }
-                        }
+                        Ok(record) => record.into_dispatch_outcome(),
                         Err(e) => {
                             if !provider.handles_nonstream_quota_backoff()
                                 && let Some(qe) =
@@ -3316,7 +3583,7 @@ async fn dispatch_provider(
                     match run_mcp_dispatch_loop(
                         provider,
                         req.clone(),
-                        &mcp_servers_for_loop,
+                        route_mcp_servers,
                         &config.autonomy_policy(),
                         &writer,
                         Some(&config.rollback),
@@ -3386,27 +3653,15 @@ async fn dispatch_provider(
                     successful_calls = outcome.successful_calls,
                     failed_calls = outcome.failed_calls,
                     hit_cap = outcome.hit_cap,
-                    "MCP dispatch loop complete"
+                    "tool/refinement dispatch complete"
                 );
-                // GOLD-TASK-05 — emit 0x89 GOAL_JUDGED WAL frame for budget_exhausted
-                // outcomes (the "met" frame is already emitted inside judge_goal_met).
-                {
-                    use crate::mcp::dispatch_loop::GoalOutcome;
-                    if matches!(outcome.goal_outcome, GoalOutcome::BudgetExhausted) {
-                        let goal_hash = config
-                            .goal
-                            .goal
-                            .as_deref()
-                            .map(|g| format!("{:016x}", xxhash_rust::xxh3::xxh3_64(g.as_bytes())))
-                            .unwrap_or_default();
-                        crate::mcp::goal_judge::emit_goal_judged_wal(
-                            Some(&writer),
-                            &goal_hash,
-                            "budget_exhausted",
-                        )
-                        .await;
-                    }
-                }
+                emit_terminal_goal_outcome(
+                    &writer,
+                    outcome.goal_outcome,
+                    outcome.goal_hash.as_deref(),
+                    "cli",
+                )
+                .await;
                 // GOLD-ADAPT-ODY-20 — capture for auto-skill extraction gate.
                 mcp_tool_calls = outcome.successful_calls;
                 // REVFIX-EXCERPTS-01 — capture structured call records for digest.
@@ -3427,6 +3682,10 @@ async fn dispatch_provider(
                     "multi-hop".to_string(),
                 )
             } else {
+                debug_assert!(
+                    matches!(&route, TurnDispatchRoute::Direct),
+                    "CLI dispatch received an unsupported non-direct route"
+                );
                 // QM-10 Phase 2: consult the circuit breaker for this
                 // provider before dispatching. Open breakers reject
                 // immediately with operator-readable retry_after.
@@ -5074,12 +5333,14 @@ async fn run_chat_with_consent(
         PromptBundle {
             combined_system,
             budget_items,
+            mcp_catalogue_slot,
             skill_tool_allowlist,
             plan_attest_hash,
             agent_raw_layers,
             resolved_model: skill_model,
             // GOLD-CCPARITY-EFFORT-03: per-skill effort resolved in build_prompt_bundle.
             resolved_effort: skill_effort,
+            skill_loop_trigger,
         },
         config,
         prompt,
@@ -5092,7 +5353,6 @@ async fn run_chat_with_consent(
             args: &args,
             prompt_bundle_hash: &intent_bundle_hash,
             writer: &writer,
-            mcp_servers: &mcp_servers,
         },
         PromptBuildOptions {
             slash_skill_name,
@@ -5126,9 +5386,11 @@ async fn run_chat_with_consent(
         agent_tool_policy,
         pending_block_restorations,
         budget_items,
+        mcp_catalogue_slot,
     ) = match enforce_preflight(
         combined_system,
         budget_items,
+        mcp_catalogue_slot,
         prompt,
         provider,
         &args,
@@ -5163,6 +5425,7 @@ async fn run_chat_with_consent(
             agent_tool_policy,
             pending_block_restorations,
             budget_items,
+            mcp_catalogue_slot,
         } => (
             writer,
             writer_join,
@@ -5178,12 +5441,66 @@ async fn run_chat_with_consent(
             agent_tool_policy,
             pending_block_restorations,
             budget_items,
+            mcp_catalogue_slot,
         ),
     };
 
     let mut mcp_tool_scope = crate::mcp::McpToolScope::from_skill_allowlist(skill_tool_allowlist);
     if let Some((allowed, disallowed)) = agent_tool_policy {
         mcp_tool_scope = mcp_tool_scope.with_agent(allowed, disallowed);
+    }
+
+    let route_thinking_budget = skill_effort
+        .filter(|_| provider.request_controls().supports_thinking_budget())
+        .map(crate::providers::effort_override::effort_to_tokens);
+    let base_route_request = Request {
+        prompt: final_prompt.clone(),
+        system: final_system.clone(),
+        model: effective_model.clone(),
+        temperature: args.temperature,
+        top_p: args.top_p,
+        sampling_seed: args.sampling_seed,
+        stop_sequences: Vec::new(),
+        thinking_budget: route_thinking_budget,
+    };
+    let chat_route = resolve_chat_turn_route(
+        &args,
+        &config,
+        &base_route_request,
+        &prompt,
+        &home,
+        &writer,
+        &mcp_servers,
+        skill_loop_trigger,
+        mcp_catalogue_slot.is_some(),
+    )
+    .await;
+
+    let mut budget_items = budget_items;
+    let mut final_system = final_system;
+    // ── Route-bound MCP catalogue (CLI path) ──────────────────────────────
+    // Exact route is fixed above. No Council/MIF/stream/direct turn reaches
+    // this await, and dispatch_provider consumes the same route value below.
+    let mcp_catalogue: Option<crate::mcp::catalogue::McpPromptCatalogue> =
+        if chat_route.uses_mcp_catalogue() && mcp_catalogue_slot.is_some() {
+            crate::mcp::catalogue::assemble_catalogue_for_prompt(&mcp_servers, &final_prompt).await
+        } else {
+            None
+        };
+    if let (Some(slot), Some(catalogue)) = (mcp_catalogue_slot, mcp_catalogue.as_ref()) {
+        info!(
+            data_bytes = catalogue.data().as_str().len(),
+            source_id = catalogue.source_id().as_str(),
+            "MCP tool catalogue injected into system prompt"
+        );
+        slot.insert(&mut budget_items, catalogue)?;
+        let (typed_prompt, typed_system) =
+            crate::tokens::budget::render_request(&budget_items).map_err(anyhow::Error::msg)?;
+        anyhow::ensure!(
+            typed_prompt == final_prompt,
+            "route-bound MCP injection changed the user message"
+        );
+        final_system = typed_system;
     }
 
     let route_cap =
@@ -5264,7 +5581,6 @@ async fn run_chat_with_consent(
         writer_join,
         quota_path,
         quota_tracker,
-        &prompt,
         request_token_cap,
         &mcp_servers,
         mcp_tool_scope,
@@ -5276,6 +5592,7 @@ async fn run_chat_with_consent(
         model_source,
         provider_audit_context,
         &ephemeral_consent,
+        chat_route,
     )
     .await?;
 
@@ -8375,9 +8692,25 @@ async fn dispatch_council_with_recovery_for_turn(
                         rounds_run = record.rounds_run,
                         "GOLD-LOOP-01: dissent-invoke loop completed — using loop output"
                     );
+                    emit_terminal_goal_outcome(
+                        writer,
+                        record.goal_outcome,
+                        record.goal_hash.as_deref(),
+                        "council_dissent",
+                    )
+                    .await;
                     return Ok(record.final_text);
                 }
                 Err(e) => {
+                    if e.downcast_ref::<crate::mcp::goal_tracker::GoalIntegrityError>()
+                        .is_some()
+                    {
+                        tracing::warn!(
+                            error = %e,
+                            "GOLD-LOOP-01: dissent-invoke integrity failure — aborting without fallback"
+                        );
+                        return Err(e);
+                    }
                     tracing::warn!(
                         error = %e,
                         "GOLD-LOOP-01: dissent-invoke loop failed — using original council output"
@@ -9048,6 +9381,246 @@ mod tests {
     const UNPRICED_TEST_PROVIDER_AUTONOMY: crate::permissions::AutonomyLevel =
         crate::permissions::AutonomyLevel::Full;
 
+    #[test]
+    fn exact_turn_route_couples_mcp_catalogue_and_dispatch() {
+        use crate::mcp::config::AutorouteDecision;
+
+        assert!(matches!(
+            select_turn_dispatch_route(
+                None,
+                AutorouteDecision::AutoOn,
+                LoopRouteTrigger::default(),
+                true,
+            ),
+            TurnDispatchRoute::McpDispatch {
+                autoroute: AutorouteDecision::AutoOn,
+                ..
+            }
+        ));
+        assert!(matches!(
+            select_turn_dispatch_route(
+                None,
+                AutorouteDecision::AutoOn,
+                LoopRouteTrigger::default(),
+                false,
+            ),
+            TurnDispatchRoute::Direct
+        ));
+        for autoroute in [AutorouteDecision::ForcedOff, AutorouteDecision::AutoOff] {
+            let route = select_turn_dispatch_route(
+                None,
+                autoroute,
+                LoopRouteTrigger::new(true, false),
+                true,
+            );
+            assert!(matches!(route, TurnDispatchRoute::RefineLoop { .. }));
+            let trigger = route.loop_trigger().expect("refine route trigger");
+            assert!(trigger.skill_triggered());
+            assert!(trigger.is_active());
+            assert_eq!(trigger.minimum_rounds(), 2);
+            assert!(!route.uses_mcp_catalogue());
+        }
+        assert!(matches!(
+            select_turn_dispatch_route(
+                Some(TurnDispatchRoute::CouncilMif {
+                    message: "clarify".into(),
+                }),
+                AutorouteDecision::AutoOn,
+                LoopRouteTrigger::new(true, false),
+                true,
+            ),
+            TurnDispatchRoute::CouncilMif { .. }
+        ));
+    }
+
+    #[test]
+    fn mode_parent_loop_contract_routes_identically_when_mcp_is_off() {
+        let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(
+            r#"
+id: iterative-parent
+description: iterative parent with a named mode
+version: "1.0.0"
+trigger_keywords: ["iterate"]
+system_prompt: "base"
+loop: true
+modes:
+  - id: focused-pass
+    description: focused iterative pass
+    spectrum: balanced
+    oversight: high
+    output:
+      format: markdown
+    trigger_phrases: ["focused pass"]
+"#,
+        )
+        .expect("mode skill manifest");
+        let skills = vec![crate::skills::schema::Skill {
+            manifest,
+            path: std::path::PathBuf::from("iterative-parent"),
+            content_hash: String::new(),
+        }];
+        let registry =
+            crate::skills::mode_registry::ModeRegistry::from_skills(&skills).expect("registry");
+        let resolved = registry.match_trigger("run a focused pass").expect("mode");
+        let parent = skills.iter().find(|skill| skill.id() == resolved.skill_id);
+        let loop_trigger = LoopRouteTrigger::new(routed_skill_loop_trigger(parent), false);
+
+        assert!(loop_trigger.skill_triggered());
+        for autoroute in [
+            crate::mcp::config::AutorouteDecision::ForcedOff,
+            crate::mcp::config::AutorouteDecision::AutoOff,
+        ] {
+            assert!(matches!(
+                select_turn_dispatch_route(None, autoroute, loop_trigger, true),
+                TurnDispatchRoute::RefineLoop { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn route_bound_catalogue_slot_inserts_one_atomic_pair_at_builder_boundary() {
+        use crate::tokens::budget::{AtomicGroup, Block, BlockItem};
+
+        let guard = crate::pipeline::enriched_request::PROMPT_NON_DISCLOSURE_CLAUSE;
+        let mut items = vec![
+            BlockItem::new(Block::B, "base system"),
+            BlockItem::new(Block::B, guard),
+            BlockItem::new(Block::E, "use the tool"),
+        ];
+        let slot = McpCatalogueSlot::from_enriched(&items).unwrap();
+        let catalogue =
+            crate::mcp::catalogue::McpPromptCatalogue::from_catalogue_data("read_file schema")
+                .unwrap();
+
+        slot.insert(&mut items, &catalogue).unwrap();
+
+        let grouped: Vec<_> = items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.atomic_group == Some(AtomicGroup::McpCatalogue))
+            .collect();
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].1.block, Block::A);
+        assert_eq!(grouped[1].1.block, Block::D);
+        assert_eq!(grouped[0].0 + 1, grouped[1].0);
+        let guard_index = items
+            .iter()
+            .position(|item| item.block == Block::B && item.content == guard)
+            .unwrap();
+        let user_index = items
+            .iter()
+            .position(|item| item.block == Block::E)
+            .unwrap();
+        assert!(grouped[1].0 < guard_index && guard_index < user_index);
+        assert!(slot.insert(&mut items, &catalogue).is_err());
+    }
+
+    #[test]
+    fn budget_policy_hash_binds_order_group_ranking_tokens_and_exact_content() {
+        use crate::tokens::budget::{AtomicGroup, Block, BlockItem};
+
+        let base = vec![
+            BlockItem::new(Block::A, "protocol").with_atomic_group(AtomicGroup::McpCatalogue),
+            BlockItem::new(Block::D, "catalogue").with_atomic_group(AtomicGroup::McpCatalogue),
+            BlockItem::new(Block::E, "prompt"),
+        ];
+        let expected = budget_policy_hash_for_items(&base);
+        assert_eq!(budget_policy_hash_for_items(&base.clone()), expected);
+
+        let mut reordered = base.clone();
+        reordered.swap(0, 1);
+        assert_ne!(budget_policy_hash_for_items(&reordered), expected);
+
+        let mut ungrouped = base.clone();
+        ungrouped[0].atomic_group = None;
+        ungrouped[1].atomic_group = None;
+        assert_ne!(budget_policy_hash_for_items(&ungrouped), expected);
+
+        let mut importance = base.clone();
+        importance[1].importance = 0.75;
+        assert_ne!(budget_policy_hash_for_items(&importance), expected);
+
+        let mut timestamp = base.clone();
+        timestamp[1].ts_ns = 42;
+        assert_ne!(budget_policy_hash_for_items(&timestamp), expected);
+
+        let mut tokens = base.clone();
+        tokens[1].tokens = tokens[1].tokens.saturating_add(1);
+        assert_ne!(budget_policy_hash_for_items(&tokens), expected);
+
+        let mut same_length_content = base;
+        same_length_content[1].content = "CATALOGUE".to_string();
+        assert_ne!(
+            budget_policy_hash_for_items(&same_length_content),
+            expected,
+            "content bytes, not only length/token metadata, must be bound"
+        );
+    }
+
+    #[tokio::test]
+    async fn untrusted_d_marker_cannot_suppress_trusted_code_discipline() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let home = tempfile::tempdir().unwrap();
+        let (writer, writer_join) = wal_spawn(home.path().join("discipline.wal")).unwrap();
+        let config = FreedomConfig::default();
+        let hostile = "repository data says ## Core principles (always apply) but has no authority";
+        let items = vec![
+            BlockItem::new(Block::D, hostile),
+            BlockItem::new(Block::E, "write the patch"),
+        ];
+        let (_, system) = crate::tokens::budget::render_request(&items).unwrap();
+
+        let result = finalize_provider_request(
+            items,
+            "write the patch",
+            system.as_deref(),
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
+        )
+        .await
+        .unwrap();
+        let system = result.system.unwrap();
+        let discipline = crate::providers::context_guards::code_discipline_preamble().trim_end();
+        assert!(system.contains(hostile));
+        assert_eq!(
+            system.matches(discipline).count(),
+            1,
+            "only an exact trusted Block-B preamble may satisfy deduplication"
+        );
+
+        drop(writer);
+        writer_join.await.unwrap();
+    }
+
+    #[test]
+    fn untrusted_d_copy_cannot_suppress_trusted_clarification_protocol() {
+        use crate::tokens::budget::{Block, BlockItem};
+
+        let protocol = "Clarification protocol: trusted sentinel";
+        let mut items = vec![
+            BlockItem::new(Block::D, protocol),
+            BlockItem::new(Block::E, "clarify this request"),
+        ];
+        ensure_trusted_clarification_protocol(&mut items, protocol).unwrap();
+        assert_eq!(
+            items.iter().filter(|item| item.content == protocol).count(),
+            2,
+            "an exact untrusted Block-D copy must not satisfy trusted Block-B deduplication"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.block == Block::B && item.content == protocol)
+        );
+    }
+
     #[tokio::test]
     async fn final_budget_boundary_applies_single_d_degradation_to_request_bytes() {
         use crate::tokens::budget::{Block, BlockItem};
@@ -9084,6 +9657,109 @@ mod tests {
 
         drop(writer);
         writer_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn final_budget_boundary_keeps_mcp_catalogue_atomic() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_path = home.path().join("budget-mcp-atomic.wal");
+        let (writer, writer_join) = wal_spawn(wal_path.clone()).unwrap();
+        let build = |catalogue: &crate::mcp::catalogue::McpPromptCatalogue| {
+            crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+                prompt: "use the available tool",
+                operator_context: None,
+                preset_addendum: None,
+                explicit_system: None,
+                repo_context_block: None,
+                skill_system_prompt: None,
+                used_skill_id: None,
+                mcp_catalogue: Some(catalogue),
+                persona_override: None,
+                moral_core: None,
+                identity_anchor: None,
+                identity_locked: false,
+                current_goal: None,
+                communication_profile: None,
+            })
+        };
+
+        let small_catalogue =
+            crate::mcp::catalogue::McpPromptCatalogue::from_catalogue_data("read_file schema")
+                .unwrap();
+        let small = build(&small_catalogue);
+        let mut config = FreedomConfig::default();
+        config.tokens.max_per_request = 200_000;
+        let retained = finalize_provider_request(
+            small.budget_items,
+            &small.prompt,
+            small.system.as_deref(),
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
+        )
+        .await
+        .expect("fitting MCP protocol and catalogue must both survive");
+        let retained_system = retained.system.unwrap();
+        assert!(retained_system.contains(small_catalogue.trusted_protocol()));
+        assert!(retained_system.contains(r#""class":"mcp_catalogue""#));
+
+        let large_catalogue =
+            crate::mcp::catalogue::McpPromptCatalogue::from_catalogue_data("x".repeat(100_000))
+                .unwrap();
+        let large = build(&large_catalogue);
+        config.tokens.max_per_request = 20_000;
+        let degraded = finalize_provider_request(
+            large.budget_items,
+            &large.prompt,
+            large.system.as_deref(),
+            ProviderRequestBoundary {
+                config: &config,
+                home: home.path(),
+                provider_name: "test_provider",
+                effective_model: None,
+                route_cap: None,
+                writer: &writer,
+            },
+        )
+        .await
+        .expect("over-cap MCP group must be removed atomically");
+        let degraded_system = degraded.system.unwrap_or_default();
+        assert!(!degraded_system.contains(large_catalogue.trusted_protocol()));
+        assert!(!degraded_system.contains(r#""class":"mcp_catalogue""#));
+
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let wal = std::fs::read(wal_path).unwrap();
+        let frame = decode_frame(&wal[SEGMENT_HEADER_LEN..]).expect("budget audit frame");
+        assert_eq!(frame.header.event_type, EVENT_TYPE_BUDGET_EXCEEDED);
+        let payload: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+        assert_eq!(
+            payload["removed_atomic_groups"],
+            serde_json::json!(["mcp_catalogue"])
+        );
+        assert_eq!(
+            payload["budget_policy_hash"].as_str().map(str::len),
+            Some(64)
+        );
+        let per_block = payload["per_block"].as_array().expect("per-block audit");
+        let a = per_block
+            .iter()
+            .find(|entry| entry["block"] == "a")
+            .expect("Block A audit");
+        assert_eq!(a["items_before"], 1);
+        assert_eq!(a["items_after"], 0);
+        let d = per_block
+            .iter()
+            .find(|entry| entry["block"] == "d")
+            .expect("Block D audit");
+        assert_eq!(d["items_before"], 1);
+        assert_eq!(d["items_after"], 0);
     }
 
     #[tokio::test]
@@ -12911,7 +13587,6 @@ mod tests {
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
                     .expect("load test quota state"),
             ),
-            "test prompt",
             config.tokens.max_per_request,
             &mcp_servers,
             crate::mcp::McpToolScope::default(),
@@ -12922,6 +13597,7 @@ mod tests {
             authorized_source,
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
+            TurnDispatchRoute::Direct,
         )
         .await;
 
@@ -13044,7 +13720,6 @@ mod tests {
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
                     .expect("load test quota state"),
             ),
-            "blocked prompt",
             config.tokens.max_per_request,
             &mcp_servers,
             crate::mcp::McpToolScope::default(),
@@ -13054,6 +13729,7 @@ mod tests {
             "cli",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
+            TurnDispatchRoute::Direct,
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
@@ -13162,7 +13838,6 @@ mod tests {
                 crate::providers::quota::QuotaTracker::load_from(&quota_path)
                     .expect("load test quota state"),
             ),
-            "effort test",
             config.tokens.max_per_request,
             &mcp_servers,
             crate::mcp::McpToolScope::default(),
@@ -13172,6 +13847,7 @@ mod tests {
             "provider_default",
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
+            TurnDispatchRoute::Direct,
         )
         .await;
 

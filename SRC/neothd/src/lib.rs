@@ -171,7 +171,8 @@ pub mod telemetry;
 pub mod time;
 /// Round-3 v0.4 ARCH-04 — block-layer prompt token-cap enforcement
 /// + graceful degradation policy (D oldest 50% → C lowest-importance
-/// 50% → Conductor truncation; never touches A/B/E). Returns the
+/// 50% → Conductor truncation). Uncoupled A/B/E items remain protected; a
+/// validated A+D semantic atomic group may be removed only as one unit. Returns the
 /// per-block diff for the WAL `0x2F BUDGET_EXCEEDED` audit emit-site.
 pub mod tokens;
 pub mod tools;

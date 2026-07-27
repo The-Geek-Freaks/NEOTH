@@ -417,14 +417,93 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     tests pass. Independent review findings for incomplete `%XX`, cross-scalar
     normalization, metadata-only overflow, hidden skeleton loss, retained-root
     parent lineage and raw citation-vs-wire budgeting are pinned by regressions.
+    **Second consumer-adoption checkpoint (2026-07-26; checkbox remains OPEN):**
+    the runtime MCP catalogue now has a dedicated type that keeps the trusted
+    static invocation protocol separate from one bounded `McpCatalogue`
+    envelope containing every server/config/tool/schema/deferred/unavailable
+    field. Chat, channels, sub-agent rebuilds and Cron all consume that type;
+    enriched budgeting tags protocol A and data D as one semantic atomic group,
+    so pressure retains both or removes both. Both public budget enforcers check
+    the exact one-A/one-D shape before mutation; grouped B/C/E/Conductor,
+    duplicates and orphans fail closed with the caller's vector unchanged. Tool
+    identifiers, property counts, required sets and schema
+    summaries are bounded before intermediate catalogue allocation. Server IDs
+    share the invocation parser's exact addressability contract; a present
+    allowlist wins over `trust_all_tools` exactly as it does at the real gate.
+    Duplicate IDs fail closed on both load and pre-persist update validation,
+    so catalogue and dispatch cannot resolve the same name to different
+    processes. The bounded catalogue is explicitly a discovery view, not an
+    authorization grant or deny-list: smart-loading/cap omission changes
+    visibility only, while the complete operator policy and live gates remain
+    authoritative for every invocation.
+    Server count, per-server and aggregate payload bytes are capped before typed
+    serialization. `tools/list` uses a shared six-second deadline with at most
+    four active fetches, deterministic completed-server order and an explicit
+    `PARTIAL` marker when selected servers remain unfinished. CLI and Channels
+    select the exact Council/MCP/refinement/direct route once before catalogue
+    I/O; only `McpDispatch` may fetch and inject it. Streaming, Council, direct
+    and protocol-free refinement routes cannot inherit catalogue authority.
+    Matched `loop: true` skills survive CLI preflight in the same typed
+    loop-route trigger used by Channels: ForcedOff/AutoOff MCP selects an empty
+    MCP registry and at least two refinement rounds instead of silently falling
+    through to one direct call.
+    Enriched repo-map context and runtime `.neothhints`/`AGENTS.md` are
+    `RepoHint` data rather than repository-granted authority; files are bounded
+    before read/allocation. Model/tool path candidates have byte, component and
+    command-token ceilings; ancestor traversal is borrowed and bounded,
+    canonical paths own dedup/accounting with lossless OS-byte SHA-256 source
+    identity, failed canonicalization consumes no successful-load allowance,
+    temporary drain pressure requeues untouched leaves, and complete rendered
+    envelopes have per-drain plus per-session byte ceilings. All hint filesystem
+    work runs on Tokio's blocking pool. `HINT_LOADED` records distinct
+    bounded-source, included-payload and exact-wire provenance without storing
+    the body. A static adapter lets relevant convention claims inform work
+    without authorizing tools, permissions, secrets, network, destructive
+    actions or policy changes. Skill
+    `$ARGUMENTS` and prompt-slash `{args}` now refer to the separate current
+    user message instead of copying caller bytes into B/System authority.
+    MCP dispatch-loop assistant output is parsed raw only for tool calls and
+    final display; its leaked-call retry, Goal/Grind continuation, goal-judge
+    call and follow-up receive a bounded `ModelOutput` envelope. The judge
+    requires an exact `YES`, its summary plus active goal are both data-only
+    typed values, and WAL distinguishes real `not_met` from provider
+    `unavailable` or input-budget failure. A configured goal retains an explicit
+    terminal `budget_exhausted` outcome at every terminal direct
+    iteration/tool-call budget exit, including after its one-shot nudge fired; a
+    negative post-nudge judgement keeps working to the cap rather than bypassing
+    verification. Multi-round records carry the exact aggregate outcome and
+    original untruncated goal hash: only a final outer cap/budget exit is
+    terminal, historical inner caps cannot create a contradictory terminal
+    event, and inner exhaustion vetoes accidental outer convergence until a
+    later `Met` or the real outer cap. A confirmed response skips post-judge
+    refinement, so the returned bytes are exactly the judged bytes. Hash
+    divergence, incomplete judge input and an all-dispatches-failed Goal are
+    typed non-bypassable errors; input overflow and dispatch unavailability emit
+    one full-hash lifecycle frame and cannot fall through to a direct provider.
+    The outer Channel-Council caller preserves that same integrity boundary
+    instead of converting a dissent-loop failure into a direct-provider
+    fallback. A confirmed Goal is conjunctive with explicit `--until` criteria:
+    it stops immediately only when the structural verifier also approves.
+    When a rejected structural gate causes another round to replace the judged
+    response, the historical `Met` verdict is cleared rather than certifying
+    different final bytes.
+    UUIDv7 loop IDs keep concurrent WAL correlation and persisted loop records
+    collision-free.
+    Judge-disabled oversized Goals retain the legacy one-shot bounded nudge;
+    judge-enabled oversized Goals fail before the first paid leaf. CLI plus
+    Channels share one terminal WAL consumer. Untrusted D blocks cannot
+    impersonate either the trusted Block-B
+    code-discipline preamble or the clarification protocol. A production
+    focused source tripwire pins the known repaired seams and removed
+    signatures; typed APIs plus behavioral tests remain the semantic boundary.
     The earlier coding
     decomposer/repair delimiter regressions remain in force. STILL OPEN:
-    attachment and `$ARGUMENTS` ingestion, enriched repo/recall/memory fragments,
-    MCP catalogue/hint/assistant fields, coding-review/model-retry output,
-    compaction, sub-agent/channel/Buddy dispatch and provider/retry/fallback/
-    streaming/cost leaves must adopt the same typed boundary. The checkbox
-    remains open until a source gate proves that no model-bound raw bypass or
-    parallel prompt-frame convention remains and exact-head CI is green.
+    attachment ingestion, recall/guidance/remaining memory fragments,
+    coding-review output, compaction summaries, remaining sub-agent/channel/
+    Buddy dispatch and provider/retry/fallback/streaming/cost leaves must adopt
+    the same typed boundary. The checkbox remains open until the source gate
+    covers every model-bound consumer, no parallel prompt-frame convention
+    remains and exact-head CI is green.
   - **R3-15 (CLOSED — ordered/fail-closed core landed 2026-07-24 `d80fba62`;
     durable lifecycle landed 2026-07-25 `0b33c166`, verify-reconfirmed 12/12
     local green 2026-07-25):** `remove_plugin_at` now clears the config trust

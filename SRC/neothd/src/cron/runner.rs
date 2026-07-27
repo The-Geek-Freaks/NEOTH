@@ -1078,6 +1078,7 @@ async fn complete_cron_request(
     let catalogue = crate::mcp::catalogue::assemble_catalogue(&scoped)
         .await
         .context("Cron MCP capability catalogue is empty or unavailable")?;
+    let catalogue = catalogue.render_system_block();
     request.system = Some(match request.system.take() {
         Some(system) => format!("{system}\n\n{catalogue}"),
         None => catalogue,

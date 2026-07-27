@@ -2,7 +2,8 @@
 //! [`crate::tokens`] ARCH-04. Inputs: a `Vec<BlockItem>` representing
 //! the assembled prompt blocks + an operator-configured `cap`.
 //! Outputs: the degraded `Vec<BlockItem>` (in place) + an
-//! `Option<BudgetExceededDetail>` the caller emits to WAL `0x2F`.
+//! `Result<Option<BudgetExceededDetail>, _>` the caller emits to WAL `0x2F`;
+//! malformed atomic groups fail before any mutation.
 //!
 //! Module-level docs in [`super`] cover the policy + the rationale.
 
@@ -35,7 +36,10 @@ pub fn count_tokens_upper_bound(text: &str) -> u32 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Block {
-    /// A — operator-explicit system prompt. NEVER dropped.
+    /// A — operator-explicit system prompt. Never dropped independently.
+    /// An A item in an [`AtomicGroup`] is removed only when the group's
+    /// degradable member is selected, so optional protocols cannot outlive
+    /// the data they describe.
     A,
     /// B — active LOWKEY skill prompts. NEVER dropped.
     B,
@@ -55,11 +59,22 @@ pub enum Block {
 
 impl Block {
     /// True iff degradation policy is permitted to remove or
-    /// truncate this block. Centralises the "never A/B/E" hard rule
-    /// so a future block addition doesn't accidentally bypass it.
+    /// truncate this block. Centralises the "never remove A/B/E
+    /// independently" rule so a future block addition doesn't accidentally
+    /// bypass it. [`AtomicGroup`] expansion is the sole explicit exception.
     pub fn is_degradable(self) -> bool {
         matches!(self, Block::C | Block::D | Block::Conductor)
     }
+}
+
+/// Optional all-or-nothing relationship between prompt items.
+///
+/// This is semantic metadata, not content matching: budget degradation can
+/// safely remove a protected protocol together with the degradable data it
+/// describes without weakening unrelated A/B/E items.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AtomicGroup {
+    McpCatalogue,
 }
 
 /// One item inside a prompt block. The `importance` field drives
@@ -68,6 +83,8 @@ impl Block {
 #[derive(Debug, Clone, PartialEq)]
 pub struct BlockItem {
     pub block: Block,
+    /// All members of an atomic group are retained or removed together.
+    pub atomic_group: Option<AtomicGroup>,
     /// Importance in `[0.0, 1.0]`. 0.5 = neutral default. Only
     /// consulted for block C; D + Conductor degradation uses ts_ns.
     pub importance: f32,
@@ -92,6 +109,7 @@ impl BlockItem {
         let content = content.into();
         Self {
             block,
+            atomic_group: None,
             importance: 0.5,
             ts_ns: 0,
             tokens: count_tokens_upper_bound(&content),
@@ -104,12 +122,20 @@ impl BlockItem {
         self.content = content.into();
         self.tokens = count_tokens_upper_bound(&self.content);
     }
+
+    /// Couple this item to other members of the same all-or-nothing group.
+    #[must_use]
+    pub fn with_atomic_group(mut self, group: AtomicGroup) -> Self {
+        self.atomic_group = Some(group);
+        self
+    }
 }
 
 /// Render the provider-facing `(prompt, system)` pair from typed blocks.
 /// Exactly one E block is required; accepting zero or multiple user-message
 /// blocks would make the budgeted representation disagree with the request.
 pub fn render_request(items: &[BlockItem]) -> Result<(String, Option<String>), &'static str> {
+    validate_atomic_groups(items)?;
     let mut prompt = None;
     let mut system_parts = Vec::with_capacity(items.len().saturating_sub(1));
     for item in items {
@@ -124,6 +150,30 @@ pub fn render_request(items: &[BlockItem]) -> Result<(String, Option<String>), &
     let prompt = prompt.ok_or("token-budget bundle is missing Block E")?;
     let system = (!system_parts.is_empty()).then(|| system_parts.join("\n\n"));
     Ok((prompt, system))
+}
+
+fn validate_atomic_groups(items: &[BlockItem]) -> Result<(), &'static str> {
+    let mut mcp_a = 0_usize;
+    let mut mcp_d = 0_usize;
+    let mut mcp_other = 0_usize;
+    for item in items
+        .iter()
+        .filter(|item| item.atomic_group == Some(AtomicGroup::McpCatalogue))
+    {
+        match item.block {
+            Block::A => mcp_a += 1,
+            Block::D => mcp_d += 1,
+            _ => mcp_other += 1,
+        }
+    }
+    if (mcp_a == 0 && mcp_d == 0 && mcp_other == 0) || (mcp_a == 1 && mcp_d == 1 && mcp_other == 0)
+    {
+        Ok(())
+    } else {
+        Err(
+            "MCP catalogue atomic group requires exactly one Block A protocol and one Block D data item",
+        )
+    }
 }
 
 /// Replace the sole E item after hooks/output presets mutate the user prompt.
@@ -253,11 +303,30 @@ fn snapshot_per_block(items: &[BlockItem]) -> Vec<(Block, u32, u32)> {
     map.into_values().collect()
 }
 
+fn expand_atomic_removals(items: &[BlockItem], indices: &mut Vec<usize>) {
+    let selected_groups: std::collections::HashSet<AtomicGroup> = indices
+        .iter()
+        .filter_map(|index| items.get(*index).and_then(|item| item.atomic_group))
+        .collect();
+    if selected_groups.is_empty() {
+        return;
+    }
+    indices.extend(items.iter().enumerate().filter_map(|(index, item)| {
+        item.atomic_group
+            .filter(|group| selected_groups.contains(group))
+            .map(|_| index)
+    }));
+    indices.sort_unstable();
+    indices.dedup();
+}
+
 /// Enforce the operator's `cap` against the supplied `items` Vec
 /// via the documented degradation policy. Mutates `items` in place
 /// (drops removed entries; truncates Conductor.content); returns
-/// `Some(detail)` when any degradation fired, `None` when
-/// `count_total(items) <= cap` on entry.
+/// `Ok(Some(detail))` when any degradation fired, `Ok(None)` when
+/// `count_total(items) <= cap` on entry, and `Err` for malformed atomic
+/// groups. Validation happens before the first mutation so a rejected bundle
+/// remains byte-for-byte unchanged.
 ///
 /// Policy order (see module docs):
 /// 1. D oldest 50% — drop bottom half by `ts_ns` ascending.
@@ -265,10 +334,14 @@ fn snapshot_per_block(items: &[BlockItem]) -> Vec<(Block, u32, u32)> {
 ///    ascending.
 /// 3. Conductor truncation — halve each Conductor item's content
 ///    + token count; never to zero (1-token floor).
-pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExceededDetail> {
+pub fn enforce_budget(
+    items: &mut Vec<BlockItem>,
+    cap: u32,
+) -> Result<Option<BudgetExceededDetail>, &'static str> {
+    validate_atomic_groups(items)?;
     let original_total = count_total(items);
     if original_total <= cap {
-        return None;
+        return Ok(None);
     }
     let pre_per_block: Vec<(Block, u32, u32)> = snapshot_per_block(items);
 
@@ -294,11 +367,13 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
             let half = sorted.len().div_ceil(2);
             // Drop indices in DESCENDING order so we don't shift left.
             let mut to_remove: Vec<usize> = sorted.into_iter().take(half).collect();
+            expand_atomic_removals(items, &mut to_remove);
             to_remove.sort_unstable();
             to_remove.reverse();
             for idx in to_remove {
-                items.remove(idx);
-                dropped_d += 1;
+                if items.remove(idx).block == Block::D {
+                    dropped_d += 1;
+                }
             }
         }
     }
@@ -323,11 +398,13 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
             // the documented second degradation step.
             let half = sorted.len().div_ceil(2);
             let mut to_remove: Vec<usize> = sorted.into_iter().take(half).collect();
+            expand_atomic_removals(items, &mut to_remove);
             to_remove.sort_unstable();
             to_remove.reverse();
             for idx in to_remove {
-                items.remove(idx);
-                dropped_c += 1;
+                if items.remove(idx).block == Block::C {
+                    dropped_c += 1;
+                }
             }
         }
     }
@@ -351,7 +428,7 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
     let post_per_block: Vec<(Block, u32, u32)> = snapshot_per_block(items);
     let per_block = build_per_block(&pre_per_block, &post_per_block);
 
-    Some(BudgetExceededDetail {
+    Ok(Some(BudgetExceededDetail {
         cap,
         original_total,
         new_total,
@@ -359,17 +436,21 @@ pub fn enforce_budget(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExce
         dropped_c_count: dropped_c,
         conductor_truncated,
         per_block,
-    })
+    }))
 }
 
 /// Reapply the ordered degradation pass until the content budget is met or no
 /// degradable bytes remain. This is the provider-boundary variant: a large
 /// aggregated C/D item or Conductor block must not cause a refusal merely
 /// because one 50% pass still leaves safe-to-remove context above the cap.
-pub fn enforce_budget_to_fit(items: &mut Vec<BlockItem>, cap: u32) -> Option<BudgetExceededDetail> {
+pub fn enforce_budget_to_fit(
+    items: &mut Vec<BlockItem>,
+    cap: u32,
+) -> Result<Option<BudgetExceededDetail>, &'static str> {
+    validate_atomic_groups(items)?;
     let original_total = count_total(items);
     if original_total <= cap {
-        return None;
+        return Ok(None);
     }
     let pre_per_block = snapshot_per_block(items);
     let mut dropped_d_count = 0_u32;
@@ -378,7 +459,8 @@ pub fn enforce_budget_to_fit(items: &mut Vec<BlockItem>, cap: u32) -> Option<Bud
 
     while count_total(items) > cap {
         let before = count_total(items);
-        let detail = enforce_budget(items, cap).expect("over-cap pass returns detail");
+        let detail = enforce_budget(items, cap)?
+            .expect("over-cap pass returns detail after validated input");
         dropped_d_count = dropped_d_count.saturating_add(detail.dropped_d_count);
         dropped_c_count = dropped_c_count.saturating_add(detail.dropped_c_count);
         conductor_truncated |= detail.conductor_truncated;
@@ -388,7 +470,7 @@ pub fn enforce_budget_to_fit(items: &mut Vec<BlockItem>, cap: u32) -> Option<Bud
     }
 
     let post_per_block = snapshot_per_block(items);
-    Some(BudgetExceededDetail {
+    Ok(Some(BudgetExceededDetail {
         cap,
         original_total,
         new_total: count_total(items),
@@ -396,7 +478,7 @@ pub fn enforce_budget_to_fit(items: &mut Vec<BlockItem>, cap: u32) -> Option<Bud
         dropped_c_count,
         conductor_truncated,
         per_block: build_per_block(&pre_per_block, &post_per_block),
-    })
+    }))
 }
 
 fn build_per_block(pre: &[(Block, u32, u32)], post: &[(Block, u32, u32)]) -> Vec<BlockTokens> {
@@ -462,7 +544,7 @@ pub fn finalize_daemon_request(
     // bytes here.  The call is kept for structural parity with the CLI path:
     // future refactors that prepend C/D context to daemon prompts get
     // degradation automatically.
-    let _ = enforce_budget_to_fit(&mut items, cap);
+    let _ = enforce_budget_to_fit(&mut items, cap)?;
 
     // Final ensure: if total still exceeds the cap after enforcement, the
     // protected content itself does not fit — fail-close.
@@ -496,6 +578,7 @@ mod tests {
     fn item(block: Block, importance: f32, ts_ns: i64, tokens: u32) -> BlockItem {
         BlockItem {
             block,
+            atomic_group: None,
             importance,
             ts_ns,
             tokens,
@@ -539,7 +622,7 @@ mod tests {
     #[test]
     fn enforce_returns_none_when_under_cap() {
         let mut items = vec![item(Block::A, 0.5, 0, 100), item(Block::E, 0.5, 0, 100)];
-        let result = enforce_budget(&mut items, 500);
+        let result = enforce_budget(&mut items, 500).expect("valid bundle");
         assert!(result.is_none());
         assert_eq!(items.len(), 2, "items untouched");
     }
@@ -547,7 +630,7 @@ mod tests {
     #[test]
     fn enforce_returns_none_exactly_at_cap() {
         let mut items = vec![item(Block::A, 0.5, 0, 100), item(Block::E, 0.5, 0, 100)];
-        let result = enforce_budget(&mut items, 200);
+        let result = enforce_budget(&mut items, 200).expect("valid bundle");
         assert!(result.is_none(), "exactly-at-cap must not trigger");
     }
 
@@ -564,7 +647,9 @@ mod tests {
             item(Block::E, 0.5, 0, 100),
         ];
         // Total 600, cap 400 → must drop 2 of the 4 D items (oldest).
-        let detail = enforce_budget(&mut items, 400).expect("must trigger");
+        let detail = enforce_budget(&mut items, 400)
+            .expect("valid bundle")
+            .expect("must trigger");
         assert_eq!(detail.dropped_d_count, 2);
         assert_eq!(detail.dropped_c_count, 0);
         assert!(!detail.conductor_truncated);
@@ -584,10 +669,148 @@ mod tests {
             item(Block::D, 0.5, 1, 100),
             item(Block::E, 0.5, 0, 10),
         ];
-        let detail = enforce_budget(&mut items, 20).expect("single D must degrade");
+        let detail = enforce_budget(&mut items, 20)
+            .expect("valid bundle")
+            .expect("single D must degrade");
         assert_eq!(detail.dropped_d_count, 1);
         assert!(!items.iter().any(|item| item.block == Block::D));
         assert_eq!(detail.new_total, 20);
+    }
+
+    #[test]
+    fn mcp_catalogue_atomic_group_is_retained_or_removed_together() {
+        let unrelated_a = item(Block::A, 0.5, 0, 10);
+        let protocol = item(Block::A, 0.5, 0, 20).with_atomic_group(AtomicGroup::McpCatalogue);
+        let catalogue = item(Block::D, 0.5, 1, 100).with_atomic_group(AtomicGroup::McpCatalogue);
+        let user = item(Block::E, 0.5, 0, 10);
+
+        let mut under_cap = vec![
+            unrelated_a.clone(),
+            protocol.clone(),
+            catalogue.clone(),
+            user.clone(),
+        ];
+        assert!(
+            enforce_budget_to_fit(&mut under_cap, 140)
+                .expect("valid bundle")
+                .is_none()
+        );
+        assert_eq!(
+            under_cap
+                .iter()
+                .filter(|item| item.atomic_group == Some(AtomicGroup::McpCatalogue))
+                .count(),
+            2
+        );
+        render_request(&under_cap).expect("complete atomic group renders");
+
+        let mut over_cap = vec![unrelated_a, protocol, catalogue, user];
+        let detail = enforce_budget_to_fit(&mut over_cap, 20)
+            .expect("valid bundle")
+            .expect("catalogue must degrade");
+        assert_eq!(detail.dropped_d_count, 1);
+        assert_eq!(detail.new_total, 20);
+        assert!(
+            over_cap
+                .iter()
+                .all(|item| item.atomic_group != Some(AtomicGroup::McpCatalogue))
+        );
+        assert!(over_cap.iter().any(|item| item.block == Block::A));
+        assert!(over_cap.iter().any(|item| item.block == Block::E));
+        let a_counts = detail
+            .per_block
+            .iter()
+            .find(|entry| entry.block == Block::A)
+            .expect("A accounting");
+        assert_eq!(a_counts.items_before, 2);
+        assert_eq!(a_counts.items_after, 1);
+        render_request(&over_cap).expect("fully removed atomic group renders");
+    }
+
+    #[test]
+    fn render_request_rejects_orphaned_mcp_atomic_group() {
+        let protocol = item(Block::A, 0.5, 0, 10).with_atomic_group(AtomicGroup::McpCatalogue);
+        let catalogue = item(Block::D, 0.5, 0, 10).with_atomic_group(AtomicGroup::McpCatalogue);
+        let user = item(Block::E, 0.5, 0, 10);
+
+        assert!(render_request(&[protocol, user.clone()]).is_err());
+        assert!(render_request(&[catalogue, user]).is_err());
+    }
+
+    #[test]
+    fn budget_enforcers_reject_malformed_atomic_groups_before_mutation() {
+        let grouped = |block| item(block, 0.5, 0, 100).with_atomic_group(AtomicGroup::McpCatalogue);
+        let cases = [
+            (
+                "orphaned Block A",
+                vec![grouped(Block::A), item(Block::E, 0.5, 0, 100)],
+            ),
+            (
+                "orphaned Block D",
+                vec![grouped(Block::D), item(Block::E, 0.5, 0, 100)],
+            ),
+            (
+                "Block B member",
+                vec![
+                    grouped(Block::A),
+                    grouped(Block::D),
+                    grouped(Block::B),
+                    item(Block::E, 0.5, 0, 100),
+                ],
+            ),
+            (
+                "Block C member",
+                vec![
+                    grouped(Block::A),
+                    grouped(Block::D),
+                    grouped(Block::C),
+                    item(Block::E, 0.5, 0, 100),
+                ],
+            ),
+            (
+                "Block E member",
+                vec![grouped(Block::A), grouped(Block::D), grouped(Block::E)],
+            ),
+            (
+                "Conductor member",
+                vec![
+                    grouped(Block::A),
+                    grouped(Block::D),
+                    grouped(Block::Conductor),
+                    item(Block::E, 0.5, 0, 100),
+                ],
+            ),
+            (
+                "duplicate Block A",
+                vec![
+                    grouped(Block::A),
+                    grouped(Block::A),
+                    grouped(Block::D),
+                    item(Block::E, 0.5, 0, 100),
+                ],
+            ),
+            (
+                "duplicate Block D",
+                vec![
+                    grouped(Block::A),
+                    grouped(Block::D),
+                    grouped(Block::D),
+                    item(Block::E, 0.5, 0, 100),
+                ],
+            ),
+        ];
+
+        for (label, original) in cases {
+            let mut one_pass = original.clone();
+            enforce_budget(&mut one_pass, 1)
+                .expect_err("malformed group must fail before one-pass degradation");
+            assert_eq!(one_pass, original, "{label}: one-pass input mutated");
+
+            let mut to_fit = original.clone();
+            enforce_budget_to_fit(&mut to_fit, 1)
+                .expect_err("malformed group must fail before repeated degradation");
+            assert_eq!(to_fit, original, "{label}: repeated input mutated");
+        }
     }
 
     // ── Step 2: C lowest-importance 50% ───────────────────────────
@@ -603,7 +826,9 @@ mod tests {
             item(Block::C, 0.9, 0, 100), // highest importance
             item(Block::E, 0.5, 0, 100),
         ];
-        let detail = enforce_budget(&mut items, 400).expect("must trigger");
+        let detail = enforce_budget(&mut items, 400)
+            .expect("valid bundle")
+            .expect("must trigger");
         assert_eq!(detail.dropped_d_count, 0);
         assert_eq!(detail.dropped_c_count, 2);
         let survivor_imp: Vec<f32> = items
@@ -621,7 +846,9 @@ mod tests {
             item(Block::C, 0.2, 0, 100),
             item(Block::E, 0.5, 0, 10),
         ];
-        let detail = enforce_budget(&mut items, 20).expect("single C must degrade");
+        let detail = enforce_budget(&mut items, 20)
+            .expect("valid bundle")
+            .expect("single C must degrade");
         assert_eq!(detail.dropped_c_count, 1);
         assert!(!items.iter().any(|item| item.block == Block::C));
         assert_eq!(detail.new_total, 20);
@@ -639,7 +866,9 @@ mod tests {
             item(Block::Conductor, 0.5, 0, 400),
         ];
         // Total 600, cap 300 → no D/C to drop, must truncate Conductor.
-        let detail = enforce_budget(&mut items, 300).expect("must trigger");
+        let detail = enforce_budget(&mut items, 300)
+            .expect("valid bundle")
+            .expect("must trigger");
         assert!(detail.conductor_truncated);
         assert_eq!(detail.dropped_d_count, 0);
         assert_eq!(detail.dropped_c_count, 0);
@@ -647,7 +876,7 @@ mod tests {
         assert_eq!(conductor.tokens, 200, "halved from 400");
     }
 
-    // ── A / B / E never touched ───────────────────────────────────
+    // ── Uncoupled A / B / E never touched ─────────────────────────
 
     #[test]
     fn a_b_e_never_dropped_even_under_extreme_pressure() {
@@ -658,7 +887,9 @@ mod tests {
         ];
         // Cap 100 — way under total 1500. No degradable items exist.
         // Degradation runs (returns Some) but A/B/E survive.
-        let detail = enforce_budget(&mut items, 100).expect("must trigger");
+        let detail = enforce_budget(&mut items, 100)
+            .expect("valid bundle")
+            .expect("must trigger");
         assert_eq!(items.len(), 3, "A + B + E all survive");
         assert_eq!(detail.dropped_d_count, 0);
         assert_eq!(detail.dropped_c_count, 0);
@@ -682,7 +913,9 @@ mod tests {
             item(Block::E, 0.5, 0, 50),
         ];
         // Total 700, cap 350 → exercise all three degradation steps.
-        let detail = enforce_budget(&mut items, 350).expect("must trigger");
+        let detail = enforce_budget(&mut items, 350)
+            .expect("valid bundle")
+            .expect("must trigger");
         // The point of this fixture is that every step fires in order
         // (D present, C present, Conductor present).
         assert!(
@@ -721,7 +954,9 @@ mod tests {
             item(Block::Conductor, 0.5, 0, 1_000),
             item(Block::E, 0.5, 0, 10),
         ];
-        let detail = enforce_budget_to_fit(&mut items, 100).expect("must degrade");
+        let detail = enforce_budget_to_fit(&mut items, 100)
+            .expect("valid bundle")
+            .expect("must degrade");
         assert!(detail.new_total <= 100, "{detail:?}");
         assert_eq!(detail.dropped_d_count, 1);
         assert_eq!(detail.dropped_c_count, 1);
@@ -743,7 +978,9 @@ mod tests {
             item(Block::D, 0.5, 2, 100),
             item(Block::E, 0.5, 0, 100),
         ];
-        let detail = enforce_budget(&mut items, 300).expect("must trigger");
+        let detail = enforce_budget(&mut items, 300)
+            .expect("valid bundle")
+            .expect("must trigger");
         let d_block = detail
             .per_block
             .iter()
@@ -812,7 +1049,9 @@ mod tests {
             BlockItem::new(Block::Conductor, "🙂".repeat(40)),
             BlockItem::new(Block::E, "e"),
         ];
-        let detail = enforce_budget(&mut items, 5).expect("conductor must truncate");
+        let detail = enforce_budget(&mut items, 5)
+            .expect("valid bundle")
+            .expect("conductor must truncate");
         assert!(detail.conductor_truncated);
         let conductor = items
             .iter()

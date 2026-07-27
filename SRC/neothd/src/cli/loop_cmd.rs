@@ -131,6 +131,7 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
         .unwrap_or(config.autonomy);
 
     let loop_cfg = crate::loop_engine::engine::LoopConfig {
+        min_rounds: 1,
         max_rounds: args
             .iterations
             .unwrap_or(config.loop_config.max_rounds)
@@ -214,6 +215,15 @@ async fn run_loop_run(args: LoopRunArgs, output: OutputFormat) -> Result<()> {
     )
     .await;
 
+    if let Ok(record) = result.as_ref() {
+        crate::cli::chat::emit_terminal_goal_outcome(
+            &writer,
+            record.goal_outcome,
+            record.goal_hash.as_deref(),
+            "loop_cmd",
+        )
+        .await;
+    }
     drop(writer);
     let _ = writer_join.await;
 
@@ -341,6 +351,8 @@ mod tests {
             rounds_run: 2,
             stop_reason: StopReason::Converged,
             total_tool_calls: Some(7),
+            goal_outcome: crate::mcp::dispatch_loop::GoalOutcome::None,
+            goal_hash: None,
             per_round: vec![LoopRound {
                 round_num: 1,
                 iterations: 3,

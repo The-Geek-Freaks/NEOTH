@@ -5,8 +5,9 @@
 //! - **Goal** — operator sets a desired outcome. When the dispatch loop
 //!   would normally finish (no tool calls in latest response), inject one
 //!   invisible nudge: "Before finishing, check whether this goal is met."
-//!   After the nudge fires once, the goal is considered answered and the
-//!   next clean exit actually stops the loop.
+//!   Without an independent judge, the next clean exit stops the loop. With
+//!   the judge enabled, negative post-nudge verdicts keep the bounded loop
+//!   working until confirmation or the configured iteration/tool budget.
 //!
 //! - **Grind** — operator sets a relentless objective. Every clean exit
 //!   injects a nudge: "Keep working, the grind goal is not yet done."
@@ -22,10 +23,27 @@
 //! The tracker is pure logic — no async, no I/O. The dispatch loop owns
 //! one instance per run.
 
-/// Maximum characters a goal/grind text may occupy in the injected nudge.
-/// Guards against accidental context explosion when the operator sets a
-/// multi-kilobyte goal string.
+/// Maximum UTF-8 payload bytes a goal/grind text may occupy before the
+/// truncation marker in an injected nudge. Guards against accidental context
+/// explosion when the operator sets a multi-kilobyte goal string.
 pub const MAX_NUDGE_TEXT_LEN: usize = 256;
+
+/// A goal lifecycle invariant that callers must never bypass with a direct
+/// provider fallback. Each variant means the returned text cannot truthfully
+/// resolve the exact configured goal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum GoalIntegrityError {
+    #[error(
+        "loop-engine goal hash mismatch: inner dispatch outcome is not bound to the original configured goal"
+    )]
+    HashMismatch,
+    #[error(
+        "configured goal cannot be judged completely: maximum {max_bytes} UTF-8 bytes; shorten the goal or disable the independent judge"
+    )]
+    PromptIncomplete { max_bytes: usize },
+    #[error("configured goal became unavailable because every tool dispatch in the round failed")]
+    DispatchUnavailable,
+}
 
 /// Caller-supplied goal context for one dispatch-loop run.
 #[derive(Debug, Clone, Default)]
@@ -56,19 +74,34 @@ impl GoalContext {
 /// Per-loop nudge state machine.
 pub struct GoalTracker {
     goal: Option<String>,
+    goal_hash: Option<String>,
+    /// Whether the bounded prompt copy contains the complete original goal.
+    /// An incomplete copy may drive nudges, but can never receive a `Met`
+    /// verdict for the hash of the full goal.
+    goal_prompt_complete: bool,
     grind: Option<String>,
-    /// Set to `true` after the goal nudge fires once. The next clean exit
-    /// (no tool calls) actually ends the loop.
+    /// Set to `true` after the legacy one-shot goal nudge fires.
     goal_nudge_fired: bool,
+    /// Independent judge confirmation. Kept separate from nudge state so the
+    /// post-nudge response remains judge eligible.
+    goal_met: bool,
 }
 
 impl GoalTracker {
     /// Create a tracker from a caller-supplied context.
     pub fn new(ctx: GoalContext) -> Self {
+        let goal_hash = ctx.goal.as_deref().map(crate::mcp::goal_judge::goal_hash);
+        let goal_prompt_complete = ctx
+            .goal
+            .as_ref()
+            .is_some_and(|goal| goal.len() <= MAX_NUDGE_TEXT_LEN);
         Self {
             goal: ctx.goal.map(|s| truncate(s, MAX_NUDGE_TEXT_LEN)),
+            goal_hash,
+            goal_prompt_complete,
             grind: ctx.grind.map(|s| truncate(s, MAX_NUDGE_TEXT_LEN)),
             goal_nudge_fired: false,
+            goal_met: false,
         }
     }
 
@@ -90,6 +123,7 @@ impl GoalTracker {
     /// 3. Otherwise → return `None` (stop the loop).
     pub fn on_clean_exit(&mut self) -> Option<String> {
         if let Some(ref goal) = self.goal
+            && !self.goal_met
             && !self.goal_nudge_fired
         {
             self.goal_nudge_fired = true;
@@ -101,34 +135,75 @@ impl GoalTracker {
         None
     }
 
+    /// A negative independent judgement is stricter than the legacy one-shot
+    /// path: keep the bounded goal active until a later judge confirms it or
+    /// the dispatch budget terminates the run.
+    pub fn on_judged_not_met(&mut self) -> Option<String> {
+        if self.goal_met {
+            return None;
+        }
+        let nudge = goal_nudge(self.goal.as_deref()?);
+        self.goal_nudge_fired = true;
+        Some(nudge)
+    }
+
     /// True when the tracker has any active goal or grind text.
     pub fn is_active(&self) -> bool {
         self.goal.is_some() || self.grind.is_some()
     }
 
-    /// HERMES-04 — returns the raw goal text if a goal is set AND the nudge has
-    /// not yet fired. Used by the judge path to obtain the goal for the judge
-    /// prompt without consuming it from the tracker.
+    /// HERMES-04 — return the bounded goal while it has not been independently
+    /// confirmed. The first post-nudge response therefore remains judge
+    /// eligible.
     pub fn active_goal(&self) -> Option<&str> {
-        if !self.goal_nudge_fired {
+        if !self.goal_met && self.goal_prompt_complete {
             self.goal.as_deref()
         } else {
             None
         }
     }
 
+    /// True only when the judge prompt contains the complete original goal.
+    /// Judge-enabled callers reject an incomplete prompt before provider
+    /// dispatch; judge-disabled callers retain the bounded legacy one-shot
+    /// nudge without accepting a verdict for a truncated prefix.
+    pub fn goal_prompt_complete(&self) -> bool {
+        self.goal_prompt_complete
+    }
+
+    /// Return the configured goal independently of whether its one-shot nudge
+    /// has already fired. Budget-exhaustion audit paths use this to retain the
+    /// terminal goal state after judge eligibility has ended.
+    pub fn configured_goal(&self) -> Option<&str> {
+        self.goal.as_deref()
+    }
+
+    /// Hash of the original, untruncated operator goal. Every lifecycle WAL
+    /// outcome uses this value even though provider prompts receive a bounded
+    /// copy.
+    pub fn configured_goal_hash(&self) -> Option<&str> {
+        self.goal_hash.as_deref()
+    }
+
     /// HERMES-04 — mark the goal as already met so `on_clean_exit` skips the
     /// nudge on the next call. Call this when the judge confirms goal-met so the
     /// loop exits immediately without injecting a spurious nudge.
     pub fn mark_goal_met(&mut self) {
+        if !self.goal_prompt_complete {
+            return;
+        }
         self.goal_nudge_fired = true;
+        self.goal_met = true;
     }
 
     /// Clear both goal and grind (operator `/goal off` / `/grind off` equivalent).
     pub fn clear(&mut self) {
         self.goal = None;
+        self.goal_hash = None;
+        self.goal_prompt_complete = false;
         self.grind = None;
         self.goal_nudge_fired = false;
+        self.goal_met = false;
     }
 }
 
@@ -237,6 +312,32 @@ mod tests {
             second.is_none(),
             "after goal nudge fired, next clean exit must stop the loop"
         );
+        assert!(
+            t.active_goal().is_some(),
+            "the post-nudge response must remain independently judge eligible"
+        );
+        assert_eq!(
+            t.configured_goal(),
+            Some("finish the report"),
+            "terminal budget audit must retain the configured goal"
+        );
+    }
+
+    #[test]
+    fn negative_judgement_keeps_goal_active_until_confirmed() {
+        let mut t = GoalTracker::new(GoalContext {
+            goal: Some("finish the report".into()),
+            grind: None,
+        });
+
+        assert!(t.on_judged_not_met().is_some());
+        assert!(t.on_judged_not_met().is_some());
+        assert!(t.active_goal().is_some());
+
+        t.mark_goal_met();
+        assert!(t.active_goal().is_none());
+        assert!(t.on_judged_not_met().is_none());
+        assert!(t.on_clean_exit().is_none());
     }
 
     #[test]
@@ -316,11 +417,28 @@ mod tests {
     #[test]
     fn long_goal_text_is_truncated_in_nudge() {
         let long = "x".repeat(MAX_NUDGE_TEXT_LEN + 100);
+        let expected_hash = crate::mcp::goal_judge::goal_hash(&long);
         let ctx = GoalContext {
-            goal: Some(long),
+            goal: Some(long.clone()),
             grind: None,
         };
         let mut t = GoalTracker::new(ctx);
+        assert_eq!(
+            t.configured_goal_hash(),
+            Some(expected_hash.as_str()),
+            "audit identity must bind the original goal, not its bounded prompt copy"
+        );
+        assert!(!t.goal_prompt_complete());
+        assert!(
+            t.active_goal().is_none(),
+            "a truncated goal must never reach the independent judge"
+        );
+        t.mark_goal_met();
+        assert!(
+            !t.goal_met,
+            "a truncated prefix cannot mark the complete goal as met"
+        );
+        assert_ne!(t.configured_goal(), Some(long.as_str()));
         let nudge = t.on_clean_exit().unwrap();
         // Nudge contains the ellipsis from truncation.
         assert!(
@@ -337,9 +455,28 @@ mod tests {
             grind: None,
         };
         let mut t = GoalTracker::new(ctx);
+        assert!(t.goal_prompt_complete());
         let nudge = t.on_clean_exit().unwrap();
         assert!(nudge.contains(short), "short goal must not be truncated");
         assert!(!nudge.contains('…'), "short goal must not have ellipsis");
+    }
+
+    #[test]
+    fn oversized_utf8_goal_cannot_be_judged_as_complete() {
+        let original = "🧠".repeat(65);
+        assert!(original.len() > MAX_NUDGE_TEXT_LEN);
+        let expected_hash = crate::mcp::goal_judge::goal_hash(&original);
+        let mut tracker = GoalTracker::new(GoalContext {
+            goal: Some(original),
+            grind: None,
+        });
+
+        assert_eq!(tracker.configured_goal_hash(), Some(expected_hash.as_str()));
+        assert!(!tracker.goal_prompt_complete());
+        assert!(tracker.active_goal().is_none());
+        assert!(tracker.on_judged_not_met().is_some());
+        tracker.mark_goal_met();
+        assert!(!tracker.goal_met);
     }
 
     // ---- truncate helper ---------------------------------------------------

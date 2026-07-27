@@ -32,10 +32,10 @@
 //!    internal plan/spec metadata block. Truncation rather than
 //!    drop so the orchestrator still has structure.
 //!
-//! **NEVER touch A/B/E.** A is the operator's explicit intent. B is
-//! the active skill's behavioural prompt — losing it breaks the
-//! skill contract. E is the current turn — losing it makes the
-//! response nonsensical.
+//! **Never remove A/B/E independently.** A is the operator's explicit intent,
+//! B is the active skill's behavioural prompt, and E is the current turn. The
+//! sole typed exception is a validated optional atomic group: its A protocol
+//! is removed together with the degradable data it describes, never by itself.
 //!
 //! ## Token counting
 //!
