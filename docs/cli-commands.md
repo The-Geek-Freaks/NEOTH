@@ -311,7 +311,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `<MESSAGE>` — Message to send. If omitted, NEOTH reads from stdin until EOF
 - `--model <MODEL>` — Override the configured model for this single call
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
-- `--attach <PATH>` — GOLD-ADAPT-ODY-03 — attach files to this turn. Each file runs the media extraction pipeline (PDF/image/audio/video/document; plain UTF-8 files inline directly) and its text is prepended to the prompt as a labelled attachment block. Repeatable
+- `--attach <PATH>` — Attach files to this turn. Each file runs through bounded admission and the media extraction pipeline; extracted data stays separate from the operator message as canonical untrusted context. Repeatable
 - `--edit` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
 - `--wal-segment <PATH>` — Override the WAL segment path (mostly for tests)

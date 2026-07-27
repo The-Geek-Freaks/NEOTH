@@ -26,12 +26,17 @@
 //!   call-site files because the audit envelopes carry path-specific
 //!   metadata (channel vs CLI).
 
+pub mod attachment_context;
 pub mod enriched_request;
 /// GOLD-R3-14 — typed, canonical, length-bound untrusted prompt data.
 pub mod untrusted_context;
 /// Deprecated pre-v1 string API; delegates to [`untrusted_context`].
 pub mod untrusted_wrap;
 
+pub use attachment_context::{
+    AttachmentContentKind, AttachmentContextBatch, AttachmentContextError, AttachmentContextInput,
+    AttachmentContextLimits, AttachmentOrigin, build_attachment_contexts,
+};
 pub use enriched_request::{
     CommunicationProfilePrompt, EnrichedRequest, EnrichmentInputs, build_enriched_request,
 };

@@ -58,21 +58,33 @@ pub async fn run_dictate(args: DictateArgs) -> Result<()> {
 
     // Symphonia decode is blocking; the canonical STT dispatcher is async and
     // must stay on the runtime rather than calling Handle::block_on from an
-    // executor thread.
-    let samples =
-        tokio::task::spawn_blocking(move || crate::media::audio::decode_file_to_pcm(&file))
-            .await
-            .context("dictate: blocking decode task panicked")??;
-    let outcome = crate::media::dictation::transcribe_utterance_with_writer(
+    // executor thread. Acquire the global audio-memory permit before the file
+    // is opened and return it from the blocking task so it remains held through
+    // VAD, WAV re-encoding, provider dispatch and fallback.
+    let permit = crate::media::audio::acquire_audio_work_permit()
+        .await
+        .context("dictate: acquire global audio worker budget")?;
+    let (samples, permit) = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+        let samples = crate::media::audio::decode_file_to_pcm(&file, &permit)?;
+        Ok((samples, permit))
+    })
+    .await
+    .context("dictate: blocking decode task panicked")??;
+    let outcome = crate::media::dictation::transcribe_utterance_with_audio_permit(
         &samples,
         crate::media::audio::TARGET_SAMPLE_RATE,
         &media_cfg,
         &updater_cfg,
         &neoth_home,
         writer_for_stt.as_ref(),
+        &permit,
     )
     .await;
 
+    // The cloned WAL sender used by STT must be released before awaiting the
+    // writer task; that task terminates only after every sender is dropped.
+    drop(writer_for_stt);
+    drop(permit);
     if let Some((writer, join)) = audit {
         drop(writer);
         join.await.context("dictate: WAL writer task panicked")?;

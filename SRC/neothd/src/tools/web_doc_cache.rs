@@ -34,6 +34,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::{fs::File, io::Read as _};
 
 use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64;
@@ -47,6 +48,15 @@ pub const CACHE_CAP: usize = 64;
 /// this; a larger response is served fresh but not cached (keeps the cache dir
 /// bounded well under `MAX_RESPONSE_BYTES`).
 pub const MAX_CACHEABLE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_CACHE_URL_BYTES: usize = 64 * 1024;
+const MAX_CACHE_HEADER_BYTES: usize = 64 * 1024;
+const MAX_CACHE_CONTENT_TYPE_BYTES: usize = 4 * 1024;
+const MAX_CACHE_FILE_BYTES: usize = (MAX_CACHEABLE_BYTES
+    + MAX_CACHE_URL_BYTES
+    + 2 * MAX_CACHE_HEADER_BYTES
+    + MAX_CACHE_CONTENT_TYPE_BYTES)
+    * 6
+    + 64 * 1024;
 
 static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -83,14 +93,18 @@ fn key(url: &str) -> String {
     format!("{:016x}", xxh3_64(url.as_bytes()))
 }
 
-/// Security (doc-cache review LOW-2): true when the URL's query string carries a
-/// credential-like parameter. Such a response may be authenticated / per-user,
-/// so it must NEVER be persisted to the on-disk cache. Checks each param NAME
-/// (the part before `=`), not the value, so a benign value can't trip it.
+/// Security (doc-cache review LOW-2): true when the URL carries userinfo or a
+/// credential-like query parameter. Such a response may be authenticated /
+/// per-user, so it must NEVER be persisted to the on-disk cache. `query_pairs`
+/// percent-decodes each parameter name before matching, so encoded spellings
+/// cannot bypass the boundary.
 pub fn url_has_credential_params(url: &str) -> bool {
-    let Some(query) = url.split('?').nth(1) else {
-        return false;
+    let Ok(parsed) = url::Url::parse(url) else {
+        return true;
     };
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return true;
+    }
     const MARKERS: &[&str] = &[
         "token",
         "api_key",
@@ -108,8 +122,8 @@ pub fn url_has_credential_params(url: &str) -> bool {
         "credential",
         "session",
     ];
-    query.split('&').any(|pair| {
-        let name = pair.split('=').next().unwrap_or("").to_ascii_lowercase();
+    parsed.query_pairs().any(|(name, _)| {
+        let name = name.to_ascii_lowercase();
         MARKERS.iter().any(|m| name.contains(m))
     })
 }
@@ -125,15 +139,35 @@ fn now_unix() -> i64 {
 /// unreadable / malformed entry, or a hash collision (stored url != query).
 pub fn lookup(dir: &Path, url: &str) -> Option<CachedDoc> {
     let path = dir.join(format!("{}.json", key(url)));
-    let body = std::fs::read_to_string(&path).ok()?;
-    let doc: CachedDoc = serde_json::from_str(&body).ok()?;
-    if doc.url == url { Some(doc) } else { None }
+    let body = match read_cache_file_bounded(&path) {
+        Some(body) => body,
+        None => {
+            let _ = std::fs::remove_file(path);
+            return None;
+        }
+    };
+    let doc: CachedDoc = match serde_json::from_slice(&body) {
+        Ok(doc) => doc,
+        Err(_) => {
+            let _ = std::fs::remove_file(path);
+            return None;
+        }
+    };
+    if cached_doc_is_valid(&doc, url) {
+        Some(doc)
+    } else {
+        let _ = std::fs::remove_file(path);
+        None
+    }
 }
 
 /// Persist `doc` (best-effort: a failure is logged, never propagated, so a
 /// cache problem can never break a fetch). Evicts the oldest entry first when
 /// at capacity.
 pub fn store(dir: &Path, doc: &CachedDoc) {
+    if !cached_doc_is_valid(doc, &doc.url) {
+        return;
+    }
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
@@ -142,10 +176,55 @@ pub fn store(dir: &Path, doc: &CachedDoc) {
     let Ok(body) = serde_json::to_string(doc) else {
         return;
     };
-    let tmp = path.with_extension("json.tmp");
-    if std::fs::write(&tmp, body.as_bytes()).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+    if body.len() > MAX_CACHE_FILE_BYTES {
+        return;
     }
+    let _ = crate::util::atomic_write::atomic_write_private(&path, body.as_bytes());
+}
+
+fn read_cache_file_bounded(path: &Path) -> Option<Vec<u8>> {
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_CACHE_FILE_BYTES as u64 {
+        return None;
+    }
+
+    let mut file = File::open(path).ok()?;
+    let initial = usize::try_from(metadata.len())
+        .ok()?
+        .min(MAX_CACHE_FILE_BYTES);
+    let mut body = Vec::new();
+    body.try_reserve_exact(initial).ok()?;
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut chunk).ok()?;
+        if read == 0 {
+            return Some(body);
+        }
+        let next_len = body.len().checked_add(read)?;
+        if next_len > MAX_CACHE_FILE_BYTES {
+            return None;
+        }
+        body.try_reserve(read).ok()?;
+        body.extend_from_slice(&chunk[..read]);
+    }
+}
+
+fn cached_doc_is_valid(doc: &CachedDoc, expected_url: &str) -> bool {
+    doc.url == expected_url
+        && doc.url.len() <= MAX_CACHE_URL_BYTES
+        && !url_has_credential_params(&doc.url)
+        && doc.status == 200
+        && doc.raw.len() <= MAX_CACHEABLE_BYTES
+        && doc.content_type.len() <= MAX_CACHE_CONTENT_TYPE_BYTES
+        && doc
+            .etag
+            .as_deref()
+            .is_none_or(|value| !value.is_empty() && value.len() <= MAX_CACHE_HEADER_BYTES)
+        && doc
+            .last_modified
+            .as_deref()
+            .is_none_or(|value| !value.is_empty() && value.len() <= MAX_CACHE_HEADER_BYTES)
+        && (doc.etag.is_some() || doc.last_modified.is_some())
 }
 
 /// When the dir holds `CACHE_CAP` or more entries, delete the oldest by mtime
@@ -228,6 +307,53 @@ mod tests {
     }
 
     #[test]
+    fn lookup_rejects_and_removes_oversized_cache_file_before_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "https://x.test/oversized-file";
+        let path = dir.path().join(format!("{}.json", key(url)));
+        let file = File::create(&path).unwrap();
+        file.set_len(MAX_CACHE_FILE_BYTES as u64 + 1).unwrap();
+        drop(file);
+
+        assert!(lookup(dir.path(), url).is_none());
+        assert!(!path.exists(), "invalid cache entry should be removed");
+    }
+
+    #[test]
+    fn lookup_rejects_raw_body_above_cache_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = "https://x.test/oversized-body";
+        let path = dir.path().join(format!("{}.json", key(url)));
+        let mut oversized = doc(url, Some("\"etag\""));
+        oversized.raw = "x".repeat(MAX_CACHEABLE_BYTES + 1);
+        std::fs::write(&path, serde_json::to_vec(&oversized).unwrap()).unwrap();
+
+        assert!(lookup(dir.path(), url).is_none());
+        assert!(!path.exists(), "invalid cache entry should be removed");
+    }
+
+    #[test]
+    fn store_refuses_unvalidated_entries() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let no_validator_url = "https://x.test/no-validator";
+        store(dir.path(), &doc(no_validator_url, None));
+        assert!(
+            !dir.path()
+                .join(format!("{}.json", key(no_validator_url)))
+                .exists()
+        );
+
+        let credential_url = "https://x.test/private?access_token=secret";
+        store(dir.path(), &doc(credential_url, Some("\"etag\"")));
+        assert!(
+            !dir.path()
+                .join(format!("{}.json", key(credential_url)))
+                .exists()
+        );
+    }
+
+    #[test]
     fn store_evicts_at_cap() {
         let dir = tempfile::tempdir().unwrap();
         for i in 0..(CACHE_CAP + 10) {
@@ -262,6 +388,12 @@ mod tests {
         ));
         assert!(url_has_credential_params("https://x/d?foo=1&api_key=K"));
         assert!(url_has_credential_params("https://x/d?sig=zzz"));
+        assert!(url_has_credential_params(
+            "https://user:password@x.test/private"
+        ));
+        assert!(url_has_credential_params(
+            "https://x.test/d?%61%63%63%65%73%73_%74%6f%6b%65%6e=secret"
+        ));
         assert!(!url_has_credential_params(
             "https://react.dev/reference/react/useActionState"
         ));

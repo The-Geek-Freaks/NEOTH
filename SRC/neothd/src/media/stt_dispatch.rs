@@ -247,7 +247,7 @@ pub struct LiveTranscriptBuffer {
 
 /// Sustained noise/music must not grow an utterance forever. Thirty seconds is
 /// long enough for dictation while bounding PCM memory deterministically.
-const MAX_LIVE_UTTERANCE_SECS: usize = 30;
+pub(crate) const MAX_LIVE_UTTERANCE_SECS: usize = 30;
 
 impl LiveTranscriptBuffer {
     pub fn new(sample_rate_hz: u32) -> Self {

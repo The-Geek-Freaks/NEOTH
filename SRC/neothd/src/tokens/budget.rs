@@ -77,6 +77,18 @@ pub enum AtomicGroup {
     McpCatalogue,
 }
 
+/// Whether the budget enforcer may remove or truncate a prompt item.
+///
+/// `Required` does not grant directive authority: the item's [`Block`] still
+/// determines its trust class and render position. It only turns an over-cap
+/// request into an explicit refusal instead of silently discarding context the
+/// operator deliberately supplied for this turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PromptRetention {
+    Degradable,
+    Required,
+}
+
 /// One item inside a prompt block. The `importance` field drives
 /// the step-2 (C lowest-importance) selection; the `ts_ns` field
 /// drives the step-1 (D oldest) selection.
@@ -85,6 +97,8 @@ pub struct BlockItem {
     pub block: Block,
     /// All members of an atomic group are retained or removed together.
     pub atomic_group: Option<AtomicGroup>,
+    /// Whether token-budget degradation may remove or truncate this item.
+    pub retention: PromptRetention,
     /// Importance in `[0.0, 1.0]`. 0.5 = neutral default. Only
     /// consulted for block C; D + Conductor degradation uses ts_ns.
     pub importance: f32,
@@ -110,6 +124,7 @@ impl BlockItem {
         Self {
             block,
             atomic_group: None,
+            retention: PromptRetention::Degradable,
             importance: 0.5,
             ts_ns: 0,
             tokens: count_tokens_upper_bound(&content),
@@ -127,6 +142,14 @@ impl BlockItem {
     #[must_use]
     pub fn with_atomic_group(mut self, group: AtomicGroup) -> Self {
         self.atomic_group = Some(group);
+        self
+    }
+
+    /// Retain this item at the provider boundary or fail the request explicitly
+    /// when the complete protected bundle cannot fit.
+    #[must_use]
+    pub fn with_required_retention(mut self) -> Self {
+        self.retention = PromptRetention::Required;
         self
     }
 }
@@ -153,6 +176,13 @@ pub fn render_request(items: &[BlockItem]) -> Result<(String, Option<String>), &
 }
 
 fn validate_atomic_groups(items: &[BlockItem]) -> Result<(), &'static str> {
+    if items
+        .iter()
+        .any(|item| item.atomic_group.is_some() && item.retention == PromptRetention::Required)
+    {
+        return Err("atomic groups cannot contain required-retention items");
+    }
+
     let mut mcp_a = 0_usize;
     let mut mcp_d = 0_usize;
     let mut mcp_other = 0_usize;
@@ -329,10 +359,10 @@ fn expand_atomic_removals(items: &[BlockItem], indices: &mut Vec<usize>) {
 /// remains byte-for-byte unchanged.
 ///
 /// Policy order (see module docs):
-/// 1. D oldest 50% — drop bottom half by `ts_ns` ascending.
-/// 2. C lowest-importance 50% — drop bottom half by `importance`
+/// 1. Degradable D oldest 50% — drop bottom half by `ts_ns` ascending.
+/// 2. Degradable C lowest-importance 50% — drop bottom half by `importance`
 ///    ascending.
-/// 3. Conductor truncation — halve each Conductor item's content
+/// 3. Degradable Conductor truncation — halve each Conductor item's content
 ///    + token count; never to zero (1-token floor).
 pub fn enforce_budget(
     items: &mut Vec<BlockItem>,
@@ -354,7 +384,9 @@ pub fn enforce_budget(
         let d_indices: Vec<usize> = items
             .iter()
             .enumerate()
-            .filter_map(|(i, it)| (it.block == Block::D).then_some(i))
+            .filter_map(|(i, it)| {
+                (it.block == Block::D && it.retention == PromptRetention::Degradable).then_some(i)
+            })
             .collect();
         if !d_indices.is_empty() {
             // Sort the D-only indices by ts_ns ascending (oldest first).
@@ -383,7 +415,9 @@ pub fn enforce_budget(
         let c_indices: Vec<usize> = items
             .iter()
             .enumerate()
-            .filter_map(|(i, it)| (it.block == Block::C).then_some(i))
+            .filter_map(|(i, it)| {
+                (it.block == Block::C && it.retention == PromptRetention::Degradable).then_some(i)
+            })
             .collect();
         if !c_indices.is_empty() {
             let mut sorted = c_indices.clone();
@@ -412,7 +446,10 @@ pub fn enforce_budget(
     // ── Step 3 — truncate Conductor ──────────────────────────────
     if count_total(items) > cap {
         for item in items.iter_mut() {
-            if item.block == Block::Conductor && item.tokens > 1 {
+            if item.block == Block::Conductor
+                && item.retention == PromptRetention::Degradable
+                && item.tokens > 1
+            {
                 // Halve by Unicode scalar count, then recompute the estimate
                 // from the exact retained content.  Byte-proportional cuts can
                 // leave a stale token count for multi-byte text.
@@ -579,6 +616,7 @@ mod tests {
         BlockItem {
             block,
             atomic_group: None,
+            retention: PromptRetention::Degradable,
             importance,
             ts_ns,
             tokens,
@@ -632,6 +670,25 @@ mod tests {
         let mut items = vec![item(Block::A, 0.5, 0, 100), item(Block::E, 0.5, 0, 100)];
         let result = enforce_budget(&mut items, 200).expect("valid bundle");
         assert!(result.is_none(), "exactly-at-cap must not trigger");
+    }
+
+    #[test]
+    fn required_untrusted_context_is_never_silently_degraded() {
+        let attachment = item(Block::D, 0.5, 0, 100).with_required_retention();
+        let recall = item(Block::D, 0.5, -1, 100);
+        let user = item(Block::E, 0.5, 0, 10);
+        let mut items = vec![recall, attachment.clone(), user];
+
+        let detail = enforce_budget_to_fit(&mut items, 50)
+            .expect("valid bundle")
+            .expect("over-cap bundle must report degradation");
+
+        assert!(items.contains(&attachment));
+        assert_eq!(detail.dropped_d_count, 1);
+        assert!(
+            count_total(&items) > 50,
+            "required context makes an impossible cap visible to the caller"
+        );
     }
 
     // ── Step 1: D oldest 50% ──────────────────────────────────────

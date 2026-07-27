@@ -125,6 +125,10 @@ NEOTH uses brain-region names as pragmatic memory analogies. They are not claims
 File / attachment / voice / image / video / document
   |
   v
+Bounded admission + immutable snapshot
+  |---- count, kind, byte and expansion ceilings
+  |---- no-follow regular-file / reparse-point checks for local paths
+  v
 Media router
   |---- PDF text/forms
   |---- Image decode + CLIP embedding
@@ -132,16 +136,27 @@ Media router
   |---- Video audio + thumbnail/frame extraction
   |---- Paperless OCR import
   v
-Extraction record
+Bounded extraction record
   |
-  |---- WAL event
-  |---- embedding/index update
-  |---- profile-safe recall material
+  |---- canonical untrusted attachment data (Block D)
+  |---- WAL lifecycle / metadata
+  |---- optional reviewed embedding/index update
   v
-Recall + answer + optional Obsidian mirror
+Exact operator caption (Block E) + answer
 ```
 
-Large files, untrusted documents, email bodies, and Paperless ingest pass through sanitizer and prompt-injection checks before becoming trusted context.
+Attachment bytes, filenames, extracted text, email bodies, web pages, and
+Paperless content remain untrusted data. They do not become system instructions
+after parsing. Chat and channel ingress preserve the exact operator caption
+separately, serialize attachment content through one bounded typed envelope, and
+fail visibly if required content cannot fit the effective provider budget.
+
+Parser and decoder work has modality-specific input, allocation, expansion,
+duration, output, and diagnostic ceilings. Subprocess-backed extraction uses
+private scratch storage plus bounded termination and reap; cloud transcription
+requires a concrete request-bound authorization and durable intent before
+egress. Ingest commands may promote reviewed extraction records into memory, but
+that does not change their prompt trust class.
 
 ## Provider routing
 
@@ -197,13 +212,16 @@ Before an LLM call, NEOTH assembles bounded context blocks:
 
 | Block | Content |
 | :-- | :-- |
-| A | System identity, operator rules, current autonomy level. |
-| B | Approved profile facts, evidence summary, redaction constraints. |
-| C | Relevant recall from episodes, files, documents, and project memory. |
-| D | Active skills, tool catalog, channel state, coding canvas, Kanban state. |
-| E | Per-request volatile outputs and safety constraints. |
+| A | Operator-explicit system text and trusted protocols. Protected from independent degradation. |
+| B | Active skill and discipline instructions. Never dropped. |
+| C | Approved profile/operator claims. Lowest-importance entries degrade first. |
+| D | Recall plus typed untrusted tool, repository, channel, web, and attachment data. Optional entries may degrade; required attachment data fails closed instead. |
+| E | The exact current operator message/caption. Exactly one is required and it is never dropped. |
+| Conductor | Orchestration plan/spec metadata. Bounded by truncation rather than silent removal. |
 
-The model does not receive raw WAL. It receives selected, policy-filtered context.
+The model does not receive raw WAL or an attachment-prepended synthetic user
+message. It receives selected, policy-filtered blocks with trusted instructions
+and untrusted data kept structurally separate.
 
 ## Tool-Framework lineage
 

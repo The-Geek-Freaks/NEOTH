@@ -17,6 +17,7 @@ use rubato::{
 
 /// Fixed input chunk fed to rubato per `process` call (frames).
 const CHUNK: usize = 1024;
+const MAX_RESAMPLE_OUTPUT_SAMPLES: usize = 32 * 1024 * 1024;
 
 /// Broad sanity bounds for real-world audio. The lower bound prevents absurd
 /// resample ratios and the upper bound still covers professional PCM formats.
@@ -35,6 +36,10 @@ pub enum ResampleError {
     InvalidTargetRate(u32),
     #[error("PCM sample at index {index} is not finite")]
     NonFiniteSample { index: usize },
+    #[error("resampled output would contain {samples} samples, exceeding the {limit}-sample cap")]
+    OutputTooLarge { samples: usize, limit: usize },
+    #[error("{stage} allocation failed: {reason}")]
+    Allocation { stage: &'static str, reason: String },
 }
 
 fn validate_rate(rate: u32, source: bool) -> Result<(), ResampleError> {
@@ -67,20 +72,37 @@ pub fn resample_mono(input: &[f32], src_sr: u32, dst_sr: u32) -> Result<Vec<f32>
     if input.is_empty() {
         return Ok(Vec::new());
     }
-    if src_sr == dst_sr {
-        return Ok(input.to_vec());
+    let expected = expected_output_samples(input.len(), src_sr, dst_sr)?;
+    if expected > MAX_RESAMPLE_OUTPUT_SAMPLES {
+        return Err(ResampleError::OutputTooLarge {
+            samples: expected,
+            limit: MAX_RESAMPLE_OUTPUT_SAMPLES,
+        });
     }
-    Ok(match sinc_resample_mono(input, src_sr, dst_sr) {
-        Some(out) => out,
+    if src_sr == dst_sr {
+        let mut cloned = Vec::new();
+        cloned
+            .try_reserve_exact(input.len())
+            .map_err(|error| allocation_error("identity output", error))?;
+        cloned.extend_from_slice(input);
+        return Ok(cloned);
+    }
+    match sinc_resample_mono(input, src_sr, dst_sr, expected)? {
+        Some(out) => Ok(out),
         // ponytail: rubato only errors on degenerate construction/params;
         // fall back to linear rather than fail the STT path.
         None => crate::media::audio::linear_resample(input, src_sr, dst_sr),
-    })
+    }
 }
 
 /// The rubato sinc path. `None` on any construction/process error so the
 /// caller falls back to linear interpolation.
-fn sinc_resample_mono(input: &[f32], src_sr: u32, dst_sr: u32) -> Option<Vec<f32>> {
+fn sinc_resample_mono(
+    input: &[f32],
+    src_sr: u32,
+    dst_sr: u32,
+    expected: usize,
+) -> Result<Option<Vec<f32>>, ResampleError> {
     let ratio = dst_sr as f64 / src_sr as f64;
     let params = SincInterpolationParameters {
         sinc_len: 128,
@@ -91,25 +113,68 @@ fn sinc_resample_mono(input: &[f32], src_sr: u32, dst_sr: u32) -> Option<Vec<f32
     };
     // max_resample_ratio_relative = 1.1: we never re-set the ratio at
     // runtime, so a tight bound is fine.
-    let mut resampler = SincFixedIn::<f32>::new(ratio, 1.1, params, CHUNK, 1).ok()?;
+    let Some(mut resampler) = SincFixedIn::<f32>::new(ratio, 1.1, params, CHUNK, 1).ok() else {
+        return Ok(None);
+    };
 
-    let mut out: Vec<f32> = Vec::with_capacity((input.len() as f64 * ratio) as usize + CHUNK);
+    let mut out: Vec<f32> = Vec::new();
+    out.try_reserve_exact(expected)
+        .map_err(|error| allocation_error("sinc output", error))?;
     let mut pos = 0usize;
     while pos < input.len() {
         // SincFixedIn consumes exactly CHUNK frames per call; zero-pad the
         // final short chunk (the silent tail is trimmed below).
         let take = CHUNK.min(input.len() - pos);
-        let mut frame = vec![0.0f32; CHUNK];
+        let mut frame = Vec::new();
+        frame
+            .try_reserve_exact(CHUNK)
+            .map_err(|error| allocation_error("sinc input frame", error))?;
+        frame.resize(CHUNK, 0.0f32);
         frame[..take].copy_from_slice(&input[pos..pos + take]);
-        let processed = resampler.process(&[frame], None).ok()?;
-        out.extend_from_slice(processed.first()?);
+        let Some(processed) = resampler.process(&[frame], None).ok() else {
+            return Ok(None);
+        };
+        let Some(processed) = processed.first() else {
+            return Ok(None);
+        };
+        let output_len = processed.len().min(expected.saturating_sub(out.len()));
+        out.try_reserve_exact(output_len)
+            .map_err(|error| allocation_error("grow sinc output", error))?;
+        out.extend_from_slice(&processed[..output_len]);
         pos += take;
     }
 
     // Trim the padding-induced tail to the ideal output length.
-    let expected = (input.len() as f64 * ratio).round() as usize;
     out.truncate(expected.min(out.len()));
-    Some(out)
+    Ok(Some(out))
+}
+
+fn expected_output_samples(
+    input_samples: usize,
+    src_sr: u32,
+    dst_sr: u32,
+) -> Result<usize, ResampleError> {
+    let numerator = (input_samples as u128)
+        .checked_mul(u128::from(dst_sr))
+        .and_then(|value| value.checked_add(u128::from(src_sr) - 1))
+        .ok_or(ResampleError::OutputTooLarge {
+            samples: usize::MAX,
+            limit: MAX_RESAMPLE_OUTPUT_SAMPLES,
+        })?;
+    usize::try_from(numerator / u128::from(src_sr)).map_err(|_| ResampleError::OutputTooLarge {
+        samples: usize::MAX,
+        limit: MAX_RESAMPLE_OUTPUT_SAMPLES,
+    })
+}
+
+fn allocation_error(
+    stage: &'static str,
+    error: std::collections::TryReserveError,
+) -> ResampleError {
+    ResampleError::Allocation {
+        stage,
+        reason: error.to_string(),
+    }
 }
 
 #[cfg(test)]

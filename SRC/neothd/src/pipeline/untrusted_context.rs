@@ -498,6 +498,20 @@ impl RenderedUntrustedContext {
             .map(|context| context.render())
     }
 
+    /// Exact wire size of this context with an empty payload.
+    ///
+    /// The provenance, root length/hash, transformation lineage, and loss
+    /// markers remain canonical. Aggregate allocators use this irreducible
+    /// envelope size before distributing any payload budget.
+    #[cfg(test)]
+    pub(crate) fn minimum_wire_bytes(&self) -> usize {
+        self.context
+            .with_current_payload_limit(0)
+            .render()
+            .wire
+            .len()
+    }
+
     /// Fit a plain typed data block into a complete wire budget. The payload is
     /// shortened before rendering; header, JSON, hashes, and footer remain
     /// intact. Returns `None` when even an empty payload cannot fit.
@@ -911,6 +925,25 @@ mod tests {
             assert_eq!(parsed.root_hash_verified, limit >= original.len());
             assert!(rendered.as_str().ends_with(GUARD_CLOSE));
         }
+    }
+
+    #[test]
+    fn minimum_wire_bytes_is_the_exact_fit_boundary() {
+        let rendered = UntrustedContext::new(
+            UntrustedContextClass::Document,
+            "attachment:cli:0:document",
+            "payload-漢字💣",
+        )
+        .render();
+        let minimum = rendered.minimum_wire_bytes();
+
+        let fitted = rendered
+            .fit_to_wire_limit(minimum)
+            .expect("the exact empty-envelope boundary must fit");
+        assert_eq!(fitted.as_str().len(), minimum);
+        assert_eq!(fitted.included_bytes(), 0);
+        assert!(fitted.was_truncated());
+        assert!(rendered.fit_to_wire_limit(minimum - 1).is_none());
     }
 
     #[test]

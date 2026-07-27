@@ -130,6 +130,53 @@ pub async fn transcribe_utterance_with_writer(
     neoth_home: &std::path::Path,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<String, DictationError> {
+    transcribe_utterance_inner(
+        pcm,
+        sample_rate_hz,
+        config,
+        updater,
+        neoth_home,
+        wal_writer,
+        None,
+    )
+    .await
+}
+
+/// Dictation seam for a caller that acquired the global audio-memory budget
+/// before decoding. The unforgeable permit remains borrowed across VAD,
+/// re-encoding, provider dispatch and fallback.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn transcribe_utterance_with_audio_permit(
+    pcm: &[f32],
+    sample_rate_hz: u32,
+    config: &MediaConfig,
+    updater: &crate::config::UpdaterConfig,
+    neoth_home: &std::path::Path,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<String, DictationError> {
+    transcribe_utterance_inner(
+        pcm,
+        sample_rate_hz,
+        config,
+        updater,
+        neoth_home,
+        wal_writer,
+        Some(permit),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn transcribe_utterance_inner(
+    pcm: &[f32],
+    sample_rate_hz: u32,
+    config: &MediaConfig,
+    updater: &crate::config::UpdaterConfig,
+    neoth_home: &std::path::Path,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: Option<&crate::media::audio::AudioWorkPermit>,
+) -> Result<String, DictationError> {
     // ── Gate 1: feature enabled check ───────────────────────────────────────
     if !config.dictation_enabled {
         return Err(DictationError::NotEnabled);
@@ -179,17 +226,34 @@ pub async fn transcribe_utterance_with_writer(
     // constructed asynchronously and keyed by the explicit NEOTH home,
     // repository, and idle timeout inside that dispatcher.
     //
-    let (text, status) = match crate::media::stt_provider::dispatch_pcm_f32(
-        &config.stt,
-        config,
-        updater,
-        neoth_home,
-        pcm,
-        sample_rate_hz,
-        wal_writer,
-    )
-    .await
-    {
+    let dispatched = match permit {
+        Some(permit) => {
+            crate::media::stt_provider::dispatch_pcm_f32_with_audio_permit(
+                &config.stt,
+                config,
+                updater,
+                neoth_home,
+                pcm,
+                sample_rate_hz,
+                wal_writer,
+                permit,
+            )
+            .await
+        }
+        None => {
+            crate::media::stt_provider::dispatch_pcm_f32(
+                &config.stt,
+                config,
+                updater,
+                neoth_home,
+                pcm,
+                sample_rate_hz,
+                wal_writer,
+            )
+            .await
+        }
+    };
+    let (text, status) = match dispatched {
         Ok(r) if !r.text.is_empty() => (r.text, "transcribed"),
         Ok(_) => (String::new(), "empty transcript"),
         Err(e) => return Err(DictationError::Transcription(e.to_string())),

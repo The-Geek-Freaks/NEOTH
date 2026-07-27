@@ -26,6 +26,14 @@ use anyhow::{Context, Result};
 const MAIN_STACK_BYTES: usize = 32 * 1024 * 1024;
 
 fn main() -> Result<()> {
+    // Private media-worker modes must run before Clap or the long-lived Tokio
+    // runtime is constructed. They are intentionally absent from the public
+    // command tree and exit immediately after one resource-bounded operation.
+    if let Some(result) = neothd::media::pdf::run_internal_pdf_worker_if_requested() {
+        result.map_err(anyhow::Error::msg)?;
+        return Ok(());
+    }
+
     // Run everything on a child thread with a large stack rather than the
     // default `#[tokio::main]` main thread, so the clap help/parse pass that
     // happens at the top of `run()` (before the first await) can't overflow.

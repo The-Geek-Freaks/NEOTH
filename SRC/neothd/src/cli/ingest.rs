@@ -86,18 +86,14 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
             path.display()
         )
     })?;
-    let stt_config = if matches!(kind, AssetKind::Audio | AssetKind::Video) {
-        Some(FreedomConfig::load_from_default_path()?)
-    } else {
-        None
-    };
+    let effective_config = FreedomConfig::load_from_default_path()?;
 
     let asset = Asset::Path {
         kind,
         mime: mime_hint(kind, &path),
         path: path.clone(),
     };
-    let backends = default_backends();
+    let backends = default_backends(&effective_config.media);
 
     // Audio STT needs the caller's effective policy and a real audit writer.
     // Use an independent segment so a running daemon can keep exclusive
@@ -122,9 +118,7 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
         None
     };
     let extraction_result = if matches!(kind, AssetKind::Audio | AssetKind::Video) {
-        let config = stt_config
-            .as_ref()
-            .expect("audio/video kinds always load their effective STT config");
+        let config = &effective_config;
         match kind {
             AssetKind::Audio => {
                 crate::media::audio::AudioExtractor
@@ -508,7 +502,9 @@ pub(crate) fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
     }
 }
 
-pub(crate) fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
+pub(crate) fn default_backends(
+    media_config: &crate::config::MediaConfig,
+) -> Vec<Arc<dyn MediaExtractor>> {
     // GOLD-ADAPT-AWE-DOC-01: DoclingExtractor is prepended before the pure-Rust
     // PDF/Document backends. It returns Unsupported (not Backend) when:
     //   - MediaConfig::docling_enabled is false (default), OR
@@ -517,7 +513,9 @@ pub(crate) fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
     // DocumentExtractor, so the pipeline is identical to pre-Docling when the
     // flag is off or the binary is absent.
     vec![
-        Arc::new(crate::media::docling::DoclingExtractor),
+        Arc::new(crate::media::docling::DoclingExtractor::new(
+            media_config.docling_enabled,
+        )),
         Arc::new(crate::media::pdf::PdfExtractor),
         Arc::new(crate::media::document::DocumentExtractor),
         Arc::new(crate::media::vision::VisionExtractor),
@@ -615,7 +613,7 @@ mod tests {
 
     #[test]
     fn default_backends_includes_all_modalities() {
-        let bs = default_backends();
+        let bs = default_backends(&crate::config::MediaConfig::default());
         let names: Vec<&'static str> = bs.iter().map(|b| b.name()).collect();
         assert!(
             names.contains(&"docling"),
@@ -629,7 +627,7 @@ mod tests {
 
     #[test]
     fn default_backends_has_docling_before_pdf_and_document() {
-        let bs = default_backends();
+        let bs = default_backends(&crate::config::MediaConfig::default());
         let names: Vec<&'static str> = bs.iter().map(|b| b.name()).collect();
         let docling_pos = names.iter().position(|&n| n == "docling").unwrap();
         let pdf_pos = names.iter().position(|&n| n == "pdf").unwrap();

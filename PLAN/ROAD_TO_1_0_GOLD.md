@@ -496,9 +496,72 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     code-discipline preamble or the clarification protocol. A production
     focused source tripwire pins the known repaired seams and removed
     signatures; typed APIs plus behavioral tests remain the semantic boundary.
-    The earlier coding
-    decomposer/repair delimiter regressions remain in force. STILL OPEN:
-    attachment ingestion, recall/guidance/remaining memory fragments,
+    The earlier coding decomposer/repair delimiter regressions remain in force.
+    **Third consumer-adoption checkpoint (2026-07-27; attachment/media slice,
+    checkbox remains OPEN):** `neoth chat --attach` no longer prepends filenames,
+    extracted text or local errors to Block E. `ResolvedTurnInput` keeps the
+    operator caption byte-separate while one `AttachmentContextBatch` carries
+    typed Block-D data through the main request, selective sub-agent rebuild and
+    provider-backed custom slash-command rebuild. Local slash actions reject an
+    attached file explicitly instead of silently ignoring it; attachment turns
+    cannot disappear into the coding or conversational-recall short circuits.
+    Local-path admission runs on the blocking pool, opens every input no-follow
+    (`O_NONBLOCK` on Unix plus Windows reparse-point rejection), requires a
+    regular file, checks count/per-kind/aggregate byte ceilings and reads that
+    same handle once with a limit+1 sentinel before handing `Asset::Bytes` to
+    the existing extractor. Fallible reservations plus incremental aggregate
+    source charging reject oversized memory demand before retained decoded
+    content grows. Repeated paths and byte-identical aliases are rejected.
+    Missing, size/mtime-changing, invalid-UTF-8, oversized or failed extractions
+    stop visibly before a provider call and never become
+    model-authored-looking content. Same-size mutations that preserve filesystem
+    timestamps are not claimed as detected. Each
+    attachment's kind, optional sanitized basename and sanitized content now
+    share one canonical envelope. Required-retention metadata keeps the
+    untrusted Block-D envelope intact and turns an impossible final token budget
+    into an explicit pre-provider error instead of silently dropping the
+    operator's attachment. Redaction precedes hashing/truncation and both
+    per-attachment and aggregate canonical-wire ceilings account for the exact
+    provider separator. `/research` and local action slash commands reject
+    attachments before file admission or decoder/STT side effects. Extraction
+    begins only after the main turn WAL is live; every failure drains it before
+    returning. Chat audio/video attachments currently require a local STT
+    primary and local fallback: cloud STT is rejected before egress until its
+    concrete provider/model request has the same request-bound cost, consent and
+    WAL authorization as a normal paid provider leaf.
+    Decoder expansion is bounded per modality: image compressed bytes,
+    dimensions, pixels and allocation; PDF input/object/page/text; archive
+    entry/member/declared plus actually-read aggregate bytes and ratio; audio
+    packet/channel/frame/sample/duration; and video input, subprocess time,
+    threads, audio/thumbnail output plus bounded diagnostics. Private RAII
+    tempfiles plus owned detached supervisors hold the complete Docling, PDF,
+    Faster-Whisper and video lifecycle across success, failure, timeout and
+    caller cancellation. Windows descendants are Job-bound. Linux/macOS
+    supervisors prove process-group identity before terminating a tree; failed
+    proof poisons the singleton permit instead of silently releasing capacity.
+    Docling receives the caller's effective media policy, snapshots inputs
+    no-follow under per-kind byte caps, parses JSON through bounded page/text
+    visitors and never passes an ambient operator path to its child. The cloud
+    STT dispatcher now owns a durable request transaction, audit claim/replay
+    binding and response-stream ceiling, while chat attachments intentionally
+    reject cloud STT before egress until that request has a paid-leaf permit.
+    Web fetch uses bounded streaming, credential-free URL admission and a
+    private atomic cache. Channel media rejects an oversized payload before
+    cloning, routes PDF by MIME and now uses that same config-bound backend
+    chain.
+    Behavioral regressions plus a source tripwire pin the removed raw renderer,
+    no-follow/single-read gate, Block-D ordering, exact Block E and main/agent/
+    slash consumers. Local evidence on the consolidated tree is attachment
+    units **22/22**, attachment boundary **2/2**, CLI attachment source gate
+    **6/6**, Channel attachment source gate **17/17**, resource-bound source
+    gate **6/6**, PDF isolation **6/6**, Council adversarial **8/8**, serial
+    Media **446/446** with two explicitly ffmpeg-dependent tests ignored,
+    native OMI ingest **22/22**, Web Fetch **52/52**, Web Document Cache **9/9**,
+    workspace rustfmt, Core library check and Core Library+Tests Clippy
+    `-D warnings`. STILL OPEN: request-bound cloud-media authorization for chat
+    attachments, channel download/media admission, channel
+    delegation, GUI/Buddy shared controller/progress/retry, a real image
+    OCR/vision-text path, recall/guidance/remaining memory fragments,
     coding-review output, compaction summaries, remaining sub-agent/channel/
     Buddy dispatch and provider/retry/fallback/streaming/cost leaves must adopt
     the same typed boundary. The checkbox remains open until the source gate

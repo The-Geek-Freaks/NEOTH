@@ -354,6 +354,7 @@ fn build_provider_request(
         preset_addendum: None,
         explicit_system: req.system.as_deref(),
         repo_context_block: None,
+        attachment_contexts: None,
         skill_system_prompt: None,
         used_skill_id: None,
         mcp_catalogue: None,

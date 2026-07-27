@@ -254,14 +254,19 @@ pub(crate) async fn extract_goal_from_text(
 /// [`FetchResult`]. Both [`fetch`] and [`fetch_raw`] go through here so the
 /// SSRF guard + no-redirect client + byte ceiling live in ONE place.
 async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String, FetchResult)> {
-    let request = ExternalHttpRequest::get(url, ExternalHttpSurface::Fetch);
+    // Parse and reject credential-bearing authority components before the URL
+    // can enter permission/audit state. DNS and socket work remain behind the
+    // external-HTTP authorization boundary below.
+    let canonical_url = parse_http_url(url)?.to_string();
+    let request = ExternalHttpRequest::get(&canonical_url, ExternalHttpSurface::Fetch);
     let permitted_request = request.clone();
     http.execute(request, move |permit| async move {
         permit.require(&permitted_request)?;
         // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
         // pre-resolution to block private/loopback/link-local/cloud-metadata
         // targets BEFORE the HTTP client opens a socket.
-        let parsed = validate_url(url).await?;
+        let parsed = validate_url(&canonical_url).await?;
+        let safe_target = parsed.origin().ascii_serialization();
         // Use the no-redirect variant so an attacker cannot 302 us into a
         // private network after `validate_url` cleared the initial host.
         // Operators who need redirects see the 3xx status + Location header
@@ -277,7 +282,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
         let cache_dir = web_doc_cache::dir();
         let cached = cache_dir
             .as_deref()
-            .and_then(|d| web_doc_cache::lookup(d, url));
+            .and_then(|d| web_doc_cache::lookup(d, &canonical_url));
 
         let mut req = client
             .get(parsed.as_str())
@@ -290,7 +295,10 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
                 req = req.header(reqwest::header::IF_MODIFIED_SINCE, lm.as_str());
             }
         }
-        let resp = req.send().await.with_context(|| format!("GET {url}"))?;
+        let mut resp = req
+            .send()
+            .await
+            .with_context(|| format!("GET {safe_target}"))?;
         let status = resp.status().as_u16();
 
         // 304 Not Modified — the origin confirms our cached copy is current. Serve
@@ -303,7 +311,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
                 return Ok((
                     c.raw,
                     FetchResult {
-                        url: url.to_string(),
+                        url: canonical_url.clone(),
                         status: c.status,
                         content_type: c.content_type,
                         bytes,
@@ -314,7 +322,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
             }
             // 304 without a cached body (protocol violation, or the entry was
             // evicted mid-flight) — nothing to serve. Fail loudly, never silently.
-            anyhow::bail!("web_fetch: {url} returned 304 with no cached body to serve");
+            anyhow::bail!("web_fetch: {safe_target} returned 304 with no cached body to serve");
         }
 
         let content_type = resp
@@ -334,14 +342,8 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
             .get(reqwest::header::LAST_MODIFIED)
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
-        let body = resp
-            .bytes()
-            .await
-            .with_context(|| format!("read body of {url}"))?;
+        let body = read_response_body_bounded(&mut resp, &safe_target).await?;
         let bytes = body.len();
-        if bytes > MAX_RESPONSE_BYTES {
-            anyhow::bail!("web_fetch: response {bytes} bytes exceeds ceiling {MAX_RESPONSE_BYTES}");
-        }
         let raw = String::from_utf8_lossy(&body).into_owned();
         let (text, truncated) = derive_text(&raw, &content_type);
 
@@ -355,13 +357,13 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
             if status == 200
                 && (etag.is_some() || last_modified.is_some())
                 && raw.len() <= web_doc_cache::MAX_CACHEABLE_BYTES
-                && !web_doc_cache::url_has_credential_params(url)
+                && !web_doc_cache::url_has_credential_params(&canonical_url)
             {
                 let stored_unix = crate::time::now_unix_i64();
                 web_doc_cache::store(
                     dir,
                     &web_doc_cache::CachedDoc {
-                        url: url.to_string(),
+                        url: canonical_url.clone(),
                         etag,
                         last_modified,
                         content_type: content_type.clone(),
@@ -376,7 +378,7 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
         Ok((
             raw,
             FetchResult {
-                url: url.to_string(),
+                url: canonical_url,
                 status,
                 content_type,
                 bytes,
@@ -388,12 +390,52 @@ async fn fetch_inner(url: &str, http: &ExternalHttpAuthorizer) -> Result<(String
     .await
 }
 
+async fn read_response_body_bounded(
+    response: &mut reqwest::Response,
+    url: &str,
+) -> Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
+    {
+        anyhow::bail!("web_fetch: declared response exceeds ceiling {MAX_RESPONSE_BYTES} bytes");
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(MAX_RESPONSE_BYTES);
+    let mut body = Vec::new();
+    body.try_reserve(initial_capacity)
+        .map_err(|error| anyhow::anyhow!("reserve bounded web response buffer: {error}"))?;
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .with_context(|| format!("read body of {url}"))?
+    {
+        let next_len = body
+            .len()
+            .checked_add(chunk.len())
+            .ok_or_else(|| anyhow::anyhow!("web_fetch: response byte count overflow"))?;
+        if next_len > MAX_RESPONSE_BYTES {
+            anyhow::bail!(
+                "web_fetch: response exceeds ceiling {MAX_RESPONSE_BYTES} bytes while streaming"
+            );
+        }
+        body.try_reserve(chunk.len())
+            .map_err(|error| anyhow::anyhow!("grow bounded web response buffer: {error}"))?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 /// Strip + truncate a raw body into displayed text by content type. Shared by
 /// the live fetch and the 304-cache-hit path so both produce identical text.
 fn derive_text(raw: &str, content_type: &str) -> (String, bool) {
     if content_type.starts_with("text/html") {
-        let stripped = strip_html(raw);
-        truncate(&stripped, MAX_EXTRACTED_BYTES)
+        strip_html_bounded(raw)
     } else if content_type.starts_with("text/")
         || content_type.contains("json")
         || content_type.contains("xml")
@@ -416,39 +458,48 @@ fn derive_text(raw: &str, content_type: &str) -> (String, bool) {
 /// (classic TOCTOU). Mitigated by `redirect(Policy::none())` in
 /// `http_client::build_client_no_redirect` so an attacker cannot 302 us into a
 /// private network after the check.
-pub(crate) async fn validate_url(url_str: &str) -> Result<url::Url> {
-    let parsed =
-        url::Url::parse(url_str).with_context(|| format!("web_fetch: invalid URL: {url_str}"))?;
-
+fn parse_http_url(url_str: &str) -> Result<url::Url> {
+    let parsed = url::Url::parse(url_str).context("web_fetch: invalid URL")?;
     match parsed.scheme() {
         "http" | "https" => {}
         other => {
-            tracing::warn!(
-                scheme = other,
-                url = url_str,
-                "web_fetch: rejected non-http(s) scheme"
-            );
-            anyhow::bail!("web_fetch: only http(s) URLs accepted, got scheme `{other}`: {url_str}");
+            tracing::warn!(scheme = other, "web_fetch: rejected non-http(s) scheme");
+            anyhow::bail!("web_fetch: only http(s) URLs accepted, got scheme `{other}`");
         }
+    }
+
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        tracing::warn!("web_fetch: rejected credential-bearing URL authority");
+        anyhow::bail!("web_fetch: URL userinfo credentials are not accepted");
     }
 
     let host = parsed
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL has no host: {url_str}"))?;
+        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL has no host"))?;
 
     let host_lower = host.to_ascii_lowercase();
     if BLOCKED_METADATA_HOSTS.iter().any(|h| host_lower == *h) {
         tracing::warn!(
             host = %host,
-            url = url_str,
             "web_fetch: rejected cloud metadata hostname"
         );
-        anyhow::bail!("web_fetch: refused metadata host `{host}`: {url_str}");
+        anyhow::bail!("web_fetch: refused metadata host `{host}`");
     }
 
-    let port = parsed.port_or_known_default().ok_or_else(|| {
-        anyhow::anyhow!("web_fetch: URL missing port and no default for scheme: {url_str}")
-    })?;
+    parsed
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL missing port and no default for scheme"))?;
+    Ok(parsed)
+}
+
+pub(crate) async fn validate_url(url_str: &str) -> Result<url::Url> {
+    let parsed = parse_http_url(url_str)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL has no host"))?;
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL missing port and no default for scheme"))?;
 
     let mut saw_any = false;
     for addr in lookup_host(format!("{host}:{port}"))
@@ -470,18 +521,17 @@ pub(crate) async fn validate_url(url_str: &str) -> Result<url::Url> {
             tracing::warn!(
                 host = %host,
                 ip = %addr.ip(),
-                url = url_str,
                 "web_fetch: rejected private/loopback/link-local IP"
             );
             anyhow::bail!(
-                "web_fetch: refused private address {} for host `{host}`: {url_str}",
+                "web_fetch: refused private address {} for host `{host}`",
                 addr.ip()
             );
         }
     }
 
     if !saw_any {
-        anyhow::bail!("web_fetch: DNS resolved zero addresses for {host}: {url_str}");
+        anyhow::bail!("web_fetch: DNS resolved zero addresses for host `{host}`");
     }
 
     Ok(parsed)
@@ -601,261 +651,484 @@ fn truncate(s: &str, max: usize) -> (String, bool) {
 /// for LLM context", not "byte-perfect Markdown conversion". Operators
 /// who need rich conversion install Pandoc + the markdown converter
 /// skill (Phase 3+).
-fn strip_html(html: &str) -> String {
-    // 1. Drop script/style blocks entirely — their content is
-    // never user-visible text.
-    let mut s = drop_block(html, "script");
-    s = drop_block(&s, "style");
-    s = drop_block(&s, "noscript");
-    s = drop_block(&s, "iframe");
-
-    // 2. Replace block-level tags with newline markers BEFORE we
-    // strip remaining tags. Order matters — we hit headings first so
-    // the link rewriter sees the cleaner shape.
-    s = replace_block_open_close(&s, "h1", "\n\n# ", "\n\n");
-    s = replace_block_open_close(&s, "h2", "\n\n## ", "\n\n");
-    s = replace_block_open_close(&s, "h3", "\n\n### ", "\n\n");
-    s = replace_block_open_close(&s, "h4", "\n\n#### ", "\n\n");
-    s = replace_block_open_close(&s, "h5", "\n\n##### ", "\n\n");
-    s = replace_block_open_close(&s, "h6", "\n\n###### ", "\n\n");
-    s = replace_block_open_close(&s, "p", "\n\n", "\n\n");
-    s = replace_block_open_close(&s, "li", "\n- ", "");
-    s = replace_block_open_close(&s, "br", "\n", "");
-    s = replace_block_open_close(&s, "tr", "\n", "");
-    s = replace_block_open_close(&s, "td", " | ", "");
-    s = replace_block_open_close(&s, "th", " | ", "");
-
-    // 3. Rewrite anchor tags as Markdown links. This catches the
-    // common case <a href="URL">TEXT</a>; messy HTML with attributes
-    // out of order or quotes mixed still gets stripped to plain
-    // TEXT by the catch-all stripper below.
-    s = rewrite_anchors(&s);
-
-    // 4. Strip every remaining tag.
-    s = strip_remaining_tags(&s);
-
-    // 5. Decode the small subset of entities operators actually see.
-    s = s
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&nbsp;", " ");
-
-    // 6. Collapse runaway whitespace.
-    collapse_whitespace(&s)
+pub(crate) fn strip_html(html: &str) -> String {
+    strip_html_bounded(html).0
 }
 
-fn drop_block(input: &str, tag: &str) -> String {
-    let open = format!("<{tag}");
-    let close = format!("</{tag}>");
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(open_at) = find_ci(rest, &open) {
-        out.push_str(&rest[..open_at]);
-        let after = &rest[open_at..];
-        if let Some(close_at) = find_ci(after, &close) {
-            rest = &after[close_at + close.len()..];
-        } else {
-            // No matching close — drop the rest entirely.
-            return out;
+const MAX_HTML_LINK_DEPTH: usize = 256;
+const MAX_HTML_LINK_BYTES: usize = 4 * 1024;
+const HTML_TRUNCATION_MARKER: &str = "\n[HTML extraction truncated]\n";
+
+fn strip_html_bounded(html: &str) -> (String, bool) {
+    // This is deliberately one forward scan. The former pipeline searched
+    // the whole remaining body once per tag type and, for every `<p...>`,
+    // searched it again for the usually absent `<p/>`. A body containing only
+    // opening paragraph tags therefore became O(n²).
+    let mut writer = HtmlTextWriter::new();
+    let mut links: Vec<Option<&str>> = Vec::new();
+    let mut omitted_link_depth = 0usize;
+    let mut dropped_block: Option<(DroppedHtmlBlock, usize)> = None;
+    let mut cursor = 0usize;
+
+    while cursor < html.len() {
+        if writer.is_truncated() {
+            break;
         }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn replace_block_open_close(input: &str, tag: &str, open_sub: &str, close_sub: &str) -> String {
-    let open = format!("<{tag}");
-    let close = format!("</{tag}>");
-    let self_closing = format!("<{tag}/>");
-    let mut out = String::with_capacity(input.len() + 32);
-    let mut rest = input;
-    loop {
-        let next_open = find_ci(rest, &open);
-        let next_self = find_ci(rest, &self_closing);
-        let next = match (next_open, next_self) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(a), None) | (None, Some(a)) => Some(a),
-            (None, None) => None,
-        };
-        match next {
-            Some(i) => {
-                out.push_str(&rest[..i]);
-                out.push_str(open_sub);
-                // Skip to the close of THIS open tag (find the next `>`).
-                if let Some(gt) = rest[i..].find('>') {
-                    rest = &rest[i + gt + 1..];
-                } else {
-                    return out;
-                }
-            }
-            None => {
-                // Now strip remaining closes.
-                out.push_str(rest);
+        let rest = &html[cursor..];
+        if let Some(comment) = rest.strip_prefix("<!--") {
+            let Some(end) = comment.find("-->") else {
                 break;
-            }
+            };
+            cursor += 4 + end + 3;
+            continue;
         }
-    }
-    out = out.replace(&close, close_sub);
-    out
-}
 
-fn rewrite_anchors(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut rest = input;
-    while let Some(open_at) = find_ci(rest, "<a ") {
-        out.push_str(&rest[..open_at]);
-        let after = &rest[open_at..];
-        let Some(gt) = after.find('>') else {
-            out.push_str(after);
-            return out;
-        };
-        let tag = &after[..gt];
-        let href = extract_attr(tag, "href").unwrap_or_default();
-        let body_start = gt + 1;
-        let Some(close_at) = find_ci(&after[body_start..], "</a>") else {
-            out.push_str(after);
-            return out;
-        };
-        let body = &after[body_start..body_start + close_at];
-        if href.is_empty() {
-            out.push_str(body);
-        } else {
-            out.push_str(&format!("[{body}]({href})"));
-        }
-        rest = &after[body_start + close_at + 4..]; // 4 = "</a>"
-    }
-    out.push_str(rest);
-    out
-}
+        if rest.as_bytes()[0] == b'<' {
+            let Some(relative_end) = rest.as_bytes().iter().position(|byte| *byte == b'>') else {
+                // Match the old fail-closed malformed-tag behaviour: an
+                // unterminated tag and the remainder are not user-visible.
+                break;
+            };
+            let raw_tag = &rest[1..relative_end];
+            cursor += relative_end + 1;
+            let Some(tag) = HtmlTag::parse(raw_tag) else {
+                continue;
+            };
 
-fn extract_attr(tag: &str, name: &str) -> Option<String> {
-    let needle = format!("{name}=");
-    let i = find_ci(tag, &needle)?;
-    let after = &tag[i + needle.len()..];
-    let bytes = after.as_bytes();
-    if bytes.is_empty() {
-        return None;
-    }
-    let (quote, content) = match bytes[0] {
-        b'"' => ('"', &after[1..]),
-        b'\'' => ('\'', &after[1..]),
-        _ => return after.split_whitespace().next().map(|s| s.to_string()),
-    };
-    let end = content.find(quote)?;
-    Some(content[..end].to_string())
-}
-
-fn strip_remaining_tags(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut in_tag = false;
-    for c in input.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
-}
-
-fn collapse_whitespace(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut last_blank = false;
-    let mut prev_space = false;
-    for line in input.lines() {
-        let trimmed = line.trim_end();
-        // Collapse internal runs of spaces to single space.
-        let mut compact = String::with_capacity(trimmed.len());
-        for c in trimmed.chars() {
-            if c.is_whitespace() {
-                if !prev_space {
-                    compact.push(' ');
+            let mut close_dropped_block = false;
+            if let Some((active, depth)) = dropped_block.as_mut() {
+                if active.matches(tag.name) {
+                    if tag.closing {
+                        *depth -= 1;
+                        close_dropped_block = *depth == 0;
+                    } else if !tag.self_closing {
+                        *depth = depth.saturating_add(1);
+                    }
                 }
-                prev_space = true;
-            } else {
-                compact.push(c);
-                prev_space = false;
+                if close_dropped_block {
+                    dropped_block = None;
+                }
+                continue;
             }
-        }
-        prev_space = false;
-        let trimmed = compact.trim();
-        if trimmed.is_empty() {
-            if !last_blank && !out.is_empty() {
-                out.push('\n');
+            if !tag.closing
+                && !tag.self_closing
+                && let Some(block) = DroppedHtmlBlock::from_name(tag.name)
+            {
+                dropped_block = Some((block, 1));
+                continue;
             }
-            last_blank = true;
-        } else {
-            out.push_str(trimmed);
-            out.push('\n');
-            last_blank = false;
+
+            if tag.closing {
+                match tag.name {
+                    name if heading_prefix(name).is_some() || name.eq_ignore_ascii_case("p") => {
+                        writer.request_break(2);
+                    }
+                    name if name.eq_ignore_ascii_case("a") => {
+                        if omitted_link_depth > 0 {
+                            omitted_link_depth -= 1;
+                        } else if let Some(Some(href)) = links.pop() {
+                            writer.push_markup("](");
+                            writer.push_markup(href);
+                            writer.push_markup(")");
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            if let Some(prefix) = heading_prefix(tag.name) {
+                writer.request_break(2);
+                writer.push_markup(prefix);
+            } else if tag.name.eq_ignore_ascii_case("p") {
+                writer.request_break(2);
+            } else if tag.name.eq_ignore_ascii_case("li") {
+                writer.request_break(1);
+                writer.push_markup("- ");
+            } else if tag.name.eq_ignore_ascii_case("br") || tag.name.eq_ignore_ascii_case("tr") {
+                writer.request_break(1);
+            } else if tag.name.eq_ignore_ascii_case("td") || tag.name.eq_ignore_ascii_case("th") {
+                writer.push_markup(" | ");
+            } else if tag.name.eq_ignore_ascii_case("a") {
+                let href = extract_attr(raw_tag, "href")
+                    .filter(|href| !href.is_empty() && href.len() <= MAX_HTML_LINK_BYTES);
+                if tag.self_closing {
+                    if let Some(href) = href {
+                        writer.push_markup("[");
+                        writer.push_markup("](");
+                        writer.push_markup(href);
+                        writer.push_markup(")");
+                    }
+                } else if omitted_link_depth > 0 || links.len() >= MAX_HTML_LINK_DEPTH {
+                    omitted_link_depth = omitted_link_depth.saturating_add(1);
+                } else if links.try_reserve(1).is_err() {
+                    omitted_link_depth = 1;
+                } else {
+                    if href.is_some() {
+                        writer.push_markup("[");
+                    }
+                    links.push(href);
+                }
+            }
+            continue;
         }
+
+        if dropped_block.is_some() {
+            // Skip hidden block content in one jump. The next tag is still
+            // parsed so matching nested opens/closes update the depth above.
+            let Some(next_tag) = rest.as_bytes().iter().position(|byte| *byte == b'<') else {
+                break;
+            };
+            cursor += next_tag;
+            continue;
+        }
+
+        if rest.as_bytes()[0] == b'&'
+            && let Some((decoded, consumed)) = decode_html_entity(rest)
+        {
+            writer.push_text(decoded);
+            cursor += consumed;
+            continue;
+        }
+
+        let character = rest
+            .chars()
+            .next()
+            .expect("cursor always points inside valid UTF-8");
+        writer.push_text_char(character);
+        cursor += character.len_utf8();
     }
-    out.trim().to_string()
+
+    writer.finish()
 }
 
-/// Case-insensitive ASCII substring search returning the byte offset of
-/// the first match in `haystack`.
-///
-/// COR-28: the previous impl did `haystack.to_lowercase().find(...)`, which
-/// allocated a full lowercased copy of the haystack on *every* call. Inside
-/// the tag-rewrite loops (`drop_block`, `replace_block_open_close`,
-/// `rewrite_anchors`, `extract_attr`) that ran once per tag occurrence over
-/// the whole body — quadratic allocation + wall time on a multi-MiB page.
-/// This version compares bytes with `to_ascii_lowercase` in a single pass
-/// and allocates nothing. Every needle in this file is a pure-ASCII HTML
-/// tag/attribute name, so the ASCII fold is correct and complete. Unlike the
-/// old version it returns the offset into the *original* haystack (the old
-/// one returned an offset into the lowercased copy, identical for ASCII).
-fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
+fn extract_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let bytes = tag.as_bytes();
+    let mut cursor = 0usize;
+    while cursor < bytes.len()
+        && matches!(bytes[cursor], b'<' | b'/' | b' ' | b'\t' | b'\r' | b'\n')
+    {
+        cursor += 1;
     }
-    let h = haystack.as_bytes();
-    let n = needle.as_bytes();
-    if n.len() > h.len() {
-        return None;
+    while cursor < bytes.len()
+        && !bytes[cursor].is_ascii_whitespace()
+        && !matches!(bytes[cursor], b'/' | b'>')
+    {
+        cursor += 1;
     }
-    (0..=(h.len() - n.len())).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
+
+    while cursor < bytes.len() {
+        while cursor < bytes.len() && (bytes[cursor].is_ascii_whitespace() || bytes[cursor] == b'/')
+        {
+            cursor += 1;
+        }
+        let attr_start = cursor;
+        while cursor < bytes.len()
+            && !bytes[cursor].is_ascii_whitespace()
+            && !matches!(bytes[cursor], b'=' | b'/' | b'>')
+        {
+            cursor += 1;
+        }
+        if attr_start == cursor {
+            break;
+        }
+        let attr_name = &tag[attr_start..cursor];
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() || bytes[cursor] != b'=' {
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if cursor >= bytes.len() {
+            return None;
+        }
+
+        let (value_start, value_end) = if matches!(bytes[cursor], b'"' | b'\'') {
+            let quote = bytes[cursor];
+            cursor += 1;
+            let start = cursor;
+            while cursor < bytes.len() && bytes[cursor] != quote {
+                cursor += 1;
+            }
+            let end = cursor;
+            cursor = cursor.saturating_add(1);
+            (start, end)
+        } else {
+            let start = cursor;
+            while cursor < bytes.len()
+                && !bytes[cursor].is_ascii_whitespace()
+                && !matches!(bytes[cursor], b'/' | b'>')
+            {
+                cursor += 1;
+            }
+            (start, cursor)
+        };
+        if attr_name.eq_ignore_ascii_case(name) {
+            return Some(&tag[value_start..value_end]);
+        }
+    }
+    None
+}
+
+#[derive(Clone, Copy)]
+struct HtmlTag<'a> {
+    name: &'a str,
+    closing: bool,
+    self_closing: bool,
+}
+
+impl<'a> HtmlTag<'a> {
+    fn parse(raw: &'a str) -> Option<Self> {
+        let raw = raw.trim();
+        if raw.starts_with('!') || raw.starts_with('?') {
+            return None;
+        }
+        let (closing, body) = match raw.strip_prefix('/') {
+            Some(body) => (true, body.trim_start()),
+            None => (false, raw),
+        };
+        let name_end = body
+            .as_bytes()
+            .iter()
+            .position(|byte| byte.is_ascii_whitespace() || matches!(*byte, b'/' | b'>'))
+            .unwrap_or(body.len());
+        let name = &body[..name_end];
+        if name.is_empty() {
+            return None;
+        }
+        Some(Self {
+            name,
+            closing,
+            self_closing: body.trim_end().ends_with('/'),
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DroppedHtmlBlock {
+    Script,
+    Style,
+    NoScript,
+    Iframe,
+}
+
+impl DroppedHtmlBlock {
+    fn from_name(name: &str) -> Option<Self> {
+        if name.eq_ignore_ascii_case("script") {
+            Some(Self::Script)
+        } else if name.eq_ignore_ascii_case("style") {
+            Some(Self::Style)
+        } else if name.eq_ignore_ascii_case("noscript") {
+            Some(Self::NoScript)
+        } else if name.eq_ignore_ascii_case("iframe") {
+            Some(Self::Iframe)
+        } else {
+            None
+        }
+    }
+
+    fn matches(self, name: &str) -> bool {
+        match self {
+            Self::Script => name.eq_ignore_ascii_case("script"),
+            Self::Style => name.eq_ignore_ascii_case("style"),
+            Self::NoScript => name.eq_ignore_ascii_case("noscript"),
+            Self::Iframe => name.eq_ignore_ascii_case("iframe"),
+        }
+    }
+}
+
+fn heading_prefix(name: &str) -> Option<&'static str> {
+    if name.eq_ignore_ascii_case("h1") {
+        Some("# ")
+    } else if name.eq_ignore_ascii_case("h2") {
+        Some("## ")
+    } else if name.eq_ignore_ascii_case("h3") {
+        Some("### ")
+    } else if name.eq_ignore_ascii_case("h4") {
+        Some("#### ")
+    } else if name.eq_ignore_ascii_case("h5") {
+        Some("##### ")
+    } else if name.eq_ignore_ascii_case("h6") {
+        Some("###### ")
+    } else {
+        None
+    }
+}
+
+fn decode_html_entity(input: &str) -> Option<(&'static str, usize)> {
+    for (encoded, decoded) in [
+        ("&amp;", "&"),
+        ("&lt;", "<"),
+        ("&gt;", ">"),
+        ("&quot;", "\""),
+        ("&apos;", "'"),
+        ("&nbsp;", " "),
+    ] {
+        if input.starts_with(encoded) {
+            return Some((decoded, encoded.len()));
+        }
+    }
+    None
+}
+
+struct HtmlTextWriter {
+    output: String,
+    pending_breaks: u8,
+    pending_space: bool,
+    truncated: bool,
+}
+
+impl HtmlTextWriter {
+    fn new() -> Self {
+        Self {
+            output: String::new(),
+            pending_breaks: 0,
+            pending_space: false,
+            truncated: false,
+        }
+    }
+
+    fn is_truncated(&self) -> bool {
+        self.truncated
+    }
+
+    fn request_break(&mut self, lines: u8) {
+        self.pending_breaks = self.pending_breaks.max(lines);
+        self.pending_space = false;
+    }
+
+    fn push_text(&mut self, text: &str) {
+        for character in text.chars() {
+            self.push_text_char(character);
+        }
+    }
+
+    fn push_text_char(&mut self, character: char) {
+        if character.is_whitespace() {
+            self.pending_space = true;
+        } else {
+            self.flush_pending();
+            self.push_char_bounded(character);
+        }
+    }
+
+    fn push_markup(&mut self, markup: &str) {
+        self.flush_pending();
+        self.push_str_bounded(markup);
+    }
+
+    fn flush_pending(&mut self) {
+        if self.pending_breaks > 0 {
+            while self.output.ends_with(' ') {
+                self.output.pop();
+            }
+            if !self.output.is_empty() {
+                let present = self
+                    .output
+                    .as_bytes()
+                    .iter()
+                    .rev()
+                    .take_while(|byte| **byte == b'\n')
+                    .count();
+                for _ in present..usize::from(self.pending_breaks) {
+                    self.push_char_bounded('\n');
+                }
+            }
+            self.pending_breaks = 0;
+            self.pending_space = false;
+        } else if self.pending_space {
+            if !self.output.is_empty()
+                && !self
+                    .output
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_whitespace)
+            {
+                self.push_char_bounded(' ');
+            }
+            self.pending_space = false;
+        }
+    }
+
+    fn push_char_bounded(&mut self, character: char) {
+        if self.truncated {
+            return;
+        }
+        let additional = character.len_utf8();
+        if self.output.len().saturating_add(additional) > MAX_EXTRACTED_BYTES
+            || self.output.try_reserve(additional).is_err()
+        {
+            self.truncated = true;
+            return;
+        }
+        self.output.push(character);
+    }
+
+    fn push_str_bounded(&mut self, value: &str) {
+        if self.truncated || value.is_empty() {
+            return;
+        }
+        let remaining = MAX_EXTRACTED_BYTES.saturating_sub(self.output.len());
+        if value.len() > remaining || self.output.try_reserve(value.len()).is_err() {
+            self.truncated = true;
+            return;
+        }
+        self.output.push_str(value);
+    }
+
+    fn finish(mut self) -> (String, bool) {
+        while self
+            .output
+            .chars()
+            .next_back()
+            .is_some_and(char::is_whitespace)
+        {
+            self.output.pop();
+        }
+        if self.truncated {
+            let content_limit = MAX_EXTRACTED_BYTES.saturating_sub(HTML_TRUNCATION_MARKER.len());
+            self.output
+                .truncate(crate::util::byte_floor(&self.output, content_limit));
+            while self
+                .output
+                .chars()
+                .next_back()
+                .is_some_and(char::is_whitespace)
+            {
+                self.output.pop();
+            }
+            if self
+                .output
+                .try_reserve(HTML_TRUNCATION_MARKER.len())
+                .is_ok()
+            {
+                self.output.push_str(HTML_TRUNCATION_MARKER);
+            }
+        }
+        (self.output, self.truncated)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
-    use std::time::Duration as StdDuration;
-
-    #[test]
-    fn find_ci_is_case_insensitive_single_pass() {
-        // COR-28: parity with the old to_lowercase().find() behaviour
-        // for ASCII content, plus the empty/overflow edge cases.
-        assert_eq!(find_ci("Hello World", "world"), Some(6));
-        assert_eq!(find_ci("<SCRIPT>", "<script"), Some(0));
-        assert_eq!(find_ci("abc", "xyz"), None);
-        assert_eq!(find_ci("", ""), Some(0));
-        assert_eq!(find_ci("anything", ""), Some(0));
-        assert_eq!(find_ci("x", "xx"), None);
-        // Offset is into the original haystack (matters once a caller
-        // slices haystack with the returned index).
-        assert_eq!(find_ci("aXbYc", "by"), Some(2));
-        // At scale: a many-tag body must still find / reject correctly
-        // without the old per-call full-body allocation.
-        let big = "<p>".repeat(100_000);
-        assert!(find_ci(&big, "<P>").is_some());
-        assert!(find_ci(&big, "<script>").is_none());
-    }
+    use std::time::{Duration as StdDuration, Instant as StdInstant};
 
     #[test]
     fn strip_html_drops_script_blocks_entirely() {
-        let html = "<p>visible</p><script>alert('hack')</script><p>also visible</p>";
+        let html = "<p>visible</p><script>alert('&amp; hack')<script>nested secret</script>tail secret</script><style>hidden css</style><iframe>hidden frame</iframe><noscript>hidden fallback</noscript><p>also visible</p>";
         let s = strip_html(html);
         assert!(s.contains("visible"));
         assert!(s.contains("also visible"));
         assert!(!s.contains("alert"));
         assert!(!s.contains("hack"));
+        assert!(!s.contains("secret"));
+        assert!(!s.contains("hidden"));
     }
 
     #[test]
@@ -891,6 +1164,60 @@ mod tests {
     }
 
     #[test]
+    fn strip_html_many_open_tags_remains_linear_at_eight_mib() {
+        // Regression: replace_block_open_close searched for the present `<p`
+        // and then scanned the entire remainder again for absent `<p/>` on
+        // every iteration. This exact shape used to be quadratic.
+        const TARGET_BYTES: usize = 8 * 1024 * 1024;
+        let html = "<p>".repeat(TARGET_BYTES.div_ceil(3));
+        let started = StdInstant::now();
+        let stripped = strip_html(&html);
+        let elapsed = started.elapsed();
+
+        assert!(stripped.is_empty());
+        assert!(
+            elapsed < StdDuration::from_secs(10),
+            "single-pass stripping took {elapsed:?} for {} bytes",
+            html.len()
+        );
+    }
+
+    #[test]
+    fn strip_html_caps_output_and_reports_truncation() {
+        let html = "x".repeat(MAX_EXTRACTED_BYTES + 4_096);
+        let (stripped, truncated) = strip_html_bounded(&html);
+
+        assert!(truncated);
+        assert!(stripped.len() <= MAX_EXTRACTED_BYTES);
+        assert!(stripped.ends_with(HTML_TRUNCATION_MARKER));
+        let (derived, derived_truncated) = derive_text(&html, "text/html");
+        assert!(derived_truncated);
+        assert_eq!(derived, stripped);
+    }
+
+    #[test]
+    fn strip_html_bounds_nested_link_state_without_dangling_markup() {
+        let mut html = r#"<a href="https://example.com">"#.repeat(MAX_HTML_LINK_DEPTH + 32);
+        html.push_str("visible");
+        html.push_str(&"</a>".repeat(MAX_HTML_LINK_DEPTH + 32));
+
+        let stripped = strip_html(&html);
+        assert!(stripped.contains("visible"));
+        assert_eq!(stripped.matches('[').count(), MAX_HTML_LINK_DEPTH);
+        assert_eq!(
+            stripped.matches("](https://example.com)").count(),
+            MAX_HTML_LINK_DEPTH
+        );
+    }
+
+    #[test]
+    fn strip_html_drops_oversized_link_targets() {
+        let href = "x".repeat(MAX_HTML_LINK_BYTES + 1);
+        let stripped = strip_html(&format!(r#"<a href="{href}">visible</a>"#));
+        assert_eq!(stripped, "visible");
+    }
+
+    #[test]
     fn truncate_preserves_short_input_verbatim() {
         let (s, t) = truncate("hello", 100);
         assert_eq!(s, "hello");
@@ -909,28 +1236,22 @@ mod tests {
     #[test]
     fn extract_attr_handles_double_quotes() {
         let tag = "<a href=\"https://example.com\" class=\"link\"";
-        assert_eq!(
-            extract_attr(tag, "href"),
-            Some("https://example.com".to_string())
-        );
+        assert_eq!(extract_attr(tag, "href"), Some("https://example.com"));
     }
 
     #[test]
     fn extract_attr_handles_single_quotes() {
         let tag = "<a href='https://example.com'";
-        assert_eq!(
-            extract_attr(tag, "href"),
-            Some("https://example.com".to_string())
-        );
+        assert_eq!(extract_attr(tag, "href"), Some("https://example.com"));
     }
 
     #[test]
-    fn collapse_whitespace_compresses_runs() {
+    fn strip_html_compresses_whitespace_runs() {
         // Multiple blank lines collapse to a single paragraph break
         // (one blank line = two `\n`s between non-empty content).
         // Runs of internal spaces collapse to a single space.
-        let input = "hello    world\n\n\n\nfoo";
-        let s = collapse_whitespace(input);
+        let input = "<p>hello    world</p><p>foo</p>";
+        let s = strip_html(input);
         assert_eq!(s, "hello world\n\nfoo");
     }
 
@@ -940,6 +1261,17 @@ mod tests {
         assert!(err.to_string().contains("http(s) URLs"));
         let err = fetch("javascript:alert(1)").await.unwrap_err();
         assert!(err.to_string().contains("http(s) URLs"));
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_url_userinfo_before_authorization_or_dns() {
+        let err = fetch("https://operator:secret@example.com/private")
+            .await
+            .unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("userinfo credentials"));
+        assert!(!message.contains("operator"));
+        assert!(!message.contains("secret"));
     }
 
     // ── SX-01: SSRF guard rejection corpus ────────────────────────────────
@@ -1183,6 +1515,28 @@ mod tests {
         let r = fetch(&url).await.unwrap();
         assert_eq!(r.status, 200);
         assert_eq!(r.text, "hello\nplain world");
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_oversized_body_before_collecting_it() {
+        let _g = test_overrides::LoopbackGuard::enable();
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(vec![b'x'; MAX_RESPONSE_BYTES + 1], "text/plain"),
+            )
+            .mount(&mock)
+            .await;
+
+        let error = fetch(&mock.uri()).await.unwrap_err();
+        assert!(
+            error.to_string().contains("exceeds ceiling"),
+            "unexpected bounded-body error: {error:#}"
+        );
     }
 
     #[tokio::test]

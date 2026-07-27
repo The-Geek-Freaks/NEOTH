@@ -7,9 +7,10 @@
 //!
 //! ## Privacy
 //!
-//! STT output is NEVER written to the WAL — transcript text stays in memory /
-//! the caller's hands per the NEOTH privacy model. Cloud calls emit only the
-//! metadata-only `0xCC STT_TRANSCRIBED` event (provider, byte/character counts).
+//! STT output is NEVER written to the WAL. Cloud results are retained only in
+//! the private, request-bound replay store so a crash after paid egress cannot
+//! charge the operator twice; the `0xCC STT_TRANSCRIBED` event remains
+//! metadata-only (provider, byte/character counts).
 //!
 //! ## Network-guard posture
 //!
@@ -108,7 +109,7 @@ impl SttFactoryError {
 /// Common STT backend surface — every transcriber implements this. `audio` is a
 /// COMPLETE encoded audio file (WAV/MP3 bytes) the cloud endpoints upload as-is.
 #[async_trait]
-pub trait SttProviderImpl: Send + Sync {
+pub(crate) trait SttProviderImpl: Send + Sync {
     /// The dispatcher's pinned [`SttProviderKind`] variant for this impl.
     fn kind(&self) -> SttProviderKind;
 
@@ -116,6 +117,7 @@ pub trait SttProviderImpl: Send + Sync {
     /// typed retryability plus an operator-readable message.
     async fn transcribe(
         &self,
+        permit: &crate::media::audio::AudioWorkPermit,
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError>;
@@ -154,6 +156,52 @@ fn http_status_error(provider: &str, status: reqwest::StatusCode) -> SttProvider
     } else {
         SttProviderError::permanent(message)
     }
+}
+
+const MAX_CLOUD_STT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+async fn read_cloud_stt_response_bounded(
+    mut response: reqwest::Response,
+    provider: &str,
+) -> Result<Vec<u8>, SttProviderError> {
+    if let Some(content_length) = response.content_length()
+        && content_length > MAX_CLOUD_STT_RESPONSE_BYTES as u64
+    {
+        return Err(SttProviderError::permanent(format!(
+            "{provider} response Content-Length {content_length} exceeds the \
+             {MAX_CLOUD_STT_RESPONSE_BYTES}-byte limit"
+        )));
+    }
+
+    let initial_capacity = response
+        .content_length()
+        .and_then(|length| usize::try_from(length).ok())
+        .unwrap_or(0)
+        .min(MAX_CLOUD_STT_RESPONSE_BYTES);
+    let mut body = Vec::new();
+    body.try_reserve_exact(initial_capacity).map_err(|error| {
+        SttProviderError::permanent(format!("{provider} response reserve: {error}"))
+    })?;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| request_error(provider, error))?
+    {
+        let next_len = body.len().checked_add(chunk.len()).ok_or_else(|| {
+            SttProviderError::permanent(format!("{provider} response size overflow"))
+        })?;
+        if next_len > MAX_CLOUD_STT_RESPONSE_BYTES {
+            return Err(SttProviderError::permanent(format!(
+                "{provider} streamed response exceeds the \
+                 {MAX_CLOUD_STT_RESPONSE_BYTES}-byte limit"
+            )));
+        }
+        body.try_reserve_exact(chunk.len()).map_err(|error| {
+            SttProviderError::permanent(format!("{provider} response reserve: {error}"))
+        })?;
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 // ── OpenAI Whisper API (multipart upload) ───────────────────────────────────
@@ -240,8 +288,13 @@ impl SttProviderImpl for OpenAiWhisperClient {
         SttProviderKind::OpenAiWhisperApi
     }
 
+    fn model_id(&self) -> Option<String> {
+        Some("whisper-1".to_string())
+    }
+
     async fn transcribe(
         &self,
+        _permit: &crate::media::audio::AudioWorkPermit,
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
@@ -271,10 +324,7 @@ impl SttProviderImpl for OpenAiWhisperClient {
         if !resp.status().is_success() {
             return Err(http_status_error("openai whisper", resp.status()));
         }
-        let body = resp
-            .bytes()
-            .await
-            .map_err(|e| request_error("openai whisper response body", e))?;
+        let body = read_cloud_stt_response_bounded(resp, "openai whisper response body").await?;
         parse_openai_whisper(&body, &request.language).map_err(SttProviderError::permanent)
     }
 }
@@ -380,6 +430,10 @@ impl SttProviderImpl for AzureSpeechClient {
         SttProviderKind::AzureSpeech
     }
 
+    fn model_id(&self) -> Option<String> {
+        Some(format!("azure-speech-v1@{}", self.region))
+    }
+
     /// F66 — engage the dispatcher's HANDY-06 fallback guard: Azure rejects an
     /// unknown locale with an HTTP error, so declare the supported set and let
     /// `resolve_language` fall an unsupported request back to auto-detect.
@@ -389,6 +443,7 @@ impl SttProviderImpl for AzureSpeechClient {
 
     async fn transcribe(
         &self,
+        _permit: &crate::media::audio::AudioWorkPermit,
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
@@ -412,10 +467,7 @@ impl SttProviderImpl for AzureSpeechClient {
         if !resp.status().is_success() {
             return Err(http_status_error("azure speech", resp.status()));
         }
-        let body = resp
-            .bytes()
-            .await
-            .map_err(|e| request_error("azure speech response body", e))?;
+        let body = read_cloud_stt_response_bounded(resp, "azure speech response body").await?;
         parse_azure_speech(&body, &request.language).map_err(SttProviderError::permanent)
     }
 }
@@ -1125,6 +1177,7 @@ trait FasterWhisperPythonProbe: Send + Sync {
         &self,
         python: &Path,
         explicitly_configured: bool,
+        audio_permit: Option<&crate::media::audio::AudioWorkPermit>,
     ) -> Result<(), SttFactoryError>;
 }
 
@@ -1136,6 +1189,7 @@ impl FasterWhisperPythonProbe for ProcessFasterWhisperPythonProbe {
         &self,
         python: &Path,
         explicitly_configured: bool,
+        audio_permit: Option<&crate::media::audio::AudioWorkPermit>,
     ) -> Result<(), SttFactoryError> {
         static VERIFIED_PYTHONS: std::sync::OnceLock<
             std::sync::Mutex<std::collections::HashSet<PathBuf>>,
@@ -1151,7 +1205,7 @@ impl FasterWhisperPythonProbe for ProcessFasterWhisperPythonProbe {
         }
         let mut command = tokio::process::Command::new(python);
         command
-            .args(["-c", "import faster_whisper"])
+            .args(["-c", FASTER_WHISPER_PYTHON_BRIDGE, "probe"])
             .env("HF_HUB_OFFLINE", "1")
             .env("TRANSFORMERS_OFFLINE", "1")
             .env("HF_DATASETS_OFFLINE", "1")
@@ -1160,27 +1214,25 @@ impl FasterWhisperPythonProbe for ProcessFasterWhisperPythonProbe {
             .stderr(std::process::Stdio::piped())
             .stdin(std::process::Stdio::null())
             .kill_on_drop(true);
-        let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
-            .await
-            .map_err(|_| {
-                SttFactoryError::retryable(format!(
-                    "Python import probe timed out for `{}`",
-                    python.display()
+        let mut resources = FasterWhisperChildResources::default();
+        resources._audio_permit = audio_permit.cloned();
+        let output = run_faster_whisper_child(
+            command,
+            std::time::Duration::from_secs(15),
+            "Python import probe",
+            resources,
+        )
+        .await
+        .map_err(|failure| {
+            if explicitly_configured && failure.message.contains("spawn") {
+                SttFactoryError::permanent(format!(
+                    "NEOTH_FASTER_WHISPER_PYTHON is invalid: {}",
+                    failure.message
                 ))
-            })?
-            .map_err(|error| {
-                let message = format!(
-                    "cannot start Python interpreter `{}`: {error}",
-                    python.display()
-                );
-                if explicitly_configured {
-                    SttFactoryError::permanent(format!(
-                        "NEOTH_FASTER_WHISPER_PYTHON is invalid: {message}"
-                    ))
-                } else {
-                    SttFactoryError::retryable(message)
-                }
-            })?;
+            } else {
+                SttFactoryError::retryable(failure.message)
+            }
+        })?;
         if output.status.success() {
             verified
                 .lock()
@@ -1207,6 +1259,9 @@ import sys
 
 from faster_whisper import WhisperModel
 from huggingface_hub import snapshot_download
+
+if len(sys.argv) == 2 and sys.argv[1] == "probe":
+    sys.exit(0)
 
 mode, model_id, revision, audio_path, language, local_only, cache_root = sys.argv[1:8]
 snapshot = snapshot_download(
@@ -1237,13 +1292,54 @@ for segment in segments:
     }, ensure_ascii=False), flush=True)
 "#;
 
-#[derive(Debug, Clone, Copy)]
-enum FasterWhisperBridgeMode<'a> {
+const FASTER_WHISPER_PROCESS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+const FASTER_WHISPER_REAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const MAX_FASTER_WHISPER_STDOUT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FASTER_WHISPER_STDERR_BYTES: usize = 64 * 1024;
+
+static FASTER_WHISPER_PROCESS_BUDGET: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
+struct FasterWhisperProcessPermit {
+    _permit: tokio::sync::SemaphorePermit<'static>,
+}
+
+#[derive(Debug)]
+enum FasterWhisperBridgeMode {
     Transcribe {
-        audio_path: &'a Path,
-        language: &'a str,
+        audio: tempfile::TempPath,
+        language: String,
     },
     Prefetch,
+}
+
+impl FasterWhisperBridgeMode {
+    fn private_audio_path(&self) -> &Path {
+        match self {
+            Self::Transcribe { audio, .. } => audio.as_ref(),
+            Self::Prefetch => Path::new(""),
+        }
+    }
+
+    fn language(&self) -> &str {
+        match self {
+            Self::Transcribe { language, .. } => language,
+            Self::Prefetch => "auto",
+        }
+    }
+
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Transcribe { .. } => "transcription",
+            Self::Prefetch => "model prefetch",
+        }
+    }
+
+    fn into_private_audio(self) -> Option<tempfile::TempPath> {
+        match self {
+            Self::Transcribe { audio, .. } => Some(audio),
+            Self::Prefetch => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -1252,20 +1348,90 @@ struct FasterWhisperBridgeFailure {
     message: String,
 }
 
+struct FasterWhisperChildResources {
+    _process_permit: Option<FasterWhisperProcessPermit>,
+    _audio_permit: Option<crate::media::audio::AudioWorkPermit>,
+    private_audio: Option<tempfile::TempPath>,
+    _model_guard: Option<super::model_manager::ModelCacheGuard>,
+    cleanup_proved: bool,
+}
+
+impl Default for FasterWhisperChildResources {
+    fn default() -> Self {
+        Self {
+            _process_permit: None,
+            _audio_permit: None,
+            private_audio: None,
+            _model_guard: None,
+            // No process has been spawned yet, so dropping a queued or
+            // cancelled admission is safe and must not poison global budgets.
+            cleanup_proved: true,
+        }
+    }
+}
+
+impl FasterWhisperChildResources {
+    fn close_private_audio(&mut self, operation: &str) -> Result<(), FasterWhisperBridgeFailure> {
+        let Some(path) = self.private_audio.take() else {
+            self.cleanup_proved = true;
+            return Ok(());
+        };
+        path.close().map_err(|error| {
+            close_faster_whisper_budgets();
+            FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!(
+                    "remove private faster-whisper WAV after proved {operation} tree exit; \
+                     budgets closed: {error}"
+                ),
+            }
+        })?;
+        self.cleanup_proved = true;
+        Ok(())
+    }
+
+    fn protect_private_audio(&mut self, operation: &str, reason: &str) {
+        if let Some(path) = self.private_audio.as_mut() {
+            let retained = path.to_path_buf();
+            path.disable_cleanup(true);
+            tracing::error!(
+                path = %retained.display(),
+                %operation,
+                %reason,
+                "retaining private faster-whisper WAV because child-tree exit was not proved"
+            );
+        }
+    }
+}
+
+impl Drop for FasterWhisperChildResources {
+    fn drop(&mut self) {
+        if !self.cleanup_proved {
+            close_faster_whisper_budgets();
+            self.protect_private_audio(
+                "unknown",
+                "resource owner exited without an explicit process-tree proof",
+            );
+        }
+    }
+}
+
+struct CappedChildStream {
+    bytes: Vec<u8>,
+    truncated: bool,
+}
+
 fn faster_whisper_bridge_command(
     python: &Path,
     model_id: &str,
     revision: &str,
     cache_root: &Path,
-    mode: FasterWhisperBridgeMode<'_>,
+    mode: &FasterWhisperBridgeMode,
     offline: bool,
 ) -> tokio::process::Command {
-    let (mode_name, audio_path, language) = match mode {
-        FasterWhisperBridgeMode::Transcribe {
-            audio_path,
-            language,
-        } => ("transcribe", audio_path, language),
-        FasterWhisperBridgeMode::Prefetch => ("prefetch", Path::new(""), "auto"),
+    let mode_name = match mode {
+        FasterWhisperBridgeMode::Transcribe { .. } => "transcribe",
+        FasterWhisperBridgeMode::Prefetch => "prefetch",
     };
     let mut command = tokio::process::Command::new(python);
     command
@@ -1273,8 +1439,8 @@ fn faster_whisper_bridge_command(
         .arg(mode_name)
         .arg(model_id)
         .arg(revision)
-        .arg(audio_path)
-        .arg(language)
+        .arg(mode.private_audio_path())
+        .arg(mode.language())
         .arg(if offline { "1" } else { "0" })
         .arg(cache_root)
         .env("PYTHONIOENCODING", "utf-8")
@@ -1297,8 +1463,10 @@ async fn run_faster_whisper_bridge(
     python: &Path,
     model_id: &str,
     cache_root: &Path,
-    mode: FasterWhisperBridgeMode<'_>,
+    mode: FasterWhisperBridgeMode,
     offline: bool,
+    audio_permit: Option<crate::media::audio::AudioWorkPermit>,
+    model_guard: Option<super::model_manager::ModelCacheGuard>,
 ) -> Result<std::process::Output, FasterWhisperBridgeFailure> {
     let revision = faster_whisper_artifact_manifest(model_id)
         .map(|manifest| manifest.revision)
@@ -1308,18 +1476,23 @@ async fn run_faster_whisper_bridge(
                 "unsupported faster-whisper repository `{model_id}` has no reviewed manifest"
             ),
         })?;
-    let mut command =
-        faster_whisper_bridge_command(python, model_id, revision, cache_root, mode, offline);
-    let output = tokio::time::timeout(std::time::Duration::from_secs(600), command.output())
-        .await
-        .map_err(|_| FasterWhisperBridgeFailure {
-            class: SttFailureClass::Retryable,
-            message: "faster-whisper process timed out".to_string(),
-        })?
-        .map_err(|error| FasterWhisperBridgeFailure {
-            class: SttFailureClass::Retryable,
-            message: format!("faster-whisper spawn: {error}"),
-        })?;
+    let operation = mode.operation();
+    let command =
+        faster_whisper_bridge_command(python, model_id, revision, cache_root, &mode, offline);
+    let resources = FasterWhisperChildResources {
+        _process_permit: None,
+        _audio_permit: audio_permit,
+        private_audio: mode.into_private_audio(),
+        _model_guard: model_guard,
+        cleanup_proved: true,
+    };
+    let output = run_faster_whisper_child(
+        command,
+        FASTER_WHISPER_PROCESS_TIMEOUT,
+        operation,
+        resources,
+    )
+    .await?;
     if output.status.success() {
         return Ok(output);
     }
@@ -1336,6 +1509,908 @@ async fn run_faster_whisper_bridge(
             stderr.trim()
         ),
     })
+}
+
+async fn run_faster_whisper_child(
+    command: tokio::process::Command,
+    timeout: std::time::Duration,
+    operation: &'static str,
+    mut resources: FasterWhisperChildResources,
+) -> Result<std::process::Output, FasterWhisperBridgeFailure> {
+    let process_permit = match FASTER_WHISPER_PROCESS_BUDGET.acquire().await {
+        Ok(permit) => permit,
+        Err(_) => {
+            resources.close_private_audio(operation)?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: "faster-whisper process budget is closed after an unverified cleanup"
+                    .to_string(),
+            });
+        }
+    };
+    resources._process_permit = Some(FasterWhisperProcessPermit {
+        _permit: process_permit,
+    });
+
+    // The supervisor owns every cleanup-sensitive resource. Dropping the
+    // caller future only detaches this JoinHandle: the child still reaches a
+    // terminal wait/reap, while the private WAV, model lock and cloned audio
+    // permit remain live until that proof completes.
+    tokio::spawn(run_faster_whisper_child_supervised(
+        command, timeout, operation, resources,
+    ))
+    .await
+    .map_err(|error| FasterWhisperBridgeFailure {
+        class: SttFailureClass::Permanent,
+        message: format!("faster-whisper supervisor task failed: {error}"),
+    })?
+}
+
+async fn run_faster_whisper_child_supervised(
+    mut command: tokio::process::Command,
+    timeout: std::time::Duration,
+    operation: &'static str,
+    mut resources: FasterWhisperChildResources,
+) -> Result<std::process::Output, FasterWhisperBridgeFailure> {
+    command
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    let setup = match FasterWhisperContainmentSetup::configure(&mut command) {
+        Ok(setup) => setup,
+        Err(error) => {
+            resources.close_private_audio(operation)?;
+            return Err(error);
+        }
+    };
+    // From this point a failed/panicking spawn may have crossed the OS process
+    // boundary. Only an explicit no-child error or a proved empty tree may
+    // make the private input eligible for deletion and release admission.
+    resources.cleanup_proved = false;
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            resources.close_private_audio(operation)?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Retryable,
+                message: format!("faster-whisper spawn ({operation}): {error}"),
+            });
+        }
+    };
+    let containment = match setup.activate(&child) {
+        Ok(containment) => containment,
+        Err(error) => {
+            // Assignment failed after spawn, so a descendant could have
+            // escaped before the OS boundary became active. Stop all future
+            // media/process admission even when the direct child reaps.
+            close_faster_whisper_budgets();
+            resources.protect_private_audio(operation, &error.message);
+            if let Err(cleanup) = kill_and_reap_faster_whisper(&mut child).await {
+                return Err(FasterWhisperBridgeFailure {
+                    class: SttFailureClass::Permanent,
+                    message: format!(
+                        "{}; direct child cleanup also failed and budgets were closed: {cleanup}",
+                        error.message
+                    ),
+                });
+            }
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!(
+                    "{}; faster-whisper budgets were closed because descendant containment was never proven",
+                    error.message
+                ),
+            });
+        }
+    };
+    let stdout = match child.stdout.take() {
+        Some(stdout) => stdout,
+        None => {
+            terminate_unpiped_faster_whisper(&mut child, containment, &mut resources, operation)
+                .await?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: "faster-whisper stdout pipe unavailable".to_string(),
+            });
+        }
+    };
+    let stderr = match child.stderr.take() {
+        Some(stderr) => stderr,
+        None => {
+            drop(stdout);
+            terminate_unpiped_faster_whisper(&mut child, containment, &mut resources, operation)
+                .await?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: "faster-whisper stderr pipe unavailable".to_string(),
+            });
+        }
+    };
+    let mut stdout_task = Some(tokio::spawn(drain_faster_whisper_stream(
+        stdout,
+        MAX_FASTER_WHISPER_STDOUT_BYTES,
+    )));
+    let mut stderr_task = Some(tokio::spawn(drain_faster_whisper_stream(
+        stderr,
+        MAX_FASTER_WHISPER_STDERR_BYTES,
+    )));
+
+    let completed = tokio::time::timeout(timeout, async {
+        let status = child
+            .wait()
+            .await
+            .map_err(|error| format!("wait for faster-whisper {operation}: {error}"))?;
+        let stdout = collect_faster_whisper_stream(&mut stdout_task, "stdout").await?;
+        let stderr = collect_faster_whisper_stream(&mut stderr_task, "stderr").await?;
+        Ok::<_, String>((status, stdout, stderr))
+    })
+    .await;
+
+    let (status, stdout, stderr) = match completed {
+        Ok(Ok(completed)) => completed,
+        Ok(Err(error)) => {
+            terminate_and_reap_faster_whisper(
+                &mut child,
+                containment,
+                &mut stdout_task,
+                &mut stderr_task,
+                &mut resources,
+                operation,
+            )
+            .await?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Retryable,
+                message: error,
+            });
+        }
+        Err(_) => {
+            terminate_and_reap_faster_whisper(
+                &mut child,
+                containment,
+                &mut stdout_task,
+                &mut stderr_task,
+                &mut resources,
+                operation,
+            )
+            .await?;
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Retryable,
+                message: format!(
+                    "faster-whisper {operation} timed out after {}s",
+                    timeout.as_secs()
+                ),
+            });
+        }
+    };
+
+    // `wait()` proves only the direct Python process exited. Explicitly close
+    // the process group / Job Object before releasing permits so detached
+    // descendants cannot survive a successful-looking root exit.
+    let tree_proof = containment.terminate_and_prove_tree_empty().await;
+    if let Err(error) = tree_proof {
+        close_faster_whisper_budgets();
+        resources.protect_private_audio(operation, &error);
+        return Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: format!(
+                "faster-whisper {operation} descendant cleanup failed; budgets closed: {error}"
+            ),
+        });
+    }
+    resources.close_private_audio(operation)?;
+    if stdout.truncated || stderr.truncated {
+        return Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: format!(
+                "faster-whisper {operation} output exceeded its hard stdout/stderr limit"
+            ),
+        });
+    }
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.bytes,
+        stderr: stderr.bytes,
+    })
+}
+
+async fn drain_faster_whisper_stream<R>(
+    mut reader: R,
+    cap: usize,
+) -> std::io::Result<CappedChildStream>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt as _;
+
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(cap.min(64 * 1024))
+        .map_err(std::io::Error::other)?;
+    let mut truncated = false;
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let read = reader.read(&mut buffer).await?;
+        if read == 0 {
+            break;
+        }
+        let remaining = cap.saturating_sub(bytes.len());
+        let retained = remaining.min(read);
+        if retained > 0 {
+            bytes
+                .try_reserve_exact(retained)
+                .map_err(std::io::Error::other)?;
+            bytes.extend_from_slice(&buffer[..retained]);
+        }
+        truncated |= retained < read;
+    }
+    Ok(CappedChildStream { bytes, truncated })
+}
+
+async fn collect_faster_whisper_stream(
+    task: &mut Option<tokio::task::JoinHandle<std::io::Result<CappedChildStream>>>,
+    stream: &str,
+) -> Result<CappedChildStream, String> {
+    let joined = task
+        .as_mut()
+        .ok_or_else(|| format!("faster-whisper {stream} drain task was already consumed"))?
+        .await;
+    // A JoinHandle is a one-shot future. Clear it immediately after the first
+    // terminal poll so error cleanup can never poll the same handle twice.
+    task.take();
+    joined
+        .map_err(|error| format!("join faster-whisper {stream} drain: {error}"))?
+        .map_err(|error| format!("read faster-whisper {stream}: {error}"))
+}
+
+async fn abort_faster_whisper_stream(
+    task: &mut Option<tokio::task::JoinHandle<std::io::Result<CappedChildStream>>>,
+) {
+    if let Some(task) = task.take() {
+        task.abort();
+        match task.await {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "faster-whisper stream drain failed during cleanup");
+            }
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                tracing::warn!(%error, "faster-whisper stream drain join failed during cleanup");
+            }
+        }
+    }
+}
+
+async fn terminate_and_reap_faster_whisper(
+    child: &mut tokio::process::Child,
+    mut containment: FasterWhisperContainment,
+    stdout_task: &mut Option<tokio::task::JoinHandle<std::io::Result<CappedChildStream>>>,
+    stderr_task: &mut Option<tokio::task::JoinHandle<std::io::Result<CappedChildStream>>>,
+    resources: &mut FasterWhisperChildResources,
+    operation: &str,
+) -> Result<(), FasterWhisperBridgeFailure> {
+    let tree_result = containment.request_tree_termination();
+    let reap_result = kill_and_reap_faster_whisper(child).await;
+    abort_faster_whisper_stream(stdout_task).await;
+    abort_faster_whisper_stream(stderr_task).await;
+    let direct_result = tree_result.and(reap_result.map_err(|error| error.to_string()));
+    let proof_result = match direct_result {
+        Ok(()) => containment.prove_tree_empty().await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = proof_result {
+        close_faster_whisper_budgets();
+        resources.protect_private_audio(operation, &error);
+        return Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: format!(
+                "faster-whisper cleanup could not prove child-tree exit; budgets closed: {error}"
+            ),
+        });
+    }
+    resources.close_private_audio(operation)?;
+    Ok(())
+}
+
+async fn terminate_unpiped_faster_whisper(
+    child: &mut tokio::process::Child,
+    mut containment: FasterWhisperContainment,
+    resources: &mut FasterWhisperChildResources,
+    operation: &str,
+) -> Result<(), FasterWhisperBridgeFailure> {
+    let tree_result = containment.request_tree_termination();
+    let reap_result = kill_and_reap_faster_whisper(child).await;
+    let direct_result = tree_result.and(reap_result.map_err(|error| error.to_string()));
+    let proof_result = match direct_result {
+        Ok(()) => containment.prove_tree_empty().await,
+        Err(error) => Err(error),
+    };
+    if let Err(error) = proof_result {
+        close_faster_whisper_budgets();
+        resources.protect_private_audio(operation, &error);
+        return Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: format!(
+                "faster-whisper pipe setup failed and child-tree cleanup was unproven; budgets closed: {error}"
+            ),
+        });
+    }
+    resources.close_private_audio(operation)?;
+    Ok(())
+}
+
+async fn kill_and_reap_faster_whisper(child: &mut tokio::process::Child) -> std::io::Result<()> {
+    if child.try_wait()?.is_some() {
+        return Ok(());
+    }
+    if let Err(kill_error) = child.start_kill() {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        return Err(kill_error);
+    }
+    match tokio::time::timeout(FASTER_WHISPER_REAP_TIMEOUT, child.wait()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(error),
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "faster-whisper child did not exit and reap within 5 seconds",
+        )),
+    }
+}
+
+fn close_faster_whisper_budgets() {
+    FASTER_WHISPER_PROCESS_BUDGET.close();
+    crate::media::audio::close_audio_work_budget();
+}
+
+#[cfg(target_os = "linux")]
+struct FasterWhisperContainmentSetup;
+
+#[cfg(target_os = "linux")]
+impl FasterWhisperContainmentSetup {
+    fn configure(
+        command: &mut tokio::process::Command,
+    ) -> Result<Self, FasterWhisperBridgeFailure> {
+        use std::os::unix::process::CommandExt as _;
+
+        // SAFETY: getpid(2) takes no pointers and cannot fail.
+        let expected_parent = unsafe { libc::getpid() };
+        command.process_group(0);
+        // SAFETY: the direct branch performs only async-signal-safe syscalls
+        // before exec. The watchdog branch never returns into Rust: it closes
+        // inherited stdio, observes the NEOTH supervisor through a pidfd, and
+        // uses only poll/getppid/nanosleep/kill/_exit. It stays in the original
+        // group after a normal bridge exit, anchoring the PGID until Rust sends
+        // its one disarmed group kill. If NEOTH itself dies, pidfd readiness
+        // makes the watchdog kill that group and exit.
+        unsafe {
+            command.pre_exec(move || {
+                let supervisor_pidfd =
+                    libc::syscall(libc::SYS_pidfd_open, expected_parent, 0) as libc::c_int;
+                if supervisor_pidfd < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                    libc::close(supervisor_pidfd);
+                    return Err(std::io::Error::last_os_error());
+                }
+                if libc::getppid() != expected_parent {
+                    libc::close(supervisor_pidfd);
+                    return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
+                }
+                if libc::getpgrp() != libc::getpid() {
+                    libc::close(supervisor_pidfd);
+                    return Err(std::io::Error::from_raw_os_error(libc::EPERM));
+                }
+                let mut fd_limit: libc::rlimit = std::mem::zeroed();
+                if libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut fd_limit) != 0 {
+                    let error = std::io::Error::last_os_error();
+                    libc::close(supervisor_pidfd);
+                    return Err(error);
+                }
+                let bridge_pid = libc::getpid();
+                let watchdog_pid = libc::fork();
+                if watchdog_pid < 0 {
+                    let error = std::io::Error::last_os_error();
+                    libc::close(supervisor_pidfd);
+                    return Err(error);
+                }
+                if watchdog_pid == 0 {
+                    libc::close(libc::STDIN_FILENO);
+                    libc::close(libc::STDOUT_FILENO);
+                    libc::close(libc::STDERR_FILENO);
+                    let lower_closed = supervisor_pidfd <= 3
+                        || libc::syscall(
+                            libc::SYS_close_range,
+                            3_u32,
+                            (supervisor_pidfd - 1) as u32,
+                            0_u32,
+                        ) == 0;
+                    let upper_closed = libc::syscall(
+                        libc::SYS_close_range,
+                        (supervisor_pidfd as u32).saturating_add(1),
+                        u32::MAX,
+                        0_u32,
+                    ) == 0;
+                    if !lower_closed || !upper_closed {
+                        const WATCHDOG_FD_FALLBACK_MAX: libc::rlim_t = 1_048_576;
+                        if fd_limit.rlim_cur > WATCHDOG_FD_FALLBACK_MAX {
+                            libc::kill(-libc::getpgrp(), libc::SIGKILL);
+                            libc::_exit(137);
+                        }
+                        let upper = fd_limit.rlim_cur;
+                        let mut fd = 3_i32;
+                        while (fd as libc::rlim_t) < upper {
+                            if fd != supervisor_pidfd {
+                                libc::close(fd);
+                            }
+                            fd += 1;
+                        }
+                    }
+                    let pause = libc::timespec {
+                        tv_sec: 0,
+                        tv_nsec: 50_000_000,
+                    };
+                    loop {
+                        if libc::getppid() != bridge_pid {
+                            let mut supervisor = libc::pollfd {
+                                fd: supervisor_pidfd,
+                                events: libc::POLLIN,
+                                revents: 0,
+                            };
+                            let observed = libc::poll(&raw mut supervisor, 1, 50);
+                            if observed > 0 {
+                                libc::kill(-libc::getpgrp(), libc::SIGKILL);
+                                libc::_exit(137);
+                            }
+                            if observed < 0
+                                && std::io::Error::last_os_error().raw_os_error()
+                                    != Some(libc::EINTR)
+                            {
+                                libc::kill(-libc::getpgrp(), libc::SIGKILL);
+                                libc::_exit(137);
+                            }
+                        }
+                        libc::nanosleep(&raw const pause, std::ptr::null_mut());
+                    }
+                }
+                libc::close(supervisor_pidfd);
+                Ok(())
+            });
+        }
+        Ok(Self)
+    }
+
+    fn activate(
+        self,
+        child: &tokio::process::Child,
+    ) -> Result<FasterWhisperContainment, FasterWhisperBridgeFailure> {
+        let pid = child.id().ok_or_else(|| FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: "faster-whisper exited before process-group activation".to_string(),
+        })?;
+        let pgid = libc::pid_t::try_from(pid).map_err(|_| FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: "faster-whisper PID does not fit a POSIX process-group id".to_string(),
+        })?;
+        Ok(FasterWhisperContainment { pgid, armed: true })
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct FasterWhisperContainment {
+    pgid: libc::pid_t,
+    armed: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl FasterWhisperContainment {
+    fn request_tree_termination(&mut self) -> Result<(), String> {
+        if !self.armed {
+            return Ok(());
+        }
+        // Disarm before the only group-targeting signal. The watchdog is still
+        // an original group member at this point, so the PGID cannot have been
+        // recycled. Once SIGKILL may empty the group we never signal this
+        // numeric PGID again; proof below is observation-only.
+        self.armed = false;
+        // SAFETY: spawn used process_group(0), so the positive child PID is
+        // also the dedicated process-group id. A negative id targets only it.
+        if unsafe { libc::kill(-self.pgid, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(format!(
+                "kill faster-whisper process group {}: {error}",
+                self.pgid
+            ))
+        }
+    }
+
+    async fn prove_tree_empty(self) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + FASTER_WHISPER_REAP_TIMEOUT;
+        loop {
+            // On a normal bridge exit the watchdog remains as the original
+            // PGID anchor until our one termination signal, preventing reuse
+            // before disarm. This loop is observation-only after that signal.
+            // SAFETY: signal 0 changes no process state; the dedicated,
+            // previously anchored group id is observed only, never re-signaled.
+            if unsafe { libc::kill(-self.pgid, 0) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() == Some(libc::ESRCH) {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "probe faster-whisper process group {}: {error}",
+                    self.pgid
+                ));
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "faster-whisper process group {} remained non-empty after {}s",
+                    self.pgid,
+                    FASTER_WHISPER_REAP_TIMEOUT.as_secs()
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    async fn terminate_and_prove_tree_empty(mut self) -> Result<(), String> {
+        self.request_tree_termination()?;
+        self.prove_tree_empty().await
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for FasterWhisperContainment {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.request_tree_termination();
+        }
+    }
+}
+
+// A process group cannot prove parent-death cleanup on macOS/BSD. Keep this
+// backend fail-closed there until an equally strong OS containment exists.
+#[cfg(all(unix, not(target_os = "linux")))]
+struct FasterWhisperContainmentSetup;
+
+#[cfg(all(unix, not(target_os = "linux")))]
+impl FasterWhisperContainmentSetup {
+    fn configure(
+        _command: &mut tokio::process::Command,
+    ) -> Result<Self, FasterWhisperBridgeFailure> {
+        Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message:
+                "faster-whisper parent-liveness containment is unavailable on this Unix platform"
+                    .to_string(),
+        })
+    }
+
+    fn activate(
+        self,
+        _child: &tokio::process::Child,
+    ) -> Result<FasterWhisperContainment, FasterWhisperBridgeFailure> {
+        Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message:
+                "faster-whisper parent-liveness containment is unavailable on this Unix platform"
+                    .to_string(),
+        })
+    }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+struct FasterWhisperContainment;
+
+#[cfg(all(unix, not(target_os = "linux")))]
+impl FasterWhisperContainment {
+    fn request_tree_termination(&mut self) -> Result<(), String> {
+        Err(
+            "faster-whisper parent-liveness containment is unavailable on this Unix platform"
+                .to_string(),
+        )
+    }
+
+    async fn prove_tree_empty(self) -> Result<(), String> {
+        Err(
+            "faster-whisper parent-liveness containment is unavailable on this Unix platform"
+                .to_string(),
+        )
+    }
+
+    async fn terminate_and_prove_tree_empty(mut self) -> Result<(), String> {
+        self.request_tree_termination()?;
+        self.prove_tree_empty().await
+    }
+}
+
+#[cfg(windows)]
+struct FasterWhisperContainmentSetup {
+    job: FasterWhisperWindowsJob,
+}
+
+#[cfg(windows)]
+impl FasterWhisperContainmentSetup {
+    fn configure(
+        command: &mut tokio::process::Command,
+    ) -> Result<Self, FasterWhisperBridgeFailure> {
+        use std::os::windows::process::CommandExt as _;
+
+        const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command
+            .as_std_mut()
+            .creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        Ok(Self {
+            job: FasterWhisperWindowsJob::create()?,
+        })
+    }
+
+    fn activate(
+        self,
+        child: &tokio::process::Child,
+    ) -> Result<FasterWhisperContainment, FasterWhisperBridgeFailure> {
+        self.job.assign(child)?;
+        self.job.resume(child)?;
+        Ok(FasterWhisperContainment { job: self.job })
+    }
+}
+
+#[cfg(windows)]
+struct FasterWhisperContainment {
+    job: FasterWhisperWindowsJob,
+}
+
+#[cfg(windows)]
+impl FasterWhisperContainment {
+    fn request_tree_termination(&mut self) -> Result<(), String> {
+        self.job.terminate()
+    }
+
+    async fn prove_tree_empty(self) -> Result<(), String> {
+        self.job.prove_empty().await
+    }
+
+    async fn terminate_and_prove_tree_empty(mut self) -> Result<(), String> {
+        self.request_tree_termination()?;
+        self.prove_tree_empty().await
+    }
+}
+
+#[cfg(windows)]
+struct FasterWhisperWindowsJob {
+    handle: windows_sys::Win32::Foundation::HANDLE,
+}
+
+// SAFETY: the uniquely owned Job Object HANDLE is process-wide and all APIs
+// used through it are thread-safe. Drop closes the handle exactly once.
+#[cfg(windows)]
+unsafe impl Send for FasterWhisperWindowsJob {}
+
+#[cfg(windows)]
+impl FasterWhisperWindowsJob {
+    fn create() -> Result<Self, FasterWhisperBridgeFailure> {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        // An unnamed, uniquely owned job avoids namespace collisions while
+        // KILL_ON_JOB_CLOSE still covers daemon death and unwinding.
+        // SAFETY: both optional pointer arguments are null as documented.
+        let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if handle.is_null() {
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!(
+                    "create faster-whisper Job Object: {}",
+                    std::io::Error::last_os_error()
+                ),
+            });
+        }
+        // SAFETY: all-zero is the documented base value for this Win32 POD.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: `handle` is live and `info` remains valid for the call.
+        let configured = unsafe {
+            SetInformationJobObject(
+                handle,
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        };
+        if configured == 0 {
+            let error = std::io::Error::last_os_error();
+            // SAFETY: `handle` is live and has not been transferred.
+            unsafe { CloseHandle(handle) };
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!("configure faster-whisper Job Object: {error}"),
+            });
+        }
+        Ok(Self { handle })
+    }
+
+    fn assign(&self, child: &tokio::process::Child) -> Result<(), FasterWhisperBridgeFailure> {
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let child_handle = child
+            .raw_handle()
+            .ok_or_else(|| FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: "faster-whisper exited before Job Object assignment".to_string(),
+            })?;
+        // SAFETY: both kernel handles are live during this synchronous call.
+        if unsafe { AssignProcessToJobObject(self.handle, child_handle.cast()) } == 0 {
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!(
+                    "assign faster-whisper to Job Object: {}",
+                    std::io::Error::last_os_error()
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn resume(&self, child: &tokio::process::Child) -> Result<(), FasterWhisperBridgeFailure> {
+        use windows_sys::Win32::Foundation::HANDLE;
+
+        #[link(name = "ntdll")]
+        unsafe extern "system" {
+            fn NtResumeProcess(process_handle: HANDLE) -> i32;
+        }
+
+        let child_handle = child
+            .raw_handle()
+            .ok_or_else(|| FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: "faster-whisper exited before suspended-process resume".to_string(),
+            })?;
+        // SAFETY: the std child still owns a live process HANDLE. NTSTATUS is
+        // non-negative on success; no thread handle is needed for this syscall.
+        let status = unsafe { NtResumeProcess(child_handle.cast()) };
+        if status < 0 {
+            let _ = self.terminate();
+            return Err(FasterWhisperBridgeFailure {
+                class: SttFailureClass::Permanent,
+                message: format!(
+                    "resume faster-whisper after Job Object assignment: NTSTATUS {status:#x}"
+                ),
+            });
+        }
+        Ok(())
+    }
+
+    fn terminate(&self) -> Result<(), String> {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        // SAFETY: this guard still owns the live Job Object handle.
+        if unsafe { TerminateJobObject(self.handle, 1) } == 0 {
+            return Err(format!(
+                "terminate faster-whisper Job Object: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        Ok(())
+    }
+
+    fn active_processes(&self) -> Result<u32, String> {
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+            QueryInformationJobObject,
+        };
+
+        // SAFETY: all-zero is the documented base value for this Win32 POD.
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        let mut returned = 0_u32;
+        // SAFETY: the Job Object handle is live and the output buffer has the
+        // exact size and alignment declared to QueryInformationJobObject.
+        if unsafe {
+            QueryInformationJobObject(
+                self.handle,
+                JobObjectBasicAccountingInformation,
+                (&raw mut info).cast(),
+                std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                &raw mut returned,
+            )
+        } == 0
+        {
+            return Err(format!(
+                "query faster-whisper Job Object accounting: {}",
+                std::io::Error::last_os_error()
+            ));
+        }
+        if returned != 0
+            && returned < std::mem::size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32
+        {
+            return Err(format!(
+                "query faster-whisper Job Object returned a short {returned}-byte accounting record"
+            ));
+        }
+        Ok(info.ActiveProcesses)
+    }
+
+    async fn prove_empty(self) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + FASTER_WHISPER_REAP_TIMEOUT;
+        loop {
+            if self.active_processes()? == 0 {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "faster-whisper Job Object remained non-empty after {}s",
+                    FASTER_WHISPER_REAP_TIMEOUT.as_secs()
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for FasterWhisperWindowsJob {
+    fn drop(&mut self) {
+        // KILL_ON_JOB_CLOSE is the synchronous last-resort tree boundary.
+        // SAFETY: this guard uniquely owns the live handle and drops once.
+        unsafe { windows_sys::Win32::Foundation::CloseHandle(self.handle) };
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+struct FasterWhisperContainmentSetup;
+
+#[cfg(not(any(unix, windows)))]
+impl FasterWhisperContainmentSetup {
+    fn configure(
+        _command: &mut tokio::process::Command,
+    ) -> Result<Self, FasterWhisperBridgeFailure> {
+        Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: "faster-whisper process-tree containment is unavailable on this platform"
+                .to_string(),
+        })
+    }
+
+    fn activate(
+        self,
+        _child: &tokio::process::Child,
+    ) -> Result<FasterWhisperContainment, FasterWhisperBridgeFailure> {
+        Err(FasterWhisperBridgeFailure {
+            class: SttFailureClass::Permanent,
+            message: "faster-whisper process-tree containment is unavailable on this platform"
+                .to_string(),
+        })
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+struct FasterWhisperContainment;
+
+#[cfg(not(any(unix, windows)))]
+impl FasterWhisperContainment {
+    fn request_tree_termination(&mut self) -> Result<(), String> {
+        Err("faster-whisper process-tree containment is unavailable on this platform".to_string())
+    }
+
+    async fn prove_tree_empty(self) -> Result<(), String> {
+        Err("faster-whisper process-tree containment is unavailable on this platform".to_string())
+    }
+
+    async fn terminate_and_prove_tree_empty(mut self) -> Result<(), String> {
+        self.request_tree_termination()?;
+        self.prove_tree_empty().await
+    }
 }
 
 #[async_trait]
@@ -1402,7 +2477,11 @@ impl LocalWhisperPrefetchExecutor for RuntimeLocalWhisperPrefetchExecutor {
                         )
                     })?;
                 ProcessFasterWhisperPythonProbe
-                    .verify(python, target.runtime.faster_whisper_python_is_explicit)
+                    .verify(
+                        python,
+                        target.runtime.faster_whisper_python_is_explicit,
+                        None,
+                    )
                     .await?;
                 let already_verified = target.verified_cache_health(attempt.is_some()).is_ready();
                 let allow_network = !already_verified
@@ -1421,6 +2500,8 @@ impl LocalWhisperPrefetchExecutor for RuntimeLocalWhisperPrefetchExecutor {
                     &target.runtime.faster_whisper_cache_root,
                     FasterWhisperBridgeMode::Prefetch,
                     !allow_network,
+                    None,
+                    attempt.map(super::model_manager::ModelDownloadAttempt::cache_guard),
                 )
                 .await
                 .map_err(|failure| match failure.class {
@@ -1643,7 +2724,10 @@ pub fn parse_faster_whisper_output(stdout: &[u8]) -> (String, Vec<TextSegment>) 
 }
 
 impl FasterWhisperProvider {
-    async fn ensure_model_ready(&self) -> Result<(), SttProviderError> {
+    async fn ensure_model_ready(
+        &self,
+        audio_permit: &crate::media::audio::AudioWorkPermit,
+    ) -> Result<(), SttProviderError> {
         use std::sync::atomic::Ordering;
 
         if self.shared_ready.load(Ordering::Acquire)
@@ -1721,6 +2805,8 @@ impl FasterWhisperProvider {
                 &self.cache_root,
                 FasterWhisperBridgeMode::Prefetch,
                 true,
+                Some(audio_permit.clone()),
+                Some(attempt.cache_guard()),
             )
             .await;
             if let Err(failure) = validation {
@@ -1775,6 +2861,8 @@ impl FasterWhisperProvider {
             &self.cache_root,
             FasterWhisperBridgeMode::Prefetch,
             false,
+            Some(audio_permit.clone()),
+            Some(attempt.cache_guard()),
         )
         .await;
         if let Err(failure) = prefetch {
@@ -1837,14 +2925,15 @@ impl SttProviderImpl for FasterWhisperProvider {
 
     async fn transcribe(
         &self,
+        permit: &crate::media::audio::AudioWorkPermit,
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
         enforce_local_audio_ceiling("faster-whisper", audio.len())?;
         // Model acquisition and backend-load validation finish their D7/D8
         // lifecycle before audio is handled. Transcription is always offline.
-        self.ensure_model_ready().await?;
-        let _model_lock = super::model_manager::lock_model_cache(&self.cache_path)
+        self.ensure_model_ready(permit).await?;
+        let model_lock = super::model_manager::lock_model_cache(&self.cache_path)
             .await
             .map_err(|error| {
                 SttProviderError::retryable(format!(
@@ -1883,16 +2972,31 @@ impl SttProviderImpl for FasterWhisperProvider {
         // `TempPath` owns cleanup across success, error, timeout, and future
         // cancellation. The file handle is closed before the external process
         // opens it, which is required on Windows.
-        let temp = tempfile::Builder::new()
-            .prefix("neoth-fw-")
-            .suffix(".wav")
-            .tempfile()
-            .map_err(|e| {
-                SttProviderError::retryable(format!("faster-whisper: create tmp WAV: {e}"))
+        let mut temp =
+            crate::util::private_temp::named_file(".neoth-fw-", ".wav").map_err(|error| {
+                SttProviderError::retryable(format!(
+                    "faster-whisper: create private tmp WAV: {error}"
+                ))
             })?;
-        std::fs::write(temp.path(), &wav_bytes).map_err(|e| {
-            SttProviderError::retryable(format!("faster-whisper: write tmp WAV: {e}"))
-        })?;
+        {
+            use std::io::Write as _;
+
+            temp.as_file_mut().write_all(&wav_bytes).map_err(|error| {
+                SttProviderError::retryable(format!(
+                    "faster-whisper: write private tmp WAV: {error}"
+                ))
+            })?;
+            temp.as_file_mut().flush().map_err(|error| {
+                SttProviderError::retryable(format!(
+                    "faster-whisper: flush private tmp WAV: {error}"
+                ))
+            })?;
+            temp.as_file_mut().sync_all().map_err(|error| {
+                SttProviderError::retryable(format!(
+                    "faster-whisper: sync private tmp WAV: {error}"
+                ))
+            })?;
+        }
         let tmp_path = temp.into_temp_path();
 
         let language = if request.language.is_empty() {
@@ -1905,10 +3009,12 @@ impl SttProviderImpl for FasterWhisperProvider {
             &self.model_id,
             &self.cache_root,
             FasterWhisperBridgeMode::Transcribe {
-                audio_path: &tmp_path,
-                language: &language,
+                audio: tmp_path,
+                language,
             },
             true,
+            Some(permit.clone()),
+            Some(model_lock),
         )
         .await;
         let out = match bridge {
@@ -2066,6 +3172,7 @@ impl SttProviderImpl for WhisperLocalProvider {
 
     async fn transcribe(
         &self,
+        _permit: &crate::media::audio::AudioWorkPermit,
         audio: &[u8],
         request: &TranscriptionRequest,
     ) -> Result<TranscriptionResult, SttProviderError> {
@@ -2126,14 +3233,15 @@ fn enforce_local_audio_ceiling(provider: &str, input_len: usize) -> Result<(), S
 ///
 /// Every model download is planned against `updater_cfg` before a provider can
 /// start a process or construct a network-capable model loader.
-pub async fn make_stt_provider(
+#[cfg(test)]
+async fn make_stt_provider(
     kind: SttProviderKind,
     api_key: Option<SecretString>,
     azure_region: Option<String>,
     media_cfg: &crate::config::MediaConfig,
     updater_cfg: &crate::config::ops::UpdaterConfig,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
-) -> Result<Box<dyn SttProviderImpl>, SttFactoryError> {
+) -> Result<std::sync::Arc<dyn SttProviderImpl>, SttFactoryError> {
     let runtime = SttRuntimeEnvironment::from_process();
     let python_probe = ProcessFasterWhisperPythonProbe;
     make_stt_provider_with_runtime(
@@ -2143,12 +3251,14 @@ pub async fn make_stt_provider(
         media_cfg,
         updater_cfg,
         wal_writer,
+        None,
         &runtime,
         &python_probe,
     )
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn make_stt_provider_with_runtime(
     kind: SttProviderKind,
     api_key: Option<SecretString>,
@@ -2156,9 +3266,10 @@ async fn make_stt_provider_with_runtime(
     media_cfg: &crate::config::MediaConfig,
     updater_cfg: &crate::config::ops::UpdaterConfig,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    audio_permit: Option<&crate::media::audio::AudioWorkPermit>,
     runtime: &SttRuntimeEnvironment,
     python_probe: &dyn FasterWhisperPythonProbe,
-) -> Result<Box<dyn SttProviderImpl>, SttFactoryError> {
+) -> Result<std::sync::Arc<dyn SttProviderImpl>, SttFactoryError> {
     // P0 ENFORCEMENT — a CLOUD STT provider may only be constructed when the
     // operator has opted in (`media.cloud_stt_enabled`). The safe-mode rail makes
     // this visible; this gate makes it REAL — audio cannot leave the device for a
@@ -2174,7 +3285,7 @@ async fn make_stt_provider_with_runtime(
         SttProviderKind::OpenAiWhisperApi => {
             let key = api_key
                 .ok_or_else(|| SttFactoryError::permanent("openai whisper requires an api key"))?;
-            Ok(Box::new(OpenAiWhisperClient::new(key)))
+            Ok(std::sync::Arc::new(OpenAiWhisperClient::new(key)))
         }
         SttProviderKind::AzureSpeech => {
             let key = api_key
@@ -2182,7 +3293,7 @@ async fn make_stt_provider_with_runtime(
             let region = azure_region
                 .filter(|region| !region.trim().is_empty())
                 .ok_or_else(|| SttFactoryError::permanent("azure speech requires a region"))?;
-            Ok(Box::new(AzureSpeechClient::new(region, key)))
+            Ok(std::sync::Arc::new(AzureSpeechClient::new(region, key)))
         }
         SttProviderKind::FasterWhisperLocal => {
             let mut provider = plan_faster_whisper_provider(media_cfg, updater_cfg, runtime)?;
@@ -2196,9 +3307,10 @@ async fn make_stt_provider_with_runtime(
                 .verify(
                     &provider.python_executable,
                     runtime.faster_whisper_python_is_explicit,
+                    audio_permit,
                 )
                 .await?;
-            Ok(Box::new(provider))
+            Ok(std::sync::Arc::new(provider))
         }
         SttProviderKind::WhisperRsLocal => {
             let _build_guard = CANDLE_PROVIDER_BUILD
@@ -2217,9 +3329,9 @@ async fn make_stt_provider_with_runtime(
                 .get(&engine_key)
                 .cloned()
             {
-                return Ok(Box::new(WhisperLocalProvider::from_shared_engine(
-                    engine, model_id,
-                )));
+                return Ok(std::sync::Arc::new(
+                    WhisperLocalProvider::from_shared_engine(engine, model_id),
+                ));
             }
             let plan = plan_candle_provider(media_cfg, runtime);
             let mut attempt = super::model_manager::ModelDownloadAttempt::acquire(
@@ -2402,26 +3514,690 @@ async fn make_stt_provider_with_runtime(
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .insert(engine_key, std::sync::Arc::clone(&engine));
-            Ok(Box::new(WhisperLocalProvider::from_shared_engine(
-                engine,
-                plan.model_id,
-            )))
+            Ok(std::sync::Arc::new(
+                WhisperLocalProvider::from_shared_engine(engine, plan.model_id),
+            ))
         }
     }
+}
+
+const CLOUD_STT_REPLAY_SCHEMA: u32 = 1;
+const CLOUD_STT_REPLAY_RESULT_MAX_BYTES: usize = 8 * 1024 * 1024;
+const CLOUD_STT_REPLAY_INTENT_MAX_BYTES: usize = 64 * 1024;
+
+static CLOUD_STT_REPLAY_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+
+#[derive(serde::Serialize)]
+struct CloudSttReplayBinding<'a> {
+    schema: u32,
+    provider: &'a str,
+    effective_model: &'a str,
+    request: &'a TranscriptionRequest,
+    audio_sha256: &'a str,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CloudSttReplayEnvelope {
+    schema: u32,
+    binding_sha256: String,
+    result_sha256: String,
+    result: TranscriptionResult,
+}
+
+#[derive(Clone)]
+struct CloudSttReplayPaths {
+    root: PathBuf,
+    pending: PathBuf,
+    outcome: PathBuf,
+    audit_claim: PathBuf,
+    audit_lock: PathBuf,
+    result: PathBuf,
+    binding_sha256: String,
+    intent_bytes: Vec<u8>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum CloudSttAuditStage {
+    Claimed,
+    Audited { wal_offset: u64 },
+    CompletedWithoutAudit { reason: String },
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+struct CloudSttAuditClaim {
+    schema: u32,
+    binding_sha256: String,
+    outcome_sha256: String,
+    claim_id: String,
+    claimed_at_ms: u64,
+    stage: CloudSttAuditStage,
+}
+
+struct CloudSttAuditLease {
+    _lock: std::fs::File,
+    claim: CloudSttAuditClaim,
+}
+
+enum CloudSttAuditAction {
+    Replay(TranscriptionResult),
+    Audit {
+        lease: CloudSttAuditLease,
+        result: TranscriptionResult,
+    },
+    Commit {
+        lease: CloudSttAuditLease,
+        result: TranscriptionResult,
+    },
+}
+
+enum CloudSttReplayStart {
+    Replay(TranscriptionResult),
+    Started(CloudSttReplayPaths),
+    ResumeAudit {
+        paths: CloudSttReplayPaths,
+        result: TranscriptionResult,
+    },
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+
+    hex::encode(sha2::Sha256::digest(bytes))
+}
+
+fn cloud_stt_replay_paths(
+    neoth_home: &Path,
+    provider: SttProviderKind,
+    effective_model: &str,
+    request: &TranscriptionRequest,
+    audio: &[u8],
+) -> Result<CloudSttReplayPaths, SttProviderError> {
+    let audio_sha256 = sha256_hex(audio);
+    let intent_bytes = serde_json::to_vec(&CloudSttReplayBinding {
+        schema: CLOUD_STT_REPLAY_SCHEMA,
+        provider: provider.as_str(),
+        effective_model,
+        request,
+        audio_sha256: &audio_sha256,
+    })
+    .map_err(|error| {
+        SttProviderError::permanent(format!("serialize cloud STT replay binding: {error}"))
+    })?;
+    if intent_bytes.len() > CLOUD_STT_REPLAY_INTENT_MAX_BYTES {
+        return Err(SttProviderError::permanent(format!(
+            "cloud STT replay binding exceeds {} bytes",
+            CLOUD_STT_REPLAY_INTENT_MAX_BYTES
+        )));
+    }
+    let binding_sha256 = sha256_hex(&intent_bytes);
+    let root = neoth_home.join("stt-cloud-replay");
+    Ok(CloudSttReplayPaths {
+        pending: root.join(format!("{binding_sha256}.pending")),
+        outcome: root.join(format!("{binding_sha256}.outcome")),
+        audit_claim: root.join(format!("{binding_sha256}.audit-claim")),
+        audit_lock: root.join(format!("{binding_sha256}.audit-lock")),
+        result: root.join(format!("{binding_sha256}.result")),
+        root,
+        binding_sha256,
+        intent_bytes,
+    })
+}
+
+fn ensure_private_cloud_stt_replay_root(root: &Path) -> std::io::Result<()> {
+    let parent = root.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "cloud STT replay root has no parent",
+        )
+    })?;
+    if !parent.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "NEOTH home for cloud STT replay does not exist",
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        // `create_private_directory_new` deliberately wraps Win32 failures
+        // with security context, so ERROR_ALREADY_EXISTS is not represented as
+        // ErrorKind::AlreadyExists. Inspect first, then re-inspect after a
+        // failed create: this is idempotent for an existing root and closes
+        // the concurrent-creator race without accepting an absent directory.
+        match std::fs::symlink_metadata(root) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if let Err(create_error) =
+                    crate::wal::win_native::create_private_directory_new(root)
+                {
+                    match std::fs::symlink_metadata(root) {
+                        Ok(_) => {}
+                        Err(raced_error) if raced_error.kind() == std::io::ErrorKind::NotFound => {
+                            return Err(create_error);
+                        }
+                        Err(raced_error) => return Err(raced_error),
+                    }
+                }
+            }
+            Err(error) => return Err(error),
+        }
+        use std::os::windows::fs::MetadataExt as _;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+        let metadata = std::fs::symlink_metadata(root)?;
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return Err(std::io::Error::other(
+                "cloud STT replay root is not a regular non-reparse directory",
+            ));
+        }
+        // An existing directory is accepted only after its ACL has been
+        // narrowed to the current operator and that exact contract verifies.
+        crate::wal::win_native::set_private_current_user_directory_dacl(root)?;
+        crate::wal::win_native::verify_private_directory_dacl(root)?;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(root) {
+            Ok(()) => {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+        let metadata = std::fs::symlink_metadata(root)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(std::io::Error::other(
+                "cloud STT replay root is not a regular directory",
+            ));
+        }
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700))?;
+        let mode = std::fs::symlink_metadata(root)?.permissions().mode() & 0o777;
+        if mode != 0o700 {
+            return Err(std::io::Error::other(format!(
+                "cloud STT replay root mode is {mode:o}, expected 700"
+            )));
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = root;
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "private cloud STT replay storage is unavailable on this platform",
+        ));
+    }
+    Ok(())
+}
+
+fn read_private_cloud_stt_replay_file(
+    root: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Option<Vec<u8>>, SttProviderError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(SttProviderError::permanent(format!(
+                "inspect cloud STT {label}: {error}"
+            )));
+        }
+    }
+    crate::updater::self_update::read_private_control_file_bounded(root, path, max_bytes, label)
+        .map(Some)
+        .map_err(|error| {
+            SttProviderError::permanent(format!("read private cloud STT {label}: {error:#}"))
+        })
+}
+
+fn decode_cloud_stt_replay_result(
+    raw: &[u8],
+    expected_binding: &str,
+) -> Result<TranscriptionResult, SttProviderError> {
+    let envelope: CloudSttReplayEnvelope = serde_json::from_slice(raw).map_err(|error| {
+        SttProviderError::permanent(format!("cloud STT replay result is corrupt: {error}"))
+    })?;
+    if envelope.schema != CLOUD_STT_REPLAY_SCHEMA || envelope.binding_sha256 != expected_binding {
+        return Err(SttProviderError::permanent(
+            "cloud STT replay result has a mismatched binding",
+        ));
+    }
+    let result_bytes = serde_json::to_vec(&envelope.result).map_err(|error| {
+        SttProviderError::permanent(format!("re-serialize cloud STT replay result: {error}"))
+    })?;
+    if result_bytes.len() > CLOUD_STT_REPLAY_RESULT_MAX_BYTES
+        || sha256_hex(&result_bytes) != envelope.result_sha256
+    {
+        return Err(SttProviderError::permanent(
+            "cloud STT replay result failed its size/integrity proof",
+        ));
+    }
+    Ok(envelope.result)
+}
+
+fn read_cloud_stt_replay_outcome(
+    paths: &CloudSttReplayPaths,
+) -> Result<Option<TranscriptionResult>, SttProviderError> {
+    read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.outcome,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "post-provider outcome",
+    )?
+    .map(|raw| decode_cloud_stt_replay_result(&raw, &paths.binding_sha256))
+    .transpose()
+}
+
+fn begin_cloud_stt_replay(
+    paths: CloudSttReplayPaths,
+) -> Result<CloudSttReplayStart, SttProviderError> {
+    ensure_private_cloud_stt_replay_root(&paths.root).map_err(|error| {
+        SttProviderError::permanent(format!("prepare private cloud STT replay root: {error}"))
+    })?;
+
+    if let Some(raw) = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.result,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "replay result",
+    )? {
+        let result = decode_cloud_stt_replay_result(&raw, &paths.binding_sha256)?;
+        return Ok(CloudSttReplayStart::Replay(result));
+    }
+
+    match crate::util::atomic_write::write_private_create_new_durable(
+        &paths.pending,
+        &paths.intent_bytes,
+    ) {
+        Ok(()) => {
+            // Close the cross-process gap between the first result lookup and
+            // create-new: an earlier owner may have committed its result and
+            // removed its pending record in that interval.
+            if let Some(raw) = read_private_cloud_stt_replay_file(
+                &paths.root,
+                &paths.result,
+                CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+                "replay result after intent acquisition",
+            )? {
+                let result = decode_cloud_stt_replay_result(&raw, &paths.binding_sha256)?;
+                return Ok(CloudSttReplayStart::Replay(result));
+            }
+            if let Some(result) = read_cloud_stt_replay_outcome(&paths)? {
+                return Ok(CloudSttReplayStart::ResumeAudit { paths, result });
+            }
+            Ok(CloudSttReplayStart::Started(paths))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let pending = read_private_cloud_stt_replay_file(
+                &paths.root,
+                &paths.pending,
+                CLOUD_STT_REPLAY_INTENT_MAX_BYTES,
+                "pending intent",
+            )?
+            .ok_or_else(|| {
+                SttProviderError::permanent(
+                    "cloud STT pending intent disappeared during validation",
+                )
+            })?;
+            if pending != paths.intent_bytes {
+                return Err(SttProviderError::permanent(
+                    "cloud STT pending intent is corrupt or mismatched",
+                ));
+            }
+            if let Some(result) = read_cloud_stt_replay_outcome(&paths)? {
+                return Ok(CloudSttReplayStart::ResumeAudit { paths, result });
+            }
+            Err(SttProviderError::permanent(format!(
+                "cloud STT request {} is pending without a durable result; refusing duplicate egress",
+                paths.binding_sha256
+            )))
+        }
+        Err(error) => Err(SttProviderError::permanent(format!(
+            "durably create cloud STT pending intent: {error}"
+        ))),
+    }
+}
+
+fn encode_cloud_stt_replay_result(
+    paths: &CloudSttReplayPaths,
+    result: &TranscriptionResult,
+) -> Result<Vec<u8>, SttProviderError> {
+    let result_bytes = serde_json::to_vec(result).map_err(|error| {
+        SttProviderError::permanent(format!("serialize cloud STT result: {error}"))
+    })?;
+    if result_bytes.len() > CLOUD_STT_REPLAY_RESULT_MAX_BYTES {
+        return Err(SttProviderError::permanent(format!(
+            "cloud STT result exceeds the {}-byte durable replay limit",
+            CLOUD_STT_REPLAY_RESULT_MAX_BYTES
+        )));
+    }
+    let envelope = serde_json::to_vec(&CloudSttReplayEnvelope {
+        schema: CLOUD_STT_REPLAY_SCHEMA,
+        binding_sha256: paths.binding_sha256.clone(),
+        result_sha256: sha256_hex(&result_bytes),
+        result: result.clone(),
+    })
+    .map_err(|error| {
+        SttProviderError::permanent(format!("serialize cloud STT replay envelope: {error}"))
+    })?;
+    if envelope.len() > CLOUD_STT_REPLAY_RESULT_MAX_BYTES {
+        return Err(SttProviderError::permanent(format!(
+            "cloud STT replay envelope exceeds the {}-byte limit",
+            CLOUD_STT_REPLAY_RESULT_MAX_BYTES
+        )));
+    }
+    Ok(envelope)
+}
+
+fn persist_cloud_stt_replay_outcome(
+    paths: &CloudSttReplayPaths,
+    result: &TranscriptionResult,
+) -> Result<(), SttProviderError> {
+    let envelope = encode_cloud_stt_replay_result(paths, result)?;
+    crate::util::atomic_write::atomic_write_private(&paths.outcome, &envelope).map_err(
+        |error| {
+            SttProviderError::permanent(format!(
+                "durably persist cloud STT post-provider outcome: {error}"
+            ))
+        },
+    )?;
+    let persisted = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.outcome,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "persisted post-provider outcome",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent(
+            "cloud STT post-provider outcome disappeared immediately after durable commit",
+        )
+    })?;
+    decode_cloud_stt_replay_result(&persisted, &paths.binding_sha256)?;
+    Ok(())
+}
+
+fn decode_cloud_stt_audit_claim(
+    raw: &[u8],
+    paths: &CloudSttReplayPaths,
+    outcome_sha256: &str,
+) -> Result<CloudSttAuditClaim, SttProviderError> {
+    let claim: CloudSttAuditClaim = serde_json::from_slice(raw).map_err(|error| {
+        SttProviderError::permanent(format!("cloud STT audit claim is corrupt: {error}"))
+    })?;
+    if claim.schema != CLOUD_STT_REPLAY_SCHEMA
+        || claim.binding_sha256 != paths.binding_sha256
+        || claim.outcome_sha256 != outcome_sha256
+        || claim.claim_id.is_empty()
+    {
+        return Err(SttProviderError::permanent(
+            "cloud STT audit claim has a mismatched request/outcome binding",
+        ));
+    }
+    Ok(claim)
+}
+
+fn persist_cloud_stt_audit_claim(
+    paths: &CloudSttReplayPaths,
+    claim: &CloudSttAuditClaim,
+) -> Result<(), SttProviderError> {
+    let bytes = serde_json::to_vec(claim).map_err(|error| {
+        SttProviderError::permanent(format!("serialize cloud STT audit claim: {error}"))
+    })?;
+    if bytes.len() > CLOUD_STT_REPLAY_INTENT_MAX_BYTES {
+        return Err(SttProviderError::permanent(
+            "cloud STT audit claim exceeds its durable size limit",
+        ));
+    }
+    crate::util::atomic_write::atomic_write_private(&paths.audit_claim, &bytes).map_err(
+        |error| {
+            SttProviderError::permanent(format!("durably persist cloud STT audit claim: {error}"))
+        },
+    )?;
+    let persisted = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.audit_claim,
+        CLOUD_STT_REPLAY_INTENT_MAX_BYTES,
+        "audit claim",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent("cloud STT audit claim disappeared after durable commit")
+    })?;
+    let decoded = decode_cloud_stt_audit_claim(&persisted, paths, &claim.outcome_sha256)?;
+    if &decoded != claim {
+        return Err(SttProviderError::permanent(
+            "cloud STT audit claim failed compare-after-swap validation",
+        ));
+    }
+    Ok(())
+}
+
+fn acquire_cloud_stt_audit(
+    paths: &CloudSttReplayPaths,
+) -> Result<CloudSttAuditAction, SttProviderError> {
+    let lock =
+        crate::util::locked_file::lock_file_blocking(&paths.audit_lock, "cloud STT audit/commit")
+            .map_err(|error| {
+            SttProviderError::permanent(format!("acquire cloud STT audit/commit lease: {error:#}"))
+        })?;
+
+    // Always recheck the final result after acquiring the OS lock. Another
+    // process may have audited and committed while this caller was waiting.
+    if let Some(raw) = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.result,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "replay result under audit lease",
+    )? {
+        return Ok(CloudSttAuditAction::Replay(decode_cloud_stt_replay_result(
+            &raw,
+            &paths.binding_sha256,
+        )?));
+    }
+
+    let outcome = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.outcome,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "post-provider outcome under audit lease",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent(
+            "cloud STT audit/commit lease acquired without a durable provider outcome",
+        )
+    })?;
+    let result = decode_cloud_stt_replay_result(&outcome, &paths.binding_sha256)?;
+    let outcome_sha256 = sha256_hex(&outcome);
+
+    if let Some(raw_claim) = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.audit_claim,
+        CLOUD_STT_REPLAY_INTENT_MAX_BYTES,
+        "audit claim",
+    )? {
+        let claim = decode_cloud_stt_audit_claim(&raw_claim, paths, &outcome_sha256)?;
+        return match &claim.stage {
+            CloudSttAuditStage::Claimed => Err(SttProviderError::permanent(format!(
+                "cloud STT audit claim {} is stale in an ambiguous pre-ack state; \
+                 refusing a duplicate 0xCC audit",
+                claim.claim_id
+            ))),
+            CloudSttAuditStage::Audited { .. }
+            | CloudSttAuditStage::CompletedWithoutAudit { .. } => Ok(CloudSttAuditAction::Commit {
+                lease: CloudSttAuditLease { _lock: lock, claim },
+                result,
+            }),
+        };
+    }
+
+    let claim = CloudSttAuditClaim {
+        schema: CLOUD_STT_REPLAY_SCHEMA,
+        binding_sha256: paths.binding_sha256.clone(),
+        outcome_sha256,
+        claim_id: uuid::Uuid::now_v7().to_string(),
+        claimed_at_ms: crate::time::now_unix_ms(),
+        stage: CloudSttAuditStage::Claimed,
+    };
+    persist_cloud_stt_audit_claim(paths, &claim)?;
+    Ok(CloudSttAuditAction::Audit {
+        lease: CloudSttAuditLease { _lock: lock, claim },
+        result,
+    })
+}
+
+fn mark_cloud_stt_audit_claim(
+    paths: &CloudSttReplayPaths,
+    lease: &mut CloudSttAuditLease,
+    stage: CloudSttAuditStage,
+) -> Result<(), SttProviderError> {
+    if !matches!(&lease.claim.stage, CloudSttAuditStage::Claimed) {
+        return Err(SttProviderError::permanent(
+            "cloud STT audit claim cannot transition twice",
+        ));
+    }
+    lease.claim.stage = stage;
+    persist_cloud_stt_audit_claim(paths, &lease.claim)
+}
+
+fn commit_cloud_stt_replay_result(
+    paths: &CloudSttReplayPaths,
+    result: &TranscriptionResult,
+    lease: &CloudSttAuditLease,
+) -> Result<(), SttProviderError> {
+    if !matches!(
+        &lease.claim.stage,
+        CloudSttAuditStage::Audited { .. } | CloudSttAuditStage::CompletedWithoutAudit { .. }
+    ) {
+        return Err(SttProviderError::permanent(
+            "cloud STT result cannot commit before its audit claim is terminal",
+        ));
+    }
+    let claim = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.audit_claim,
+        CLOUD_STT_REPLAY_INTENT_MAX_BYTES,
+        "terminal audit claim",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent("cloud STT terminal audit claim disappeared before commit")
+    })?;
+    let persisted_claim = decode_cloud_stt_audit_claim(&claim, paths, &lease.claim.outcome_sha256)?;
+    if persisted_claim != lease.claim {
+        return Err(SttProviderError::permanent(
+            "cloud STT audit claim changed before compare-and-swap commit",
+        ));
+    }
+    let envelope = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.outcome,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "audited post-provider outcome",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent("cloud STT audited result has no durable post-provider outcome")
+    })?;
+    let persisted_result = decode_cloud_stt_replay_result(&envelope, &paths.binding_sha256)?;
+    if &persisted_result != result {
+        return Err(SttProviderError::permanent(
+            "cloud STT in-memory result differs from its durable post-provider outcome",
+        ));
+    }
+    crate::util::atomic_write::atomic_write_private(&paths.result, &envelope).map_err(|error| {
+        SttProviderError::permanent(format!(
+            "durably finalize audited cloud STT replay result: {error}"
+        ))
+    })?;
+    let persisted = read_private_cloud_stt_replay_file(
+        &paths.root,
+        &paths.result,
+        CLOUD_STT_REPLAY_RESULT_MAX_BYTES,
+        "persisted replay result",
+    )?
+    .ok_or_else(|| {
+        SttProviderError::permanent(
+            "cloud STT replay result disappeared immediately after durable commit",
+        )
+    })?;
+    decode_cloud_stt_replay_result(&persisted, &paths.binding_sha256)?;
+    crate::util::atomic_write::durable_remove_file(&paths.outcome).map_err(|error| {
+        SttProviderError::permanent(format!(
+            "cloud STT result is durable but post-provider outcome removal failed: {error}"
+        ))
+    })?;
+    crate::util::atomic_write::durable_remove_file(&paths.pending).map_err(|error| {
+        SttProviderError::permanent(format!(
+            "cloud STT result is durable but pending intent removal failed: {error}"
+        ))
+    })?;
+    crate::util::atomic_write::durable_remove_file(&paths.audit_claim).map_err(|error| {
+        SttProviderError::permanent(format!(
+            "cloud STT result is durable but terminal audit claim removal failed: {error}"
+        ))
+    })
 }
 
 /// P0 — transcribe through `provider` and emit the metadata-only
 /// `0xCC STT_TRANSCRIBED` audit. Records that audio went to a cloud provider
 /// (provider id + audio byte count + transcript char count) — NEVER the
 /// transcript itself. This is the audited entry point a cloud-STT consumer
-/// uses; the audit is best-effort (a WAL error logs, never fails the call).
-pub async fn transcribe_and_audit(
-    provider: &dyn SttProviderImpl,
+/// uses. Required audit and durable replay failures are permanent so dispatch
+/// cannot fall through to another paid provider after an unproven egress.
+pub(crate) async fn transcribe_and_audit(
+    provider: std::sync::Arc<dyn SttProviderImpl>,
+    permit: &crate::media::audio::AudioWorkPermit,
     audio: &[u8],
     request: &TranscriptionRequest,
     writer: Option<&crate::wal::writer::WalWriterHandle>,
     media_cfg: &crate::config::MediaConfig,
     neoth_home: &Path,
+) -> Result<TranscriptionResult, SttProviderError> {
+    let is_cloud = !provider.kind().is_local();
+    if is_cloud {
+        crate::media::enforce_cloud_media_audit(
+            media_cfg.required_audit_for_cloud_media,
+            writer.is_some_and(crate::wal::writer::WalWriterHandle::is_alive),
+        )
+        .map_err(SttProviderError::permanent)?;
+    }
+
+    let transaction = transcribe_and_audit_owned(
+        provider,
+        permit.clone(),
+        audio.to_vec(),
+        request.clone(),
+        writer.cloned(),
+        media_cfg.clone(),
+        neoth_home.to_path_buf(),
+    );
+    if !is_cloud {
+        return transaction.await;
+    }
+
+    // The supervisor owns provider, request, audio, permit, WAL handle and
+    // replay state. Cancelling the public caller only detaches this JoinHandle;
+    // once paid egress starts the task still reaches outcome -> audit -> result.
+    tokio::spawn(transaction).await.map_err(|error| {
+        SttProviderError::permanent(format!("cloud STT transaction supervisor failed: {error}"))
+    })?
+}
+
+async fn transcribe_and_audit_owned(
+    provider: std::sync::Arc<dyn SttProviderImpl>,
+    permit: crate::media::audio::AudioWorkPermit,
+    audio: Vec<u8>,
+    request: TranscriptionRequest,
+    writer: Option<crate::wal::writer::WalWriterHandle>,
+    media_cfg: crate::config::MediaConfig,
+    neoth_home: PathBuf,
 ) -> Result<TranscriptionResult, SttProviderError> {
     // P0 fail-closed pre-flight: under proof-hardline, refuse BEFORE the cloud
     // call when there is no audit sink — never transcribe unprovably.
@@ -2429,7 +4205,9 @@ pub async fn transcribe_and_audit(
     if is_cloud {
         crate::media::enforce_cloud_media_audit(
             media_cfg.required_audit_for_cloud_media,
-            writer.is_some(),
+            writer
+                .as_ref()
+                .is_some_and(crate::wal::writer::WalWriterHandle::is_alive),
         )
         .map_err(SttProviderError::permanent)?;
     }
@@ -2440,193 +4218,357 @@ pub async fn transcribe_and_audit(
         (!request.language.is_empty()).then_some(request.language.as_str()),
         provider.supported_languages(),
     );
-    let mut result = if resolved.fell_back {
+    let mut effective_request = request;
+    if resolved.fell_back {
         tracing::warn!(
             provider = provider.kind().as_str(),
             requested = resolved.fallback_from.as_deref().unwrap_or(""),
             chosen = %resolved.language,
             "stt: requested language unsupported by provider — falling back",
         );
-        let mut req = request.clone();
-        req.language = resolved.language.clone();
-        provider.transcribe(audio, &req).await?
-    } else {
-        provider.transcribe(audio, request).await?
-    };
-    // GOLD-ADAPT-HANDY-03 — strip filler words + stutters from the transcript
-    // on every transcription (conservative; never deletes content words).
-    result.text = crate::media::stt_postprocess::clean_transcript(&result.text);
-    // GOLD-ADAPT-SPEAKR-02b/02c — speaker re-identification.
-    //
-    // Encoder selection (inside spawn_blocking):
-    //   1. Try EcapaTdnn::try_load() — highest accuracy; activates when operator
-    //      provisions weights via `scripts/convert_ecapa.py`. 192-dim output.
-    //   2. Try XVectorEncoder::try_load() — fallback neural encoder; activates
-    //      when operator provisions weights via `scripts/convert_xvector.py`.
-    //      512-dim output.
-    //   3. Fall back to the log-mel encoder (embed_segments). 80-dim output.
-    //
-    // The dim difference across encoders is safe: speaker_profile::load_profiles
-    // gates on embedding_dim and resets the store on a mismatch rather than
-    // silently returning cosine 0.0 for every speaker.
-    //
-    // The config read, the CPU-bound encode, AND the profile-store I/O all run
-    // inside ONE spawn_blocking so nothing blocks the async executor. Raw PCM
-    // and the canonical PCM16 WAV container are decoded explicitly.
-    if media_cfg.auto_speaker_labels
-        && matches!(
-            request.format,
-            crate::media::stt_dispatch::AudioFormat::PcmS16leMono
-                | crate::media::stt_dispatch::AudioFormat::PcmF32leMono
-                | crate::media::stt_dispatch::AudioFormat::WavPcmS16leMono
-        )
-    {
-        let audio_owned = audio.to_vec();
-        let segments = result.segments.clone();
-        let format = request.format;
-        let sample_rate = request.sample_rate_hz;
-        let neoth_home = neoth_home.to_path_buf();
-        let labels = tokio::task::spawn_blocking(move || -> Result<Vec<Option<String>>, String> {
-            // Decode to 16 kHz f32 first so all neural encoder paths share
-            // the same decoded buffer.  embed_segments handles decoding
-            // internally; we replicate it here for the neural paths.
-            use crate::media::speaker_encoder_ecapa::EcapaTdnn;
-            use crate::media::speaker_encoder_xvector::XVectorEncoder;
+        effective_request.language = resolved.language;
+    }
 
-            /// Encode segments from a pre-decoded 16 kHz f32 buffer using the
-            /// given per-sample closure.  Returns one embedding per segment
-            /// (or one for the whole clip when `segments` is empty).
-            fn encode_aligned<F>(
-                decoded: &[f32],
-                segments: &[crate::media::stt_dispatch::TextSegment],
-                embed: F,
-            ) -> Vec<Option<Vec<f32>>>
-            where
-                F: Fn(&[f32]) -> Option<Vec<f32>>,
-            {
-                const SR: u32 = 16_000;
-                if segments.is_empty() {
-                    vec![embed(decoded)]
-                } else {
-                    segments
-                        .iter()
-                        .map(|s| {
-                            let start = (s.start_ms as u64 * SR as u64 / 1000)
-                                .min(decoded.len() as u64)
-                                as usize;
-                            let end = (s.end_ms as u64 * SR as u64 / 1000).min(decoded.len() as u64)
-                                as usize;
-                            if start >= end {
-                                None
+    // One in-process guard plus create-new durable intent gives identical
+    // cloud calls single-flight semantics across both tasks and processes.
+    // Keep it through result commit: no waiter can observe a pre-result gap.
+    let replay_guard = if is_cloud {
+        Some(
+            CLOUD_STT_REPLAY_LOCK
+                .get_or_init(|| tokio::sync::Mutex::new(()))
+                .lock()
+                .await,
+        )
+    } else {
+        None
+    };
+    let mut recovered_outcome = None;
+    let replay_paths = if is_cloud {
+        let effective_model = provider
+            .model_id()
+            .unwrap_or_else(|| "provider-default".to_string());
+        let paths = cloud_stt_replay_paths(
+            &neoth_home,
+            provider.kind(),
+            &effective_model,
+            &effective_request,
+            &audio,
+        )?;
+        match tokio::task::spawn_blocking(move || begin_cloud_stt_replay(paths))
+            .await
+            .map_err(|error| {
+                SttProviderError::permanent(format!(
+                    "join cloud STT durable-intent worker: {error}"
+                ))
+            })?? {
+            CloudSttReplayStart::Replay(result) => return Ok(result),
+            CloudSttReplayStart::Started(paths) => Some(paths),
+            CloudSttReplayStart::ResumeAudit { paths, result } => {
+                recovered_outcome = Some(result);
+                Some(paths)
+            }
+        }
+    } else {
+        None
+    };
+
+    let provider_was_called = recovered_outcome.is_none();
+    let mut result = match recovered_outcome {
+        Some(result) => result,
+        None => {
+            provider
+                .transcribe(&permit, &audio, &effective_request)
+                .await?
+        }
+    };
+    if provider_was_called {
+        // GOLD-ADAPT-HANDY-03 — strip filler words + stutters from the transcript
+        // on every transcription (conservative; never deletes content words).
+        result.text = crate::media::stt_postprocess::clean_transcript(&result.text);
+        // GOLD-ADAPT-SPEAKR-02b/02c — speaker re-identification.
+        //
+        // Encoder selection (inside spawn_blocking):
+        //   1. Try EcapaTdnn::try_load() — highest accuracy; activates when operator
+        //      provisions weights via `scripts/convert_ecapa.py`. 192-dim output.
+        //   2. Try XVectorEncoder::try_load() — fallback neural encoder; activates
+        //      when operator provisions weights via `scripts/convert_xvector.py`.
+        //      512-dim output.
+        //   3. Fall back to the log-mel encoder (embed_segments). 80-dim output.
+        //
+        // The dim difference across encoders is safe: speaker_profile::load_profiles
+        // gates on embedding_dim and resets the store on a mismatch rather than
+        // silently returning cosine 0.0 for every speaker.
+        //
+        // The config read, the CPU-bound encode, AND the profile-store I/O all run
+        // inside ONE spawn_blocking so nothing blocks the async executor. Raw PCM
+        // and the canonical PCM16 WAV container are decoded explicitly.
+        if media_cfg.auto_speaker_labels
+            && matches!(
+                effective_request.format,
+                crate::media::stt_dispatch::AudioFormat::PcmS16leMono
+                    | crate::media::stt_dispatch::AudioFormat::PcmF32leMono
+                    | crate::media::stt_dispatch::AudioFormat::WavPcmS16leMono
+            )
+        {
+            let audio_owned = audio.clone();
+            let segments = result.segments.clone();
+            let format = effective_request.format;
+            let sample_rate = effective_request.sample_rate_hz;
+            let neoth_home = neoth_home.clone();
+            let labels =
+                tokio::task::spawn_blocking(move || -> Result<Vec<Option<String>>, String> {
+                    // Decode to 16 kHz f32 first so all neural encoder paths share
+                    // the same decoded buffer.  embed_segments handles decoding
+                    // internally; we replicate it here for the neural paths.
+                    use crate::media::speaker_encoder_ecapa::EcapaTdnn;
+                    use crate::media::speaker_encoder_xvector::XVectorEncoder;
+
+                    /// Encode segments from a pre-decoded 16 kHz f32 buffer using the
+                    /// given per-sample closure.  Returns one embedding per segment
+                    /// (or one for the whole clip when `segments` is empty).
+                    fn encode_aligned<F>(
+                        decoded: &[f32],
+                        segments: &[crate::media::stt_dispatch::TextSegment],
+                        embed: F,
+                    ) -> Vec<Option<Vec<f32>>>
+                    where
+                        F: Fn(&[f32]) -> Option<Vec<f32>>,
+                    {
+                        const SR: u32 = 16_000;
+                        if segments.is_empty() {
+                            vec![embed(decoded)]
+                        } else {
+                            segments
+                                .iter()
+                                .map(|s| {
+                                    let start = (s.start_ms as u64 * SR as u64 / 1000)
+                                        .min(decoded.len() as u64)
+                                        as usize;
+                                    let end = (s.end_ms as u64 * SR as u64 / 1000)
+                                        .min(decoded.len() as u64)
+                                        as usize;
+                                    if start >= end {
+                                        None
+                                    } else {
+                                        embed(&decoded[start..end])
+                                    }
+                                })
+                                .collect()
+                        }
+                    }
+
+                    fn empty_aligned_labels(
+                        segments: &[crate::media::stt_dispatch::TextSegment],
+                    ) -> Vec<Option<String>> {
+                        if segments.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![None; segments.len()]
+                        }
+                    }
+
+                    // ── Encoder priority: ECAPA → x-vector → log-mel ─────────────
+                    let aligned_embeddings: Vec<Option<Vec<f32>>> =
+                        if let Some(ecapa) = EcapaTdnn::try_load() {
+                            // Highest accuracy: ECAPA-TDNN, 192-dim.
+                            let decoded = crate::media::speaker_encoder::decode_to_f32(
+                                &audio_owned,
+                                format,
+                                sample_rate,
+                            )
+                            .map_err(|e| format!("speaker audio decode: {e}"))?;
+                            if decoded.is_empty() {
+                                return Ok(empty_aligned_labels(&segments));
+                            }
+                            encode_aligned(&decoded, &segments, |s| ecapa.embed(s))
+                        } else if let Some(xvec) = XVectorEncoder::try_load() {
+                            // Fallback neural: x-vector TDNN, 512-dim.
+                            let decoded = crate::media::speaker_encoder::decode_to_f32(
+                                &audio_owned,
+                                format,
+                                sample_rate,
+                            )
+                            .map_err(|e| format!("speaker audio decode: {e}"))?;
+                            if decoded.is_empty() {
+                                return Ok(empty_aligned_labels(&segments));
+                            }
+                            encode_aligned(&decoded, &segments, |s| xvec.embed(s))
+                        } else {
+                            // Log-mel fallback (always available, no weights needed).
+                            let decoded = crate::media::speaker_encoder::decode_to_f32(
+                                &audio_owned,
+                                format,
+                                sample_rate,
+                            )
+                            .map_err(|e| format!("speaker audio decode: {e}"))?;
+                            if decoded.is_empty() {
+                                return Ok(empty_aligned_labels(&segments));
+                            }
+                            encode_aligned(
+                                &decoded,
+                                &segments,
+                                crate::media::speaker_encoder::embed_samples,
+                            )
+                        };
+
+                    if aligned_embeddings.is_empty() {
+                        return Ok(Vec::new());
+                    }
+                    let present: Vec<bool> =
+                        aligned_embeddings.iter().map(Option::is_some).collect();
+                    let embeddings: Vec<Vec<f32>> =
+                        aligned_embeddings.into_iter().flatten().collect();
+                    if embeddings.is_empty() {
+                        return Ok(vec![None; present.len()]);
+                    }
+                    let mut labels =
+                        crate::media::speaker_profile::label_embeddings(&neoth_home, &embeddings)
+                            .into_iter();
+                    Ok(present
+                        .into_iter()
+                        .map(|has_embedding| {
+                            if has_embedding {
+                                labels.next().unwrap_or(None)
                             } else {
-                                embed(&decoded[start..end])
+                                None
                             }
                         })
-                        .collect()
-                }
-            }
-
-            fn empty_aligned_labels(
-                segments: &[crate::media::stt_dispatch::TextSegment],
-            ) -> Vec<Option<String>> {
-                if segments.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![None; segments.len()]
-                }
-            }
-
-            // ── Encoder priority: ECAPA → x-vector → log-mel ─────────────
-            let aligned_embeddings: Vec<Option<Vec<f32>>> = if let Some(ecapa) =
-                EcapaTdnn::try_load()
-            {
-                // Highest accuracy: ECAPA-TDNN, 192-dim.
-                let decoded =
-                    crate::media::speaker_encoder::decode_to_f32(&audio_owned, format, sample_rate)
-                        .map_err(|e| format!("speaker audio decode: {e}"))?;
-                if decoded.is_empty() {
-                    return Ok(empty_aligned_labels(&segments));
-                }
-                encode_aligned(&decoded, &segments, |s| ecapa.embed(s))
-            } else if let Some(xvec) = XVectorEncoder::try_load() {
-                // Fallback neural: x-vector TDNN, 512-dim.
-                let decoded =
-                    crate::media::speaker_encoder::decode_to_f32(&audio_owned, format, sample_rate)
-                        .map_err(|e| format!("speaker audio decode: {e}"))?;
-                if decoded.is_empty() {
-                    return Ok(empty_aligned_labels(&segments));
-                }
-                encode_aligned(&decoded, &segments, |s| xvec.embed(s))
-            } else {
-                // Log-mel fallback (always available, no weights needed).
-                let decoded =
-                    crate::media::speaker_encoder::decode_to_f32(&audio_owned, format, sample_rate)
-                        .map_err(|e| format!("speaker audio decode: {e}"))?;
-                if decoded.is_empty() {
-                    return Ok(empty_aligned_labels(&segments));
-                }
-                encode_aligned(
-                    &decoded,
-                    &segments,
-                    crate::media::speaker_encoder::embed_samples,
-                )
-            };
-
-            if aligned_embeddings.is_empty() {
-                return Ok(Vec::new());
-            }
-            let present: Vec<bool> = aligned_embeddings.iter().map(Option::is_some).collect();
-            let embeddings: Vec<Vec<f32>> = aligned_embeddings.into_iter().flatten().collect();
-            if embeddings.is_empty() {
-                return Ok(vec![None; present.len()]);
-            }
-            let mut labels =
-                crate::media::speaker_profile::label_embeddings(&neoth_home, &embeddings)
-                    .into_iter();
-            Ok(present
-                .into_iter()
-                .map(|has_embedding| {
-                    if has_embedding {
-                        labels.next().unwrap_or(None)
-                    } else {
-                        None
-                    }
+                        .collect())
                 })
-                .collect())
-        })
-        .await;
-        match labels {
-            Ok(Ok(labels)) => {
-                let labelled = labels.iter().filter(|label| label.is_some()).count();
-                result.speaker_labels = labels;
-                if labelled > 0 {
-                    tracing::info!(speakers = ?result.speaker_labels, labelled, "SPEAKR-02c speaker re-id");
+                .await;
+            match labels {
+                Ok(Ok(labels)) => {
+                    let labelled = labels.iter().filter(|label| label.is_some()).count();
+                    result.speaker_labels = labels;
+                    if labelled > 0 {
+                        tracing::info!(speakers = ?result.speaker_labels, labelled, "SPEAKR-02c speaker re-id");
+                    }
+                }
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "speaker re-id skipped: invalid audio input");
+                }
+                Err(error) => {
+                    tracing::error!(%error, "speaker re-id worker failed");
                 }
             }
-            Ok(Err(error)) => {
-                tracing::warn!(%error, "speaker re-id skipped: invalid audio input");
+        }
+    }
+    if is_cloud && provider_was_called {
+        let paths = replay_paths
+            .as_ref()
+            .ok_or_else(|| {
+                SttProviderError::permanent(
+                    "cloud STT provider returned without an owned replay transaction",
+                )
+            })?
+            .clone();
+        let outcome = result.clone();
+        tokio::task::spawn_blocking(move || persist_cloud_stt_replay_outcome(&paths, &outcome))
+            .await
+            .map_err(|error| {
+                SttProviderError::permanent(format!(
+                    "join cloud STT post-provider outcome worker: {error}"
+                ))
+            })??;
+    }
+    if let Some(paths) = replay_paths {
+        let claim_paths = paths.clone();
+        let action = tokio::task::spawn_blocking(move || acquire_cloud_stt_audit(&claim_paths))
+            .await
+            .map_err(|error| {
+                SttProviderError::permanent(format!("join cloud STT audit-claim worker: {error}"))
+            })??;
+        match action {
+            CloudSttAuditAction::Replay(replayed) => {
+                result = replayed;
             }
-            Err(error) => {
-                tracing::error!(%error, "speaker re-id worker failed");
+            CloudSttAuditAction::Audit {
+                mut lease,
+                result: claimed_result,
+            } => {
+                if claimed_result != result {
+                    return Err(SttProviderError::permanent(
+                        "cloud STT claimed outcome differs from the supervised provider result",
+                    ));
+                }
+                let stage = if let Some(w) = writer.as_ref() {
+                    match emit_stt_transcribed(
+                        w,
+                        provider.kind(),
+                        audio.len(),
+                        result.text.chars().count(),
+                        &paths.binding_sha256,
+                        &lease.claim.claim_id,
+                    )
+                    .await
+                    {
+                        Ok(wal_offset) => CloudSttAuditStage::Audited { wal_offset },
+                        Err(error) if media_cfg.required_audit_for_cloud_media => {
+                            // The append may have reached stable storage even
+                            // when its ACK was lost. Keep `claimed` ambiguous:
+                            // stale recovery must fail closed, never emit a
+                            // possibly duplicate 0xCC.
+                            return Err(SttProviderError::permanent(format!(
+                                "required STT audit append failed after cloud transcription: {error}"
+                            )));
+                        }
+                        Err(error) => {
+                            tracing::warn!(
+                                %error,
+                                "WAL append STT_TRANSCRIBED (0xCC) failed (non-fatal)"
+                            );
+                            CloudSttAuditStage::CompletedWithoutAudit {
+                                reason: "non_required_wal_append_failed".to_string(),
+                            }
+                        }
+                    }
+                } else {
+                    CloudSttAuditStage::CompletedWithoutAudit {
+                        reason: "no_wal_writer_and_audit_not_required".to_string(),
+                    }
+                };
+                let mark_paths = paths.clone();
+                lease = tokio::task::spawn_blocking(move || {
+                    mark_cloud_stt_audit_claim(&mark_paths, &mut lease, stage)?;
+                    Ok::<_, SttProviderError>(lease)
+                })
+                .await
+                .map_err(|error| {
+                    SttProviderError::permanent(format!(
+                        "join cloud STT audit-claim transition worker: {error}"
+                    ))
+                })??;
+                let commit_paths = paths.clone();
+                result = tokio::task::spawn_blocking(move || {
+                    commit_cloud_stt_replay_result(&commit_paths, &result, &lease)?;
+                    Ok::<_, SttProviderError>(result)
+                })
+                .await
+                .map_err(|error| {
+                    SttProviderError::permanent(format!(
+                        "join cloud STT result-commit worker: {error}"
+                    ))
+                })??;
+            }
+            CloudSttAuditAction::Commit {
+                lease,
+                result: claimed_result,
+            } => {
+                let commit_paths = paths.clone();
+                result = tokio::task::spawn_blocking(move || {
+                    commit_cloud_stt_replay_result(&commit_paths, &claimed_result, &lease)?;
+                    Ok::<_, SttProviderError>(claimed_result)
+                })
+                .await
+                .map_err(|error| {
+                    SttProviderError::permanent(format!(
+                        "join recovered cloud STT result-commit worker: {error}"
+                    ))
+                })??;
             }
         }
     }
-    if is_cloud && let Some(w) = writer {
-        let audit =
-            emit_stt_transcribed(w, provider.kind(), audio.len(), result.text.chars().count())
-                .await;
-        if let Err(error) = audit {
-            if media_cfg.required_audit_for_cloud_media {
-                // The cloud call already happened, so this is deliberately
-                // permanent: a fallback would duplicate the egress/cost while
-                // still failing to prove the first call.
-                return Err(SttProviderError::permanent(format!(
-                    "required STT audit append failed after cloud transcription: {error}"
-                )));
-            }
-            tracing::warn!(%error, "WAL append STT_TRANSCRIBED (0xCC) failed (non-fatal)");
-        }
-    }
+    drop(replay_guard);
     Ok(result)
 }
 
@@ -2635,12 +4577,16 @@ async fn emit_stt_transcribed(
     provider: SttProviderKind,
     audio_bytes: usize,
     output_chars: usize,
-) -> Result<(), String> {
+    replay_binding_sha256: &str,
+    audit_claim_id: &str,
+) -> Result<u64, String> {
     let ts_unix = crate::time::now_unix_secs();
     let payload = serde_json::to_vec(&serde_json::json!({
         "provider": provider.as_str(),
         "audio_bytes": audio_bytes,
         "output_chars": output_chars,
+        "replay_binding_sha256": replay_binding_sha256,
+        "audit_claim_id": audit_claim_id,
         "ts_unix": ts_unix,
     }))
     .map_err(|error| format!("serialize STT_TRANSCRIBED (0xCC): {error}"))?;
@@ -2648,7 +4594,6 @@ async fn emit_stt_transcribed(
     writer
         .append(header, payload)
         .await
-        .map(|_| ())
         .map_err(|error| format!("append STT_TRANSCRIBED (0xCC): {error}"))
 }
 
@@ -2682,7 +4627,8 @@ trait SttProviderFactory: Send + Sync {
     async fn build(
         &self,
         kind: SttProviderKind,
-    ) -> Result<Box<dyn SttProviderImpl>, SttFactoryError>;
+        permit: &crate::media::audio::AudioWorkPermit,
+    ) -> Result<std::sync::Arc<dyn SttProviderImpl>, SttFactoryError>;
 }
 
 struct ConfiguredSttProviderFactory<'a> {
@@ -2699,7 +4645,8 @@ impl SttProviderFactory for ConfiguredSttProviderFactory<'_> {
     async fn build(
         &self,
         kind: SttProviderKind,
-    ) -> Result<Box<dyn SttProviderImpl>, SttFactoryError> {
+        permit: &crate::media::audio::AudioWorkPermit,
+    ) -> Result<std::sync::Arc<dyn SttProviderImpl>, SttFactoryError> {
         let python_probe = ProcessFasterWhisperPythonProbe;
         make_stt_provider_with_runtime(
             kind,
@@ -2708,6 +4655,7 @@ impl SttProviderFactory for ConfiguredSttProviderFactory<'_> {
             self.media_cfg,
             self.updater_cfg,
             self.wal_writer,
+            Some(permit),
             &self.runtime,
             &python_probe,
         )
@@ -2735,15 +4683,17 @@ impl SttAttemptError {
 async fn run_stt_attempt(
     factory: &dyn SttProviderFactory,
     kind: SttProviderKind,
+    permit: &crate::media::audio::AudioWorkPermit,
     audio: &[u8],
     request: &TranscriptionRequest,
     media_cfg: &crate::config::MediaConfig,
     neoth_home: &Path,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<TranscriptionResult, SttAttemptError> {
-    let provider = factory.build(kind).await?;
+    let provider = factory.build(kind, permit).await?;
     let mut result = transcribe_and_audit(
-        provider.as_ref(),
+        std::sync::Arc::clone(&provider),
+        permit,
         audio,
         request,
         wal_writer,
@@ -2777,6 +4727,31 @@ pub async fn dispatch_transcription(
     audio: &[u8],
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<TranscriptionResult, String> {
+    let permit = crate::media::audio::acquire_audio_work_permit()
+        .await
+        .map_err(|error| format!("audio worker budget unavailable: {error}"))?;
+    dispatch_transcription_with_audio_permit(
+        stt_cfg,
+        media_cfg,
+        updater_cfg,
+        neoth_home,
+        audio,
+        wal_writer,
+        &permit,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_transcription_with_audio_permit(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::ops::UpdaterConfig,
+    neoth_home: &Path,
+    audio: &[u8],
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<TranscriptionResult, String> {
     let azure_region =
         (!stt_cfg.azure_region.trim().is_empty()).then(|| stt_cfg.azure_region.clone());
     let factory = ConfiguredSttProviderFactory {
@@ -2787,16 +4762,20 @@ pub async fn dispatch_transcription(
         wal_writer,
         runtime: SttRuntimeEnvironment::for_home(neoth_home),
     };
-    dispatch_transcription_with_factory(stt_cfg, media_cfg, neoth_home, audio, wal_writer, &factory)
-        .await
+    dispatch_transcription_with_factory(
+        stt_cfg, media_cfg, neoth_home, audio, wal_writer, permit, &factory,
+    )
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_transcription_with_factory(
     stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
     media_cfg: &crate::config::MediaConfig,
     neoth_home: &Path,
     audio: &[u8],
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: &crate::media::audio::AudioWorkPermit,
     factory: &dyn SttProviderFactory,
 ) -> Result<TranscriptionResult, String> {
     use crate::media::stt_dispatch::AudioFormat;
@@ -2819,6 +4798,7 @@ async fn dispatch_transcription_with_factory(
     let primary_error = match run_stt_attempt(
         factory,
         stt_cfg.primary,
+        permit,
         audio,
         &request,
         media_cfg,
@@ -2866,7 +4846,7 @@ async fn dispatch_transcription_with_factory(
     }
 
     run_stt_attempt(
-        factory, fb_kind, audio, &request, media_cfg, neoth_home, wal_writer,
+        factory, fb_kind, permit, audio, &request, media_cfg, neoth_home, wal_writer,
     )
     .await
     .map_err(|fallback_error| {
@@ -2883,6 +4863,8 @@ async fn dispatch_transcription_with_factory(
 pub enum PcmSttError {
     #[error("PCM input is empty")]
     EmptyInput,
+    #[error("audio worker budget unavailable: {0}")]
+    AudioBudget(String),
     #[error(transparent)]
     Resample(#[from] crate::media::resampler::ResampleError),
     #[error(transparent)]
@@ -2918,14 +4900,67 @@ pub async fn dispatch_pcm_f32(
     sample_rate_hz: u32,
     wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
 ) -> Result<TranscriptionResult, PcmSttError> {
+    let permit = crate::media::audio::acquire_audio_work_permit()
+        .await
+        .map_err(|error| PcmSttError::AudioBudget(error.to_string()))?;
+    dispatch_pcm_f32_with_audio_permit(
+        stt_cfg,
+        media_cfg,
+        updater_cfg,
+        neoth_home,
+        samples,
+        sample_rate_hz,
+        wal_writer,
+        &permit,
+    )
+    .await
+}
+
+/// Canonical PCM dispatch for a caller that acquired the process-wide audio
+/// budget before decoding or copying its input.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn dispatch_pcm_f32_with_audio_permit(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::ops::UpdaterConfig,
+    neoth_home: &Path,
+    samples: &[f32],
+    sample_rate_hz: u32,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    _permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<TranscriptionResult, PcmSttError> {
+    dispatch_pcm_f32_inner(
+        stt_cfg,
+        media_cfg,
+        updater_cfg,
+        neoth_home,
+        samples,
+        sample_rate_hz,
+        wal_writer,
+        _permit,
+    )
+    .await
+}
+
+async fn dispatch_pcm_f32_inner(
+    stt_cfg: &crate::media::stt_dispatch::MediaSttConfig,
+    media_cfg: &crate::config::MediaConfig,
+    updater_cfg: &crate::config::ops::UpdaterConfig,
+    neoth_home: &Path,
+    samples: &[f32],
+    sample_rate_hz: u32,
+    wal_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    permit: &crate::media::audio::AudioWorkPermit,
+) -> Result<TranscriptionResult, PcmSttError> {
     let wav = prepare_pcm_f32_wav(samples, sample_rate_hz)?;
-    dispatch_transcription(
+    dispatch_transcription_with_audio_permit(
         stt_cfg,
         media_cfg,
         updater_cfg,
         neoth_home,
         &wav,
         wal_writer,
+        permit,
     )
     .await
     .map_err(PcmSttError::Dispatch)
@@ -3680,6 +5715,7 @@ mod tests {
             &self,
             python: &Path,
             _explicitly_configured: bool,
+            _audio_permit: Option<&crate::media::audio::AudioWorkPermit>,
         ) -> Result<(), SttFactoryError> {
             assert_eq!(python, Path::new("python-test"));
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -3713,6 +5749,7 @@ mod tests {
             &media,
             &updater,
             None,
+            None,
             &runtime,
             &probe,
         )
@@ -3733,6 +5770,7 @@ mod tests {
             None,
             &media,
             &updater,
+            None,
             None,
             &runtime,
             &unavailable,
@@ -3789,6 +5827,7 @@ mod tests {
         }
         async fn transcribe(
             &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
             _audio: &[u8],
             _request: &TranscriptionRequest,
         ) -> Result<TranscriptionResult, SttProviderError> {
@@ -3803,6 +5842,336 @@ mod tests {
         }
     }
 
+    struct CountingCloudStt {
+        calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        sabotage_result_path: Option<PathBuf>,
+    }
+
+    impl CountingCloudStt {
+        fn new(calls: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Self {
+            Self {
+                calls,
+                sabotage_result_path: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SttProviderImpl for CountingCloudStt {
+        fn kind(&self) -> SttProviderKind {
+            SttProviderKind::OpenAiWhisperApi
+        }
+
+        fn model_id(&self) -> Option<String> {
+            Some("test-cloud-model".to_string())
+        }
+
+        async fn transcribe(
+            &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
+            _audio: &[u8],
+            request: &TranscriptionRequest,
+        ) -> Result<TranscriptionResult, SttProviderError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some(path) = &self.sabotage_result_path {
+                std::fs::create_dir(path).map_err(|error| {
+                    SttProviderError::permanent(format!(
+                        "test could not sabotage replay result path: {error}"
+                    ))
+                })?;
+            }
+            Ok(TranscriptionResult {
+                text: "paid result".to_string(),
+                segments: Vec::new(),
+                language: request.language.clone(),
+                confidence: Some(0.9),
+                speaker_labels: Vec::new(),
+                provider: String::new(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_stt_replays_identical_result_without_second_provider_call() {
+        let home = test_neoth_home();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+        let audio = b"same paid audio";
+        let request = req("en");
+
+        let first = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap();
+        let replay = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first, replay);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    fn prepared_cloud_stt_outcome(
+        home: &Path,
+        audio: &[u8],
+        request: &TranscriptionRequest,
+    ) -> (CloudSttReplayPaths, TranscriptionResult) {
+        let provider =
+            CountingCloudStt::new(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+        let paths = cloud_stt_replay_paths(
+            home,
+            provider.kind(),
+            provider.model_id().as_deref().unwrap(),
+            request,
+            audio,
+        )
+        .unwrap();
+        ensure_private_cloud_stt_replay_root(&paths.root).unwrap();
+        crate::util::atomic_write::write_private_create_new_durable(
+            &paths.pending,
+            &paths.intent_bytes,
+        )
+        .unwrap();
+        let result = TranscriptionResult {
+            text: "durable paid result".to_string(),
+            segments: Vec::new(),
+            language: request.language.clone(),
+            confidence: Some(0.9),
+            speaker_labels: Vec::new(),
+            provider: String::new(),
+        };
+        persist_cloud_stt_replay_outcome(&paths, &result).unwrap();
+        (paths, result)
+    }
+
+    #[test]
+    fn stale_ambiguous_cloud_audit_claim_blocks_duplicate_0xcc() {
+        let home = test_neoth_home();
+        let (paths, expected) =
+            prepared_cloud_stt_outcome(home.path(), b"ambiguous audit", &req("en"));
+        let lease = match acquire_cloud_stt_audit(&paths).unwrap() {
+            CloudSttAuditAction::Audit { lease, result } => {
+                assert_eq!(result, expected);
+                lease
+            }
+            _ => panic!("fresh outcome must acquire an audit claim"),
+        };
+        drop(lease); // simulate a process dying before the WAL append ACK
+
+        let error = match acquire_cloud_stt_audit(&paths) {
+            Err(error) => error,
+            Ok(_) => panic!("ambiguous stale claim must fail closed"),
+        };
+        assert!(error.to_string().contains("refusing a duplicate 0xCC"));
+    }
+
+    #[test]
+    fn terminal_cloud_audit_claim_recovers_commit_without_reaudit() {
+        let home = test_neoth_home();
+        let (paths, expected) = prepared_cloud_stt_outcome(home.path(), b"acked audit", &req("en"));
+        let mut lease = match acquire_cloud_stt_audit(&paths).unwrap() {
+            CloudSttAuditAction::Audit { lease, .. } => lease,
+            _ => panic!("fresh outcome must acquire an audit claim"),
+        };
+        mark_cloud_stt_audit_claim(
+            &paths,
+            &mut lease,
+            CloudSttAuditStage::Audited { wal_offset: 42 },
+        )
+        .unwrap();
+        drop(lease); // simulate a crash after durable WAL ACK + claim transition
+
+        let (lease, recovered) = match acquire_cloud_stt_audit(&paths).unwrap() {
+            CloudSttAuditAction::Commit { lease, result } => (lease, result),
+            _ => panic!("terminal audit claim must recover as commit-only"),
+        };
+        assert_eq!(recovered, expected);
+        commit_cloud_stt_replay_result(&paths, &recovered, &lease).unwrap();
+        assert!(matches!(
+            begin_cloud_stt_replay(paths).unwrap(),
+            CloudSttReplayStart::Replay(result) if result == expected
+        ));
+    }
+
+    #[tokio::test]
+    async fn cloud_stt_pending_intent_blocks_provider_egress() {
+        let home = test_neoth_home();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
+        let audio = b"pending paid audio";
+        let request = req("en");
+        let paths = cloud_stt_replay_paths(
+            home.path(),
+            provider.kind(),
+            provider.model_id().as_deref().unwrap(),
+            &request,
+            audio,
+        )
+        .unwrap();
+        ensure_private_cloud_stt_replay_root(&paths.root).unwrap();
+        crate::util::atomic_write::write_private_create_new_durable(
+            &paths.pending,
+            &paths.intent_bytes,
+        )
+        .unwrap();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+
+        let error = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("pending without a durable result")
+        );
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cloud_stt_corrupt_result_blocks_provider_egress() {
+        let home = test_neoth_home();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
+        let audio = b"corrupt paid audio";
+        let request = req("en");
+        let paths = cloud_stt_replay_paths(
+            home.path(),
+            provider.kind(),
+            provider.model_id().as_deref().unwrap(),
+            &request,
+            audio,
+        )
+        .unwrap();
+        ensure_private_cloud_stt_replay_root(&paths.root).unwrap();
+        crate::util::atomic_write::atomic_write_private(&paths.result, b"{corrupt").unwrap();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+
+        let error = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("result is corrupt"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cloud_stt_pre_intent_failure_calls_provider_zero_times() {
+        let parent = test_neoth_home();
+        let invalid_home = parent.path().join("not-a-directory");
+        std::fs::write(&invalid_home, b"occupied").unwrap();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+
+        let error = transcribe_and_audit(
+            provider as std::sync::Arc<dyn SttProviderImpl>,
+            &permit,
+            b"never leaves",
+            &req("en"),
+            None,
+            &cloud_on(),
+            &invalid_home,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("replay root"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn cloud_stt_post_call_persist_failure_is_permanent_and_not_retried() {
+        let home = test_neoth_home();
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let audio = b"paid once before persist failure";
+        let request = req("en");
+        let template = CountingCloudStt::new(std::sync::Arc::clone(&calls));
+        let paths = cloud_stt_replay_paths(
+            home.path(),
+            template.kind(),
+            template.model_id().as_deref().unwrap(),
+            &request,
+            audio,
+        )
+        .unwrap();
+        let provider = std::sync::Arc::new(CountingCloudStt {
+            calls: std::sync::Arc::clone(&calls),
+            sabotage_result_path: Some(paths.result),
+        });
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+
+        let first = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(first.class(), SttFailureClass::Permanent);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let retry = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            audio,
+            &request,
+            None,
+            &cloud_on(),
+            home.path(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(retry.class(), SttFailureClass::Permanent);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
     struct SegmentedLocalMockStt;
 
     #[async_trait]
@@ -3813,6 +6182,7 @@ mod tests {
 
         async fn transcribe(
             &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
             _audio: &[u8],
             _request: &TranscriptionRequest,
         ) -> Result<TranscriptionResult, SttProviderError> {
@@ -3849,9 +6219,13 @@ mod tests {
             .collect();
         let audio = pcm_f32_to_wav(&samples).unwrap();
         let neoth_home = test_neoth_home();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
 
         let result = transcribe_and_audit(
-            &SegmentedLocalMockStt,
+            std::sync::Arc::new(SegmentedLocalMockStt),
+            &permit,
             &audio,
             &request,
             None,
@@ -3876,6 +6250,42 @@ mod tests {
     fn faster_whisper_provider_is_local() {
         assert!(SttProviderKind::FasterWhisperLocal.is_local());
         assert!(!SttProviderKind::FasterWhisperLocal.requires_credentials());
+    }
+
+    #[test]
+    fn faster_whisper_reap_fixture() {
+        if std::env::var_os("NEOTH_FASTER_WHISPER_REAP_FIXTURE").is_some() {
+            std::thread::sleep(std::time::Duration::from_secs(30));
+        }
+    }
+
+    #[tokio::test]
+    async fn faster_whisper_kill_path_observes_and_reaps_child_exit() {
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args([
+                "--exact",
+                "media::stt_provider::tests::faster_whisper_reap_fixture",
+                "--nocapture",
+            ])
+            .env("NEOTH_FASTER_WHISPER_REAP_FIXTURE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true);
+        let mut child = command.spawn().unwrap();
+        let pid = child.id().expect("spawned fixture has a PID");
+
+        kill_and_reap_faster_whisper(&mut child).await.unwrap();
+
+        assert!(
+            child.try_wait().unwrap().is_some(),
+            "child {pid} must have an observed exit status"
+        );
+        assert!(
+            child.id().is_none(),
+            "reaped child {pid} must no longer expose a live PID"
+        );
     }
 
     #[test]
@@ -3962,8 +6372,12 @@ mod tests {
         let audio = vec![0u8; 16];
         let mut required = cloud_on();
         required.required_audit_for_cloud_media = true;
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
         let err = transcribe_and_audit(
-            &MockStt,
+            std::sync::Arc::new(MockStt),
+            &permit,
             &audio,
             &req("en"),
             None,
@@ -3979,7 +6393,8 @@ mod tests {
         // Without required-audit, a writerless call still transcribes (best-effort).
         assert!(
             transcribe_and_audit(
-                &MockStt,
+                std::sync::Arc::new(MockStt),
+                &permit,
                 &audio,
                 &req("en"),
                 None,
@@ -3999,8 +6414,12 @@ mod tests {
         let audio = vec![0u8; 4096];
         let mut media_cfg = cloud_on();
         media_cfg.required_audit_for_cloud_media = true;
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
         let out = transcribe_and_audit(
-            &MockStt,
+            std::sync::Arc::new(MockStt),
+            &permit,
             &audio,
             &req("en"),
             Some(&writer),
@@ -4044,18 +6463,122 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn required_audit_never_reports_success_on_closed_writer() {
+    async fn caller_cancellation_after_cloud_egress_does_not_cancel_audit_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("cancelled-caller.wal");
+        let gate =
+            crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED);
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let writer = writer.with_test_ack_gate(gate.clone());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+        let audio = b"paid request survives caller cancellation".to_vec();
+        let request = req("en");
+        let mut media_cfg = cloud_on();
+        media_cfg.required_audit_for_cloud_media = true;
+        let paths = cloud_stt_replay_paths(
+            dir.path(),
+            provider.kind(),
+            provider.model_id().as_deref().unwrap(),
+            &request,
+            &audio,
+        )
+        .unwrap();
+
+        let caller = tokio::spawn({
+            let provider: std::sync::Arc<dyn SttProviderImpl> = provider.clone();
+            let permit = permit.clone();
+            let audio = audio.clone();
+            let request = request.clone();
+            let writer = writer.clone();
+            let media_cfg = media_cfg.clone();
+            let home = dir.path().to_path_buf();
+            async move {
+                transcribe_and_audit(
+                    provider,
+                    &permit,
+                    &audio,
+                    &request,
+                    Some(&writer),
+                    &media_cfg,
+                    &home,
+                )
+                .await
+            }
+        });
+        gate.wait_until_durable().await;
+        caller.abort();
+        assert!(caller.await.unwrap_err().is_cancelled());
+        gate.release();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !paths.result.is_file() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("owned cloud supervisor must finish replay commit");
+
+        let replay = transcribe_and_audit(
+            provider.clone(),
+            &permit,
+            &audio,
+            &request,
+            Some(&writer),
+            &media_cfg,
+            dir.path(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(replay.text, "paid result");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(segment).unwrap();
+        let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = header.header_len();
+        let mut audit_frames = 0usize;
+        while cursor < bytes.len() {
+            let decoded = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(decoded) => decoded,
+                Err(_) => break,
+            };
+            if decoded.header.event_type == crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED {
+                audit_frames += 1;
+            }
+            cursor = cursor.saturating_add(decoded.header.total_len as usize);
+        }
+        assert_eq!(
+            audit_frames, 1,
+            "caller cancellation must not duplicate 0xCC"
+        );
+    }
+
+    #[tokio::test]
+    async fn required_audit_refuses_dead_writer_before_provider_call() {
         let dir = tempfile::tempdir().unwrap();
         let (writer, join) = crate::wal::writer::spawn(dir.path().join("closed.wal")).unwrap();
         join.abort();
         let _ = join.await;
 
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider = std::sync::Arc::new(CountingCloudStt::new(std::sync::Arc::clone(&calls)));
         let mut required = cloud_on();
         required.required_audit_for_cloud_media = true;
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+        let audio = [0u8; 16];
+        let request = req("en");
         let error = transcribe_and_audit(
-            &MockStt,
-            &[0u8; 16],
-            &req("en"),
+            provider as std::sync::Arc<dyn SttProviderImpl>,
+            &permit,
+            &audio,
+            &request,
             Some(&writer),
             &required,
             dir.path(),
@@ -4063,22 +6586,8 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(error.class(), SttFailureClass::Permanent);
-        assert!(
-            error
-                .to_string()
-                .contains("required STT audit append failed")
-        );
-
-        let best_effort = transcribe_and_audit(
-            &MockStt,
-            &[0u8; 16],
-            &req("en"),
-            Some(&writer),
-            &cloud_on(),
-            dir.path(),
-        )
-        .await;
-        assert!(best_effort.is_ok());
+        assert!(error.to_string().contains("required_audit_for_cloud_media"));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     // ── B20: dispatch_transcription unit tests ────────────────────
@@ -4102,6 +6611,7 @@ mod tests {
 
         async fn transcribe(
             &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
             _audio: &[u8],
             request: &TranscriptionRequest,
         ) -> Result<TranscriptionResult, SttProviderError> {
@@ -4150,7 +6660,8 @@ mod tests {
         async fn build(
             &self,
             kind: SttProviderKind,
-        ) -> Result<Box<dyn SttProviderImpl>, SttFactoryError> {
+            _permit: &crate::media::audio::AudioWorkPermit,
+        ) -> Result<std::sync::Arc<dyn SttProviderImpl>, SttFactoryError> {
             self.calls.lock().unwrap().push(kind);
             match self.outcomes.get(&kind).cloned().unwrap_or_else(|| {
                 InjectedFactoryOutcome::Error(SttFactoryError::permanent(
@@ -4158,7 +6669,7 @@ mod tests {
                 ))
             }) {
                 InjectedFactoryOutcome::Provider(outcome) => {
-                    Ok(Box::new(InjectedProvider { kind, outcome }))
+                    Ok(std::sync::Arc::new(InjectedProvider { kind, outcome }))
                 }
                 InjectedFactoryOutcome::Error(error) => Err(error),
             }
@@ -4192,6 +6703,9 @@ mod tests {
         };
         let media_cfg = crate::config::MediaConfig::default();
         let neoth_home = test_neoth_home();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
 
         let result = dispatch_transcription_with_factory(
             &stt_cfg,
@@ -4199,6 +6713,7 @@ mod tests {
             neoth_home.path(),
             &wav_fixture(),
             None,
+            &permit,
             &factory,
         )
         .await
@@ -4229,6 +6744,9 @@ mod tests {
         };
         let media_cfg = crate::config::MediaConfig::default();
         let neoth_home = test_neoth_home();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
 
         let error = dispatch_transcription_with_factory(
             &stt_cfg,
@@ -4236,6 +6754,7 @@ mod tests {
             neoth_home.path(),
             &wav_fixture(),
             None,
+            &permit,
             &factory,
         )
         .await
@@ -4243,6 +6762,55 @@ mod tests {
 
         assert!(error.contains("failed permanently"));
         assert!(error.contains("credential missing"));
+        assert_eq!(factory.calls(), vec![primary]);
+    }
+
+    #[tokio::test]
+    async fn dead_required_audit_sink_never_builds_fallback() {
+        let primary = SttProviderKind::OpenAiWhisperApi;
+        let fallback = SttProviderKind::WhisperRsLocal;
+        let factory = InjectedFactory::new([
+            (
+                primary,
+                InjectedFactoryOutcome::Provider(InjectedProviderOutcome::Success),
+            ),
+            (
+                fallback,
+                InjectedFactoryOutcome::Provider(InjectedProviderOutcome::Success),
+            ),
+        ]);
+        let stt_cfg = crate::media::stt_dispatch::MediaSttConfig {
+            primary,
+            fallback: Some(fallback),
+            ..Default::default()
+        };
+        let mut media_cfg = cloud_on();
+        media_cfg.required_audit_for_cloud_media = true;
+        let neoth_home = test_neoth_home();
+        let (writer, join) =
+            crate::wal::writer::spawn(neoth_home.path().join("closed-dispatch.wal")).unwrap();
+        join.abort();
+        let _ = join.await;
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
+
+        let error = dispatch_transcription_with_factory(
+            &stt_cfg,
+            &media_cfg,
+            neoth_home.path(),
+            &wav_fixture(),
+            Some(&writer),
+            &permit,
+            &factory,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            error.contains("required_audit_for_cloud_media"),
+            "got: {error}"
+        );
         assert_eq!(factory.calls(), vec![primary]);
     }
 
@@ -4270,6 +6838,9 @@ mod tests {
             ..Default::default()
         };
         let neoth_home = test_neoth_home();
+        let permit = crate::media::audio::acquire_audio_work_permit()
+            .await
+            .unwrap();
 
         let error = dispatch_transcription_with_factory(
             &stt_cfg,
@@ -4277,6 +6848,7 @@ mod tests {
             neoth_home.path(),
             &wav_fixture(),
             None,
+            &permit,
             &factory,
         )
         .await

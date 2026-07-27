@@ -2,6 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Hard process-wide ceiling used by native OMI ingest. Four calls, each with
+/// four 48 kHz tracks and a bounded 30-second live buffer, stay below the
+/// retained-PCM budget asserted in `daemon::omi_native_ingest`.
+pub(crate) const MAX_OMI_ACTIVE_CALLS: usize = 4;
+
 /// SPEC-03b — per-provider HTTP-429 fallback chain (4-lens gremium design,
 /// 2026-05-30). When the primary provider returns `QuotaError` (429), the
 /// chat dispatch transparently tries each chain entry in order. Two guards
@@ -465,7 +470,7 @@ impl Default for OmiConfig {
             max_audio_bytes_per_stream: 64 * 1024 * 1024,
             max_image_bytes: 16 * 1024 * 1024,
             max_connections: 4,
-            max_active_calls: 64,
+            max_active_calls: MAX_OMI_ACTIVE_CALLS,
             idle_timeout_secs: 120,
             allowed_uids: Vec::new(),
         }
@@ -496,7 +501,6 @@ impl OmiConfig {
         const MAX_AUDIO_BYTES: u64 = 512 * 1024 * 1024;
         const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
         const MAX_CONNECTIONS: usize = 64;
-        const MAX_ACTIVE_CALLS: usize = 4_096;
         const MAX_IDLE_TIMEOUT_SECS: u64 = 3_600;
         const MAX_ALLOWED_UIDS: usize = 256;
         const MAX_UID_BYTES: usize = 256;
@@ -587,9 +591,9 @@ impl OmiConfig {
                 "omi.max_connections must be between 1 and {MAX_CONNECTIONS}"
             ));
         }
-        if !(1..=MAX_ACTIVE_CALLS).contains(&self.max_active_calls) {
+        if !(1..=MAX_OMI_ACTIVE_CALLS).contains(&self.max_active_calls) {
             return Err(format!(
-                "omi.max_active_calls must be between 1 and {MAX_ACTIVE_CALLS}"
+                "omi.max_active_calls must be between 1 and {MAX_OMI_ACTIVE_CALLS}; this hard ceiling bounds retained live PCM"
             ));
         }
         if !(1..=MAX_IDLE_TIMEOUT_SECS).contains(&self.idle_timeout_secs) {

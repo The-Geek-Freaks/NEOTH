@@ -30,7 +30,7 @@ mod config_defaults_tests {
         assert_eq!(d.max_audio_bytes_per_stream, 64 * 1024 * 1024);
         assert_eq!(d.max_image_bytes, 16 * 1024 * 1024);
         assert_eq!(d.max_connections, 4);
-        assert_eq!(d.max_active_calls, 64);
+        assert_eq!(d.max_active_calls, 4);
         assert_eq!(d.idle_timeout_secs, 120);
         assert!(d.allowed_uids.is_empty());
         d.validate().expect("defaults must be valid");
@@ -117,6 +117,14 @@ mod config_defaults_tests {
         let mut cfg = OmiConfig::default();
         cfg.confidence_threshold = f32::NAN;
         assert!(cfg.validate().is_err(), "NaN confidence must fail");
+
+        let mut cfg = OmiConfig::default();
+        cfg.max_active_calls = 5;
+        let error = cfg.validate().expect_err("more than four calls must fail");
+        assert!(
+            error.contains("between 1 and 4"),
+            "operator-facing hard-cap error must name the supported range: {error}"
+        );
 
         let mut cfg = OmiConfig::default();
         cfg.allowed_uids = vec!["".to_string()];

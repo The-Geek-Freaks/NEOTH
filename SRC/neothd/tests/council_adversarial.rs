@@ -39,7 +39,7 @@ use neothd::council::factual_check::{
 use neothd::skills::versioning::{
     BundleBlock, BundleBlockEntry, compute_prompt_bundle_hash, prompt_bundle_hash_hex,
 };
-use neothd::tokens::budget::{Block, BlockItem, enforce_budget};
+use neothd::tokens::budget::{Block, BlockItem, PromptRetention, enforce_budget};
 
 // ── Test 1 — test_all_three_agree_and_wrong ─────────────────────
 
@@ -199,6 +199,7 @@ fn test_token_budget_exhaustion() {
         BlockItem {
             block: Block::A,
             atomic_group: None,
+            retention: PromptRetention::Degradable,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,
@@ -207,6 +208,7 @@ fn test_token_budget_exhaustion() {
         BlockItem {
             block: Block::B,
             atomic_group: None,
+            retention: PromptRetention::Degradable,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,
@@ -215,6 +217,7 @@ fn test_token_budget_exhaustion() {
         BlockItem {
             block: Block::E,
             atomic_group: None,
+            retention: PromptRetention::Degradable,
             importance: 0.5,
             ts_ns: 0,
             tokens: 500,

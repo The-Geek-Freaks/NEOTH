@@ -59,18 +59,39 @@ const MAX_TITLE_BYTES: usize = 512;
 const MAX_ACTIONS: usize = 256;
 const MAX_ACTION_BYTES: usize = 4 * 1024;
 const MAX_EVENTS_PER_CALL: usize = 10_000;
-const MAX_TRACKS_PER_CALL: usize = 32;
+const MAX_TRACKS_PER_CALL: usize = 4;
 const MAX_SEGMENTS_PER_CALL: usize = 5_000;
 const MAX_MEDIA_PER_CALL: usize = 1_000;
 const MAX_TRANSCRIPT_BYTES_PER_CALL: usize = 8 * 1024 * 1024;
 const MAX_JOURNAL_BYTES: u64 = 32 * 1024 * 1024;
-const MAX_SAMPLE_RATE_HZ: u32 = 192_000;
+const MAX_SAMPLE_RATE_HZ: u32 = 48_000;
 const MIN_SAMPLE_RATE_HZ: u32 = 8_000;
+const MAX_AUDIO_CHUNK_BODY_BYTES: usize = 1024 * 1024;
+const OMI_RETAINED_PCM_BUDGET_BYTES: usize = 128 * 1024 * 1024;
+const MAX_RETAINED_PCM_BYTES_PER_TRACK: usize = MAX_SAMPLE_RATE_HZ as usize
+    * crate::media::stt_dispatch::MAX_LIVE_UTTERANCE_SECS
+    * std::mem::size_of::<f32>();
+const MAX_RETAINED_PCM_BYTES_PER_CALL: usize =
+    MAX_TRACKS_PER_CALL * MAX_RETAINED_PCM_BYTES_PER_TRACK;
+const MAX_RETAINED_OMI_PCM_BYTES: usize =
+    crate::config::features::MAX_OMI_ACTIVE_CALLS * MAX_RETAINED_PCM_BYTES_PER_CALL;
+// The retained baseline is process lifetime state. One globally serialized
+// audio transaction may additionally hold one cloned call plus encoded and
+// decoded copies of its <=1 MiB chunk before entering the canonical audio/STT
+// pipeline, whose own request-controlled buffers are capped at 256 MiB.
+const MAX_OMI_CHUNK_AND_CLONE_BYTES: usize =
+    MAX_RETAINED_PCM_BYTES_PER_CALL + MAX_AUDIO_CHUNK_BODY_BYTES * 2;
+const _: () = assert!(MAX_RETAINED_OMI_PCM_BYTES <= OMI_RETAINED_PCM_BUDGET_BYTES);
+const _: () = assert!(
+    MAX_OMI_CHUNK_AND_CLONE_BYTES
+        < crate::media::audio::AUDIO_REQUEST_CONTROLLED_MEMORY_BUDGET_BYTES
+);
 const MAX_START_SKEW_MS: i64 = 2;
 const MAX_SUMMARY_INPUT_BYTES: usize = 32 * 1024;
 const MAX_SUMMARY_OUTPUT_BYTES: usize = 4 * 1024;
 const LOCAL_SUMMARY_BYTES: usize = 1_200;
 const SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_BODY_TOTAL_TIMEOUT: Duration = Duration::from_secs(120);
 const STATE_SANITIZER_HALTED: &str = "sanitizer_halted";
 const STATE_LAST_ERROR: &str = "last_error";
 const STATE_LAST_SUCCESS: &str = "last_success_ts";
@@ -112,6 +133,7 @@ pub trait NativeSummaryProvider: Send + Sync {
 trait PcmTranscriber: Send + Sync {
     async fn transcribe(
         &self,
+        permit: &crate::media::audio::AudioWorkPermit,
         media: &MediaConfig,
         updater: &crate::config::UpdaterConfig,
         neoth_home: &Path,
@@ -127,6 +149,7 @@ struct CanonicalPcmTranscriber;
 impl PcmTranscriber for CanonicalPcmTranscriber {
     async fn transcribe(
         &self,
+        permit: &crate::media::audio::AudioWorkPermit,
         media: &MediaConfig,
         updater: &crate::config::UpdaterConfig,
         neoth_home: &Path,
@@ -134,7 +157,7 @@ impl PcmTranscriber for CanonicalPcmTranscriber {
         sample_rate_hz: u32,
         wal: Option<&WalWriterHandle>,
     ) -> std::result::Result<TranscriptionResult, String> {
-        crate::media::stt_provider::dispatch_pcm_f32(
+        crate::media::stt_provider::dispatch_pcm_f32_with_audio_permit(
             &media.stt,
             media,
             updater,
@@ -142,6 +165,7 @@ impl PcmTranscriber for CanonicalPcmTranscriber {
             samples,
             sample_rate_hz,
             wal,
+            permit,
         )
         .await
         .map_err(|error| error.to_string())
@@ -498,7 +522,14 @@ impl RouteKind {
 
     const fn body_limit(self, config: &OmiConfig) -> usize {
         match self {
-            Self::Audio => config.max_audio_bytes_per_stream as usize,
+            Self::Audio => {
+                let configured = config.max_audio_bytes_per_stream as usize;
+                if configured < MAX_AUDIO_CHUNK_BODY_BYTES {
+                    configured
+                } else {
+                    MAX_AUDIO_CHUNK_BODY_BYTES
+                }
+            }
             Self::Image | Self::VideoFrame => {
                 let configured = config.max_image_bytes as usize;
                 if configured < VISION_PIPELINE_LIMIT {
@@ -570,8 +601,37 @@ where
     {
         return Err(IngestError::TooLarge { cap });
     }
-    let body = read_limited(request.into_body(), cap, idle_timeout).await?;
-    let outcome = dispatch_event(Arc::clone(&state), route, event_id, uid, headers, body).await?;
+    // Audio owns the process-wide request-memory permit before Hyper starts
+    // accumulating the bounded body. The token then crosses candidate
+    // cloning, PCM conversion, live-buffer mutation, STT and persistence.
+    let audio_permit = if matches!(
+        route.kind,
+        RouteKind::Audio | RouteKind::Finish | RouteKind::Cancel | RouteKind::Fail
+    ) {
+        Some(
+            crate::media::audio::acquire_audio_work_permit()
+                .await
+                .map_err(|error| external_error("native OMI audio budget", &error.to_string()))?,
+        )
+    } else {
+        None
+    };
+    let body = tokio::time::timeout(
+        REQUEST_BODY_TOTAL_TIMEOUT,
+        read_limited(request.into_body(), cap, idle_timeout),
+    )
+    .await
+    .map_err(|_| IngestError::BadRequest("request body exceeded its total upload deadline"))??;
+    let outcome = dispatch_event(
+        Arc::clone(&state),
+        route,
+        event_id,
+        uid,
+        headers,
+        body,
+        audio_permit,
+    )
+    .await?;
     Ok(success_response(outcome))
 }
 
@@ -599,6 +659,18 @@ where
         };
         let frame = frame.map_err(|_| IngestError::TooLarge { cap })?;
         if let Ok(data) = frame.into_data() {
+            let projected = bytes
+                .len()
+                .checked_add(data.len())
+                .ok_or(IngestError::TooLarge { cap })?;
+            if projected > cap {
+                return Err(IngestError::TooLarge { cap });
+            }
+            bytes.try_reserve(data.len()).map_err(|error| {
+                IngestError::InternalOwned(format!(
+                    "reserve bounded native OMI request body: {error}"
+                ))
+            })?;
             bytes.extend_from_slice(&data);
         }
     }
@@ -674,6 +746,7 @@ async fn dispatch_event(
     uid: Option<String>,
     headers: hyper::HeaderMap,
     body: Vec<u8>,
+    audio_permit: Option<crate::media::audio::AudioWorkPermit>,
 ) -> std::result::Result<EventOutcome, IngestError> {
     // One gate covers the durable SC-18/tombstone check and every following
     // journal/projection effect. Once one request halts or purges a feed, a
@@ -712,6 +785,11 @@ async fn dispatch_event(
     if let Some(idempotent) = call.check_event(&event_id, route.kind, &fingerprint)? {
         return Ok(idempotent);
     }
+    if call.has_unresolved_audio_event() {
+        return Err(IngestError::Conflict(
+            "call has an unresolved audio provider outcome; use a new call id after reviewing the recovery journal",
+        ));
+    }
     if call.status != CallStatus::Active {
         return Err(IngestError::Conflict("call is already terminal"));
     }
@@ -723,6 +801,9 @@ async fn dispatch_event(
 
     match route.kind {
         RouteKind::Audio => {
+            let audio_permit = audio_permit.as_ref().ok_or(IngestError::Internal(
+                "native OMI audio route is missing its memory permit",
+            ))?;
             let mut candidate = call.clone();
             let outcome = process_audio(
                 &state,
@@ -731,6 +812,7 @@ async fn dispatch_event(
                 fingerprint,
                 &headers,
                 &body,
+                audio_permit,
             )
             .await?;
             *call = candidate;
@@ -759,8 +841,19 @@ async fn dispatch_event(
             Ok(outcome)
         }
         RouteKind::Finish | RouteKind::Cancel | RouteKind::Fail => {
-            let result =
-                terminalize(&state, &mut call, event_id, fingerprint, route.kind, &body).await;
+            let audio_permit = audio_permit.as_ref().ok_or(IngestError::Internal(
+                "native OMI terminal route is missing its memory permit",
+            ))?;
+            let result = terminalize(
+                &state,
+                &mut call,
+                event_id,
+                fingerprint,
+                route.kind,
+                &body,
+                audio_permit,
+            )
+            .await;
             if let Err(error) = &result
                 && !matches!(error, IngestError::SanitizerHalted)
             {
@@ -869,6 +962,7 @@ async fn process_audio(
     fingerprint: String,
     headers: &hyper::HeaderMap,
     body: &[u8],
+    audio_permit: &crate::media::audio::AudioWorkPermit,
 ) -> std::result::Result<EventOutcome, IngestError> {
     if !state.config.audio_enabled {
         return Err(IngestError::Forbidden(
@@ -891,7 +985,7 @@ async fn process_audio(
     let sample_rate_hz = parse_header::<u32>(headers, "x-omi-sample-rate-hz")?;
     if !(MIN_SAMPLE_RATE_HZ..=MAX_SAMPLE_RATE_HZ).contains(&sample_rate_hz) {
         return Err(IngestError::BadRequest(
-            "sample rate must be in 8000..=192000 Hz",
+            "sample rate must be in 8000..=48000 Hz",
         ));
     }
     let chunk_start_ms = parse_header::<i64>(headers, "x-omi-start-ms")?;
@@ -908,10 +1002,15 @@ async fn process_audio(
             "audio body must contain non-empty f32 little-endian mono samples",
         ));
     }
-    let samples: Vec<f32> = body
-        .chunks_exact(4)
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("exact chunk")))
-        .collect();
+    let mut samples = Vec::new();
+    samples
+        .try_reserve_exact(body.len() / std::mem::size_of::<f32>())
+        .map_err(|error| {
+            IngestError::InternalOwned(format!("reserve native OMI PCM samples: {error}"))
+        })?;
+    for bytes in body.chunks_exact(4) {
+        samples.push(f32::from_le_bytes(bytes.try_into().expect("exact chunk")));
+    }
     if samples
         .iter()
         .any(|sample| !sample.is_finite() || sample.abs() > 1.0)
@@ -963,9 +1062,15 @@ async fn process_audio(
         .ok_or(IngestError::BadRequest("audio sample counter overflow"))?;
     if let Some(utterance) = next.buffer.poll_completed_utterance() {
         let base_ms = next.absolute_ms(next.buffer_start_sample)?;
+        // All request-shape, track, size and timeline checks completed above.
+        // Cloud retry ownership lives in the canonical, request-hash-bound STT
+        // replay store. Do not create a second OMI-local pending transaction:
+        // it would intercept an identical retry before the canonical layer can
+        // replay the persisted provider outcome and finish its required audit.
         let result = state
             .transcriber
             .transcribe(
+                audio_permit,
                 &state.media,
                 &state.updater,
                 &state.home,
@@ -1132,6 +1237,7 @@ async fn terminalize(
     fingerprint: String,
     kind: RouteKind,
     body: &[u8],
+    audio_permit: &crate::media::audio::AudioWorkPermit,
 ) -> std::result::Result<EventOutcome, IngestError> {
     let input: TerminalRequest = decode_json_or_default(body)?;
     validate_optional_text(input.title.as_deref(), MAX_TITLE_BYTES, "title")?;
@@ -1189,6 +1295,7 @@ async fn terminalize(
             let result = state
                 .transcriber
                 .transcribe(
+                    audio_permit,
                     &state.media,
                     &state.updater,
                     &state.home,
@@ -2401,7 +2508,11 @@ impl CallState {
         fingerprint: &str,
     ) -> std::result::Result<Option<EventOutcome>, IngestError> {
         let expected = format!("{}:{fingerprint}", kind.as_str());
+        let pending = format!("{}_pending:{fingerprint}", kind.as_str());
         match self.applied_events.get(event_id) {
+            Some(stored) if stored == &pending => Err(IngestError::Conflict(
+                "event has an unresolved provider outcome; retry is blocked to prevent duplicate egress or cost",
+            )),
             // Journals from the first native-ingest build stored only the kind.
             // Preserve their retry contract, while every new event binds its
             // idempotency key to the exact body + semantic headers.
@@ -2418,6 +2529,12 @@ impl CallState {
     fn apply_event(&mut self, event_id: String, kind: RouteKind, fingerprint: String) {
         self.applied_events
             .insert(event_id, format!("{}:{fingerprint}", kind.as_str()));
+    }
+
+    fn has_unresolved_audio_event(&self) -> bool {
+        self.applied_events
+            .values()
+            .any(|event| event.starts_with("audio_pending:"))
     }
 
     fn sort_segments(&mut self) {
@@ -3249,6 +3366,7 @@ impl CallJournal {
                 event_kind,
                 "start"
                     | "audio"
+                    | "audio_pending"
                     | "caption"
                     | "image"
                     | "video_frame"
@@ -3661,6 +3779,10 @@ mod tests {
         calls: Arc<AtomicUsize>,
     }
 
+    struct PostCallAuditFailingTranscriber {
+        calls: Arc<AtomicUsize>,
+    }
+
     struct DiscardingExporter {
         calls: Arc<AtomicUsize>,
     }
@@ -3684,6 +3806,7 @@ mod tests {
     impl PcmTranscriber for FakeTranscriber {
         async fn transcribe(
             &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
             _media: &MediaConfig,
             _updater: &crate::config::UpdaterConfig,
             _neoth_home: &Path,
@@ -3704,6 +3827,23 @@ mod tests {
                 speaker_labels: Vec::new(),
                 provider: "fake_test_provider".to_string(),
             })
+        }
+    }
+
+    #[async_trait]
+    impl PcmTranscriber for PostCallAuditFailingTranscriber {
+        async fn transcribe(
+            &self,
+            _permit: &crate::media::audio::AudioWorkPermit,
+            _media: &MediaConfig,
+            _updater: &crate::config::UpdaterConfig,
+            _neoth_home: &Path,
+            _samples: &[f32],
+            _sample_rate_hz: u32,
+            _wal: Option<&WalWriterHandle>,
+        ) -> std::result::Result<TranscriptionResult, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err("required STT audit append failed after cloud transcription (injected)".to_string())
         }
     }
 
@@ -3815,6 +3955,33 @@ mod tests {
             .uri(path)
             .header(hyper::header::AUTHORIZATION, format!("Bearer {TOKEN}"))
             .header("x-omi-event-id", event_id)
+    }
+
+    #[test]
+    fn native_audio_memory_contract_is_process_bounded() {
+        assert_eq!(crate::config::features::MAX_OMI_ACTIVE_CALLS, 4);
+        assert_eq!(MAX_TRACKS_PER_CALL, 4);
+        assert_eq!(MAX_SAMPLE_RATE_HZ, 48_000);
+        assert_eq!(crate::media::stt_dispatch::MAX_LIVE_UTTERANCE_SECS, 30);
+        const {
+            assert!(
+                MAX_RETAINED_OMI_PCM_BYTES <= OMI_RETAINED_PCM_BUDGET_BYTES,
+                "4 calls * 4 tracks * 48 kHz * 30 s * f32 must stay within 128 MiB"
+            );
+            assert!(
+                MAX_OMI_CHUNK_AND_CLONE_BYTES
+                    < crate::media::audio::AUDIO_REQUEST_CONTROLLED_MEMORY_BUDGET_BYTES,
+                "one serialized OMI call clone plus chunk copies must stay below the 256 MiB audio permit"
+            );
+        }
+
+        let mut config = OmiConfig::default();
+        assert_eq!(
+            RouteKind::Audio.body_limit(&config),
+            MAX_AUDIO_CHUNK_BODY_BYTES
+        );
+        config.max_audio_bytes_per_stream = 512 * 1024;
+        assert_eq!(RouteKind::Audio.body_limit(&config), 512 * 1024);
     }
 
     async fn invoke(
@@ -4132,6 +4299,107 @@ mod tests {
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
         let body = response.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&body).contains("payload_too_large"));
+    }
+
+    #[tokio::test]
+    async fn audio_chunk_body_cap_returns_typed_413_before_pcm_allocation() {
+        let temp = TempDir::new().unwrap();
+        let ingest = fixture(
+            &temp,
+            true,
+            false,
+            1024,
+            Vec::new(),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let response = invoke(
+            &ingest,
+            request(
+                &format!("{API_PREFIX}oversized/audio"),
+                "audio-oversized",
+                Bytes::new(),
+            )
+            .header(
+                hyper::header::CONTENT_LENGTH,
+                MAX_AUDIO_CHUNK_BODY_BYTES + 1,
+            ),
+            Bytes::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("payload_too_large"));
+    }
+
+    #[tokio::test]
+    async fn failed_transcriber_does_not_poison_canonical_audio_retry() {
+        let temp = TempDir::new().unwrap();
+        let stt_calls = Arc::new(AtomicUsize::new(0));
+        let config = OmiConfig {
+            enabled: true,
+            mode: OmiIngestMode::NativeIngest,
+            listen_addr: "127.0.0.1:8003".to_string(),
+            audio_enabled: true,
+            ..OmiConfig::default()
+        };
+        let credentials = Credentials {
+            omi_ingest_token: Some(SecretString::from(TOKEN)),
+            ..Credentials::default()
+        };
+        let ingest = NativeOmiIngest::new_with_transcriber(
+            config,
+            MediaConfig::default(),
+            crate::config::UpdaterConfig::default(),
+            &credentials,
+            temp.path().to_path_buf(),
+            None,
+            None,
+            None,
+            Arc::new(PostCallAuditFailingTranscriber {
+                calls: Arc::clone(&stt_calls),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            start(&ingest, "call-audit-gap").await.status(),
+            StatusCode::OK
+        );
+
+        let mut pcm = Vec::new();
+        for sample in
+            std::iter::repeat_n(0.25_f32, 1_600).chain(std::iter::repeat_n(0.0_f32, 16_000))
+        {
+            pcm.extend_from_slice(&sample.to_le_bytes());
+        }
+        let path = format!("{API_PREFIX}call-audit-gap/audio");
+        let audio_request = || {
+            request(&path, "audio-gap-1", Bytes::new())
+                .header("content-type", "audio/x-pcm-f32le")
+                .header("x-omi-track-id", "remote")
+                .header("x-omi-sample-rate-hz", "16000")
+                .header("x-omi-start-ms", "0")
+        };
+
+        let first = invoke(&ingest, audio_request(), pcm.clone()).await;
+        assert_eq!(first.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(stt_calls.load(Ordering::SeqCst), 1);
+
+        let retry = invoke(&ingest, audio_request(), pcm).await;
+        assert_eq!(retry.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(
+            stt_calls.load(Ordering::SeqCst),
+            2,
+            "OMI must route the identical retry back through the canonical STT recovery boundary"
+        );
+
+        let journal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(journal_path(temp.path(), "call-audit-gap")).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            journal["applied_events"].get("audio-gap-1").is_none(),
+            "a failed STT boundary must not poison the OMI event journal before a canonical result commits"
+        );
     }
 
     #[tokio::test]
@@ -4719,6 +4987,61 @@ mod tests {
         assert_eq!(finish.status(), StatusCode::OK);
         let body = finish.into_body().collect().await.unwrap().to_bytes();
         assert!(String::from_utf8_lossy(&body).contains("completed_incomplete"));
+    }
+
+    #[tokio::test]
+    async fn restart_fails_closed_when_legacy_journals_exceed_four_active_calls() {
+        let temp = TempDir::new().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        {
+            let ingest = fixture(&temp, false, false, 1024, Vec::new(), Arc::clone(&calls));
+            for index in 1..=4 {
+                assert_eq!(
+                    start(&ingest, &format!("legacy-call-{index}"))
+                        .await
+                        .status(),
+                    StatusCode::OK
+                );
+            }
+        }
+
+        let source_path = journal_path(temp.path(), "legacy-call-1");
+        let mut fifth: CallJournal =
+            serde_json::from_slice(&std::fs::read(source_path).unwrap()).unwrap();
+        fifth.call_id = "legacy-call-5".to_string();
+        persist_journal(temp.path(), &fifth).unwrap();
+
+        let config = OmiConfig {
+            enabled: true,
+            mode: OmiIngestMode::NativeIngest,
+            listen_addr: "127.0.0.1:8003".to_string(),
+            ..OmiConfig::default()
+        };
+        let credentials = Credentials {
+            omi_ingest_token: Some(SecretString::from(TOKEN)),
+            ..Credentials::default()
+        };
+        let result = NativeOmiIngest::new_with_transcriber(
+            config,
+            MediaConfig::default(),
+            crate::config::UpdaterConfig::default(),
+            &credentials,
+            temp.path().to_path_buf(),
+            None,
+            None,
+            None,
+            Arc::new(FakeTranscriber { calls }),
+        );
+        let error = match result {
+            Ok(_) => panic!("five recovered calls must fail closed"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("recovered 5 active native OMI calls, exceeding omi.max_active_calls=4"),
+            "operator must see the exact recovery limit: {error:#}"
+        );
     }
 
     #[tokio::test]

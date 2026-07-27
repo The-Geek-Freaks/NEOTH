@@ -231,9 +231,14 @@ enum PendingOutcomeRecord {
 /// duplicate first-use work across independently-created provider instances;
 /// the file tier covers CLI/daemon and multi-process races. Unlike the generic
 /// config lock, this intentionally waits for long model loads/downloads.
-pub(crate) struct ModelCacheGuard {
+struct ModelCacheLease {
     _process: tokio::sync::OwnedMutexGuard<()>,
     _os: std::fs::File,
+}
+
+#[derive(Clone)]
+pub(crate) struct ModelCacheGuard {
+    _lease: Arc<ModelCacheLease>,
 }
 
 /// Durable, replayable D7/D8 transaction for one model cache. The pending
@@ -323,6 +328,13 @@ impl ModelDownloadAttempt {
 
     pub(crate) fn is_pending(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// Clone the exact cache-lock lease into a detached subprocess supervisor.
+    /// The OS/process lock is released only after both the transaction owner
+    /// and every in-flight child have proved completion.
+    pub(crate) fn cache_guard(&self) -> ModelCacheGuard {
+        self._guard.clone()
     }
 
     #[cfg(test)]
@@ -612,8 +624,10 @@ pub(crate) async fn lock_model_cache(root: &Path) -> Result<ModelCacheGuard> {
     let process = process_model_mutex(&root).lock_owned().await;
     let os = lock_model_os(&root).await?;
     Ok(ModelCacheGuard {
-        _process: process,
-        _os: os,
+        _lease: Arc::new(ModelCacheLease {
+            _process: process,
+            _os: os,
+        }),
     })
 }
 
@@ -638,8 +652,10 @@ pub(crate) fn lock_model_cache_blocking(root: &Path) -> Result<ModelCacheGuard> 
         }
     };
     Ok(ModelCacheGuard {
-        _process: process,
-        _os: os,
+        _lease: Arc::new(ModelCacheLease {
+            _process: process,
+            _os: os,
+        }),
     })
 }
 

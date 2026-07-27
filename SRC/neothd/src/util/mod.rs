@@ -8,6 +8,7 @@
 pub mod atomic_write;
 pub mod hmac;
 pub mod locked_file;
+pub(crate) mod private_temp;
 pub mod url_encode;
 
 /// Returns the largest byte index ≤ `cap` that is a valid UTF-8 char boundary.

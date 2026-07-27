@@ -47,8 +47,9 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken}
 
 // ── E-12 import ────────────────────────────────────────────────────────────
 use windows_sys::Win32::Storage::FileSystem::{
-    CREATE_NEW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ,
-    FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FileRenameInfoEx, FlushFileBuffers,
+    CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
+    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FileRenameInfoEx, FlushFileBuffers,
     SetFileInformationByHandle,
 };
 
@@ -296,6 +297,21 @@ fn single_trustee_acl(
 /// The descriptor is verified through `GetSecurityInfo` on that handle before
 /// it is returned, avoiding path replacement races in the security check.
 pub fn create_private_file_new(path: &Path) -> io::Result<File> {
+    create_private_file_new_with_share(path, 0)
+}
+
+/// Create a private file that same-token child processes can reopen by path.
+///
+/// The file is protected from its first observable instant by the same exact
+/// TokenUser DACL as [`create_private_file_new`]. Sharing is required for
+/// sandboxed media tools such as ffmpeg: the parent retains the cleanup handle
+/// while the authorized child opens the random path. The DACL, not an
+/// inherited temp-directory ACL, remains the access-control boundary.
+pub fn create_private_shared_file_new(path: &Path) -> io::Result<File> {
+    create_private_file_new_with_share(path, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+}
+
+fn create_private_file_new_with_share(path: &Path, share_mode: u32) -> io::Result<File> {
     let path_w = path_to_wide_nul(path)?;
     let sid = current_process_token_sid()?;
     let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, NO_INHERITANCE)?;
@@ -344,13 +360,14 @@ pub fn create_private_file_new(path: &Path) -> io::Result<File> {
     // - `security_attributes`, its descriptor, ACL, and SID-derived ACL bytes
     //   all remain live until the call returns.
     // - CREATE_NEW prevents replacement/truncation of an existing object.
-    // - share mode 0 excludes read, write, and delete sharing.
+    // - `share_mode` is either zero for state commits or the explicit
+    //   read/write/delete set for private child-process media staging.
     // - a null template handle is documented for ordinary file creation.
     let raw_handle = unsafe {
         CreateFileW(
             path_w.as_ptr(),
             FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
-            0,
+            share_mode,
             &security_attributes,
             CREATE_NEW,
             FILE_ATTRIBUTE_NORMAL,
@@ -387,6 +404,64 @@ pub fn create_private_file_new(path: &Path) -> io::Result<File> {
     }
 
     Ok(owned_handle.into_file())
+}
+
+/// Atomically create a private directory for the current process TokenUser.
+///
+/// The protected inheritable DACL is supplied to `CreateDirectoryW`, so there
+/// is no public-directory interval before media files are staged inside it.
+pub fn create_private_directory_new(path: &Path) -> io::Result<()> {
+    let path_w = path_to_wide_nul(path)?;
+    let sid = current_process_token_sid()?;
+    let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, inheritance)?;
+
+    // SAFETY: SECURITY_DESCRIPTOR is a Win32 POD structure initialized by the
+    // API immediately below before it is exposed through SECURITY_ATTRIBUTES.
+    let mut descriptor: SECURITY_DESCRIPTOR = unsafe { std::mem::zeroed() };
+    let descriptor_ptr = std::ptr::addr_of_mut!(descriptor) as *mut std::ffi::c_void;
+    const SECURITY_DESCRIPTOR_REVISION: u32 = 1;
+    // SAFETY: `descriptor_ptr` addresses live, correctly sized writable
+    // storage and the revision is the documented Win32 value.
+    if unsafe { InitializeSecurityDescriptor(descriptor_ptr, SECURITY_DESCRIPTOR_REVISION) } == 0 {
+        return Err(last_win32_error("InitializeSecurityDescriptor"));
+    }
+    // SAFETY: the descriptor and LocalAlloc-owned ACL remain live through
+    // CreateDirectoryW; Win32 copies rather than retains them.
+    if unsafe { SetSecurityDescriptorDacl(descriptor_ptr, 1, acl.0, 0) } == 0 {
+        return Err(last_win32_error("SetSecurityDescriptorDacl"));
+    }
+    // SAFETY: the initialized absolute descriptor is writable for this call.
+    if unsafe { SetSecurityDescriptorControl(descriptor_ptr, SE_DACL_PROTECTED, SE_DACL_PROTECTED) }
+        == 0
+    {
+        return Err(last_win32_error("SetSecurityDescriptorControl"));
+    }
+
+    let security_attributes = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: descriptor_ptr,
+        bInheritHandle: 0,
+    };
+    // SAFETY: `path_w` is a live null-terminated UTF-16 path and every pointer
+    // reachable from `security_attributes` stays live for the call.
+    if unsafe { CreateDirectoryW(path_w.as_ptr(), &security_attributes) } == 0 {
+        return Err(last_win32_error("CreateDirectoryW"));
+    }
+
+    if let Err(verification_error) = verify_private_dacl_for_sid(path, &sid, inheritance as u8) {
+        if let Err(cleanup_error) = std::fs::remove_dir(path) {
+            return Err(io::Error::new(
+                verification_error.kind(),
+                format!(
+                    "{verification_error}; cleanup of unverified private directory failed: \
+                     {cleanup_error}"
+                ),
+            ));
+        }
+        return Err(verification_error);
+    }
+    Ok(())
 }
 
 /// Atomically replace `target` with the private file behind `file` without

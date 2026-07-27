@@ -285,6 +285,7 @@ fn assemble_cluster_request(
         preset_addendum: None,
         explicit_system: Some(CLUSTER_DELEGATED_SYSTEM),
         repo_context_block: None,
+        attachment_contexts: None,
         skill_system_prompt: None,
         used_skill_id: None,
         mcp_catalogue: None,

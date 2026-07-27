@@ -26,12 +26,19 @@
 //!     happens via the extraction-side caller when it persists to
 //!     SQLite.
 
+use std::io::{Cursor, Read};
+
 use super::{Asset, AssetKind, Extraction, ExtractionError, MediaExtractor};
 use crate::providers::clip_engine;
 
 /// Hard image-size ceiling — refuse anything past this to keep the WAL
 /// payload bound consistent with the writer's MAX_PAYLOAD_BYTES.
 const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
+/// Dimension and decoded-allocation bounds are independent from compressed
+/// size: a tiny PNG can otherwise expand into hundreds of millions of pixels.
+const MAX_IMAGE_DIMENSION: u32 = 16_384;
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+const MAX_IMAGE_DECODE_ALLOC_BYTES: u64 = 256 * 1024 * 1024;
 
 pub struct VisionExtractor;
 
@@ -58,35 +65,20 @@ impl MediaExtractor for VisionExtractor {
 }
 
 fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
-    let bytes = match asset {
-        Asset::Bytes { data, .. } => {
-            if data.len() > MAX_IMAGE_BYTES {
-                return Err(ExtractionError::Backend {
-                    backend: "vision",
-                    reason: format!(
-                        "image bytes {} exceed {} ceiling",
-                        data.len(),
-                        MAX_IMAGE_BYTES
-                    ),
-                });
-            }
-            data.clone()
-        }
-        Asset::Path { path, .. } => std::fs::read(path)
-            .map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display())))?,
-    };
+    let bytes = read_image_bytes(asset)?;
 
     let format = image::guess_format(&bytes).map_err(|e| ExtractionError::Backend {
         backend: "vision",
         reason: format!("guess_format: {e}"),
     })?;
-    let img = image::load_from_memory(&bytes).map_err(|e| ExtractionError::Backend {
-        backend: "vision",
-        reason: format!("decode: {e}"),
-    })?;
+    let img = decode_bounded(&bytes, format)?;
+    let width = img.width();
+    let height = img.height();
+    validate_image_dimensions(width, height)?;
+    // The dimensions/pixel budget is checked before this format-conversion
+    // copy. `to_rgb8` can allocate three bytes per pixel in addition to the
+    // decoder's native buffer.
     let rgb = img.to_rgb8();
-    let width = rgb.width();
-    let height = rgb.height();
 
     // Try the CLIP embedding pass. It is best-effort by design — a
     // cold install ships without the checkpoint and we surface that
@@ -119,6 +111,110 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
         text: String::new(),
         metadata,
     })
+}
+
+fn read_image_bytes(asset: &Asset) -> Result<Vec<u8>, ExtractionError> {
+    match asset {
+        Asset::Bytes { data, .. } => {
+            enforce_image_byte_ceiling(data.len())?;
+            Ok(data.clone())
+        }
+        Asset::Path { path, .. } => {
+            let file = std::fs::File::open(path)
+                .map_err(|e| ExtractionError::Io(format!("open {}: {e}", path.display())))?;
+            let declared_len = file
+                .metadata()
+                .map_err(|e| ExtractionError::Io(format!("stat {}: {e}", path.display())))?
+                .len();
+            let declared_len =
+                usize::try_from(declared_len).map_err(|_| ExtractionError::Backend {
+                    backend: "vision",
+                    reason: "image size does not fit this platform".into(),
+                })?;
+            enforce_image_byte_ceiling(declared_len)?;
+            let mut bytes = Vec::with_capacity(declared_len);
+            file.take(MAX_IMAGE_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display())))?;
+            enforce_image_byte_ceiling(bytes.len())?;
+            Ok(bytes)
+        }
+    }
+}
+
+fn enforce_image_byte_ceiling(len: usize) -> Result<(), ExtractionError> {
+    if len > MAX_IMAGE_BYTES {
+        return Err(ExtractionError::Backend {
+            backend: "vision",
+            reason: format!("image bytes {len} exceed {MAX_IMAGE_BYTES} ceiling"),
+        });
+    }
+    Ok(())
+}
+
+fn decoder_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC_BYTES);
+    limits
+}
+
+fn decode_bounded(
+    bytes: &[u8],
+    format: image::ImageFormat,
+) -> Result<image::DynamicImage, ExtractionError> {
+    // Header-only dimension discovery avoids allocating the decoded image
+    // before the aggregate pixel cap is known.
+    let mut header_reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    header_reader.limits(decoder_limits());
+    let (width, height) =
+        header_reader
+            .into_dimensions()
+            .map_err(|e| ExtractionError::Backend {
+                backend: "vision",
+                reason: format!("read dimensions: {e}"),
+            })?;
+    validate_image_dimensions(width, height)?;
+
+    let mut reader = image::ImageReader::with_format(Cursor::new(bytes), format);
+    reader.limits(decoder_limits());
+    reader.decode().map_err(|e| ExtractionError::Backend {
+        backend: "vision",
+        reason: format!("decode: {e}"),
+    })
+}
+
+fn validate_image_dimensions(width: u32, height: u32) -> Result<(), ExtractionError> {
+    if width == 0 || height == 0 {
+        return Err(ExtractionError::Backend {
+            backend: "vision",
+            reason: format!("image has invalid zero dimension {width}x{height}"),
+        });
+    }
+    if width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION {
+        return Err(ExtractionError::Backend {
+            backend: "vision",
+            reason: format!(
+                "image dimensions {width}x{height} exceed the {MAX_IMAGE_DIMENSION}-pixel axis cap"
+            ),
+        });
+    }
+    let pixels = u64::from(width)
+        .checked_mul(u64::from(height))
+        .ok_or_else(|| ExtractionError::Backend {
+            backend: "vision",
+            reason: "image pixel-count overflow".into(),
+        })?;
+    if pixels > MAX_IMAGE_PIXELS {
+        return Err(ExtractionError::Backend {
+            backend: "vision",
+            reason: format!(
+                "image has {pixels} pixels, exceeding the {MAX_IMAGE_PIXELS}-pixel cap"
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Best-effort CLIP embedding. Returns `(Some(vec), "ok")` when the
@@ -235,6 +331,43 @@ mod tests {
             ExtractionError::Backend { backend: "vision", reason } if reason.contains("ceiling"),
         );
         assert!(matched, "got: {err:?}");
+    }
+
+    #[test]
+    fn compressed_image_cannot_bypass_dimension_or_pixel_caps() {
+        assert!(validate_image_dimensions(10_000, 4_000).is_ok());
+        let pixels = validate_image_dimensions(10_001, 4_000).unwrap_err();
+        assert!(
+            matches!(
+                pixels,
+                ExtractionError::Backend {
+                    backend: "vision",
+                    ref reason
+                } if reason.contains("pixel cap")
+            ),
+            "{pixels:?}"
+        );
+
+        let axis = validate_image_dimensions(MAX_IMAGE_DIMENSION + 1, 1).unwrap_err();
+        assert!(
+            matches!(
+                axis,
+                ExtractionError::Backend {
+                    backend: "vision",
+                    ref reason
+                } if reason.contains("axis cap")
+            ),
+            "{axis:?}"
+        );
+        assert!(validate_image_dimensions(0, 1).is_err());
+    }
+
+    #[test]
+    fn image_decoder_receives_explicit_allocation_limits() {
+        let limits = decoder_limits();
+        assert_eq!(limits.max_image_width, Some(MAX_IMAGE_DIMENSION));
+        assert_eq!(limits.max_image_height, Some(MAX_IMAGE_DIMENSION));
+        assert_eq!(limits.max_alloc, Some(MAX_IMAGE_DECODE_ALLOC_BYTES));
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-07-26
+**Created:** 2026-05-24  **Last updated:** 2026-07-27
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **Typed consumer-adoption checkpoint 2026-07-26 (R3-14 remains OPEN;
@@ -73,6 +73,48 @@
 > work is attachments, recall/guidance and other memory, coding/compaction,
 > remaining sub-agent/channel/Buddy consumers and every provider/retry/
 > fallback/streaming/cost leaf.
+>
+> **Typed attachment/media checkpoint 2026-07-27 (R3-14 remains OPEN;
+> counts unchanged):** `neoth chat --attach` now keeps the exact operator
+> caption in Block E and carries every attachment as a canonical bounded Block-D
+> envelope through the main, sub-agent, detached-background and TOML
+> provider-backed slash paths. `/research` rejects attachments before starting
+> its independent provider loop instead of silently ignoring them.
+> No-follow single-handle admission runs on the blocking pool, rejects
+> Unix FIFO/device blocking and Windows reparse points, enforces regular-file,
+> count, per-kind and aggregate byte limits and rejects repeated paths plus
+> byte-identical aliases. The read path reserves memory fallibly and charges the
+> aggregate source budget incrementally, before retaining decoded content.
+> Size/mtime drift is detected; same-size rewrites that preserve timestamps are
+> not claimed as detected. Failures are operator errors
+> rather than synthetic prompt text. Filename, kind and content stay atomic,
+> exact provider separators count toward the aggregate wire limit, and
+> required-retention fails an impossible provider budget rather than silently
+> dropping an attachment. `/research` and local action slash commands reject
+> before decode; extraction starts only after the turn WAL exists and drains it
+> on failure. Cloud STT chat attachments fail before egress until a concrete
+> request-bound cost/consent/WAL permit exists. Image, PDF, document/archive,
+> audio and video decoders have input/expansion/output ceilings. Private
+> tempfiles plus owned, detached lifecycle supervisors contain Docling, PDF,
+> Faster-Whisper and video subprocess trees through success, failure, timeout
+> and cancellation. Windows children are Job-bound; Linux/macOS process-group
+> identity is proved before tree termination, and an unprovable cleanup poisons
+> the relevant singleton permit instead of pretending capacity is free.
+> Docling is bound to the effective media config, snapshots no-follow inputs and
+> parses JSON with bounded page/text allocation. Web fetch streams into a hard
+> response ceiling, rejects credential-bearing URLs, and writes its private
+> cache atomically. Channel media now checks size before cloning, identifies PDF
+> by MIME and uses the same config-bound backend chain. Source/behavior gates
+> pin the removed raw prepend path. Consolidated local evidence: attachment unit
+> **22/22**, attachment boundary **2/2**, CLI source gate **6/6**, Channel
+> attachment source gate **17/17**, media-resource source gate **6/6**, PDF
+> isolation **6/6**, Council adversarial **8/8**, serial Media **446/446**
+> (two ffmpeg-dependent tests explicitly ignored), native OMI ingest **22/22**,
+> Web Fetch **52/52**, Web Document Cache **9/9**, workspace rustfmt,
+> Core Library+Tests Clippy `-D warnings`, and Core library check. Still open:
+> request-authorized cloud media for chat attachments, Channel
+> downloads/delegation, GUI/Buddy progress and retry, image OCR/vision text and
+> the remaining memory/provider consumers.
 >
 > **Typed untrusted-context checkpoint 2026-07-26 (R3-14 remains OPEN;
 > counts unchanged):** one canonical typed serializer now owns context class,

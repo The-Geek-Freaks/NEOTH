@@ -34,9 +34,58 @@ use super::{Asset, AssetKind, Extraction, ExtractionError, MediaExtractor};
 /// Per-member read cap — guards against a zip-bomb member inflating to
 /// gigabytes. 64 MiB is comfortably above any real document part.
 const MAX_MEMBER_BYTES: u64 = 64 * 1024 * 1024;
-/// Total extracted-text cap handed downstream. Truncated with a marker
-/// rather than streamed — recall/ingest reason over a bounded blob.
+const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ARCHIVE_MEMBERS: usize = 4_096;
+const MAX_ARCHIVE_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ARCHIVE_EXPANSION_RATIO: u64 = 200;
+/// Total extracted-text cap handed downstream, including the visible
+/// truncation marker.
 const MAX_TOTAL_TEXT: usize = 8 * 1024 * 1024;
+const TRUNCATION_MARKER: &str = "\n[NEOTH] …document truncated at extraction cap…";
+const MAX_CONTENT_TEXT: usize = MAX_TOTAL_TEXT - TRUNCATION_MARKER.len();
+
+#[derive(Clone, Copy)]
+struct ArchiveLimits {
+    members: usize,
+    member_bytes: u64,
+    uncompressed_bytes: u64,
+    expansion_ratio: u64,
+}
+
+const ARCHIVE_LIMITS: ArchiveLimits = ArchiveLimits {
+    members: MAX_ARCHIVE_MEMBERS,
+    member_bytes: MAX_MEMBER_BYTES,
+    uncompressed_bytes: MAX_ARCHIVE_UNCOMPRESSED_BYTES,
+    expansion_ratio: MAX_ARCHIVE_EXPANSION_RATIO,
+};
+
+struct ArchiveReadBudget {
+    limit: u64,
+    remaining: u64,
+}
+
+impl ArchiveReadBudget {
+    fn new(limit: u64) -> Self {
+        Self {
+            limit,
+            remaining: limit,
+        }
+    }
+
+    fn consume(&mut self, bytes: u64) -> Result<(), ExtractionError> {
+        self.remaining =
+            self.remaining
+                .checked_sub(bytes)
+                .ok_or_else(|| ExtractionError::Backend {
+                    backend: "document",
+                    reason: format!(
+                        "archive member reads exceed the {}-byte aggregate cap",
+                        self.limit
+                    ),
+                })?;
+        Ok(())
+    }
+}
 
 pub struct DocumentExtractor;
 
@@ -136,16 +185,13 @@ fn extract_blocking(asset: &Asset) -> Result<Extraction, ExtractionError> {
     })?;
     let bytes = read_asset_bytes(asset)?;
 
-    let mut text = if fmt.is_zip() {
+    let (mut text, truncated) = if fmt.is_zip() {
         extract_zip_text(&bytes, fmt)?
     } else {
-        rtf_to_text(&bytes)
+        truncate_owned_text(rtf_to_text(&bytes), MAX_CONTENT_TEXT)
     };
-    let truncated = text.len() > MAX_TOTAL_TEXT;
     if truncated {
-        let safe = crate::util::byte_floor(&text, MAX_TOTAL_TEXT);
-        text.truncate(safe);
-        text.push_str("\n[NEOTH] …document truncated at extraction cap…");
+        text.push_str(TRUNCATION_MARKER);
     }
 
     let stats = compute_stats(&text);
@@ -178,71 +224,191 @@ fn detect_format(asset: &Asset) -> Option<DocFormat> {
 
 fn read_asset_bytes(asset: &Asset) -> Result<Vec<u8>, ExtractionError> {
     match asset {
-        Asset::Bytes { data, .. } => Ok(data.clone()),
+        Asset::Bytes { data, .. } => {
+            enforce_document_byte_ceiling(data.len() as u64)?;
+            Ok(data.clone())
+        }
         Asset::Path { path, .. } => read_path(path),
     }
 }
 
 fn read_path(path: &Path) -> Result<Vec<u8>, ExtractionError> {
-    std::fs::read(path).map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display())))
+    let file = std::fs::File::open(path)
+        .map_err(|e| ExtractionError::Io(format!("open {}: {e}", path.display())))?;
+    let declared_len = file
+        .metadata()
+        .map_err(|e| ExtractionError::Io(format!("stat {}: {e}", path.display())))?
+        .len();
+    enforce_document_byte_ceiling(declared_len)?;
+    let mut bytes = Vec::with_capacity(declared_len as usize);
+    file.take(MAX_DOCUMENT_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| ExtractionError::Io(format!("read {}: {e}", path.display())))?;
+    enforce_document_byte_ceiling(bytes.len() as u64)?;
+    Ok(bytes)
+}
+
+fn enforce_document_byte_ceiling(len: u64) -> Result<(), ExtractionError> {
+    if len > MAX_DOCUMENT_BYTES {
+        return Err(ExtractionError::Backend {
+            backend: "document",
+            reason: format!("input {len} bytes exceeds the {MAX_DOCUMENT_BYTES}-byte cap"),
+        });
+    }
+    Ok(())
 }
 
 // ── zip-based extraction ──────────────────────────────────────────────
 
 type Archive = zip::ZipArchive<Cursor<Vec<u8>>>;
 
-fn extract_zip_text(bytes: &[u8], fmt: DocFormat) -> Result<String, ExtractionError> {
+fn extract_zip_text(bytes: &[u8], fmt: DocFormat) -> Result<(String, bool), ExtractionError> {
     let cursor = Cursor::new(bytes.to_vec());
     let mut archive = zip::ZipArchive::new(cursor).map_err(|e| ExtractionError::Backend {
         backend: "document",
         reason: format!("open {} archive: {e}", fmt.as_str()),
     })?;
+    validate_archive(&mut archive, ARCHIVE_LIMITS)?;
+    let mut read_budget = ArchiveReadBudget::new(MAX_ARCHIVE_UNCOMPRESSED_BYTES);
 
     match fmt {
         DocFormat::Docx => {
-            let xml = read_member(&mut archive, "word/document.xml")?
+            let xml = read_member(&mut archive, "word/document.xml", &mut read_budget)?
                 .ok_or_else(missing("docx", "word/document.xml"))?;
-            Ok(xml_body_text(&xml, DOCX_BREAKS))
+            Ok(truncate_owned_text(
+                xml_body_text(&xml, DOCX_BREAKS),
+                MAX_CONTENT_TEXT,
+            ))
         }
         DocFormat::Pptx => {
             let mut names = member_names(&archive);
             names.retain(|n| is_slide(n));
             names.sort_by_key(|n| slide_number(n));
             let mut out = String::new();
+            let mut truncated = false;
             for name in names {
-                if let Some(xml) = read_member(&mut archive, &name)? {
-                    push_section(&mut out, &xml_body_text(&xml, PPTX_BREAKS));
+                if let Some(xml) = read_member(&mut archive, &name, &mut read_budget)?
+                    && push_section_bounded(
+                        &mut out,
+                        &xml_body_text(&xml, PPTX_BREAKS),
+                        MAX_CONTENT_TEXT,
+                    )
+                {
+                    truncated = true;
+                    break;
                 }
             }
-            Ok(out)
+            Ok((out, truncated))
         }
         DocFormat::Xlsx => {
             // Shared strings hold the text labels; numeric-only sheets
             // legitimately yield empty text.
-            match read_member(&mut archive, "xl/sharedStrings.xml")? {
-                Some(xml) => Ok(xml_body_text(&xml, XLSX_BREAKS)),
-                None => Ok(String::new()),
+            match read_member(&mut archive, "xl/sharedStrings.xml", &mut read_budget)? {
+                Some(xml) => Ok(truncate_owned_text(
+                    xml_body_text(&xml, XLSX_BREAKS),
+                    MAX_CONTENT_TEXT,
+                )),
+                None => Ok((String::new(), false)),
             }
         }
         DocFormat::Odt | DocFormat::Ods | DocFormat::Odp => {
-            let xml = read_member(&mut archive, "content.xml")?
+            let xml = read_member(&mut archive, "content.xml", &mut read_budget)?
                 .ok_or_else(missing(fmt.as_str(), "content.xml"))?;
-            Ok(xml_body_text(&xml, ODF_BREAKS))
+            Ok(truncate_owned_text(
+                xml_body_text(&xml, ODF_BREAKS),
+                MAX_CONTENT_TEXT,
+            ))
         }
         DocFormat::Epub => {
             let mut names = member_names(&archive);
             names.retain(|n| is_xhtml(n));
             names.sort();
             let mut out = String::new();
+            let mut truncated = false;
             for name in names {
-                if let Some(xml) = read_member(&mut archive, &name)? {
-                    push_section(&mut out, &xml_body_text(&xml, HTML_BREAKS));
+                if let Some(xml) = read_member(&mut archive, &name, &mut read_budget)?
+                    && push_section_bounded(
+                        &mut out,
+                        &xml_body_text(&xml, HTML_BREAKS),
+                        MAX_CONTENT_TEXT,
+                    )
+                {
+                    truncated = true;
+                    break;
                 }
             }
-            Ok(out)
+            Ok((out, truncated))
         }
         DocFormat::Rtf => unreachable!("rtf is not zip-based"),
     }
+}
+
+fn validate_archive(archive: &mut Archive, limits: ArchiveLimits) -> Result<(), ExtractionError> {
+    let member_count = archive.len();
+    if member_count > limits.members {
+        return Err(ExtractionError::Backend {
+            backend: "document",
+            reason: format!(
+                "archive has {member_count} members, exceeding the {}-member cap",
+                limits.members
+            ),
+        });
+    }
+
+    let mut total_uncompressed = 0u64;
+    let mut total_compressed = 0u64;
+    for index in 0..member_count {
+        let file = archive
+            .by_index(index)
+            .map_err(|e| ExtractionError::Backend {
+                backend: "document",
+                reason: format!("inspect archive member {index}: {e}"),
+            })?;
+        let member_size = file.size();
+        if member_size > limits.member_bytes {
+            return Err(ExtractionError::Backend {
+                backend: "document",
+                reason: format!(
+                    "archive member `{}` declares {member_size} bytes, exceeding the {}-byte cap",
+                    file.name(),
+                    limits.member_bytes
+                ),
+            });
+        }
+        total_uncompressed = total_uncompressed.checked_add(member_size).ok_or_else(|| {
+            ExtractionError::Backend {
+                backend: "document",
+                reason: "archive uncompressed-size sum overflow".into(),
+            }
+        })?;
+        total_compressed = total_compressed
+            .checked_add(file.compressed_size())
+            .ok_or_else(|| ExtractionError::Backend {
+                backend: "document",
+                reason: "archive compressed-size sum overflow".into(),
+            })?;
+    }
+    if total_uncompressed > limits.uncompressed_bytes {
+        return Err(ExtractionError::Backend {
+            backend: "document",
+            reason: format!(
+                "archive declares {total_uncompressed} uncompressed bytes, exceeding the {}-byte cap",
+                limits.uncompressed_bytes
+            ),
+        });
+    }
+    if u128::from(total_uncompressed)
+        > u128::from(total_compressed.max(1)) * u128::from(limits.expansion_ratio)
+    {
+        return Err(ExtractionError::Backend {
+            backend: "document",
+            reason: format!(
+                "archive expansion ratio exceeds {}:1 ({total_uncompressed} uncompressed / {total_compressed} compressed bytes)",
+                limits.expansion_ratio
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn missing(fmt: &'static str, member: &'static str) -> impl Fn() -> ExtractionError {
@@ -256,17 +422,54 @@ fn member_names(archive: &Archive) -> Vec<String> {
     archive.file_names().map(|s| s.to_string()).collect()
 }
 
-fn read_member(archive: &mut Archive, name: &str) -> Result<Option<String>, ExtractionError> {
+fn read_member(
+    archive: &mut Archive,
+    name: &str,
+    read_budget: &mut ArchiveReadBudget,
+) -> Result<Option<String>, ExtractionError> {
+    read_member_with_limits(archive, name, MAX_MEMBER_BYTES, read_budget)
+}
+
+fn read_member_with_limits(
+    archive: &mut Archive,
+    name: &str,
+    max_bytes: u64,
+    read_budget: &mut ArchiveReadBudget,
+) -> Result<Option<String>, ExtractionError> {
     match archive.by_name(name) {
         Ok(file) => {
-            let mut buf = String::new();
-            file.take(MAX_MEMBER_BYTES)
-                .read_to_string(&mut buf)
+            let actual_limit = max_bytes.min(read_budget.remaining);
+            let mut bytes = Vec::with_capacity(file.size().min(actual_limit) as usize);
+            file.take(actual_limit + 1)
+                .read_to_end(&mut bytes)
                 .map_err(|e| ExtractionError::Backend {
                     backend: "document",
                     reason: format!("read member `{name}`: {e}"),
                 })?;
-            Ok(Some(buf))
+            if bytes.len() as u64 > max_bytes {
+                return Err(ExtractionError::Backend {
+                    backend: "document",
+                    reason: format!(
+                        "archive member `{name}` exceeds the {max_bytes}-byte read cap"
+                    ),
+                });
+            }
+            if bytes.len() as u64 > read_budget.remaining {
+                return Err(ExtractionError::Backend {
+                    backend: "document",
+                    reason: format!(
+                        "archive member reads exceed the {}-byte aggregate cap while reading `{name}`",
+                        read_budget.limit
+                    ),
+                });
+            }
+            read_budget.consume(bytes.len() as u64)?;
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|e| ExtractionError::Backend {
+                    backend: "document",
+                    reason: format!("archive member `{name}` is not UTF-8: {e}"),
+                })
         }
         Err(zip::result::ZipError::FileNotFound) => Ok(None),
         Err(e) => Err(ExtractionError::Backend {
@@ -297,15 +500,39 @@ fn is_xhtml(name: &str) -> bool {
     lower.ends_with(".xhtml") || lower.ends_with(".html") || lower.ends_with(".htm")
 }
 
-fn push_section(out: &mut String, section: &str) {
+fn push_section_bounded(out: &mut String, section: &str, limit: usize) -> bool {
     let section = section.trim();
     if section.is_empty() {
-        return;
+        return false;
     }
-    if !out.is_empty() {
+    let separator_len = usize::from(!out.is_empty()) * 2;
+    let remaining = limit.saturating_sub(out.len());
+    if section.len().saturating_add(separator_len) <= remaining {
+        if separator_len != 0 {
+            out.push_str("\n\n");
+        }
+        out.push_str(section);
+        return false;
+    }
+    if remaining <= separator_len {
+        return true;
+    }
+    if separator_len != 0 {
         out.push_str("\n\n");
     }
-    out.push_str(section);
+    let available = limit.saturating_sub(out.len());
+    let safe = crate::util::byte_floor(section, available);
+    out.push_str(&section[..safe]);
+    true
+}
+
+fn truncate_owned_text(mut text: String, limit: usize) -> (String, bool) {
+    if text.len() <= limit {
+        return (text, false);
+    }
+    let safe = crate::util::byte_floor(&text, limit);
+    text.truncate(safe);
+    (text, true)
 }
 
 // ── XML → text ────────────────────────────────────────────────────────
@@ -385,10 +612,16 @@ fn decode_entities(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'&'
-            && let Some(semi) = s[i..].find(';').map(|rel| i + rel)
-            && semi - i <= 12
-        {
+        let entity_end = if bytes[i] == b'&' {
+            let search_end = i.saturating_add(13).min(bytes.len());
+            bytes[i + 1..search_end]
+                .iter()
+                .position(|byte| *byte == b';')
+                .map(|relative| i + 1 + relative)
+        } else {
+            None
+        };
+        if let Some(semi) = entity_end {
             let entity = &s[i + 1..semi];
             if let Some(ch) = decode_one_entity(entity) {
                 out.push(ch);
@@ -675,6 +908,10 @@ mod tests {
         w.finish().unwrap().into_inner()
     }
 
+    fn open_zip(bytes: Vec<u8>) -> Archive {
+        zip::ZipArchive::new(Cursor::new(bytes)).expect("open test zip")
+    }
+
     fn doc_asset(mime: &str, data: Vec<u8>) -> Asset {
         Asset::Bytes {
             kind: AssetKind::Document,
@@ -749,6 +986,17 @@ mod tests {
     #[test]
     fn decode_entities_leaves_unknown_amp_alone() {
         assert_eq!(decode_entities("Q&A session"), "Q&A session");
+    }
+
+    #[test]
+    fn decode_entities_is_linear_for_ampersand_heavy_hostile_text() {
+        let input = "&".repeat(256 * 1024);
+        let started = std::time::Instant::now();
+        assert_eq!(decode_entities(&input), input);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "bounded entity lookahead must stay linear"
+        );
     }
 
     #[test]
@@ -921,6 +1169,144 @@ mod tests {
         let asset = doc_asset(DOCX_MIME, b"PK\x03\x04 not a real zip".to_vec());
         let err = DocumentExtractor.extract(&asset).await.unwrap_err();
         assert!(matches!(err, ExtractionError::Backend { .. }), "{err:?}");
+    }
+
+    #[test]
+    fn archive_member_count_is_bounded_before_name_collection() {
+        let zip = make_zip(&[("a", ""), ("b", ""), ("c", "")]);
+        let mut archive = open_zip(zip);
+        let error = validate_archive(
+            &mut archive,
+            ArchiveLimits {
+                members: 2,
+                member_bytes: u64::MAX,
+                uncompressed_bytes: u64::MAX,
+                expansion_ratio: u64::MAX,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExtractionError::Backend {
+                    backend: "document",
+                    ref reason
+                } if reason.contains("member")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn archive_member_read_uses_limit_plus_one_and_fails() {
+        let mut archive = open_zip(make_zip(&[("word/document.xml", "12345")]));
+        let mut budget = ArchiveReadBudget::new(100);
+        let error =
+            read_member_with_limits(&mut archive, "word/document.xml", 4, &mut budget).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExtractionError::Backend {
+                    backend: "document",
+                    ref reason
+                } if reason.contains("read cap")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn archive_member_reads_share_an_actual_byte_budget() {
+        let mut archive = open_zip(make_zip(&[("a", "1234"), ("b", "5678")]));
+        let mut budget = ArchiveReadBudget::new(7);
+        assert_eq!(
+            read_member_with_limits(&mut archive, "a", 10, &mut budget)
+                .unwrap()
+                .as_deref(),
+            Some("1234")
+        );
+        let error = read_member_with_limits(&mut archive, "b", 10, &mut budget).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                ExtractionError::Backend {
+                    backend: "document",
+                    ref reason
+                } if reason.contains("aggregate cap")
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn archive_aggregate_and_expansion_ratio_are_bounded() {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer
+            .start_file::<_, ()>("word/document.xml", options)
+            .unwrap();
+        writer.write_all(&vec![b'A'; 4_096]).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        let mut archive = open_zip(bytes);
+
+        let ratio_error = validate_archive(
+            &mut archive,
+            ArchiveLimits {
+                members: 10,
+                member_bytes: 8_192,
+                uncompressed_bytes: 8_192,
+                expansion_ratio: 2,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                ratio_error,
+                ExtractionError::Backend {
+                    backend: "document",
+                    ref reason
+                } if reason.contains("expansion ratio")
+            ),
+            "{ratio_error:?}"
+        );
+
+        let mut archive = open_zip(make_zip(&[("a", "1234"), ("b", "5678")]));
+        let aggregate_error = validate_archive(
+            &mut archive,
+            ArchiveLimits {
+                members: 10,
+                member_bytes: 8,
+                uncompressed_bytes: 7,
+                expansion_ratio: 10,
+            },
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                aggregate_error,
+                ExtractionError::Backend {
+                    backend: "document",
+                    ref reason
+                } if reason.contains("uncompressed")
+            ),
+            "{aggregate_error:?}"
+        );
+    }
+
+    #[test]
+    fn bounded_section_append_never_splits_utf8_or_exceeds_limit() {
+        let mut out = "abc".to_string();
+        assert!(push_section_bounded(&mut out, "ééé", 8));
+        assert!(out.is_char_boundary(out.len()));
+        assert!(out.len() <= 8);
+        assert_eq!(out, "abc\n\né");
+    }
+
+    #[test]
+    fn document_input_ceiling_is_fail_closed() {
+        assert!(enforce_document_byte_ceiling(MAX_DOCUMENT_BYTES).is_ok());
+        assert!(enforce_document_byte_ceiling(MAX_DOCUMENT_BYTES + 1).is_err());
     }
 
     #[test]
