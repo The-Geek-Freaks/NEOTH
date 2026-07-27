@@ -935,13 +935,27 @@ class LostFeatureIntegrityTests(unittest.TestCase):
                 open_tasks += 1
             return f"**{done} done / {open_tasks}"
 
-        mutated_progress, replacements = re.subn(
+        section_match = re.search(
+            r"(?ms)^> \*\*Current WS-LF inventory integrity\b.*?(?=^>\s*$|\Z)",
+            self.progress,
+        )
+        self.assertIsNotNone(
+            section_match,
+            "PROGRESS mutation fixture did not find the WS-LF section",
+        )
+        assert section_match is not None
+        mutated_section, replacements = re.subn(
             r"\*\*(\d+)\s+done\s*/\s*(\d+)(?=\s+[^*]*\bopen\*\*)",
             drift,
-            self.progress,
+            section_match.group(0),
             count=1,
         )
         self.assertEqual(replacements, 1, "PROGRESS mutation fixture did not match")
+        mutated_progress = (
+            self.progress[: section_match.start()]
+            + mutated_section
+            + self.progress[section_match.end() :]
+        )
         self.assert_contract_fails(
             self.inventory,
             self.source,

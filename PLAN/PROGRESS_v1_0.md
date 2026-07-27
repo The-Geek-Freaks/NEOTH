@@ -3,6 +3,57 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-27
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Cognitive Transport / Cluster forensic adoption checkpoint 2026-07-27
+> (`GOLD-NCT-00` complete; 28 implementation/adoption boxes OPEN):** the
+> complete 2,481-line research plan is now tracked
+> at `PLAN/NEOTH_COGNITIVE_TRANSPORT.md` and its contradictory historical
+> `post-Gold`/`v1.1`/delayed-GUI wording is reconciled with the binding 1.0
+> scope. `WS-NCT` adds 28 `GOLD-NCT-*` implementation/qualification contracts
+> plus one pinned selective Buzz-adoption contract; `GOLD-R4-13a..l` decomposes
+> the existing broad Cluster blocker into membership/revoke, durable master
+> coordination, ambiguity-safe distributed cost, typed task/artifact envelopes,
+> capability/locality, scheduler correctness, carrier/config truth, surface
+> parity, live observability, rolling upgrade, restore-versus-recall and real
+> multi-process release proof. The current runtime is not a stub: authenticated
+> Peeroxide, supervised Iroh, Vector-Clock Gossip, persist-before-ACK,
+> durable foreign-event/conflict/restore state and the worker-side
+> Cost/Consent/WAL-gated executor are live. It is not yet complete distributed
+> execution: no production master `TaskDelegate` sender/outbox/result-inbox
+> feeds a real Chat/Channel/Buddy request, inbound `TaskResult` is only logged,
+> task fencing has no cluster-wide linearizable generation authority, and
+> removing a registry peer does not yet prevent a stale or passphrase-holding
+> node from reconnecting after partition or restore. The present
+> `discover -> confirm` path also persists an mDNS passphrase-derived pseudonym
+> while Peeroxide admission compares its unrelated Noise public key, and that
+> Noise identity is auto-generated again on daemon restart. Passphrase-only
+> sessions can currently reach Heartbeat, Gossip/ACK and Result handling because
+> membership is checked only for `TaskDelegate`; queued provider and durable
+> Gossip effects are not revalidated at their commit leaves, and an old stream
+> can unregister a newer reconnect generation. Provider calls without a
+> proven upstream idempotency contract also require an explicit persistent
+> `Indeterminate` outcome instead of an impossible blanket exactly-once claim.
+> These are explicit P0 Gold blockers rather than hidden under the prior
+> rollup.
+>
+> Buzz was reviewed on 2026-07-27 from canonical upstream
+> `https://github.com/block/buzz` at commit
+> `00ecf2cac7544d986b4eb111ad0a8b1d7560791f`. Apache-2.0 was verified
+> from `LICENSE` blob `862ee3c28647e7a58801a75236855c269c1448ae`;
+> that tree has no root `NOTICE`, and every reviewed/adopted source blob is
+> pinned in `GOLD-ADOPT-BUZZ-01`. NEOTH will
+> reimplement only the useful durable per-key FIFO/fairness, bounded batching,
+> backoff-with-jitter, visible dead-letter/backpressure, monotone committed
+> generation fencing, stable-node-to-ephemeral-endpoint attestation,
+> pairing/SAS, bounded transport-policy, lifecycle/progress and routing-
+> hysteresis invariants. Buzz's central relay, Redis requirement, Nostr
+> authority, process-memory durability, queue drop-on-busy/overflow,
+> logging-only dead letters, free-text handoff, LWW/Phi Gossip,
+> incomplete workflow/approval/rate-limit paths and young MeshLLM integration
+> are explicit non-adoptions. NEOTH's authenticated WAL/Vector-Clock/replay/
+> conflict substrate remains authoritative. Only the reviewed specification-
+> binding box `GOLD-NCT-00` is complete; no implementation, qualification,
+> Buzz-adoption or Cluster contract was closed by this documentation decision.
+>
 > **Typed consumer-adoption checkpoint 2026-07-26 (R3-14 remains OPEN;
 > counts unchanged):** MCP catalogue assembly now returns a dedicated typed
 > value: trusted invocation instructions stay separate from one bounded

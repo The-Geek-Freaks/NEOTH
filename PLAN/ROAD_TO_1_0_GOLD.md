@@ -108,6 +108,11 @@ the release gates:
 | WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
 | WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 14 | **13** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **116** | **2** |
+| WS-NCT Cognitive Transport + selective Buzz coordination (2026-07-27) | 29 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01`) | **28** | **1** |
+
+`GOLD-R4-13a..l` are twelve mandatory acceptance subcontracts inside the
+already-open `GOLD-R4-13` rollup and therefore are not added a second time to
+the WS-R4 top-level total.
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -1035,6 +1040,126 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
 - [ ] **GOLD-R4-11 Default-on local communication adaptation:** ship a subject-isolated, deterministic local communication-profile engine that learns observable presentation and clarification preferences across authenticated sessions, applies them on every CLI, Channel, GUI, Buddy, Council, retry, fallback and sub-agent prompt path, and exposes the same inspect/correct/pin/reset/forget controls everywhere. Explicit settings outrank feedback and passive evidence; passive evidence requires bounded provenance, multi-session confidence and decay. FULL-AUTO may promote stable low-risk accommodations to durable-until-revoked state, but never bypasses subject, poisoning, privacy or medical-inference guards. Health, autism and ADHD labels may be stored only after an explicit operator declaration and are not exported to a provider unless the operator explicitly selects label export; the default prompt exports accommodations only. Incognito performs zero profile reads and writes. `self-dev accept` must transactionally apply every proposal type or report a typed recoverable failure; `Accepted` without an effect is forbidden.
 - [ ] **GOLD-R4-12 Real Mobile Companion product:** replace the current loopback/one-shot pairing preview with a versioned, authenticated, durable phone protocol and installable Android and iOS clients. Pairing must use an actually reachable route/carrier, bind a durable revocable device identity and scoped authority, survive daemon/app restart and upgrade, provide chat/stream/cancel/status/notifications/file-transfer plus encrypted ACKed offline replay, and expose list/status/revoke/retry in CLI, GUI and Buddy. Release gates must build, sign and content-test APK/AAB and iOS archive/TestFlight-ready artifacts, exercise emulator/simulator and clean-device pair/reconnect/revoke/upgrade flows, and never call timeout/rejection a successful pair.
 - [ ] **GOLD-R4-13 Cluster product completion:** retain the proven authenticated durable gossip/ACK/replay substrate, then finish the missing master-side task coordinator, idempotent delegated-execution/result outbox, correlation/deadline/retry/redelegation, operator/device/capability binding, transactional audited peer mutation and GUI/CLI/Buddy/Doctor control parity. The product must state and test whether remote material remains an explicit backup/restore ledger or participates in recall; cross-origin conflicts may never be silently merged. Every advertised transport and mDNS setting must be consumed or removed, and no worker-only task executor may be marketed as complete distributed execution.
+  - [ ] **GOLD-R4-13a — Authoritative membership and real revoke:** model
+    `Discovered`, `Pending`, `Active` and `Revoked` separately; bind the stable
+    device/node identity, Noise key, Iroh endpoint, auth epoch, invitation or
+    certificate, expiry and revocation tombstone. The shared cluster
+    passphrase is bootstrap protection, never data membership. A committed
+    StableNodeId must be independent of the passphrase and bind every exact
+    carrier identity through a signed, expiring attestation. The mDNS
+    passphrase-derived discovery pseudonym is never stored or compared as a
+    Peeroxide Noise identity; `discover -> confirm` verifies and persists the
+    actual attested carrier binding. Peeroxide's signing/Noise seed and Iroh's
+    endpoint secret follow one owner-private persistence/rotation contract and
+    survive ordinary daemon restart rather than being auto-generated per boot.
+    Admission returns a non-forgeable membership grant bound to carrier,
+    StableNodeId and auth/membership epochs; passphrase proof alone cannot emit
+    `PEER_CONNECTED`, register a stream, update stability, or accept Heartbeat,
+    Capability, Gossip/ACK, Task/Result or any durable effect. The grant is
+    revalidated inside provider, result, cursor and persistence commit leaves.
+    Session registration is generation-token-aware so an old disconnect cannot
+    unregister its replacement, and revoke aborts every live generation on
+    both carriers before a new admission can succeed. A committed
+    revoke writes durable intent/result evidence, invalidates caches, closes
+    both carrier sessions immediately and blocks heartbeat, Gossip, task and
+    reconnect after every node restart. Cluster-key and device-key rotation
+    have explicit migration/revocation semantics. Define the sole or quorum
+    membership authority, monotone membership epoch and persistent
+    `revocation_floor`; a stale/minority or restored node below that floor may
+    not admit a session or effect. Revocation tombstones outlive every old
+    credential/lease/backup window, restore cannot resurrect them, and future
+    group/transport/content keys are redistributed only to active members.
+    Revoke authority itself is role/quorum-gated against self-elevation and
+    last-admin removal. State explicitly that already disclosed plaintext
+    cannot be clawed back: revoke removes future access and authority.
+  - [ ] **GOLD-R4-13b — Durable master coordinator and result return:** add a
+    transactional task outbox, attempts, delivery receipts, result inbox,
+    deadlines, cancel, retry, redelegation, dead-letter and crash recovery.
+    `TaskDelegate` must have a production sender and `TaskResult` must persist
+    and correlate before ACK, then re-enter the originating Chat, Coding,
+    Buddy, Channel or API stream. A lost ACK, disconnect or restart cannot
+    lose a terminal result. A second paid execution is forbidden only where a
+    stable upstream idempotency contract proves at-most-once dispatch; an
+    ambiguous crash outcome without that contract becomes durable
+    `Indeterminate`, is not automatically retried/redelegated/refunded, and
+    requires reconciliation or a new explicit authorization. Cross-link the
+    same proof to `GOLD-NCT-14/15/17`.
+  - [ ] **GOLD-R4-13c — Idempotent distributed cost authority:** bind every
+    task attempt to request digest, origin, target, auth epoch, deadline,
+    provider/model/output ceiling and one scoped expiring budget/provider
+    permit. Duplicate frames, retry, fallback, redelegation, partition and
+    leader change cannot double-spend or reuse a stale authorization. A changed
+    leaf requires a new Cost/Consent/WAL decision. Cross-link the proof to
+    `GOLD-LF-P2-19` and `GOLD-NCT-17`. Persist the complete
+    lifecycle: only an undispatched `Reserved` permit may become `Released`;
+    `DispatchCommitted` becomes `Spent` or `Indeterminate`, and an indeterminate
+    outcome becomes `ReconciledSpent` or `ReconciledUnspent`. Timeout/cancel
+    cannot release a possibly dispatched permit.
+  - [ ] **GOLD-R4-13d — Typed task, result and artifact contract:** replace the
+    free `prompt`/`output` cluster seam with the canonical NIR request/result,
+    privacy class, capability requirements, claims/evidence, immutable scoped
+    references, model/runtime fingerprint, deadline, attempt/fence and signed
+    manifest. A remote `ActionIntent` is proposal data only and must traverse
+    every local authority gate again.
+  - [ ] **GOLD-R4-13e — Capability, capacity and locality registry:** announce
+    bounded, signed, fresh inventories for node role, models/revisions, local
+    cache, skills, Channels/accounts, data access, CPU/RAM/VRAM, throughput,
+    latency, queue/inflight and privacy posture. Empty or stale capabilities
+    are not eligibility. Operator assignments from `GOLD-LF-P2-18` remain
+    authoritative and remote metadata cannot widen them.
+  - [ ] **GOLD-R4-13f — Correct production scheduler:** separate load pressure
+    from measured capacity; the current output TPS must not be interpreted as
+    busyness. Eligibility precedes scoring and includes membership,
+    capability, runtime compatibility, privacy, data access, budget and fresh
+    heartbeat. Score latency, queue/transfer/monetary cost and cache/data
+    locality with a deterministic tie-break, explicit local fallback and an
+    auditable route explanation. No synthetic `cluster plan` result counts as
+    production wiring.
+  - [ ] **GOLD-R4-13g — Carrier and configuration truth:** Peeroxide and Iroh
+    implement the same task/result/fence/ACK contract, or every surface and
+    release capability manifest states the exact reduced `gossip-only`
+    capability. Every task-capable carrier passes the full task/result/fence/
+    ACK/cost/cancel/crash matrix. Every `gossip-only` carrier passes the shared
+    identity, Gossip, revoke, reconnect and mixed-version/upgrade matrix,
+    returns a typed task rejection and is excluded from scheduler eligibility.
+    A build cannot persist a transport it does not contain.
+    `listen_port` must bind an authenticated NEOTH listener and Tailscale must
+    verify its protocol/identity handshake, otherwise the field/probe is
+    removed. `peers`, mDNS and Hysteria are consumed end to end or removed from
+    public claims.
+  - [ ] **GOLD-R4-13h — GUI, CLI, Buddy and Channel parity:** one typed
+    controller covers discovery, pending/confirm, devices, revoke, topology,
+    frontier, conflicts, export, restore dry-run/consent, roles, capabilities,
+    task submit/watch/cancel/retry/dead-letter, node/model pinning, local-only
+    override, progress, result and error recovery. Channels use identical
+    routing/privacy/cost semantics and Buddy explains every node decision.
+  - [ ] **GOLD-R4-13i — Live daemon observability and Doctor:** publish a
+    typed local status snapshot for connected peers, carrier/reconcile/backoff,
+    auth epoch/revocation, protocol/capability versions, sync lag, writer,
+    executor/queue, attempts/results, per-peer load, active routes and budget
+    authority. CLI, GUI, Buddy and Doctor consume it; a stale marker or
+    `last_seen` timestamp cannot masquerade as live health.
+  - [ ] **GOLD-R4-13j — Rolling upgrade and artifact capability contract:**
+    negotiate supported protocol/version/capability ranges and define unknown
+    frame, downgrade, N-1/N mixed-version and rollback behavior, or document
+    and enforce an atomic whole-cluster upgrade. Every archive/installer embeds
+    and displays its exact carrier/task/backend capability manifest.
+  - [ ] **GOLD-R4-13k — Backup versus recall authority:** foreign events remain
+    restore-only by default. Any cross-node recall path requires a separate
+    visible subject/counterparty consent, provenance, conflict and forget
+    contract; no backup row silently enters ordinary recall or profile
+    inference.
+  - [ ] **GOLD-R4-13l — Real multi-process release qualification:** for every
+    task-capable advertised carrier, execute two real installed nodes through
+    discovery, pending, confirm, active sync, task, duplicate, lost ACK,
+    cancel, crash, reconnect, revoke, key rotation, partition, stale
+    capability, wrong fingerprint, mixed version and upgrade/rollback. For
+    each explicitly `gossip-only` carrier, execute the same real identity/
+    membership, Gossip, revoke, reconnect, key-rotation, partition and upgrade/
+    rollback cases plus typed task rejection and scheduler exclusion. Run the
+    clean-machine matrices on supported Windows, macOS and Linux release
+    artifacts; ignored network tests and unit mocks alone cannot close this
+    task.
 - [ ] **GOLD-R4-14 OpenClaw-class LLM provider and model parity:** every
   inference provider supported by the current OpenClaw provider registry must
   be either natively available in NEOTH or covered by an equally capable typed
@@ -3035,6 +3160,470 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-003-23 — Prove all exact-head parity gates green:** CI, tests, Security, CodeQL, Plan-001 fixtures, Plan-002 clean-machine/adoption tests, parity tests and self-knowledge verification succeed visibly. Source: Plan 003 DoD 23.
 - [ ] **GOLD-LF-003-24 — Forbid evidence-free WS-R4 closure:** no completion claim may rely only on dirty local work, an unpushed commit, source-only implementation or environment-limited result. Source: Plan 003 DoD 24.
 
+## WS-NCT — Cognitive Transport, typed Cluster Delegation and Buzz-informed coordination (1.0 GOLD)
+
+> **Binding scope (2026-07-27):** every card below is `v1.0.0 Gold` work under
+> the operator correction in section 0. Historical `post-Gold` or `v1.1`
+> labels in `PLAN/NEOTH_COGNITIVE_TRANSPORT.md` describe dependency order only
+> and may not defer implementation. This workstream extends, but does not
+> automatically close, `GOLD-R3-14`, `GOLD-R4-12`, `GOLD-R4-13`,
+> `GOLD-LF-P2-18` or `GOLD-LF-P2-19`. Shared behavioral evidence may close
+> overlapping acceptance criteria only after each affected card records the
+> same production source-to-sink proof explicitly.
+>
+> **Buzz verdict:** selective native adoption only, pinned to reviewed upstream
+> commit `00ecf2cac7544d986b4eb111ad0a8b1d7560791f` (Apache-2.0). Buzz is a
+> relay-centric workspace and is not a replacement for NEOTH's authenticated
+> Peeroxide/Iroh, Vector-Clock, persist-before-ACK, conflict and WAL substrate.
+> Adopt state-machine invariants where they strengthen the missing master
+> coordinator; do not introduce Buzz, Redis, Nostr or MeshLLM as a second
+> source of cluster authority.
+>
+> **Buzz provenance ledger (reviewed 2026-07-27):** canonical upstream is
+> [`block/buzz`](https://github.com/block/buzz), pinned at
+> [`00ecf2cac7544d986b4eb111ad0a8b1d7560791f`](https://github.com/block/buzz/tree/00ecf2cac7544d986b4eb111ad0a8b1d7560791f).
+> Apache-2.0 was verified from `LICENSE` Git blob
+> `862ee3c28647e7a58801a75236855c269c1448ae`; that tree contains no root
+> `NOTICE`. The reviewed source blobs are frozen below so a later upstream
+> change cannot silently alter the approved behavior:
+>
+> | Disposition | Upstream source at pinned commit | Git blob |
+> |---|---|---|
+> | adopt selected queue invariants | `crates/buzz-acp/src/queue.rs` | `029bf86dbf40ee00b63685af6f660232bee27350` |
+> | evaluate first; no pre-approval | `crates/buzz-acp/src/pool.rs` | `cc537f8683076b9c2e6f35d478bbc83a7e483811` |
+> | evaluate first; no pre-approval | `crates/buzz-acp/src/pool_lifecycle.rs` | `a1099a2dc5d86e324d8a28d73c538a041ddab4bd` |
+> | adopt selected owner/lease invariants | `crates/buzz-relay/src/tunnel/directory.rs` | `7cd6e22a2d1d5c0e193123b31bca0c5462c94de2` |
+> | adopt selected reconnect/reliability invariants | `crates/buzz-relay/src/tunnel/reliable.rs` | `5153e104df69969040d92e5baed499d18ea44272` |
+> | adopt selected boot/lifecycle invariants | `crates/buzz-relay/src/mesh_boot.rs` | `20e550aa08acea962ca744129bf47c518c6b95ef` |
+> | adopt selected routing-hysteresis invariants | `crates/buzz-relay/src/router.rs` | `2af036079ff8174c242843b0a17badcf679c4003` |
+> | adopt selected pairing state machine | `crates/buzz-core/src/pairing/session.rs` | `431b87fcc0365dbf48d63c170b272147bd1fc64f` |
+> | adopt selected pairing crypto/transcript rules | `crates/buzz-core/src/pairing/crypto.rs` | `14534ee58d4d5bc8ed1436c79ed598ca07b56f8a` |
+> | adopt selected endpoint-attestation rules | `desktop/src-tauri/src/mesh_llm/identity.rs` | `e46bceab20ad26ee47b8859b5f5a43e04190387e` |
+> | adopt selected discovery record rules | `desktop/src-tauri/src/mesh_llm/discovery.rs` | `2df4a7f8c5e6ab2ddf4630af0a5784f14663a485` |
+> | adopt selected bounded transport policy | `desktop/src-tauri/src/mesh_llm/transport_policy.rs` | `122bffd60e499fce56c7fdabbcb248e443615d86` |
+> | adopt selected progress contract | `desktop/src-tauri/src/mesh_llm/progress.rs` | `a98b27c98fd4783fce6681738c4a049bcda71c47` |
+> | adopt selected supervisor cleanup rules | `desktop/src-tauri/src/managed_agents/process_lifecycle.rs` | `8dddf9f71599319666d140d09baa32b39042bad4` |
+> | adopt selected runtime lifecycle rules | `desktop/src-tauri/src/managed_agents/runtime/lifecycle.rs` | `6363b15d2a7914f91812b5176f1e9f71d7117bf1` |
+>
+> A same-day recheck observed upstream HEAD
+> `fe84274d215b098a97b0b46cf565d736dbce14b7`, four commits ahead of the
+> reviewed pin. The compare touched dependency locks, contribution docs and
+> unrelated desktop log/storage code, but none of the fifteen source blobs
+> above. The adoption baseline remains deliberately pinned until a new
+> file-by-file review replaces this ledger.
+
+- [x] **GOLD-NCT-00 — Bind the complete Cognitive Transport specification to
+  1.0 Gold:** keep the reviewed specification at
+  `PLAN/NEOTH_COGNITIVE_TRANSPORT.md`, retain its research record, claim
+  ladder, phase dependencies, ADR set, threat assumptions, legal/prior-art
+  sources, kill criteria and implementation map, and keep every scope/release
+  statement aligned with this Roadmap. No implementation item, GUI surface or
+  retained backend may disappear behind historical chronology. **DONE
+  2026-07-27:** full source inventory retained (162 headings, 34 unchanged DoD
+  boxes); Gold scope reconciled; two adversarial review/fix passes closed
+  fencing, revocation, provider-ambiguity, sidecar, A2A, CAS, downgrade,
+  manifest and provenance contradictions. This closes specification binding
+  only, not an implementation, qualification, Buzz-adoption or Cluster card.
+
+- [ ] **GOLD-NCT-01 — Reproducible current-path baseline and duplication
+  corpus:** benchmark the exact current Direct, NEXUS, Council, QA, retry,
+  fallback, streaming, sub-agent and cluster-worker paths. Record repeated
+  context bytes/tokens, latency, provider-native usage, total cost, quality,
+  repair and failure behavior with frozen fixtures plus train/holdout
+  separation. The behavior-neutral baseline is the authority for every later
+  route, codec and public efficiency claim.
+
+- [ ] **GOLD-NCT-02 — Canonical NIR/1 schema, limits and golden vectors:** add
+  `cognitive_transport/{mod,types,nir,limits}.rs` and versioned schemas under
+  `schemas/nct/`. Define strict request, result, claim, evidence, warning,
+  usage, action-intent and error objects with canonical bytes,
+  subject/session/task/correlation binding, typed untrusted blocks and hard
+  byte/nesting/count ceilings. Unknown version, ambiguous field or excess
+  allocation fails typed and closed. Rust and at least one independent
+  implementation must share golden vectors.
+
+- [ ] **GOLD-NCT-03 — Immutable subject-scoped ContentRef store:** add
+  `refs.rs` with digest, length, media type, subject/scope, encryption,
+  capability and provenance metadata. Use keyed or namespace-isolated
+  identities so cross-subject equality does not leak; forbid raw host paths,
+  symlink/reparse escape and unbounded reads. Implement quota, TTL, pins,
+  forget, deterministic GC, dry-run, crash recovery and audit, then expose
+  health/usage/errors/recovery in daemon status, CLI, GUI, Buddy and Doctor.
+  GC uses a transactional snapshot/epoch barrier: committed manifests, staged
+  transactions, outbox/inbox, live attempts, rollback/migration and evidence
+  pins are roots, and deletion rechecks reachability atomically after grace.
+  A locator is never authority; remote bytes pass the common SSRF/redirect/DNS/
+  compression/size gates and become visible only after complete digest
+  verification. Resolver grants bind actor, subject, purpose, auth epoch,
+  lease, session and expiry, and revoke interrupts bounded streaming reads.
+
+- [ ] **GOLD-NCT-04 — Revision-bound StateDelta transaction layer:** add
+  `revisions.rs` and `delta.rs`. Every mutation binds expected revision,
+  idempotency key and subject scope and either applies atomically or returns a
+  typed conflict. Replay, duplicate, stale writer, cross-origin conflict,
+  partial I/O, process crash, retention and GC tests must prove no visible
+  partial state and no silent merge.
+
+- [ ] **GOLD-NCT-05 — One context projector for every provider boundary:** add
+  `projection.rs` and route Primary, QA, retry, fallback, streaming, Council,
+  Coding, Sub-Agent, Cluster, Cron, Channel and Buddy delegation through the
+  same typed Block/ContentRef projector. Preserve exact operator Block E,
+  bounded untrusted Block D, stable prefixes, structured-output enforcement
+  and bounded repair. A production source/behavior gate must prove that no raw
+  delimiter or parallel prompt-frame bypass remains.
+
+- [ ] **GOLD-NCT-06 — NEXUS V2 handoff/result migration without a parallel
+  harness:** extend `sub_agents/schema.rs` and `runtime.rs` with V2 NIR
+  requests/results, claims/evidence, refs, revisions and actual provider
+  calls. Support bounded legacy dual-read and V2-write migration, private
+  record migration and exact rollback. V1 adapters may never regain authority
+  or bypass new limits; removal of V1 writes/reads requires compatibility and
+  stored-run migration evidence.
+
+- [ ] **GOLD-NCT-07 — Authoritative provider usage and per-edge telemetry:**
+  normalize the actual provider instance/model plus authoritative-versus-
+  estimated input, output, cache and reasoning tokens per concrete leaf.
+  Measure TTFT, queue, projection, transfer, provider, decode, retry, fanout,
+  total cost and result quality per edge. Persist content-free,
+  bounded-cardinality WAL/analytics records and expose explainable readback
+  without prompts, refs, tensors or secrets.
+
+- [ ] **GOLD-NCT-08 — Qualified non-latent codec registry:** implement
+  `codec.rs` with canonical `nir_json` and any retained same-runtime KV or
+  concise codec. Each declares capabilities, exact limits, semantic
+  round-trip/error behavior, cost model and an explicit allowed-fallback set.
+  Default downgrade is false and privacy, authority or integrity cannot be
+  weakened by fallback. No codec becomes selectable before canonical,
+  property, fuzz, privacy and downgrade gates pass. Generated config, examples,
+  migrations, GUI and CLI must all preserve `allow_downgrade = false`; every
+  enabled edge is an explicit operator/policy choice.
+
+- [ ] **GOLD-NCT-09 — Deterministic shadow route planner and immutable
+  receipts:** add `routing.rs` and `policy.rs`; evaluate Direct first and then
+  eligible verifier, bounded parallel, sequential, manager-worker and Council
+  shapes under provider, model, skill, privacy, cost, deadline, resource,
+  capability and operator constraints. Shadow mode is reproducible and
+  behavior-neutral and records candidates, rejection reasons, estimates,
+  policy/config hashes and chosen route in one immutable receipt.
+
+- [ ] **GOLD-NCT-10 — Active bounded routing with operator controls:** activate
+  only routes that pass held-out non-inferiority and measured total-cost/
+  latency gates. Enforce maximum fanout, concurrency and rounds; final-leaf
+  Cost/Consent/WAL authorization; deadlines; cancel; typed fallback and
+  rollback. `--cognition-route`, `--cognition-codec` and
+  `--no-cognitive-handoff` remain subordinate to security, privacy,
+  capability, provider and budget gates.
+
+- [ ] **GOLD-NCT-11 — Canonical authenticated transfer manifest and key
+  lifecycle:** add `manifest.rs` with fixed canonical bytes binding schema,
+  subject, session, task, correlation, state/config/capability/route hashes,
+  refs, codec, sender, recipient, monotone sequence, time bounds, generation
+  and downgrade intent. Cluster manifests additionally bind cluster,
+  attempt/fence owner, leader term/commit proof, membership/auth epoch,
+  BudgetToken/provider-permit digest, final provider/model revision, output
+  ceiling, pricing bound and capability-inventory revision. Specify integer
+  widths/endianness, enum/option/list/string normalization, duplicate handling,
+  digest algorithms and key/signature encoding before golden vectors. Use
+  scoped HMAC only for authenticated internal same-runtime/session paths and
+  Ed25519 for external paths; define one non-conflicting authenticated
+  per-start cross-process sidecar contract and keep Rust as admission authority.
+  Golden vectors, secure generation/storage/zeroization, rotation, revocation,
+  recovery and threat-model limits are mandatory.
+
+- [ ] **GOLD-NCT-12 — Fail-closed admission, replay and downgrade pipeline:**
+  add `admission.rs`; authenticate before expensive work, then cap, decode,
+  replay-check, expire, sequence-check, bind sender/recipient/state/config/
+  capabilities, resolve scoped refs and admit. Only exact operator-approved
+  non-weakening downgrades are allowed. Tamper, replay, clock, mismatch, stale
+  generation, malformed ref and downgrade fixtures reject before provider,
+  memory or action effects.
+
+- [ ] **GOLD-NCT-13 — NIR action firewall over existing NEOTH authority
+  gates:** treat every received `ActionIntent` as untrusted proposal data.
+  Reconstruct the concrete action locally and re-run subject, Custom/autonomy,
+  capability, dangerous-command/egress, consent, paid-provider, WAL and
+  request-binding gates. No signature, route receipt, cluster peer, A2A card,
+  latent payload or prior attempt can mint or inherit execution authority.
+
+- [ ] **GOLD-NCT-14 — Durable Cluster master coordinator using vetted Buzz
+  queue patterns:** implement persistent coordinator, task/result outboxes,
+  correlation, bounded per-key fairness, attempt generations, deadlines,
+  retry/redelegation, cancellation, terminal compare-and-set, orphan recovery
+  and dead-letter handling. Adapt the invariants from pinned Buzz
+  `crates/buzz-acp/src/queue.rs`, but keep authoritative state in NEOTH's
+  transactional WAL/SQLite layer rather than process memory. Duplicate
+  delegate/result frames, late old attempts, master crash/restart, worker
+  panic/disconnect, partition/rejoin and deadline races must be deterministic.
+  The approved Buzz invariants are per-key FIFO fairness, bounded batching,
+  exponential backoff with jitter, a dead-letter transition and monotone
+  deadline extension; NEOTH strengthens the transition into durable visible
+  dead-letter state. Explicit non-adoptions are `DedupMode::Drop`, drop-oldest
+  or drop-newest overflow, logging-only dead-letter, process-local `Instant`
+  deadlines, volatile in-flight ownership and free-text cancel/steer handoff.
+  Saturation returns durable typed backpressure/rejection without silent loss.
+
+- [ ] **GOLD-NCT-15 — Fenced task ownership and generation-bound cluster
+  sessions:** adapt the pinned Buzz
+  `crates/buzz-relay/src/tunnel/{directory,reliable}.rs` invariants without
+  adding Redis. Every task/session binds cluster, subject, task, correlation,
+  attempt, owner StableNodeId, monotone generation, lease deadline and manifest
+  hash. A lost or superseded generation immediately loses provider, result,
+  memory and action authority. Revalidate before provider dispatch and before
+  terminal commit; integrate with `runtime_supervisor`, every task-capable
+  carrier and durable ACK/replay. A `gossip-only` carrier instead returns typed
+  task rejection and is scheduler-ineligible. Generation is valid only when
+  issued and checked by one durable origin authority or a quorum-committed
+  linearizable fence ledger binding leader term, commit index and membership
+  epoch. A minority/stale leader cannot allocate, renew or commit a fence;
+  local replicated WAL/SQLite state alone is not proof of ownership.
+
+- [ ] **GOLD-NCT-16 — Stable device/node/agent identity, pairing and endpoint
+  attestation:** adapt the pure Buzz pairing/SAS/transcript/replay patterns from
+  `crates/buzz-core/src/pairing/` and the full-record endpoint-policy lessons
+  from `desktop/src-tauri/src/mesh_llm/{identity,discovery,transport_policy}.rs`
+  into a versioned NEOTH protocol. Bind revocable StableNodeId, ephemeral
+  runtime endpoint/boot, operator authority, roles, skills, Channels/accounts,
+  exact endpoints/capabilities, expiry and signature. Do not claim Buzz's
+  project-specific pairing identifier as an accepted Nostr standard. Provide
+  pair/status/list/rotate/revoke/retry parity in CLI, GUI, Buddy and Doctor and
+  cross-link `GOLD-R4-12`, `GOLD-R4-13a` and `GOLD-LF-P2-18`. Replace the
+  current unbound identity split explicitly: `mdns::derive_node_id` remains a
+  discovery pseudonym only, while a persistent StableNode signing key attests
+  the exact persistent Peeroxide Noise public key and Iroh endpoint identity.
+  `SwarmConfig.key_pair` cannot remain `None` in production. Legacy
+  `cluster.yaml` rows import once as `Pending`/`legacy_unattested`, never as
+  cross-carrier Active identity; all runtime admission and operator surfaces
+  cut over to one membership authority without an `old || new` bypass.
+
+- [ ] **GOLD-NCT-17 — Distributed BudgetToken and provider-permit binding:**
+  integrate `GOLD-LF-P2-19`'s consensus-backed budget authority with route
+  receipts, attempt generations and final provider leaves. Partition, retry,
+  redelegation, late worker or leader change cannot overspend or reuse a
+  grant. Remote workers receive only scoped, expiring request permits;
+  provider, model, prompt binding, output ceiling or effective cost changes
+  require a new authorization. Each permit is single-use and binds worker,
+  membership epoch, attempt/fence, provider account, pricing snapshot/currency
+  and maximum cost. Atomically persist the state graph: only undispatched
+  `Reserved` may become `Released`; `DispatchCommitted` becomes `Spent` or
+  `Indeterminate`, and `Indeterminate` becomes `ReconciledSpent` or
+  `ReconciledUnspent`. Never release or automatically retry an ambiguous
+  provider outcome; use a stable upstream idempotency key where the adapter
+  proves one, otherwise require reconciliation or new explicit authorization.
+
+- [ ] **GOLD-NCT-18 — Versioned A2A 1.0 NIR profile:** implement against the
+  current normative A2A proto, not a stale draft. Cover Agent Card and extended
+  card discovery, JCS/JWS verification, NIR `DataPart`/Artifact mapping,
+  Task/Stream/Cancel/Status, version/extension negotiation, endpoint SSRF,
+  key/JWKS rotation and external-peer policy mapping. No external agent
+  inherits internal capability or cluster authority; conformance must pass
+  against at least two independent SDK languages. A signed Card is discovery,
+  not message authority: require per-message proof-of-possession or a
+  channel-bound authenticated session over sender/receiver, peer namespace,
+  task/message/sequence, Card/key version and endpoint origin. Pin algorithms
+  and trusted key sources; reject `alg=none`, algorithm confusion and untrusted
+  `jku`/`x5u`. Revalidate DNS and every redirect for Card, Artifact, ContentRef
+  and push/webhook URLs and never forward credentials cross-origin.
+
+- [ ] **GOLD-NCT-19 — Bounded MCP NIR resource/tool profile:** expose only
+  explicitly scoped NIR schemas, resources, refs and tools. `resolve_ref`
+  requires a subject/capability lease and applies endpoint, range, size, rate,
+  privacy and expiry gates. MCP remains a context/tool boundary, never a
+  transport authority, task-owner bypass or latent-transfer shortcut.
+
+- [ ] **GOLD-NCT-20 — Exact-runtime latent backend contract and managed
+  Null/HF implementation:** add
+  `latent/{mod,backend,fingerprint,envelope,sidecar}.rs`; first ship the null
+  backend and exact-runtime compatibility Doctor, then a pinned managed HF
+  sidecar with private authenticated IPC, a per-start session key,
+  process/generation ownership, bounded tensors, TTL/quota, cancellation,
+  health, repair and clean uninstall. Eligibility binds exact model revision,
+  tokenizer/template, dtype/quantization, layers/heads/RoPE, engine build,
+  adapters, layout and policy. Latent is same-host, explicit opt-in,
+  non-persistent by default, never shown as chain-of-thought and never
+  authorizes an action. The retained sidecar is OS-sandboxed with network off,
+  least filesystem/GPU access, no shell or arbitrary child spawn, private
+  per-launch pipe/socket ACL plus peer credentials and parent-death ownership.
+  Verify the signed runtime/lock/model manifest before race-free spawn; forbid
+  Hugging Face `trust_remote_code`, pickle and other executable model formats.
+  Pass session secrets through a restricted inherited handle, not argv or a
+  broadly readable environment. Rust independently verifies every envelope,
+  fingerprint and receipt; sidecar output never mints authority. Test and
+  document allocator/GPU remanence honestly rather than promising guaranteed
+  zeroization.
+
+- [ ] **GOLD-NCT-21 — Collective-compute backend, vLLM/LMCache and optional
+  MeshLLM/AVP qualification:** define a backend trait that returns a complete
+  authorized compute plan before execution: concrete nodes/leaves, final model
+  revision, ceilings/cost, data/privacy locality, resource/download needs,
+  fallbacks and task fence. Independently qualify vLLM/LMCache and every
+  optional MeshLLM or AVP candidate for exact runtime, memory/backpressure,
+  transfer cost, quality, fault injection, license, artifact integrity and
+  all supported platforms. Buzz MeshLLM is young, feature-gated, absent from
+  its Windows release and has ignored live E2E tests; it cannot be copied as a
+  default. Any retained backend has zero-friction signed packaging and GUI/
+  CLI/Buddy download progress, pause/cancel/retry, repair and removal.
+
+- [ ] **GOLD-NCT-22 — Babel observation, routing hysteresis and controlled
+  activation:** record privacy-safe failure/quality/cost features first and
+  evaluate offline on held-out data. Require multiple healthy observations
+  before switching, cooldown/backoff after failure, last confirmed state on
+  transient `Unknown`, and no automatic override of an explicitly pinned
+  model. Advisory/throttling may activate only after drift and rollback gates;
+  Babel may never be the sole route, refusal, safety, consent or capability
+  decision input, and every fallback gets a new B22 authorization. Last-known-
+  good applies only to availability/performance routing, never membership,
+  revoke, role, capability, budget/permit, policy/config generation, runtime/
+  model fingerprint or task fence; `Unknown` on an authority axis fails closed.
+
+- [ ] **GOLD-NCT-23 — Frozen config, daemon API and lifecycle ownership:** add
+  validated `[cognitive_transport]`, security, latent and Babel schemas,
+  generated example config, migrations, exact readback and hot reload. One
+  generation-bound runtime owns router, refstore, coordinator and sidecars;
+  reload atomically swaps complete generations and shutdown drains or durably
+  requeues work. No hidden environment override, mutable remote policy
+  widening or parsed-but-unused field is allowed.
+
+- [ ] **GOLD-NCT-24 — Complete CLI, status, Doctor, GUI and Buddy parity:**
+  implement `neoth cognition status/routes/explain/codecs/refs/audit/benchmark/
+  latent/a2a` plus cluster submit/watch/cancel/retry/dead-letter and the same
+  typed controller in GUI and Buddy. Every long operation shows phase,
+  bytes/model/source/license, progress, expected wait, pause/cancel/retry and
+  final verification. Security rejection, downgrade, incompatibility, missing
+  model, offline and recovery states are explicit; raw tensors, secrets and
+  pseudo-chain-of-thought are never displayed.
+
+- [ ] **GOLD-NCT-25 — Production-consumer adoption ledger:** enumerate and
+  wire Direct Chat, Council, Coding, QA, retry, fallback, streaming,
+  Sub-Agents, Cluster, Cron, Channels, Buddy, GUI, Mobile, n8n/API and every
+  provider. For each consumer record NIR input, projector, refs, route,
+  admission, provider usage, Cost/Consent/WAL binding, cancel/recovery and
+  surface evidence. A type, parser, feature flag, reserved command,
+  worker-only path or mock-only primitive cannot close adoption.
+
+- [ ] **GOLD-NCT-26 — Migration, fuzz, security, benchmark and negative-
+  evidence release gate:** run schema/property/fuzz/golden/cross-language,
+  crash/replay/partition/fencing, provider failure, sidecar compromise, SSRF,
+  CAS isolation, action bypass, held-out quality/cost/latency and supported-
+  hardware matrices. Test off→shadow→active, V1→V2, downgrade reader and exact
+  rollback. Publish direct-versus-multi-agent and qualified latent results,
+  including negative findings; upstream benchmarks are never NEOTH evidence.
+  Include split-brain/minority, revocation-floor restore, ambiguous provider
+  dispatch, budget refund race, CAS mark/publish/delete race, A2A key/redirect/
+  DNS-rebinding, sidecar pipe squatting/forged receipt/network/filesystem/RCE
+  and cross-session memory-reuse cases.
+
+- [ ] **GOLD-NCT-27 — Zero-friction packaging and exact-release self-
+  knowledge:** content-test every supported release artifact for NCT schemas,
+  config example, managed sidecar launchers and signed manifests. Optional
+  models may download on demand, but acquisition, license display, hash/
+  signature verification, progress, pause/cancel/resume, retry, repair,
+  cleanup and uninstall are fully controlled by NEOTH with no manual compiler,
+  Python, CUDA-toolkit, Git, verifier or other prerequisite. Regenerate
+  Graphify, affected map, self-Wiki/Obsidian snapshot, architecture/security
+  docs, CLI docs, compatibility matrix, runbooks, README and release notes
+  from the exact release commit. Exact-head CI, Security, CodeQL,
+  clean-machine installer and rollback gates must be green.
+
+- [ ] **GOLD-ADOPT-BUZZ-01 — Pinned selective Buzz adoption with explicit
+  non-adoptions and provenance:** pin reviewed upstream commit
+  `00ecf2cac7544d986b4eb111ad0a8b1d7560791f` and each used source file.
+  Independently implement only approved fenced-ownership, pairing/SAS,
+  endpoint-attestation, bounded transport-policy, supervisor/progress and
+  routing-hysteresis invariants in NEOTH-native modules. From
+  `crates/buzz-acp/src/queue.rs`, adopt only per-key FIFO fairness, bounded
+  batching, exponential backoff with jitter, its dead-letter transition and
+  monotone deadline extension; strengthen dead-letter into NEOTH-durable
+  visible state and reject `DedupMode::Drop`, overflow eviction, logging-only
+  dead-letter, volatile `Instant`/in-flight state and free-text handoff. Any
+  Buzz agent-pool invariant remains evaluate-first until a
+  file-by-file source, authority, lifecycle, failure and test review records
+  the exact approved/non-approved pieces. If code is copied, preserve
+  Apache-2.0 notices, mark modifications and add Buzz plus any MeshLLM code to
+  third-party notices/SBOM. Explicitly reject Buzz's
+  central-relay cluster model, Redis backend requirement, Nostr as a second
+  authority, process-memory durability, free-text handoff as NIR, LWW/Phi
+  Gossip replacement, fire-and-forget authority/audit paths, unfinished
+  workflow actions, incomplete approval/rate-limit wiring, hard model-fit
+  heuristics and unapproved fallback inheritance. Golden/adversarial tests
+  prove each adopted invariant rather than relying on code resemblance.
+
+### WS-NCT mandatory coordinator and release scenarios
+
+The following cases are part of `GOLD-NCT-14/15/17/26` and `GOLD-R4-13l`;
+they are not optional follow-ups:
+
+1. Duplicate `TaskDelegate` with the same manifest causes at most one local
+   dispatch. At-most-once upstream provider execution additionally requires a
+   proven stable provider idempotency key; without it an ambiguous outcome is
+   durable `Indeterminate` and is never automatically repeated. The same
+   identity with a different digest rejects fail-closed.
+2. Duplicate `TaskResult` terminalizes once; an old-attempt result after
+   redelegation is audited stale and cannot overwrite the valid generation.
+3. A result after cancel cannot mutate task, memory, profile or action state.
+4. Master crash after send but before ACK resumes without double cost only when
+   upstream idempotency or a durable pre-dispatch non-send proof exists;
+   otherwise it enters `Indeterminate` for reconciliation/new authorization.
+5. Master crash after result persistence but before UI ACK returns the same
+   durable result after restart.
+6. Worker crash releases capacity and authority only after proved termination
+   or lease expiry; a superseded worker cannot commit late.
+7. Revoke during a task removes future authority immediately; behavior for an
+   already paid in-flight leaf is explicit, bounded and audited.
+8. Capability, skill, Channel/account, provider/model and config bindings are
+   pinned per attempt; a material change creates a new manifest/authorization.
+9. A partition with competing owners accepts only a quorum-committed or sole-
+   origin fence; a minority/stale leader cannot allocate, renew or commit one.
+10. Consensus leader change cannot duplicate a BudgetToken or provider permit.
+11. Retry/fallback to another provider/model receives a new concrete
+    Cost/Consent/WAL authorization.
+12. Queue fairness prevents starvation and the dead-letter state is visible
+    and recoverable in CLI, GUI, Buddy, Doctor and audit.
+13. A malicious worker cannot make unevidenced claims authoritative or execute
+    `ActionIntent`; a compromised A2A peer inherits no internal capability.
+14. Sidecar lease loss or runtime-fingerprint drift stops latent transfer
+    before use and discards bounded ephemeral state.
+15. Release rollback can read new records safely or rejects them with a typed
+    compatibility error; silent downgrade never destroys data.
+16. Every task-capable carrier passes the same full task/result/fence/ACK/cost/
+    cancel/crash/reconnect conformance suite in real processes on supported
+    release platforms.
+17. Every explicitly `gossip-only` carrier passes the shared identity, Gossip,
+    revoke, reconnect, key-rotation, partition and mixed-version/upgrade suite,
+    returns a typed task rejection and is excluded from scheduler eligibility.
+18. A revoke committed during partition remains effective after restart,
+    reconnect and old-backup restore; stale/minority nodes cannot re-admit the
+    peer, and future group keys exclude it.
+19. A CAS object cannot be collected between staging and manifest publication;
+    remote locator mutation/redirect/rebinding, transferred grants and revoke
+    during a bounded read all fail closed without cross-subject leakage.
+20. A signed A2A Card alone never authenticates task traffic; altered sender,
+    endpoint, key/card version, message sequence, redirect or peer namespace is
+    rejected before state, provider or action effects.
+21. The managed latent sidecar cannot access network or unauthorized files,
+    execute remote model code, squat the IPC endpoint, forge an authoritative
+    receipt or leak one session through reused allocator/GPU state.
+22. Generated config and every surface default to no codec downgrade; an
+    explicitly allowed downgrade cannot weaken privacy, authority or integrity.
+23. Last-known-good hysteresis can preserve only routing availability/
+    performance, never stale membership, revocation, capability, budget,
+    policy, runtime/model fingerprint or fence authority.
+24. The local StableNodeId and each attested carrier identity survive an
+    ordinary daemon restart. A passphrase-derived mDNS pseudonym cannot be
+    treated as a Peeroxide Noise key, and a real `discover -> confirm` flow
+    authorizes only the subsequently authenticated exact carrier binding.
+25. Correct passphrase proof from Unknown, Pending, expired or Revoked
+    membership is rejected before `PEER_CONNECTED`, stream registration,
+    stability refresh or allocation of a complete large frame. Heartbeat,
+    Capability, Gossip, ACK, Task and Result all require the same current
+    membership grant on Peeroxide and Iroh.
+26. Revoke after task queueing but before provider dispatch causes zero
+    provider calls. Revoke before an inbound persistence or outbound-cursor
+    transaction commits causes no row/frontier/cursor mutation and no ACK; an
+    effect that linearized first completes before revoke can commit.
+27. Reconnect generation N exiting cannot unregister generation N+1. Revoke
+    aborts every live generation and evicts every outbound target on both
+    carriers; restart cannot restore an old-epoch pending delivery.
+
 ## 5. Definition of GOLD (Release Gate)
 
 All of the following must be `[x]` before tagging `v1.0-gold`:
@@ -3050,6 +3639,12 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 - [x] WS-H: All non-operator-blocked GOLD-PROG-NN tasks done; operator-blocked tasks (GOLD-PROG-13 minisign keypair, GOLD-PROG-15 PC-02 license) have operator decisions recorded — ✅ flipped 2026-07-04: the only open PROG boxes ARE PROG-13/PROG-15, both carry recorded operator-park decisions in plan §9 (the gate requires the DECISION recorded, not the execution).
 - [x] WS-I: All GOLD-ADAPT-* deep-read adaptations done; no “post-rc1” label excludes an implementation from Gold — ✅ the former v1.0 subset closed 2026-07-04 (OH-01 was already implemented behind `--confirm`; detect + GUI mirror shipped), and the later L6 vault-preload adoption is also shipped. **Scope corrected 2026-07-13:** completion requires the current production consumer and tests for every retained adoption, regardless of its older milestone label.
 - [ ] WS-LF: all 118 `GOLD-LF-*` inventory-integrity, recovered-feature and plans/001-003 acceptance tasks are `[x]`; no P1/P2 item is deferred to 1.1, hidden behind a broad WS-R4 rollup, or closed solely by a source-only/partial implementation.
+- [ ] WS-NCT: `GOLD-NCT-00..27` plus `GOLD-ADOPT-BUZZ-01` and the
+  overlapping `GOLD-R4-13a..l` cluster contracts are `[x]`; the complete NCT
+  DoD, production-consumer ledger, zero-friction artifacts, exact-release
+  Graphify/self-knowledge and real multi-process carrier matrix pass. No
+  `post-Gold`, experimental, worker-only or external-upstream label may defer
+  retained 1.0 functionality or substitute for NEOTH evidence.
 - [x] Full build + clippy + test green on Windows+MSVC: `cargo clippy -p neoth --tests --no-deps -- -D warnings` exits 0; `cargo test -p neoth --lib` exits 0 — ✅ 2026-07-04 evidence: clippy `-D warnings` CLIPPY_EXIT=0 (5 runs this session) + full lib suite 9868 passed / 0 failed (4 full runs: 9846→9847→9863→9868); CI matrix additionally running per-push.
 - [x] `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth --lib cli_commands_md_is_up_to_date` exits 0 (no CLI doc drift) — ✅ 2026-07-04 evidence: regen run TEST_EXIT=0 (docs/cli-commands.md regenerated for `neoth dictate`) and the drift test passes inside every full-suite run since.
 - [x] README/docs honesty pass merged (GOLD-HON-01..GOLD-HON-26 all done) — ✅ flipped 2026-07-04 (stale box, duplicates WS-B which is [x] 26/26).
@@ -3060,6 +3655,11 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 ---
 
 ## 6. Appendix — Source Artifacts
+
+**Operator-adopted architecture specifications:**
+- `PLAN/NEOTH_COGNITIVE_TRANSPORT.md` — complete NCT/NIR, cluster
+  coordination, A2A, latent-backend, benchmark, security, rollout, ADR and
+  34-point production DoD; imported and bound to `v1.0.0 Gold` on 2026-07-27.
 
 **Audit files (all verified at HEAD `3df06b5`, 2026-06-06):**
 - `REVIEWS/_gold_audit/agent1_strategic.md` — B-01..B-23 strategic/honesty findings
