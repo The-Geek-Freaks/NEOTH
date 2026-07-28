@@ -429,10 +429,13 @@
 > the matched Skill grants no MCP tools, and `Some(non-empty)` is the only
 > positive per-Skill tool authority. The schema/docs, channel derivation, MCP
 > gate and `/skill info` output are aligned with that contract. This is a
-> narrow R3-17 source slice only; external activation receipts, GUI/Buddy
-> parity, install/replace/remove WAL correlation, rollback/revocation and
-> exact-head CI proof remain open. WS-R3 stays **9 done / 9 open** and WS-R4
-> stays **1 done / 13 open**.
+> narrow R3-17 source slice only. The authenticated installed-Skill authority
+> record, independent current anchor, exact activation receipt, GUI/Buddy
+> decision parity, authority invalidation/revocation/migration and exact-head
+> proof remain open. Install/replace/remove intent/result correlation and
+> mutation namespace rollback are now completed lifecycle substrate; they are
+> not activation authority. Current counts are **WS-R3 19 total / 13 done / 6
+> open** and **WS-R4 14 total / 1 done / 13 open**.
 >
 > **Current WS-LF inventory integrity (2026-07-18):** the original 79
 > archaeological candidate occurrences are now durably accounted for as
@@ -599,8 +602,9 @@
 > R3/R4/WS-LF tasks remain open; counts stay **WS-R3 9 done / 9 open** and
 > **WS-R4 1 done / 13 open**.
 >
-> **Installed-authority local checkpoint 2026-07-22 (not yet pushed; R3-17
-> remains OPEN):** the current worktree adds signed, generation-bound inactive
+> **HISTORICAL — superseded installed-authority local checkpoint 2026-07-22
+> (R3-17 remains OPEN):** the then-current worktree claimed signed,
+> generation-bound inactive
 > authority for external Skills; exact provenance/capability activation;
 > in-process native GUI consent; HMAC-authenticated proactive proposals;
 > pre-debounce invalidation on public Skill/sidecar/anchor/key changes; and

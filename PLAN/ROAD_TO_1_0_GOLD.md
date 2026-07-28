@@ -1086,8 +1086,9 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   and all unrelated R3/R4/WS-LF tasks remain open.** Counts remain **WS-R3 18
   total / 9 done / 9 open** and **WS-R4 14 total / 1 done / 13 open**.
 
-  **Installed-authority local checkpoint 2026-07-22 (verification/commit/push
-  still pending; R3-17 remains OPEN):** imported, community and generated
+  **HISTORICAL — superseded installed-authority local checkpoint 2026-07-22
+  (R3-17 remains OPEN):** the then-current worktree claimed imported,
+  community and generated
   Skills now land inactive behind a signed manifest/package-generation-bound
   authority record and an independent current-anchor commit marker. Empty
   installed tool scope is explicit deny-all; activation is provenance-aware,
@@ -1195,10 +1196,12 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   grants no MCP tools; `Some(non-empty)` allows only the listed tools. This
   closes the old "empty is behaviorally unrestricted" ambiguity for routed
   Skill MCP dispatch while preserving global autonomy, permission, cost, WAL,
-  server and agent deny/allow gates. It does **not** close R3-17 because
-  externally sourced activation receipts, GUI/Buddy decision parity, install/
-  replace/remove intent WAL correlation, rollback/revocation and exact-head CI
-  proof remain the release-blocking authority contract.
+  server and agent deny/allow gates. It does **not** close R3-17 because the
+  authenticated authority record/current anchor/activation receipt, GUI/Buddy
+  parity and authority invalidation, revocation and migration remain
+  release-blocking. Install/replace/remove intent/result correlation and
+  package rollback are now completed mutation-lifecycle substrate and must no
+  longer be listed as missing authority work.
 
   **R3-18 recurring-egress correction 2026-07-22:** forensic leaf tracing found
   that the GUI's `auto_update.*` controls do not govern the older generic
