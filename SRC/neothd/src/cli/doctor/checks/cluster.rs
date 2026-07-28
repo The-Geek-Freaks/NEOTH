@@ -503,7 +503,8 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                   route and queued, in-flight, network, or durable effect still matches the \
                   exact current StableNode/AuthEpoch/MembershipEpoch generation.",
         common_failures: "A revoked or restamped generation remains live, or a daemon that owns \
-                          the membership authority has lost its required loopback RPC listener.",
+                          the membership authority has lost its required same-user authority \
+                          listener.",
         fix: "Treat this as fail-closed. Stop the daemon if it did not already terminate, inspect \
               the revoke receipt and carrier teardown, then restart and confirm the check passes.",
     },

@@ -62,7 +62,7 @@ pub enum OsGateError {
 /// Where a gated OS-tool action sends its WAL audit frame. Replaces the old
 /// `Option<&WalWriterHandle>` so a one-shot CLI running while `neoth serve`
 /// owns the single writer can still get its frame audited — by FORWARDING it
-/// to the daemon over the loopback audit-RPC channel (AUDIT-RPC-01) instead of
+/// to the daemon over the same-user OS audit-RPC channel (AUDIT-RPC-01) instead of
 /// silently dropping it.
 #[derive(Clone, Copy)]
 pub enum AuditSink<'a> {
@@ -89,9 +89,9 @@ async fn dispatch_frame(sink: AuditSink<'_>, event_type: u8, payload: Vec<u8>) {
             let _ = w.append(header, payload).await;
         }
         AuditSink::DaemonRpc(home) => {
-            // Loopback IPC to the WAL-owning daemon. Best-effort: a disabled /
-            // unreachable listener just means the frame isn't recorded (the
-            // action itself already happened, gated).
+            // Same-user OS IPC to the WAL-owning daemon. Best-effort: a disabled
+            // audit route or unreachable listener means the frame isn't
+            // recorded (the action itself already happened, gated).
             if let Err(e) =
                 crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
             {

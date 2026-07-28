@@ -414,7 +414,7 @@ pub(crate) async fn emit_todo_write(
 }
 
 /// Shared one-shot external-write audit delivery. P0: when a daemon owns the WAL
-/// FORWARD over the loopback audit-RPC channel (the `event_type` must be in the
+/// FORWARD over the same-user OS audit-RPC channel (the `event_type` must be in the
 /// audit-RPC allowlist) instead of skipping; otherwise open a one-shot writer.
 /// Used by `neoth todo` (`0xC8`) + `neoth calendar` (`0xCA`/`0xCB`) so every
 /// external-write audit takes the identical durable path. `label` only names the

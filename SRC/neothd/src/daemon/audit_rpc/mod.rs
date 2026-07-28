@@ -1,4 +1,4 @@
-//! AUDIT-RPC-01 — loopback audit-RPC listener + client.
+//! AUDIT-RPC-01 — same-user OS audit-RPC listener + client.
 //!
 //! ## Why this exists
 //! The daemon owns the SINGLE WAL writer (the single-writer invariant). So when
@@ -6,14 +6,17 @@
 //! `autonomy set`, `lease …`) cannot open a second writer to record its own
 //! gated action — it passes `writer: None` and the action runs gated but
 //! UN-audited. This module closes that gap: the one-shot CLI forwards an *audit
-//! intent* to the running daemon over a loopback socket, and the daemon (which
-//! owns the writer) appends the frame on its behalf.
+//! intent* to the running daemon over an OS-authenticated same-user IPC
+//! transport, and the daemon (which owns the writer) appends the frame on its
+//! behalf.
 //!
 //! ## Security model — anti-audit-poisoning
 //! The audit chain is NEOTH's verifiable-loyalty wedge, so a forged frame is a
 //! real threat. Defenses, all fail-closed:
-//!   1. **Loopback-only.** The listener binds `127.0.0.1:0`; every connection's
-//!      peer is re-checked `is_loopback()` at accept time (403 otherwise).
+//!   1. **Kernel-attested same user.** Unix uses an owner-private Unix socket
+//!      plus peer-credential UID equality. Windows uses a current-TokenUser
+//!      DACL, local-only first-instance named pipe and post-connect client SID
+//!      equality. There is no TCP fallback.
 //!   2. **Per-boot bearer token.** 32 bytes from the OS CSPRNG, base64url, freshly
 //!      minted on every daemon start (a token captured before a restart is dead
 //!      after it), written `0600` on unix / DPAPI-wrapped+DACL on Windows via the
@@ -26,12 +29,9 @@
 //!      could already forge frames directly.
 //!   4. **Body cap** 4096 bytes (audit payloads are small structured JSON).
 //!
-//! ## Residual (documented, accepted)
-//! A process running as the SAME OS user can read the token file and submit
-//! frames — but a same-uid process is already inside NEOTH's trust boundary (it
-//! could read the WAL HMAC key, or simply BE `neoth`). The token closes the
-//! cross-uid forgery vector, which is the real boundary. Same precedent as the
-//! WAL HMAC key (`wal/compaction.rs`).
+//! A process running as the same OS user can read the defense-in-depth bearer
+//! and submit allowlisted frames; that user already owns the NEOTH instance and
+//! WAL keys. A different local user cannot reach the application codec.
 //!
 //! The approval-token endpoints use that same operator-authority boundary. A
 //! jobs-run token is bound to one canonical request digest, expires quickly,
@@ -40,13 +40,16 @@
 //! proof before it releases the token. This is deliberately not an OS sandbox
 //! against the operator who owns both `freedom.yaml` and the RPC credential.
 //!
-//! Gated behind `freedom.yaml::audit_rpc.enabled` (default OFF). The listener is
-//! spawned from `cli/serve.rs` and aborted on shutdown; the sidecar is removed
-//! by [`SidecarGuard`] on drop.
+//! The internal listener is mandatory while `neoth serve` owns the WAL.
+//! `freedom.yaml::audit_rpc.enabled` controls only the optional public audit and
+//! approval-token routes; the Skill-mutation authority route remains available.
+//! The listener is spawned from `cli/serve.rs` and aborted on shutdown; the
+//! sidecar is removed by [`SidecarGuard`] on drop.
 //!
 //! ## Module layout (the file was split once it crossed ~800 LOC)
 //!   - [`token`]   — the per-boot bearer secret (mint / read / path).
-//!   - [`sidecar`] — port advertisement + the stale-sidecar guard + `SidecarGuard`.
+//!   - [`sidecar`] — typed local-endpoint discovery + stale guard + `SidecarGuard`.
+//!   - [`transport`] — Unix-socket / Windows named-pipe bind, peer proof, connect.
 //!   - [`server`]  — the daemon listener: bind, accept, auth, allowlist, append.
 //!   - [`client`]  — the one-shot CLI side: reachability, required-audit gate,
 //!                   `try_post_audit_frame`.
@@ -59,6 +62,7 @@ mod fullauto_token;
 mod server;
 mod sidecar;
 mod token;
+mod transport;
 
 #[cfg(test)]
 mod tests;
@@ -75,9 +79,12 @@ pub use client::{
     membership_revoke, membership_runtime_health, membership_snapshot,
 };
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
+pub(crate) use server::bind_and_serve;
 pub use server::{
-    ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState, bind_and_serve,
+    ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState,
     is_allowed_client_event, is_allowed_client_event_pair,
 };
-pub use sidecar::{SidecarGuard, read_sidecar, remove_sidecar, sidecar_path, write_sidecar};
+pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
+pub(crate) use sidecar::{read_sidecar, write_sidecar};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
+pub(crate) use transport::AuditEndpointV2;

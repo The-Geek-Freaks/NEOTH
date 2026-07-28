@@ -101,7 +101,7 @@ struct DaemonCron {
 static DAEMON_CRONS: &[DaemonCron] = &[
     DaemonCron {
         id: "audit-rpc",
-        description: "Loopback audit-RPC listener for one-shot CLIs to forward audit frames to the WAL-owning daemon.",
+        description: "Optional one-shot audit/token routes on the mandatory same-user Unix-socket or Windows named-pipe authority listener.",
         gate: Some("freedom.yaml::audit_rpc.enabled"),
     },
     DaemonCron {

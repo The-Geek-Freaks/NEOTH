@@ -94,7 +94,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
         &home,
     )?;
     // Same one-shot-WAL pattern as `neoth fs`: when the daemon owns the WAL,
-    // FORWARD the audit frame to it via the loopback audit-RPC channel
+    // FORWARD the audit frame to it via the same-user OS audit-RPC channel
     // (AUDIT-RPC-01) rather than open a 2nd writer; the launch is gated either way.
     let result = {
         if daemon_live {

@@ -148,7 +148,7 @@ fn short_id(id: &str) -> String {
 
 /// Best-effort `RISK_CONFIRM_GRANTED` (0x54) audit emit. Mirrors
 /// `cli::lease::emit_lease`: when the daemon owns the WAL, forward over the
-/// loopback audit-RPC (0x54 is allowlisted); otherwise a one-shot writer
+/// same-user OS audit-RPC (0x54 is allowlisted); otherwise a one-shot writer
 /// appends directly. The lease itself already persisted to disk before this.
 async fn emit_risk_confirm_granted(
     home: &std::path::Path,

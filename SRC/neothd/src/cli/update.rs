@@ -438,7 +438,7 @@ pub(super) async fn emit_self_update_applied(
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
     {
         // AUDIT-RPC-01: daemon owns the writer → forward the 0xD2 frame over
-        // the loopback channel instead of silently skipping. Best-effort.
+        // the same-user OS channel instead of silently skipping. Best-effort.
         let home = crate::config::FreedomConfig::default_neoth_home();
         if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
             &home,

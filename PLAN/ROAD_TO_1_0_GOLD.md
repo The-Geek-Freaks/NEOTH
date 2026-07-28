@@ -1176,10 +1176,24 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   This is mutation-integrity progress, **not installed-Skill activation
   authority**. The versioned authority record, independent current anchor and
   exact activation receipt consumed by loader/router/updater/extractor are
-  still absent and remain the blocking R3-17 slice described above. The
-  loopback audit RPC also still needs an OS-enforced same-user transport before
-  release to eliminate a lower-privileged local socket-exhaustion edge; its
-  bearer, bounded concurrency and deadlines do not prove peer identity.
+  still absent and remain the blocking R3-17 slice described above.
+
+  **Same-user audit-RPC transport checkpoint 2026-07-28 (R3-17 remains OPEN):**
+  the old loopback-TCP endpoint and port sidecar are replaced by a typed,
+  canonical-home/boot-nonce-bound OS endpoint with no TCP fallback. Unix uses
+  an owner-private `0700` runtime directory, `0600` Unix socket, peer-credential
+  UID equality, bounded nonblocking connect and identity-checked crash cleanup.
+  Windows uses a first-instance, remote-client-rejecting named pipe with an
+  exact protected current-TokenUser DACL, bidirectional SID proof, mandatory
+  impersonation reversion and deadline-bounded overlapped I/O. Discovery is a
+  strict, bounded, no-follow `audit_rpc.endpoint.v2.json` record without port,
+  token or token hint; obsolete `audit_rpc.port` is removed without reading it.
+  Accept failure is fatal to the daemon authority boundary, peer proof happens
+  before connection admission, and live client reachability is regression
+  tested. This closes the lower-privileged local socket-exhaustion/peer-identity
+  transport remainder, but it does **not** supply the installed-Skill authority
+  record, current anchor, activation receipt or GUI/Buddy decision surface.
+
   Two independent adversarial full-slice reviews report zero
   Critical/High/Medium/Low findings after the corrective passes. Deferred
   Cargo/runtime gates and exact-head CI/Security/CodeQL evidence remain

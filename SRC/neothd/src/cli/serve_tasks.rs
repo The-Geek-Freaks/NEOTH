@@ -3915,14 +3915,14 @@ pub(crate) fn spawn_healthz(
     }
 }
 
-/// Mandatory loopback control listener. The internal Skill-mutation route is
+/// Mandatory same-user OS control listener. The internal Skill-mutation route is
 /// always present while this daemon owns the WAL; `audit_rpc.enabled` controls
 /// only the optional public audit/token routes. Returns BOTH the listener task
 /// AND the `SidecarGuard` — the guard MUST be bound for the daemon lifetime in
 /// `run_serve` (its `Drop` removes the sidecar + token), so it is returned, not
 /// dropped here. Membership-enabled daemons fail startup if this authority
-/// listener cannot be established. Async (binds the socket). WAL-emitting via
-/// the listener's writer clone.
+/// listener cannot be established. Async (binds the platform OS endpoint).
+/// WAL-emitting via the listener's writer clone.
 pub(crate) async fn spawn_audit_rpc(
     config: &FreedomConfig,
     home: &std::path::Path,
@@ -3936,9 +3936,10 @@ pub(crate) async fn spawn_audit_rpc(
     Option<crate::daemon::audit_rpc::SidecarGuard>,
 )> {
     let home = home.to_path_buf();
-    // Clear any sidecar+token a PRIOR daemon left behind on a crash (no clean
-    // SidecarGuard drop) BEFORE minting fresh ones — closes the
-    // stale-token-disclosure window (recycled port).
+    // Clear discovery a PRIOR daemon left behind on a crash (no clean
+    // SidecarGuard drop) before atomically replacing its bearer. The strict
+    // PID+nonce binding and OS peer proof prevent disclosure to a stale or
+    // substituted endpoint during this restart window.
     crate::daemon::audit_rpc::remove_sidecar(&home);
     let token = crate::daemon::audit_rpc::init_rpc_token(&home)
         .context("mint mandatory daemon internal-RPC token")?;
@@ -3952,15 +3953,14 @@ pub(crate) async fn spawn_audit_rpc(
         membership: Some(membership),
         audit_routes_enabled: config.audit_rpc.enabled,
     };
-    let (addr, task) = crate::daemon::audit_rpc::bind_and_serve(state)
+    let endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
+    let (endpoint, task) = crate::daemon::audit_rpc::bind_and_serve(&home, &endpoint_nonce, state)
         .await
         .context("bind mandatory daemon internal-RPC listener")?;
-    let endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
     if let Err(error) = crate::daemon::audit_rpc::write_sidecar(
         &home,
-        addr.port(),
+        &endpoint,
         std::process::id(),
-        &token,
         &endpoint_nonce,
     ) {
         task.abort();
@@ -3973,9 +3973,9 @@ pub(crate) async fn spawn_audit_rpc(
         return Err(error).context("commit daemon internal-RPC endpoint to PID lock");
     }
     info!(
-        port = addr.port(),
+        endpoint = ?endpoint,
         public_audit_routes = config.audit_rpc.enabled,
-        "mandatory daemon internal-RPC listener up (127.0.0.1)"
+        "mandatory same-user daemon internal-RPC listener up"
     );
     let listener_abort = task.abort_handle();
     Ok((
@@ -7017,12 +7017,12 @@ pub(crate) async fn shutdown_background_tasks(
     // boot picks it up via the at-boot one-shot check.
     crate::cli::serve_tasks::abort_join(reload_task).await;
 
-    // Abort the /healthz listener — it never writes WAL so it can be cancelled
-    // freely. In-flight connections finish on their own.
-    // COR-34: await the abort so the handle isn't dropped mid-run.
+    // The audit-RPC discovery guard already withdrew the sidecar + token and
+    // cancelled the listener at shutdown admission. Await that cancellation so
+    // its accept loop and in-flight JoinSet cannot outlive the authority
+    // boundary.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
-    // Its discovery guard already removed the sidecar + token at shutdown
-    // admission, before the listener port could be recycled.
+    // Abort the independent /healthz listener; it never writes WAL.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 
     // Abort the Hebbian decay task. It runs against the SQLite views db, so

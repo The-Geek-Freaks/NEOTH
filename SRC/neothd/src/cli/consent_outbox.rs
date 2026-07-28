@@ -441,7 +441,7 @@ pub(crate) async fn recover_pending(home: &Path) -> Result<RecoveryOutcome> {
 
 /// Daemon-start recovery path. It appends through the daemon's already-owned
 /// writer directly, avoiding the startup interval in which the pidfile is live
-/// but the loopback audit-RPC listener is not yet accepting requests.
+/// but the same-user OS audit-RPC listener is not yet accepting requests.
 pub(crate) async fn recover_pending_with_writer(
     home: &Path,
     writer: &crate::wal::writer::WalWriterHandle,

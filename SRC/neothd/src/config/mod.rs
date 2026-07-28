@@ -1343,14 +1343,14 @@ pub struct FreedomConfig {
     /// cluster transport so one freedom.yaml remains portable across builds.
     #[serde(default)]
     pub swarm: SwarmConfig,
-    /// AUDIT-RPC-01 — loopback audit-RPC listener. When the daemon owns the
-    /// single WAL writer, one-shot CLIs (`neoth os launch`, `fs`, `lease`, …)
-    /// can't write their own audit frames; with this enabled they forward an
-    /// authenticated audit intent to the running daemon over `127.0.0.1:<auto>`
-    /// (bearer-token + loopback-only + a compile-time event-type allowlist), so
-    /// every gated action stays audited even while `neoth serve` is up.
-    /// Default OFF at the struct level (source builds stay opt-in); the wizard
-    /// turns it on so noob operators get audited one-shots automatically.
+    /// AUDIT-RPC-01 — same-user OS audit-RPC route policy. The daemon always
+    /// binds its internal authority listener while it owns the WAL. Enabling
+    /// this policy additionally lets one-shot CLIs (`neoth os launch`, `fs`,
+    /// `lease`, …) forward authenticated audit intents through that
+    /// owner-private Unix socket or current-user-only Windows named pipe.
+    /// Kernel peer identity, a per-boot bearer, and a compile-time event
+    /// allowlist protect the WAL boundary. Default OFF at the struct level;
+    /// the wizard enables the optional one-shot routes.
     #[serde(default)]
     pub audit_rpc: AuditRpcConfig,
     /// GOLD-WIRE-07 — memory backend tuning. Today: the similarity-recall
@@ -1525,14 +1525,17 @@ impl Default for ToneModifierConfig {
     }
 }
 
-/// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon
-/// binds no audit-RPC port unless this is flipped on).
+/// AUDIT-RPC-01 — optional same-user audit/token route policy.
+///
+/// The daemon's internal Skill-mutation authority listener is mandatory and is
+/// not disabled by this policy. Default: optional public routes disabled.
 #[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct AuditRpcConfig {
-    /// Bind the loopback audit-RPC listener. No port field — the daemon always
-    /// binds `127.0.0.1:0` (OS-assigned) and advertises the chosen port in the
-    /// `~/.neoth/audit_rpc.port` sidecar so one-shot CLIs can find it.
+    /// Expose the one-shot audit and approval-token routes on the mandatory
+    /// same-user OS listener. Its typed endpoint, daemon PID, and per-boot nonce
+    /// are advertised through the strict private
+    /// `~/.neoth/audit_rpc.endpoint.v2.json` discovery record.
     pub enabled: bool,
 
     /// Compliance fail-closed switch. When `true` AND a daemon owns the WAL, a

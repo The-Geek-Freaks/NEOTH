@@ -3,14 +3,12 @@
 
 use super::*;
 
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use base64::Engine;
 use sha2::Digest as _;
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 use crate::n8n_api::auth::AuthCooldown;
 
@@ -18,26 +16,25 @@ const TEST_ENDPOINT_NONCE: &str = "00112233445566778899aabbccddeeff";
 
 fn publish_test_endpoint(
     home: &std::path::Path,
-    port: u16,
-    token: &str,
+    endpoint: &AuditEndpointV2,
 ) -> crate::daemon::pidfile::PidGuard {
     let mut guard = crate::daemon::pidfile::acquire(&home.join("neothd.pid")).unwrap();
-    write_sidecar(home, port, std::process::id(), token, TEST_ENDPOINT_NONCE).unwrap();
+    write_sidecar(home, endpoint, std::process::id(), TEST_ENDPOINT_NONCE).unwrap();
     guard.publish_endpoint_nonce(TEST_ENDPOINT_NONCE).unwrap();
     guard
 }
 
-async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
+async fn raw_post(addr: &AuditEndpointV2, token: Option<&str>, body: &str) -> u16 {
     raw_post_path(addr, "/audit", token, body).await.0
 }
 
 async fn raw_post_path(
-    addr: SocketAddr,
+    addr: &AuditEndpointV2,
     path: &str,
     token: Option<&str>,
     body: &str,
 ) -> (u16, String) {
-    let mut s = TcpStream::connect(addr).await.unwrap();
+    let mut s = super::transport::connect(addr).await.unwrap();
     let auth = token
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
@@ -197,30 +194,36 @@ fn token_round_trips_through_secure_write() {
 }
 
 #[test]
-fn sidecar_round_trips_port_without_full_token() {
+fn sidecar_round_trips_typed_endpoint_without_bearer_material() {
     let dir = tempdir().unwrap();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
     write_sidecar(
         dir.path(),
-        54321,
+        &endpoint,
         std::process::id(),
-        "supersecrettoken",
         TEST_ENDPOINT_NONCE,
     )
     .unwrap();
-    assert_eq!(read_sidecar(dir.path()).unwrap().0, 54321);
-    // The full token must NEVER be in the sidecar — only an 8-char hint.
+    let record = read_sidecar(dir.path()).unwrap();
+    assert_eq!(record.endpoint, endpoint);
+    assert_eq!(record.pid, std::process::id());
+    assert_eq!(record.endpoint_nonce, TEST_ENDPOINT_NONCE);
     let raw = std::fs::read(sidecar_path(dir.path())).unwrap();
-    let body = crate::wal::compaction::maybe_unwrap_dpapi(&raw, &sidecar_path(dir.path())).unwrap();
-    let s = String::from_utf8_lossy(&body);
-    assert!(s.contains("supersec"));
-    assert!(!s.contains("supersecrettoken"));
+    assert!(!String::from_utf8_lossy(&raw).contains("supersecrettoken"));
 }
 
 #[test]
 fn sidecar_guard_removes_on_drop() {
     let dir = tempdir().unwrap();
-    let t = init_rpc_token(dir.path()).unwrap();
-    write_sidecar(dir.path(), 1, std::process::id(), &t, TEST_ENDPOINT_NONCE).unwrap();
+    init_rpc_token(dir.path()).unwrap();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
+    write_sidecar(
+        dir.path(),
+        &endpoint,
+        std::process::id(),
+        TEST_ENDPOINT_NONCE,
+    )
+    .unwrap();
     {
         let _g = SidecarGuard::new(dir.path().to_path_buf());
         assert!(sidecar_path(dir.path()).exists());
@@ -232,12 +235,12 @@ fn sidecar_guard_removes_on_drop() {
 #[tokio::test]
 async fn daemon_sidecar_guard_aborts_its_published_listener_on_early_return() {
     let dir = tempdir().unwrap();
-    let token = init_rpc_token(dir.path()).unwrap();
+    init_rpc_token(dir.path()).unwrap();
+    let endpoint = super::transport::endpoint_for_home(dir.path(), TEST_ENDPOINT_NONCE).unwrap();
     write_sidecar(
         dir.path(),
-        1,
+        &endpoint,
         std::process::id(),
-        &token,
         TEST_ENDPOINT_NONCE,
     )
     .unwrap();
@@ -267,8 +270,10 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let mut idle = TcpStream::connect(addr).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let mut idle = super::transport::connect(&addr).await.unwrap();
     idle.write_all(b"P").await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         while Arc::strong_count(&cooldown) < 3 {
@@ -305,12 +310,14 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
 
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(br#"{"program":"/bin/x"}"#);
     let body =
         format!("{{\"event_type\":{EVENT_TYPE_OS_APP_LAUNCH},\"payload_b64\":{payload_b64:?}}}");
-    let status = raw_post(addr, Some("tok-valid"), &body).await;
+    let status = raw_post(&addr, Some("tok-valid"), &body).await;
     assert_eq!(status, 200);
 
     task.abort();
@@ -366,7 +373,9 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
         membership: Some(Arc::clone(&controller)),
         audit_routes_enabled: false,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
 
     let identity = LocalNodeIdentity::load_or_create(peer_home.path()).unwrap();
     let transport = TransportIdentity::parse("ab".repeat(32)).unwrap();
@@ -382,7 +391,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     };
     let invite_body = serde_json::to_string(&invite_request).unwrap();
     assert_eq!(
-        raw_post_path(addr, "/membership/invite", None, &invite_body)
+        raw_post_path(&addr, "/membership/invite", None, &invite_body)
             .await
             .0,
         401
@@ -399,7 +408,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     );
 
     let (status, body) = raw_post_path(
-        addr,
+        &addr,
         "/membership/invite",
         Some("membership-token"),
         &invite_body,
@@ -429,7 +438,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     })
     .unwrap();
     assert_eq!(
-        raw_post_path(addr, "/membership/confirm", Some("wrong"), &confirm_body)
+        raw_post_path(&addr, "/membership/confirm", Some("wrong"), &confirm_body)
             .await
             .0,
         401
@@ -443,7 +452,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     );
 
     let (status, body) = raw_post_path(
-        addr,
+        &addr,
         "/membership/confirm",
         Some("membership-token"),
         &confirm_body,
@@ -481,13 +490,13 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     })
     .unwrap();
     assert_eq!(
-        raw_post_path(addr, "/membership/revoke", None, &revoke_body)
+        raw_post_path(&addr, "/membership/revoke", None, &revoke_body)
             .await
             .0,
         401
     );
     let (status, body) = raw_post_path(
-        addr,
+        &addr,
         "/membership/revoke",
         Some("membership-token"),
         &revoke_body,
@@ -502,7 +511,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
 
     let status_body = serde_json::json!({"request_id": request_id}).to_string();
     let (status, body) = raw_post_path(
-        addr,
+        &addr,
         "/membership/revoke/status",
         Some("membership-token"),
         &status_body,
@@ -519,7 +528,7 @@ async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated
     );
 
     let (status, body) = raw_post_path(
-        addr,
+        &addr,
         "/membership/revoke",
         Some("membership-token"),
         &revoke_body,
@@ -552,18 +561,20 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
     let payload_b64 = base64::engine::general_purpose::STANDARD.encode(b"{}");
 
     let accepted =
         format!("{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}");
-    assert_eq!(raw_post(addr, Some("tok-subtype"), &accepted).await, 200);
+    assert_eq!(raw_post(&addr, Some("tok-subtype"), &accepted).await, 200);
 
     let extended_zero =
         format!("{{\"event_type\":0,\"event_subtype\":0,\"payload_b64\":{payload_b64:?}}}");
     assert_eq!(
-        raw_post(addr, Some("tok-subtype"), &extended_zero).await,
+        raw_post(&addr, Some("tok-subtype"), &extended_zero).await,
         422
     );
 
@@ -571,7 +582,7 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         "{{\"event_type\":168,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}"
     );
     assert_eq!(
-        raw_post(addr, Some("tok-subtype"), &top_level_with_subtype).await,
+        raw_post(&addr, Some("tok-subtype"), &top_level_with_subtype).await,
         422
     );
 
@@ -616,16 +627,18 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
         membership: None,
         audit_routes_enabled: false,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _pid_guard = publish_test_endpoint(home.path(), addr.port(), &token);
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let _pid_guard = publish_test_endpoint(home.path(), &addr);
 
     assert_eq!(
-        raw_post_path(addr, "/health", Some(&token), "{}").await.0,
+        raw_post_path(&addr, "/health", Some(&token), "{}").await.0,
         200,
         "authenticated endpoint discovery must remain available"
     );
     assert_eq!(
-        raw_post_path(addr, "/audit", Some(&token), "{}").await.0,
+        raw_post_path(&addr, "/audit", Some(&token), "{}").await.0,
         404,
         "the operator-disabled public audit route must stay disabled"
     );
@@ -678,7 +691,9 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
     let operation_id = "deadbeefdeadbeefdeadbeefdeadbeef";
     let audit_event_id = "9".repeat(64);
@@ -694,11 +709,11 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         format!("{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}");
 
     assert_eq!(
-        raw_post(addr, Some("skill-dedup-token"), &request).await,
+        raw_post(&addr, Some("skill-dedup-token"), &request).await,
         200
     );
     assert_eq!(
-        raw_post(addr, Some("skill-dedup-token"), &request).await,
+        raw_post(&addr, Some("skill-dedup-token"), &request).await,
         200,
         "retry after a lost response must ACK the existing audit id"
     );
@@ -715,7 +730,7 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         "{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{conflicting_b64:?}}}"
     );
     assert_eq!(
-        raw_post(addr, Some("skill-dedup-token"), &conflicting_request).await,
+        raw_post(&addr, Some("skill-dedup-token"), &conflicting_request).await,
         409
     );
 
@@ -1083,12 +1098,14 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
     let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
-    let status = raw_post(addr, Some("tok-WRONG"), body).await;
+    let status = raw_post(&addr, Some("tok-WRONG"), body).await;
     assert_eq!(status, 401);
     // missing token too
-    assert_eq!(raw_post(addr, None, body).await, 401);
+    assert_eq!(raw_post(&addr, None, body).await, 401);
     task.abort();
     drop(writer);
     wal_join.await.ok();
@@ -1101,16 +1118,16 @@ async fn wrong_token_is_401_and_writes_no_frame() {
 }
 
 #[tokio::test]
-async fn valid_bearer_bypasses_and_resets_shared_loopback_cooldown() {
+async fn valid_bearer_bypasses_and_resets_shared_ipc_cooldown() {
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
     let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
     let cooldown = Arc::new(AuthCooldown::new());
     let now = std::time::Instant::now();
     for _ in 0..crate::n8n_api::AUTH_FAILURE_STRIKE_LIMIT {
-        cooldown.record_failure("127.0.0.1", now);
+        cooldown.record_failure("same-user-ipc", now);
     }
-    assert!(cooldown.is_locked("127.0.0.1", now));
+    assert!(cooldown.is_locked("same-user-ipc", now));
     let state = AuditRpcState {
         token: "tok-valid".into(),
         writer: writer.clone(),
@@ -1120,13 +1137,15 @@ async fn valid_bearer_bypasses_and_resets_shared_loopback_cooldown() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
 
-    let (status, body) = raw_post_path(addr, "/health", Some("tok-valid"), "").await;
+    let (status, body) = raw_post_path(&addr, "/health", Some("tok-valid"), "").await;
     assert_eq!(status, 200, "{body}");
     assert!(
-        !cooldown.is_locked("127.0.0.1", std::time::Instant::now()),
-        "a valid bearer must clear a cooldown poisoned by another local client"
+        !cooldown.is_locked("same-user-ipc", std::time::Instant::now()),
+        "a valid bearer must clear a cooldown poisoned by another same-user client"
     );
 
     task.abort();
@@ -1150,10 +1169,12 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let (addr, task) = bind_and_serve(segdir.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
     // 0x10 (daemon lifecycle) is NOT forwardable.
     let body = r#"{"event_type":16,"payload_b64":"e30="}"#;
-    let status = raw_post(addr, Some("tok"), body).await;
+    let status = raw_post(&addr, Some("tok"), body).await;
     assert_eq!(status, 422);
     task.abort();
     drop(writer);
@@ -1165,7 +1186,7 @@ async fn blocked_event_type_is_422_and_emits_reject() {
     assert_eq!(f.header.event_type, EVENT_TYPE_AUDIT_RPC_REJECT);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn client_round_trips_against_a_live_listener() {
     use crate::wal::events::EVENT_TYPE_OS_FILE_READ;
     let home = tempdir().unwrap();
@@ -1183,8 +1204,14 @@ async fn client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
+    assert!(
+        is_reachable(home.path()),
+        "live same-user IPC health probe must accept the exact response body"
+    );
 
     // The CLIENT path: read sidecar+token, connect, POST.
     try_post_audit_frame(
@@ -1222,8 +1249,10 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
     let binding = "ab".repeat(32);
     let approval = mint_jobs_run_token(home.path(), &binding)
         .await
@@ -1277,8 +1306,10 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
 
     assert!(
         mint_jobs_run_token(home.path(), &"ab".repeat(32))
@@ -1306,8 +1337,10 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         membership: None,
         audit_routes_enabled: true,
     };
-    let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
+    let (addr, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), &addr);
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
 
     try_post_audit_frame_with_subtype(home.path(), 0x00, subtype, b"{}")
@@ -1335,14 +1368,15 @@ async fn client_unavailable_when_no_sidecar() {
 #[tokio::test]
 async fn client_rejects_stale_sidecar_with_dead_pid() {
     // A sidecar left by a crashed daemon (dead pid) must NOT be trusted —
-    // the recycled port could belong to an unrelated process, and sending
-    // the bearer token there would disclose it.
+    // an attacker could occupy the stale OS endpoint, and sending the bearer
+    // token there would disclose it.
     let home = tempdir().unwrap();
     init_rpc_token(home.path()).unwrap();
     // 999_999_999 is above any OS pid_max (and stays positive as an i32
     // pid_t, so the unix `kill(pid,0)` check can't alias to the -1
     // "whole process group" sentinel) — reliably a dead pid on all OSes.
-    write_sidecar(home.path(), 5000, 999_999_999, "tok", TEST_ENDPOINT_NONCE).unwrap();
+    let endpoint = super::transport::endpoint_for_home(home.path(), TEST_ENDPOINT_NONCE).unwrap();
+    write_sidecar(home.path(), &endpoint, 999_999_999, TEST_ENDPOINT_NONCE).unwrap();
     let r = try_post_audit_frame(home.path(), 0xA8, b"{}").await;
     assert!(
         matches!(r, Err(AuditRpcClientError::Unavailable(ref m)) if m.contains("stale")),

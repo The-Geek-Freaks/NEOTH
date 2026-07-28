@@ -411,9 +411,9 @@ async fn emit_audit_events(
     let pidfile = home.join("neothd.pid");
     if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
         // AUDIT-RPC-01: daemon owns the WAL writer → forward the ingest frames
-        // over the loopback channel (0x2C/0x2D allowlisted) instead of silently
-        // skipping. Best-effort: an unreachable/disabled listener falls through
-        // to no-frame (the asset was still ingested).
+        // over the same-user OS channel (0x2C/0x2D allowlisted) instead of silently
+        // skipping. Best-effort: a disabled audit route or unreachable listener
+        // falls through to no-frame (the asset was still ingested).
         if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
             home,
             EVENT_TYPE_INGEST_EXTRACTED,

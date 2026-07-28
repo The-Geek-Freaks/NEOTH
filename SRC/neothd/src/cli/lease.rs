@@ -201,9 +201,10 @@ async fn emit_lease(home: &std::path::Path, event_type: u8, lease: &CapabilityLe
     let pidfile = crate::daemon::pidfile::default_pidfile();
     if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
         // AUDIT-RPC-01: the daemon owns the single WAL writer → forward the
-        // lease audit over the loopback channel (0xA5/0xA6/0xA7 allowlisted)
-        // instead of silently dropping it. Best-effort: an unreachable/disabled
-        // listener falls through to no-frame (the lease itself still applied).
+        // lease audit over the same-user OS channel (0xA5/0xA6/0xA7 allowlisted)
+        // instead of silently dropping it. Best-effort: a disabled audit route
+        // or unreachable listener falls through to no-frame (the lease itself
+        // still applied).
         if let Err(e) =
             crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
         {

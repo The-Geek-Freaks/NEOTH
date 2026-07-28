@@ -82,7 +82,7 @@ async fn run_write(
         &home,
     )?;
     // Same one-shot-WAL pattern as run_read: when the daemon owns the WAL,
-    // FORWARD the audit frame to it via the loopback audit-RPC channel
+    // FORWARD the audit frame to it via the same-user OS audit-RPC channel
     // (AUDIT-RPC-01) instead of opening a racing 2nd writer; the write is gated
     // either way.
     let result = {
@@ -179,7 +179,7 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
         &home,
     )?;
     // Best-effort one-shot WAL audit (HF-01 pattern): if `neothd serve` owns the
-    // writer, FORWARD the audit frame to it via the loopback audit-RPC channel
+    // writer, FORWARD the audit frame to it via the same-user OS audit-RPC channel
     // (AUDIT-RPC-01) rather than open a 2nd writer racing the segment. The read
     // is gated either way. Inlined rather than a generic higher-order helper to
     // avoid an unnameable borrow lifetime across the awaited future.

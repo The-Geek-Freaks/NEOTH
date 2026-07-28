@@ -657,7 +657,7 @@ pub struct WizardState {
     /// resumed wizard does not lose privacy choices or advanced YAML values.
     #[serde(default)]
     pub omi: crate::config::OmiConfig,
-    /// AUDIT-RPC-01 — fresh CLI onboarding enables the loopback listener so
+    /// AUDIT-RPC-01 — fresh CLI onboarding enables the same-user OS listener so
     /// one-shot permission events can reach the daemon-owned WAL. Force
     /// reconfiguration hydrates and preserves the operator's existing value.
     #[serde(default)]

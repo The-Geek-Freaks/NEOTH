@@ -76,7 +76,7 @@ Grouped by theme:
 **Crypto / proof / audit:**
 - `e60838f` KF-03 `wal export --sign` (ed25519 + verify `.neoth-proof` bundles, DAU-safe auto-managed key).
 - `b00633d` PROOF-KEY-01 `wal proof-key show/export-pub`.
-- `eb87664` + `1a80507` + `68efc68` + `d873474` **AUDIT-RPC-01** (loopback audit-RPC: daemon listener + client + os_tools consumer wiring + required-audit fail-closed mode + `audit_rpc.rs`→module-dir split).
+- `eb87664` + `1a80507` + `68efc68` + `d873474` **AUDIT-RPC-01** (original loopback audit-RPC slice, now superseded by strict V2 same-user Unix-socket/Windows-named-pipe transport: daemon listener + client + os_tools consumer wiring + required-audit fail-closed mode + `audit_rpc.rs`→module-dir split).
 
 **OS-tool surface:** `5e15537` PC-01 `neoth os launch` (exec-allowlist) + `8679131` GR-10 safe-mode exec rail.
 
@@ -126,7 +126,7 @@ Codes assigned this session: `0x3F REGRESSION_ALERT`, `0x4B RECALL_LATENCY_ALERT
 ### One-shot CLI audit (when a `neoth <cmd>` needs to emit a WAL frame)
 Two patterns in the tree:
 - **Old (recall M-02):** open a short-lived `wal::writer::spawn(default_wal_dir().join("000001.wal"))` + `writer.try_append_sync(header, payload)` (SYNC, best-effort). Races the daemon's writer if live.
-- **New (AUDIT-RPC-01, preferred):** `os_tools::AuditSink { None, Writer(&handle), DaemonRpc(&home) }` — forwards the frame to the live daemon over the loopback audit-RPC channel when `live_daemon_pid` is `Some`, opens a one-shot writer otherwise. See `cli/fs.rs`, `cli/os.rs`. `cli/dream.rs` uses the simpler daemon-live-skip variant (skip the emit when daemon live to avoid the race). **Migrating recall + dream to AuditSink forwarding is a clean follow-on.**
+- **New (AUDIT-RPC-01, preferred):** `os_tools::AuditSink { None, Writer(&handle), DaemonRpc(&home) }` — forwards the frame to the live daemon over the kernel-authenticated same-user OS audit-RPC channel when `live_daemon_pid` is `Some`, opens a one-shot writer otherwise. See `cli/fs.rs`, `cli/os.rs`. `cli/dream.rs` uses the simpler daemon-live-skip variant (skip the emit when daemon live to avoid the race). **Migrating recall + dream to AuditSink forwarding is a clean follow-on.**
 
 ### views.db schema
 `memory/store.rs::apply_schema` runs `CREATE TABLE IF NOT EXISTS` on every `open()` → adding a table is backward-safe. Repository fns live next to `open()` (e.g. `record_recall_latency`, `recent_recall_latencies_ms`). New table this session: `idx_recall_latency`.

@@ -223,7 +223,7 @@ async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
     let pidfile = crate::daemon::pidfile::default_pidfile();
     if let Ok(Some(_)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
         // AUDIT-RPC-01: daemon owns the WAL → forward each 0x3E frame over the
-        // loopback channel instead of silently skipping. Best-effort: a disabled
+        // same-user OS channel instead of silently skipping. Best-effort: a disabled
         // listener is the operator's config choice, not an audit failure, so we
         // still report the audit as complete (return true) — symmetric with the
         // prior daemon-live behaviour.

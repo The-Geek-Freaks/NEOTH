@@ -132,7 +132,7 @@ pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()
 }
 
 /// `0x9B IDENTITY_MERGED` audit. P0: when a daemon owns the WAL, FORWARD over
-/// the loopback audit-RPC channel (`0x9B` allowlisted) instead of skipping;
+/// the same-user OS audit-RPC channel (`0x9B` allowlisted) instead of skipping;
 /// otherwise open a one-shot writer. Carries the before-state (the reassigned
 /// aliases) so the merge is auditable + a future `split` reversible.
 async fn emit_identity_merged(

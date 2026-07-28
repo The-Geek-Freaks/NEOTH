@@ -1829,7 +1829,7 @@ pub const EVENT_TYPE_OS_APP_LAUNCH: u8 = 0xAC;
 /// itself failed. The audit trail records every blocked process launch.
 /// Payload: `{program, reason, ts_unix}`.
 pub const EVENT_TYPE_OS_APP_LAUNCH_DENIED: u8 = 0xAD;
-/// `0xAE AUDIT_RPC_ACCEPT` — AUDIT-RPC-01. The daemon's loopback audit-RPC
+/// `0xAE AUDIT_RPC_ACCEPT` — AUDIT-RPC-01. The daemon's same-user OS audit-RPC
 /// listener accepted an authenticated audit intent from a one-shot CLI (which
 /// could not write the WAL itself because the daemon owns the single writer)
 /// and appended the forwarded frame. Emitted by the DAEMON, not the client —

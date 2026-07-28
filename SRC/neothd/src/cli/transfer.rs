@@ -189,7 +189,7 @@ async fn run_export(
 }
 
 /// `0xF5 MEMORY_TRANSFER_EXPORTED` audit. When a daemon owns the WAL, FORWARD
-/// over the loopback audit-RPC channel (#1 — `0xF5` is allowlisted) instead of
+/// over the same-user OS audit-RPC channel (#1 — `0xF5` is allowlisted) instead of
 /// silently skipping; otherwise open a one-shot writer. Metadata only (recipient
 /// + sizes + counts), never plaintext.
 async fn emit_transfer_exported(

@@ -13,9 +13,10 @@ pub mod accelerator;
 /// `scope = "arxiv-learning"`, `FactState::Candidate`). WAL-free; off by
 /// default (`arxiv_skill_scan.enabled = false`). Requires a wired provider.
 pub mod arxiv_skill_scan_cron;
-/// AUDIT-RPC-01 — loopback audit-RPC listener + client so one-shot CLIs can
-/// forward audit frames to the WAL-owning daemon (bearer-auth, loopback-only,
-/// event-type allowlist). Gated `freedom.yaml::audit_rpc.enabled` (default off).
+/// AUDIT-RPC-01 — same-user OS audit-RPC listener + client so one-shot CLIs can
+/// forward audit frames to the WAL-owning daemon (kernel peer proof, bearer,
+/// event-type allowlist). The internal Skill-mutation route is mandatory;
+/// `freedom.yaml::audit_rpc.enabled` gates only optional audit/token routes.
 pub mod audit_rpc;
 /// MV-01b (Session 28c) — daemon CLI auto-apply loop. At
 /// `AutonomyLevel::Elevated`/`Full` it periodically applies updates for

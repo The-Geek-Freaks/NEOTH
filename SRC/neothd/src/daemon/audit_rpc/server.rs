@@ -1,20 +1,19 @@
-//! AUDIT-RPC-01 — the daemon-side loopback listener.
+//! AUDIT-RPC-01 — the daemon-side same-user IPC listener.
 //!
-//! Binds `127.0.0.1:0`, accepts same-uid one-shot CLIs, and (after the
-//! loopback-peer guard + bearer auth + compile-time event-type allowlist)
+//! Binds an OS-authenticated local endpoint, accepts same-user one-shot CLIs,
+//! and (after the transport peer proof + bearer auth + compile-time event-type allowlist)
 //! appends the forwarded frame into the daemon's single WAL writer, recording a
 //! `0xAE AUDIT_RPC_ACCEPT` / `0xAF AUDIT_RPC_REJECT` marker. See the module-level
 //! doc in `mod.rs` for the full security model.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use base64::Engine;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 
 use crate::n8n_api::auth::AuthCooldown;
@@ -401,19 +400,25 @@ pub struct AuditRpcState {
     pub audit_routes_enabled: bool,
 }
 
-/// Bind `127.0.0.1:0`, return the OS-assigned address + the accept-loop handle.
-/// Mirrors [`crate::daemon::healthz::bind_and_serve`].
-pub async fn bind_and_serve(state: AuditRpcState) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
-    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, 0).into();
-    let listener = TcpListener::bind(addr)
+/// Bind the OS-authenticated same-user endpoint for one daemon incarnation.
+/// No TCP fallback exists: unsupported or unverifiable local transports fail
+/// daemon startup closed.
+pub(crate) async fn bind_and_serve(
+    home: &Path,
+    endpoint_nonce: &str,
+    state: AuditRpcState,
+) -> Result<(super::transport::AuditEndpointV2, JoinHandle<Result<()>>)> {
+    let (listener, endpoint) = super::transport::bind(home, endpoint_nonce)
         .await
-        .with_context(|| format!("bind audit-RPC listener on {addr}"))?;
-    let local = listener.local_addr()?;
+        .context("bind same-user audit-RPC transport")?;
     let task = tokio::spawn(async move { run_accept_loop(listener, state).await });
-    Ok((local, task))
+    Ok((endpoint, task))
 }
 
-async fn run_accept_loop(listener: TcpListener, state: AuditRpcState) -> Result<()> {
+async fn run_accept_loop(
+    mut listener: super::transport::AuditListener,
+    state: AuditRpcState,
+) -> Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNS));
     let mut connections = tokio::task::JoinSet::new();
     loop {
@@ -427,9 +432,10 @@ async fn run_accept_loop(listener: TcpListener, state: AuditRpcState) -> Result<
             accepted = listener.accept() => accepted,
         };
         match accepted {
-            Ok((stream, peer)) => {
-                // Drop the connection immediately if we're at the concurrency
-                // cap — never queue (queuing is what a slowloris flood wants).
+            Ok(stream) => {
+                // `AuditListener::accept` returns only after the OS attests the
+                // peer as the daemon's own user. Apply the application
+                // concurrency cap after that identity proof and never queue.
                 let Ok(permit) = Arc::clone(&sem).try_acquire_owned() else {
                     tracing::warn!("audit-RPC at connection cap; dropping connection");
                     continue;
@@ -437,15 +443,26 @@ async fn run_accept_loop(listener: TcpListener, state: AuditRpcState) -> Result<
                 let state = state.clone();
                 connections.spawn(async move {
                     let _permit = permit; // released when this task ends
-                    let _ = tokio::time::timeout(
+                    match tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
-                        handle_one(stream, peer, &state),
+                        handle_one(stream, &state),
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => {
+                            tracing::warn!(%error, "audit-RPC connection failed");
+                        }
+                        Err(_) => {
+                            tracing::warn!("audit-RPC connection timed out");
+                        }
+                    }
                 });
             }
-            Err(e) => {
-                tracing::warn!(error = %e, "audit-RPC accept failed");
+            Err(error) => {
+                return Err(error).context(
+                    "audit-RPC same-user listener failed; authority boundary is no longer live",
+                );
             }
         }
     }
@@ -461,7 +478,7 @@ struct Parsed {
 
 /// Read + parse a single HTTP request (request line + headers + Content-Length
 /// body), capped. Returns `None` on a malformed/oversized request.
-async fn read_request(stream: &mut TcpStream) -> Option<Parsed> {
+async fn read_request(stream: &mut super::transport::AuditStream) -> Option<Parsed> {
     let mut buf = Vec::with_capacity(1024);
     let mut chunk = [0u8; 1024];
     let mut header_end: Option<usize> = None;
@@ -545,16 +562,13 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcState) -> Result<()> {
-    // Layer 1 — loopback peer guard (defense-in-depth vs a future bind regression).
-    if !peer.ip().is_loopback() {
-        let _ = stream
-            .write_all(http_response(403, "non-loopback peer rejected").as_bytes())
-            .await;
-        let _ = stream.shutdown().await;
-        return Ok(());
-    }
-    let source = peer.ip().to_string();
+async fn handle_one(
+    mut stream: super::transport::AuditStream,
+    state: &AuditRpcState,
+) -> Result<()> {
+    // Layer 1 is enforced by `AuditListener::accept`: the peer's kernel token
+    // (UID/SID) must exactly match the daemon user before this function runs.
+    let source = "same-user-ipc";
 
     let Some(req) = read_request(&mut stream).await else {
         let _ = stream
@@ -600,7 +614,7 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
     }
 
     // Layer 2 — constant-time bearer verification before applying the
-    // source-wide cooldown. Every audit-RPC client is loopback, so all local
+    // source-wide cooldown. Every audit-RPC client is kernel-attested local, so all
     // users share the same source key. A bad local client must not be able to
     // lock a valid CLI/GUI/Skill bearer out of its mandatory audit path.
     // Auth failures are NOT WAL-recorded (avoids a forged-frame paradox + WAL
@@ -611,15 +625,15 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         .as_deref()
         .is_some_and(|t| constant_time_token_eq(t, &state.token));
     if ok {
-        state.cooldown.record_success(&source);
-    } else if state.cooldown.is_locked(&source, now) {
+        state.cooldown.record_success(source);
+    } else if state.cooldown.is_locked(source, now) {
         let _ = stream
             .write_all(http_response(429, "auth cooldown active").as_bytes())
             .await;
         let _ = stream.shutdown().await;
         return Ok(());
     } else {
-        state.cooldown.record_failure(&source, now);
+        state.cooldown.record_failure(source, now);
         let _ = stream
             .write_all(http_response(401, "unauthorized").as_bytes())
             .await;

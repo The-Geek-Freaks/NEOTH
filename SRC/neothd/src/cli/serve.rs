@@ -2196,7 +2196,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         result = async {
             audit_rpc_task
                 .as_mut()
-                .expect("required membership listener task missing after startup")
+                .expect("required membership/audit listener task missing after startup")
                 .await
         }, if membership_listener_required => {
             match result {
@@ -2218,9 +2218,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     };
     // Withdraw endpoint discovery at the shutdown decision, before hooks or
-    // background drains can take time and before the listener's port can be
-    // recycled. The guard also aborts the listener; its JoinHandle remains in
-    // `BackgroundHandles` solely for ordered task collection.
+    // background drains can take time and before the OS endpoint can be
+    // substituted. The guard also aborts the listener; its JoinHandle remains
+    // in `BackgroundHandles` solely for ordered task collection.
     audit_rpc_guard.take();
     restart_watcher.abort();
     let _ = restart_watcher.await;

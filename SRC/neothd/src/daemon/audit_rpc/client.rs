@@ -1,17 +1,13 @@
 //! AUDIT-RPC-01 — the one-shot CLI client side.
 //!
-//! This file is allowlisted in `tests/no_outbound_network.rs`: the client below
-//! uses `TcpStream::connect` ONLY to the daemon's own loopback audit-RPC port
-//! (read from the same-uid sidecar), never to a remote host — it is local
-//! same-host IPC, not network egress.
+//! The client uses only the OS-authenticated same-user endpoint advertised by
+//! the strict local sidecar. No TCP or remote-network fallback exists.
 
-use std::net::SocketAddr;
 use std::path::Path;
 
 use anyhow::Result;
 use base64::Engine;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
 
 use super::sidecar::read_sidecar;
 use super::token::read_rpc_token;
@@ -27,32 +23,22 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
-/// Authenticated loopback health probe. Sidecar/PID checks prevent bearer-token
-/// disclosure to a recycled port; success additionally requires the live
-/// listener to accept the token and return the exact bounded health response.
+/// Authenticated same-user IPC health probe. Sidecar/PID checks bind discovery
+/// to the live daemon incarnation; the transport additionally proves the OS
+/// user before the bearer is sent.
 pub fn is_reachable(home: &Path) -> bool {
-    let Ok((port, pid, endpoint_nonce)) = read_sidecar(home) else {
+    let Ok(sidecar) = read_sidecar(home) else {
         return false;
     };
-    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
         return false;
     }
     let Ok(token) = read_rpc_token(home) else {
         return false;
     };
-    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
-    let Ok(mut stream) =
-        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250))
-    else {
-        return false;
-    };
-    let timeout = Some(std::time::Duration::from_millis(250));
-    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
-        return false;
-    }
     let request = format!(
         "POST /health HTTP/1.1\r\n\
-         Host: 127.0.0.1\r\n\
+         Host: neoth-local\r\n\
          Authorization: Bearer {token}\r\n\
          Content-Type: application/json\r\n\
          Content-Length: 2\r\n\
@@ -60,21 +46,20 @@ pub fn is_reachable(home: &Path) -> bool {
          \r\n\
          {{}}"
     );
-    use std::io::{Read as _, Write as _};
-    if stream.write_all(request.as_bytes()).is_err() {
-        return false;
-    }
-    let mut response = Vec::with_capacity(256);
-    if stream.take(4096).read_to_end(&mut response).is_err() {
-        return false;
-    }
-    let Ok(response) = std::str::from_utf8(&response) else {
+    let Ok(response) = super::transport::exchange_blocking(
+        &sidecar.endpoint,
+        request.as_bytes(),
+        4096,
+        std::time::Duration::from_millis(250),
+    ) else {
         return false;
     };
-    response.starts_with("HTTP/1.1 200 ")
-        && response
-            .split_once("\r\n\r\n")
-            .is_some_and(|(_, body)| body == "{\"ok\":true}")
+    parse_rpc_response(response).is_ok_and(|(status, response)| {
+        status == 200
+            && response
+                .split_once("\r\n\r\n")
+                .is_some_and(|(_, body)| body == "{\"ok\":true}")
+    })
 }
 
 fn exact_daemon_owner(home: &Path, pid: u32, endpoint_nonce: &str) -> bool {
@@ -97,8 +82,8 @@ pub fn enforce_required_audit(required: bool, daemon_live: bool, home: &Path) ->
         anyhow::bail!(
             "required permission auditing is active for this action and a daemon owns the WAL, but \
              its audit-RPC listener is unreachable — refusing the action so it isn't performed \
-             un-audited. Enable `audit_rpc` and restart the daemon, or stop the daemon so the \
-             one-shot can own its WAL writer."
+             un-audited. Restart the daemon and inspect its same-user IPC/PID discovery, or stop \
+             the daemon so the one-shot can own its WAL writer."
         );
     }
     Ok(())
@@ -157,15 +142,12 @@ async fn try_post_frame_to_path(
     event_subtype: u8,
     payload: &[u8],
 ) -> std::result::Result<(), AuditRpcClientError> {
-    let (port, pid, endpoint_nonce) =
+    let sidecar =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
-    // Anti-token-disclosure: a crashed daemon may have left a stale sidecar
-    // whose port the OS recycled to an UNRELATED process — sending the bearer
-    // token there would leak it. Only proceed if the daemon that wrote the
-    // sidecar is still alive.
-    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
         return Err(AuditRpcClientError::Unavailable(format!(
-            "stale audit-RPC sidecar (daemon pid {pid} not alive)"
+            "stale audit-RPC sidecar (daemon pid {} does not own the endpoint)",
+            sidecar.pid
         )));
     }
     let token =
@@ -174,10 +156,9 @@ async fn try_post_frame_to_path(
     let body = format!(
         "{{\"event_type\":{event_type},\"event_subtype\":{event_subtype},\"payload_b64\":{payload_b64:?}}}",
     );
-    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
     let req = format!(
         "POST {path} HTTP/1.1\r\n\
-         Host: 127.0.0.1\r\n\
+         Host: neoth-local\r\n\
          Authorization: Bearer {token}\r\n\
          Content-Type: application/json\r\n\
          Content-Length: {len}\r\n\
@@ -186,7 +167,7 @@ async fn try_post_frame_to_path(
          {body}",
         len = body.len(),
     );
-    let (status, _) = exchange_rpc(addr, req).await?;
+    let (status, _) = exchange_rpc(sidecar.endpoint, req).await?;
     if status == 200 {
         Ok(())
     } else {
@@ -194,7 +175,7 @@ async fn try_post_frame_to_path(
     }
 }
 
-/// Shared same-uid loopback POST to the daemon's audit-RPC listener (same
+/// Shared same-user IPC POST to the daemon's audit-RPC listener (same
 /// sidecar + bearer-token auth + staleness guard as [`try_post_audit_frame`]).
 /// Returns `(status, full_response)`. Used by the D34 FULL-AUTO token verbs.
 async fn post_rpc(
@@ -202,19 +183,19 @@ async fn post_rpc(
     path: &str,
     body: &str,
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
-    let (port, pid, endpoint_nonce) =
+    let sidecar =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
-    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
+    if !exact_daemon_owner(home, sidecar.pid, &sidecar.endpoint_nonce) {
         return Err(AuditRpcClientError::Unavailable(format!(
-            "stale audit-RPC sidecar (daemon pid {pid} not alive)"
+            "stale audit-RPC sidecar (daemon pid {} does not own the endpoint)",
+            sidecar.pid
         )));
     }
     let token =
         read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
-    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
     let req = format!(
         "POST {path} HTTP/1.1\r\n\
-         Host: 127.0.0.1\r\n\
+         Host: neoth-local\r\n\
          Authorization: Bearer {token}\r\n\
          Content-Type: application/json\r\n\
          Content-Length: {len}\r\n\
@@ -223,17 +204,18 @@ async fn post_rpc(
          {body}",
         len = body.len(),
     );
-    exchange_rpc(addr, req).await
+    exchange_rpc(sidecar.endpoint, req).await
 }
 
 async fn exchange_rpc(
-    addr: SocketAddr,
+    endpoint: super::transport::AuditEndpointV2,
     request: String,
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    let endpoint_label = format!("{endpoint:?}");
     tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, async move {
-        let mut stream = TcpStream::connect(addr)
+        let mut stream = super::transport::connect(&endpoint)
             .await
-            .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {addr}: {e}")))?;
+            .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {endpoint:?}: {e}")))?;
         stream
             .write_all(request.as_bytes())
             .await
@@ -243,14 +225,14 @@ async fn exchange_rpc(
     .await
     .map_err(|_| {
         AuditRpcClientError::Unavailable(format!(
-            "RPC exchange with {addr} exceeded the {}s deadline",
+            "RPC exchange with {endpoint_label} exceeded the {}s deadline",
             RPC_EXCHANGE_TIMEOUT.as_secs()
         ))
     })?
 }
 
 async fn read_rpc_response(
-    stream: &mut TcpStream,
+    stream: &mut super::transport::AuditStream,
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
     let mut bytes = Vec::with_capacity(1024);
     let mut chunk = [0u8; 4096];

@@ -18,7 +18,7 @@ use super::{
 
 /// Defaults owned by the onboarding contract rather than by `FreedomConfig`.
 /// The config-level audit-RPC default stays off for source/manual configs, but
-/// a successful fresh wizard enables the loopback listener so one-shot CLIs
+/// a successful fresh wizard enables the same-user OS listener so one-shot CLIs
 /// can append to the daemon-owned WAL. `--force` hydration may overwrite this
 /// with the operator's existing explicit choice.
 pub(crate) fn fresh_wizard_state() -> WizardState {

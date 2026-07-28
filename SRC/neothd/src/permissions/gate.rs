@@ -75,7 +75,7 @@ pub enum PermissionAuditSink<'a> {
     None,
     /// Append through a WAL writer owned by this process.
     Writer(&'a WalWriterHandle),
-    /// Forward through the live daemon's same-uid loopback audit RPC.
+    /// Forward through the live daemon's kernel-authenticated same-user OS IPC.
     DaemonRpc(&'a Path),
     /// Deterministic audit failure used to prove required-audit fail-closed
     /// behaviour without starting a real writer.
