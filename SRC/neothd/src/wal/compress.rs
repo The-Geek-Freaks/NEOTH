@@ -39,7 +39,7 @@ pub fn decompress_frames(compressed: &[u8]) -> Result<Vec<u8>, WalError> {
 /// a hard ceiling so a maliciously-crafted compressed segment cannot
 /// expand unbounded and OOM the daemon (GOLD-SEC-11 / A-29). Reads one
 /// byte past `max` to detect overflow.
-fn decompress_frames_capped(compressed: &[u8], max: u64) -> Result<Vec<u8>, WalError> {
+pub(crate) fn decompress_frames_capped(compressed: &[u8], max: u64) -> Result<Vec<u8>, WalError> {
     use std::io::Read;
     let mut decoder = zstd::stream::read::Decoder::new(compressed)
         .map_err(|e| WalError::Decompress(e.to_string()))?;

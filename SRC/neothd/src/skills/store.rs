@@ -17,11 +17,173 @@ use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
 use cap_std::fs::DirBuilder;
 use cap_std::fs::{Dir, File, OpenOptions};
 
+#[cfg(test)]
+thread_local! {
+    static TEST_DELETE_WORK_BEFORE_FAILURE: std::cell::Cell<Option<usize>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn fail_delete_after_work_units(units: usize) {
+    TEST_DELETE_WORK_BEFORE_FAILURE.with(|remaining| remaining.set(Some(units)));
+}
+
 /// Open directory plus the operator-facing absolute namespace path. Security
 /// decisions use `dir`; `display_path` is reporting-only.
 pub(crate) struct BoundDirectory {
     pub(crate) dir: Dir,
     pub(crate) display_path: PathBuf,
+}
+
+/// Stable no-follow identity for one direct child. Real files/directories keep
+/// their opened handle alive across the caller's commit window; Unix symlinks
+/// cannot be opened portably without following them, so they retain the
+/// equivalent `lstat` device/inode/type identity. The token is persisted only
+/// in the private Skill-mutation journal and is never an ambient path.
+pub(crate) struct BoundChildObject {
+    identity_token: String,
+    _handle: Option<File>,
+}
+
+impl BoundChildObject {
+    #[must_use]
+    pub(crate) fn identity_token(&self) -> &str {
+        &self.identity_token
+    }
+
+    pub(crate) fn matches_child(
+        &self,
+        parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<bool> {
+        Ok(bind_child_object(parent, name, display_path)?.identity_token == self.identity_token)
+    }
+}
+
+fn child_kind(metadata: &cap_std::fs::Metadata) -> &'static str {
+    if cap_metadata_is_link_like(metadata) {
+        "link"
+    } else if metadata.is_dir() {
+        "dir"
+    } else if metadata.is_file() {
+        "file"
+    } else {
+        "other"
+    }
+}
+
+fn child_identity_token(metadata: &cap_std::fs::Metadata) -> Result<String> {
+    let kind = child_kind(metadata);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt as _;
+        Ok(format!(
+            "unix:{:016x}:{:016x}:{kind}",
+            metadata.dev(),
+            metadata.ino()
+        ))
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::MetadataExt as _;
+        let volume = metadata
+            .volume_serial_number()
+            .context("opened Windows Skill object has no volume identity")?;
+        let file_index = metadata
+            .file_index()
+            .context("opened Windows Skill object has no file-index identity")?;
+        Ok(format!("windows:{volume:08x}:{file_index:016x}:{kind}"))
+    }
+}
+
+pub(crate) fn valid_child_identity_token(token: &str) -> bool {
+    fn valid_hex(value: &str, width: usize) -> bool {
+        value.len() == width
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    }
+
+    let mut fields = token.split(':');
+    let Some(platform) = fields.next() else {
+        return false;
+    };
+    let Some(first) = fields.next() else {
+        return false;
+    };
+    let Some(second) = fields.next() else {
+        return false;
+    };
+    let Some(kind) = fields.next() else {
+        return false;
+    };
+    if fields.next().is_some() || !matches!(kind, "dir" | "file" | "link" | "other") {
+        return false;
+    }
+    match platform {
+        "unix" => valid_hex(first, 16) && valid_hex(second, 16),
+        "windows" => valid_hex(first, 8) && valid_hex(second, 16),
+        _ => false,
+    }
+}
+
+/// Bind one direct child without following it. The returned identity can be
+/// compared after a rename to prove the kernel moved the exact object that was
+/// authorized, rather than a same-name replacement introduced in the final
+/// lookup gap.
+pub(crate) fn bind_child_object(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<BoundChildObject> {
+    validate_child_name(name)?;
+    #[cfg(windows)]
+    {
+        let handle = open_windows_mutation_handle(parent, name, display_path)?;
+        let metadata = handle
+            .metadata()
+            .with_context(|| format!("inspect bound Skill object {}", display_path.display()))?;
+        return Ok(BoundChildObject {
+            identity_token: child_identity_token(&metadata)?,
+            _handle: Some(handle),
+        });
+    }
+    #[cfg(unix)]
+    {
+        let mut options = OpenOptions::new();
+        options.read(true).follow(FollowSymlinks::No);
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK);
+        match parent.open_with(name, &options) {
+            Ok(handle) => {
+                let metadata = handle.metadata().with_context(|| {
+                    format!("inspect bound Skill object {}", display_path.display())
+                })?;
+                Ok(BoundChildObject {
+                    identity_token: child_identity_token(&metadata)?,
+                    _handle: Some(handle),
+                })
+            }
+            Err(open_error) => {
+                let metadata = parent.symlink_metadata(name).with_context(|| {
+                    format!(
+                        "inspect no-follow Skill object after open failure {}",
+                        display_path.display()
+                    )
+                })?;
+                if !cap_metadata_is_link_like(&metadata) {
+                    return Err(open_error).with_context(|| {
+                        format!("open bound Skill object {}", display_path.display())
+                    });
+                }
+                Ok(BoundChildObject {
+                    identity_token: child_identity_token(&metadata)?,
+                    _handle: None,
+                })
+            }
+        }
+    }
 }
 
 /// Open `path` as a stable directory capability. The grandparent is the
@@ -302,15 +464,9 @@ pub(crate) fn rename_child(
     #[cfg(windows)]
     {
         let source = open_windows_mutation_handle(source_parent, source_name, source_display)?;
-        let metadata = source
-            .metadata()
-            .with_context(|| format!("inspect rename source {}", source_display.display()))?;
-        if cap_metadata_is_link_like(&metadata) {
-            anyhow::bail!(
-                "refuse to rename linked or reparse source {}",
-                source_display.display()
-            );
-        }
+        // FILE_FLAG_OPEN_REPARSE_POINT binds a link/junction handle to the
+        // namespace object itself. Renaming that handle is safe and is needed
+        // for atomic leaf-removal tombstones; it never follows the target.
         windows_rename_open_handle(
             &source,
             target_parent,
@@ -374,6 +530,20 @@ impl DeleteBudget {
     }
 
     fn charge_work(&mut self, display_path: &Path) -> Result<()> {
+        #[cfg(test)]
+        TEST_DELETE_WORK_BEFORE_FAILURE.with(|remaining| {
+            if let Some(units) = remaining.get() {
+                if units == 0 {
+                    remaining.set(None);
+                    return Err(anyhow::anyhow!(
+                        "injected recursive Skill cleanup interruption at {}",
+                        display_path.display()
+                    ));
+                }
+                remaining.set(Some(units - 1));
+            }
+            Ok(())
+        })?;
         self.work_units = self
             .work_units
             .checked_add(1)
@@ -648,6 +818,14 @@ pub(crate) struct FileReplaceReport {
 #[derive(Debug)]
 pub(crate) struct ConditionalReplacePreconditionFailed {
     display_path: PathBuf,
+}
+
+impl ConditionalReplacePreconditionFailed {
+    pub(crate) fn at(display_path: impl Into<PathBuf>) -> Self {
+        Self {
+            display_path: display_path.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for ConditionalReplacePreconditionFailed {

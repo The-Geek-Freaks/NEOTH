@@ -141,26 +141,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── 0/0a/0b. Pre-config startup guards (GOLD-ARCH-01: relocated to
     // serve_tasks). Home-dir isolation (BS-9) + clock-rollback guard (BS-5) +
     // single-instance PID lock (BS-12). `--one-shot` skips isolation + PID.
-    // The PidGuard is bound HERE (named `_pid_guard`, not bare `_`) for the
+    // The PidGuard is bound HERE for the
     // daemon lifetime — its Drop releases the lock at run_serve fn-end.
-    let _pid_guard = crate::cli::serve_tasks::run_preflight_guards(
+    let mut pid_guard = crate::cli::serve_tasks::run_preflight_guards(
         &neoth_home,
         args.one_shot,
         args.allow_clock_rollback,
     )?;
-
-    // Recover a crash-interrupted self-improvement accept/rollback while the
-    // instance lock is held and before any daemon consumer can read proposals,
-    // the ledger, or a partially-written skill. Corrupt/ambiguous state blocks
-    // startup for operator repair instead of racing a second daemon process.
-    if !args.one_shot {
-        crate::self_improve::recover_pending_journal(&neoth_home).with_context(|| {
-            format!(
-                "recover self-improvement journal under {} before daemon startup",
-                neoth_home.display()
-            )
-        })?;
-    }
 
     // ── 1. Load config ──────────────────────────────────────────────────────
     let credentials_path = neoth_home.join("credentials.yaml");
@@ -330,47 +317,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // Recover consent authority before any runtime-service preflight constructs
-    // a provider. A prepared or required-audit journal deliberately blocks
-    // live use; placing recovery after priming would therefore make restart
-    // recovery self-blocking.
-    match crate::cli::consent_outbox::recover_pending_with_writer(&neoth_home, &writer)
-        .await
-        .context("recover pending consent mutation before provider startup")?
-    {
-        crate::cli::consent_outbox::RecoveryOutcome::None => {}
-        crate::cli::consent_outbox::RecoveryOutcome::Recovered {
-            operation_id,
-            phase,
-            delivery,
-        } => {
-            if delivery.is_pending() {
-                warn!(
-                    %operation_id,
-                    phase = phase.as_str(),
-                    "consent mutation recovered but its audit remains queued"
-                );
-            } else {
-                info!(
-                    %operation_id,
-                    phase = phase.as_str(),
-                    "consent mutation recovered before provider startup"
-                );
-            }
-        }
-    }
-
-    // Runtime-service priming follows the validated startup-hook and recovered
-    // consent boundaries. The SkillRegistry watcher handle remains bound for
-    // the daemon lifetime.
-    let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(
-        &config,
-        &creds,
-        &neoth_home,
-        std::sync::Arc::clone(&reload_controller),
-    )
-    .await?;
-
     // E-2 Phase 4 (Session 14 Pick #23) — log a depth-cost warning at
     // boot when the operator's freedom.yaml has
     // `hemisphere_council_depth > 1`. Catches the operator who hand-
@@ -442,6 +388,98 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         writer_join.await.ok();
         return Ok(());
     }
+
+    // Publish the mandatory daemon-owned mutation-audit endpoint before any
+    // recovery or registry consumer can observe installed Skills. Public
+    // `/audit` and token routes still follow `audit_rpc.enabled`; `/health`,
+    // Skill mutation auditing, and cluster authority remain internal runtime
+    // contracts whenever this process owns the PID lock and WAL writer.
+    #[cfg(feature = "cluster")]
+    let cluster_live_sessions =
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
+    #[cfg(feature = "cluster")]
+    let membership_store = crate::cluster::membership::MembershipStore::open(&neoth_home)
+        .context("open daemon membership authority")?;
+    #[cfg(feature = "cluster")]
+    let membership_controller = std::sync::Arc::new(
+        crate::cluster::membership::MembershipController::with_audit_writer(
+            membership_store,
+            std::sync::Arc::clone(&cluster_live_sessions),
+            writer.clone(),
+        ),
+    );
+    #[cfg(feature = "cluster")]
+    let startup_membership = std::sync::Arc::clone(&membership_controller);
+    #[cfg(feature = "cluster")]
+    tokio::task::spawn_blocking(move || {
+        startup_membership.drain_outbox(crate::time::now_unix_i64())
+    })
+    .await
+    .context("join membership outbox startup replay")?
+    .context("replay membership outbox before carrier startup")?;
+    // The listener is a required authority boundary even without cluster:
+    // Skill mutations cannot safely bypass the daemon-owned WAL.
+    let membership_listener_required = true;
+    let daemon_pid_guard = pid_guard
+        .as_mut()
+        .context("normal daemon startup must retain its PID lock")?;
+    #[cfg(feature = "cluster")]
+    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
+        &config,
+        &neoth_home,
+        &writer,
+        daemon_pid_guard,
+        std::sync::Arc::clone(&membership_controller),
+    )
+    .await
+    .context("start daemon membership/audit RPC")?;
+    #[cfg(not(feature = "cluster"))]
+    let (audit_rpc_task, mut audit_rpc_guard) =
+        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer, daemon_pid_guard)
+            .await
+            .context("start mandatory daemon audit RPC")?;
+
+    // Recover consent authority before any runtime-service preflight constructs
+    // a provider. A prepared or required-audit journal deliberately blocks
+    // live use; placing recovery after priming would make restart recovery
+    // self-blocking.
+    match crate::cli::consent_outbox::recover_pending_with_writer(&neoth_home, &writer)
+        .await
+        .context("recover pending consent mutation before provider startup")?
+    {
+        crate::cli::consent_outbox::RecoveryOutcome::None => {}
+        crate::cli::consent_outbox::RecoveryOutcome::Recovered {
+            operation_id,
+            phase,
+            delivery,
+        } => {
+            if delivery.is_pending() {
+                warn!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent mutation recovered but its audit remains queued"
+                );
+            } else {
+                info!(
+                    %operation_id,
+                    phase = phase.as_str(),
+                    "consent mutation recovered before provider startup"
+                );
+            }
+        }
+    }
+
+    // Runtime-service priming follows the validated startup-hook, published
+    // internal audit endpoint, and recovered consent boundary. The
+    // SkillRegistry watcher remains bound for the daemon lifetime.
+    let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(
+        &config,
+        &creds,
+        &neoth_home,
+        &writer,
+        std::sync::Arc::clone(&reload_controller),
+    )
+    .await?;
 
     // ── 4b. Replay any stranded profile-outbox rows ───────────────────────
     //
@@ -1422,56 +1460,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let healthz_task =
         crate::cli::serve_tasks::spawn_healthz(&config, &neoth_home, &provider_meter);
 
-    // ── 5c-ter. Spawn the audit-RPC listener — AUDIT-RPC-01 ────────────────
-    //
-    // Off by default. When `freedom.yaml::audit_rpc.enabled = true`, a loopback
-    // listener lets one-shot CLIs forward their audit frames to this (the
-    // WAL-owning) daemon so a `neoth os launch` / `fs` / `lease` run while the
-    // daemon is up still lands its `0xA5..=0xAD` audit frames. Bearer-token +
-    // loopback-only + a compile-time event-type allowlist (anti-poisoning).
-    #[cfg(feature = "cluster")]
-    let cluster_live_sessions =
-        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
-    #[cfg(feature = "cluster")]
-    let membership_store = crate::cluster::membership::MembershipStore::open(&neoth_home)
-        .context("open daemon membership authority")?;
-    #[cfg(feature = "cluster")]
-    let membership_controller = std::sync::Arc::new(
-        crate::cluster::membership::MembershipController::with_audit_writer(
-            membership_store,
-            std::sync::Arc::clone(&cluster_live_sessions),
-            writer.clone(),
-        ),
-    );
-    #[cfg(feature = "cluster")]
-    let startup_membership = std::sync::Arc::clone(&membership_controller);
-    #[cfg(feature = "cluster")]
-    tokio::task::spawn_blocking(move || {
-        startup_membership.drain_outbox(crate::time::now_unix_i64())
-    })
-    .await
-    .context("join membership outbox startup replay")?
-    .context("replay membership outbox before carrier startup")?;
-    #[cfg(feature = "cluster")]
-    let membership_listener_required =
-        config.cluster.enabled || neoth_home.join("cluster-membership.db").exists();
-    #[cfg(feature = "cluster")]
-    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
-        &config,
-        &neoth_home,
-        &writer,
-        std::sync::Arc::clone(&membership_controller),
-    )
-    .await
-    .context("start daemon membership/audit RPC")?;
-    #[cfg(not(feature = "cluster"))]
-    let membership_listener_required = false;
-    #[cfg(not(feature = "cluster"))]
-    let (audit_rpc_task, mut audit_rpc_guard) =
-        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer)
-            .await
-            .context("start daemon audit RPC")?;
-
     // ── 5d. Cron scheduler — Phase 33a AU-B5 ───────────────────────────────
     //
     // Loads `<instance-home>/jobs.yaml` if present and spawns the tick loop.
@@ -2229,6 +2217,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             true
         }
     };
+    // Withdraw endpoint discovery at the shutdown decision, before hooks or
+    // background drains can take time and before the listener's port can be
+    // recycled. The guard also aborts the listener; its JoinHandle remains in
+    // `BackgroundHandles` solely for ordered task collection.
+    audit_rpc_guard.take();
     restart_watcher.abort();
     let _ = restart_watcher.await;
     // Linearize Dream shutdown at the signal/fatal-boundary decision, before
@@ -2320,9 +2313,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // GOLD-ARCH-01: the full ordered shutdown sequence is now
     // serve_tasks::shutdown_background_tasks. Gather every background handle into
-    // BackgroundHandles (the RAII guards _pid_guard / _skill_watcher /
-    // _audit_rpc_guard stay bound HERE so their Drop fires at fn-end AFTER the
-    // writer drain), then run the verbatim teardown + writer drain in the fn.
+    // BackgroundHandles. The PID + Skill watcher remain bound here; audit-RPC
+    // discovery was deliberately withdrawn at the shutdown decision above so
+    // a dead listener can never remain advertised during the longer drain.
     let bg = crate::cli::serve_tasks::BackgroundHandles {
         plugin_invoker_registration,
         shared_provider,

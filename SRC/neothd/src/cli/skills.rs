@@ -7,19 +7,19 @@
 //!
 //! Output respects the global `--output` flag.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use std::io::IsTerminal;
 
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
-use sha2::Digest as _;
 use tracing::info;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::skills::loader::{SkillInventoryOrigin, SkillInventoryRow, diagnostic_inventory};
+use crate::skills::mutation_lifecycle::{self, IntentDelivery as SkillIntentDelivery};
 use crate::skills::{installer, load_all, operator_skill_warnings, route};
 
 fn print_operator_skill_warnings(warnings: &[String]) {
@@ -105,6 +105,34 @@ fn skill_uninstall_receipt(report: &installer::UninstallReport) -> SkillUninstal
         removed_generation_sha256: report.removed_generation_sha256.as_deref(),
         warnings: operator_skill_warnings(&report.warnings),
     }
+}
+
+fn print_skill_uninstall_report(
+    report: &installer::UninstallReport,
+    skills_dir: &Path,
+    output: OutputFormat,
+) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(&skill_uninstall_receipt(report))?
+            );
+        }
+        OutputFormat::Table => {
+            if report.removed {
+                println!("Uninstalled `{}`", report.id);
+            } else {
+                println!(
+                    "Skill `{}` was not installed under {} — nothing to remove.",
+                    report.id,
+                    skills_dir.display()
+                );
+            }
+            print_operator_skill_warnings(&report.warnings);
+        }
+    }
+    Ok(())
 }
 
 /// Stable machine-readable create acknowledgement. `replaced_existing` is
@@ -313,6 +341,9 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     if args.force && args.install.is_none() && !args.create {
         anyhow::bail!("--force requires --install or --create");
     }
+    reconcile_pending_skill_mutation(&home, &skills_dir)
+        .await
+        .context("reconcile pending audited Skill mutation")?;
 
     if let Some(source) = &args.inspect_install {
         let report = installer::inspect_local_install(source, &skills_dir)?;
@@ -380,51 +411,75 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 "--expected-id, --expected-generation-sha256, and --expected-target-generation-sha256 must be supplied together"
             ),
         };
-        // R3-17: durable install intent → mutation → terminal result. The skill
-        // set is the agent's own capability surface, so a durable WAL ACK must
-        // precede any byte/replacement change (mirrors `plugin remove`, R3-15).
-        // The pre-mutation identity comes from a read-only preflight inspect so
-        // the intent binds the exact source generation the mutation will apply.
-        let operation_id = uuid::Uuid::now_v7().to_string();
-        let preflight = installer::inspect_local_install(source, &skills_dir)?;
-        emit_skill_install_intent(&home, &operation_id, &preflight)
-            .await
-            .context("skill install intent was not durable; nothing was installed")?;
-
-        let report = match installer::install_from_local_with_expectation(
+        // R3-17: prepare privately under the shared cross-process lock, ACK the
+        // exact prepared binding, then publish under that SAME lock. No second
+        // preflight can race the intent's source/destination anchor identity.
+        let operation_id = uuid::Uuid::now_v7().simple().to_string();
+        let mut prepared = installer::prepare_install_from_local_with_expectation(
             source,
             &skills_dir,
             args.force,
             expectation.as_ref(),
-        ) {
+            &operation_id,
+        )?;
+        prepared
+            .mark_intent_submitting()
+            .context("persist skill install intent-delivery ownership")?;
+        let audit_binding = prepared.audit_binding();
+        let intent_receipt = match deliver_skill_mutation_intent(&home, &audit_binding).await? {
+            SkillIntentDelivery::Durable(receipt) => receipt,
+            SkillIntentDelivery::DefinitelyNotRecorded(audit_error) => {
+                prepared.abort_without_intent().with_context(|| {
+                    format!(
+                        "skill install intent was not durable and private preparation cleanup failed: {audit_error:#}"
+                    )
+                })?;
+                return Err(audit_error.context(
+                    "skill install intent was not durable; no public Skill was installed",
+                ));
+            }
+            SkillIntentDelivery::Pending(audit_error) => {
+                drop(prepared);
+                return Err(audit_error.context(
+                    "skill install intent delivery may still complete; private journal retained \
+                     for same-operation recovery",
+                ));
+            }
+        };
+        if let Err(error) = prepared.mark_intent_durable_authenticated(intent_receipt) {
+            drop(prepared);
+            let recovery = reconcile_pending_skill_mutation(&home, &skills_dir).await;
+            return Err(match recovery {
+                Ok(()) => error.context(
+                    "skill install intent was durable, but its local phase transition failed; \
+                     the same operation was reconciled without committing",
+                ),
+                Err(recovery_error) => error.context(format!(
+                    "skill install intent was durable, its local phase transition failed, and \
+                     same-operation recovery remains pending: {recovery_error:#}"
+                )),
+            });
+        }
+
+        let report = match prepared.commit() {
             Ok(report) => report,
-            Err(error) => {
-                let error_sha = hex::encode(sha2::Sha256::digest(format!("{error:#}").as_bytes()));
-                let _ = emit_skill_install_result(
-                    &home,
-                    &operation_id,
-                    &preflight.id,
-                    "aborted",
-                    None,
-                    None,
-                    Some(&error_sha),
-                )
-                .await;
+            Err(commit_error) => {
+                let status = commit_error.state().as_str();
+                let error = commit_error.into_inner();
+                if let Err(recovery_error) =
+                    reconcile_pending_skill_mutation(&home, &skills_dir).await
+                {
+                    return Err(error.context(format!(
+                        "skill install failed with `{status}`, and its same-operation terminal \
+                         reconciliation remains pending: {recovery_error:#}"
+                    )));
+                }
                 return Err(error);
             }
         };
-
-        emit_skill_install_result(
-            &home,
-            &operation_id,
-            &report.id,
-            "committed",
-            Some(report.replaced_existing),
-            Some(&report.source_generation_sha256),
-            None,
-        )
-        .await
-        .context("skill was installed, but its committed audit failed")?;
+        reconcile_pending_skill_mutation(&home, &skills_dir)
+            .await
+            .context("skill was installed, but its committed audit remains pending")?;
 
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
@@ -467,30 +522,78 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 "--expected-uninstall-id and --expected-uninstall-generation-sha256 must be supplied together"
             ),
         };
-        let report = installer::uninstall_with_report_and_expectation(
+        let operation_id = uuid::Uuid::now_v7().simple().to_string();
+        let preparation = installer::prepare_uninstall_with_expectation(
             &skills_dir,
             id,
             expectation.as_ref(),
+            &operation_id,
         )?;
-        match args.output {
-            OutputFormat::Json | OutputFormat::Jsonl => {
-                println!(
-                    "{}",
-                    serde_json::to_string(&skill_uninstall_receipt(&report))?
-                );
+        let mut prepared = match preparation {
+            installer::PreparedSkillRemovalOutcome::Unchanged(report) => {
+                print_skill_uninstall_report(&report, &skills_dir, args.output)?;
+                return Ok(());
             }
-            OutputFormat::Table => {
-                if report.removed {
-                    println!("Uninstalled `{id}`");
-                } else {
-                    println!(
-                        "Skill `{id}` was not installed under {} — nothing to remove.",
-                        skills_dir.display()
-                    );
-                }
-                print_operator_skill_warnings(&report.warnings);
+            installer::PreparedSkillRemovalOutcome::Prepared(prepared) => prepared,
+        };
+        prepared
+            .mark_intent_submitting()
+            .context("persist skill removal intent-delivery ownership")?;
+        let audit_binding = prepared.audit_binding();
+        let intent_receipt = match deliver_skill_mutation_intent(&home, &audit_binding).await? {
+            SkillIntentDelivery::Durable(receipt) => receipt,
+            SkillIntentDelivery::DefinitelyNotRecorded(audit_error) => {
+                prepared.abort_without_intent().with_context(|| {
+                    format!(
+                        "skill removal intent was not durable and its journal cleanup failed: {audit_error:#}"
+                    )
+                })?;
+                return Err(audit_error
+                    .context("skill removal intent was not durable; no public Skill was removed"));
             }
+            SkillIntentDelivery::Pending(audit_error) => {
+                drop(prepared);
+                return Err(audit_error.context(
+                    "skill removal intent delivery may still complete; private journal retained \
+                     for same-operation recovery",
+                ));
+            }
+        };
+        if let Err(error) = prepared.mark_intent_durable_authenticated(intent_receipt) {
+            drop(prepared);
+            let recovery = reconcile_pending_skill_mutation(&home, &skills_dir).await;
+            return Err(match recovery {
+                Ok(()) => error.context(
+                    "skill removal intent was durable, but its local phase transition failed; \
+                     the same operation was reconciled without committing",
+                ),
+                Err(recovery_error) => error.context(format!(
+                    "skill removal intent was durable, its local phase transition failed, and \
+                     same-operation recovery remains pending: {recovery_error:#}"
+                )),
+            });
         }
+
+        let report = match prepared.commit() {
+            Ok(report) => report,
+            Err(commit_error) => {
+                let status = commit_error.state().as_str();
+                let error = commit_error.into_inner();
+                if let Err(recovery_error) =
+                    reconcile_pending_skill_mutation(&home, &skills_dir).await
+                {
+                    return Err(error.context(format!(
+                        "skill removal failed with `{status}`, and its same-operation terminal \
+                         reconciliation remains pending: {recovery_error:#}"
+                    )));
+                }
+                return Err(error);
+            }
+        };
+        reconcile_pending_skill_mutation(&home, &skills_dir)
+            .await
+            .context("skill removal committed, but its correlated audit remains pending")?;
+        print_skill_uninstall_report(&report, &skills_dir, args.output)?;
         return Ok(());
     }
 
@@ -524,11 +627,13 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 "--expected-create-id and --expected-create-target-generation-sha256 must be supplied together"
             ),
         };
-        let report = crate::skills::creator::create_skill_with_expectation(
+        let report = crate::skills::creator::create_skill_with_expectation_audited(
+            &home,
             &skills_dir,
             params,
             existing,
             expectation.as_ref(),
+            installer::SkillMutationOrigin::CliCreate,
         )?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
@@ -742,67 +847,30 @@ fn print_skill_inventory(
     Ok(())
 }
 
-/// Emit the mandatory `skills --install` intent (EXTENDED `SkillInstallIntent`).
-/// Required: a non-durable intent aborts the install before any change. The
-/// payload is metadata-only — skill id and generation hashes, never the raw
-/// source path (R3-17, mirrors `emit_plugin_removal_intent`).
-async fn emit_skill_install_intent(
-    home: &std::path::Path,
-    operation_id: &str,
-    preflight: &installer::InstallPreflight,
-) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "operation_id": operation_id,
-        "skill_id": preflight.id,
-        "source_generation_sha256": preflight.source_generation_sha256,
-        "replacing_existing": preflight.replacing_existing,
-        "target_generation_sha256": preflight.target_generation_sha256,
-        "phase": "intent",
-        "source": "cli",
-        "ts_unix": crate::time::now_unix_secs(),
-    }))?;
-    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
-        home,
-        crate::wal::events::EVENT_TYPE_EXTENDED,
-        crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8,
-        payload,
-        "SKILL_INSTALL_INTENT",
-        true,
-    )
-    .await
+#[cfg(test)]
+fn fail_next_skill_audit_deliveries(count: usize) {
+    mutation_lifecycle::fail_next_skill_audit_deliveries(count);
 }
 
-/// Emit the terminal `skills --install` outcome (EXTENDED `SkillInstallResult`)
-/// correlated to its intent by `operation_id`. Committed is required; an aborted
-/// outcome is best-effort (its call site keeps propagating the mutation error).
-#[allow(clippy::too_many_arguments)]
-async fn emit_skill_install_result(
-    home: &std::path::Path,
-    operation_id: &str,
-    skill_id: &str,
-    status: &str,
-    replaced_existing: Option<bool>,
-    installed_generation_sha256: Option<&str>,
-    error_sha256: Option<&str>,
+async fn deliver_skill_mutation_intent(
+    home: &Path,
+    binding: &installer::SkillMutationAuditBinding,
+) -> Result<SkillIntentDelivery> {
+    mutation_lifecycle::deliver_intent(home, None, binding).await
+}
+
+#[cfg(test)]
+async fn deliver_skill_mutation_terminal_once(
+    home: &Path,
+    binding: &installer::SkillMutationAuditBinding,
 ) -> Result<()> {
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "operation_id": operation_id,
-        "skill_id": skill_id,
-        "status": status,
-        "replaced_existing": replaced_existing,
-        "installed_generation_sha256": installed_generation_sha256,
-        "error_sha256": error_sha256,
-        "ts_unix": crate::time::now_unix_secs(),
-    }))?;
-    crate::cli::todo::emit_oneshot_audit_at_with_subtype(
-        home,
-        crate::wal::events::EVENT_TYPE_EXTENDED,
-        crate::wal::events::ExtendedSubtype::SkillInstallResult as u8,
-        payload,
-        "SKILL_INSTALL_RESULT",
-        status == "committed",
-    )
-    .await
+    mutation_lifecycle::deliver_terminal_once(home, None, binding)
+        .await
+        .map(|_| ())
+}
+
+async fn reconcile_pending_skill_mutation(home: &Path, skills_dir: &Path) -> Result<()> {
+    mutation_lifecycle::reconcile_pending(home, skills_dir, None).await
 }
 
 /// GOLD-ADOPT-14 — `neoth skill {--enable,--disable} <id>`: validate the id is a
@@ -1310,46 +1378,25 @@ mod tests {
         assert_eq!(s.disabled, vec!["pm-retro".to_string()]);
     }
 
-    /// Decode every frame in a raw WAL segment to `{event_type, payload}` JSON.
-    /// Mirrors the proven `cli::plugin` test decoder (same public `wal` APIs).
-    fn decode_wal_frames(segment: &std::path::Path) -> Vec<serde_json::Value> {
-        use crate::wal::compress::decompress_frames;
-        use crate::wal::frame::decode_frame;
-        use crate::wal::segment_header::parse_segment_header;
-
-        let Ok(bytes) = std::fs::read(segment) else {
-            return Vec::new();
-        };
-        let Ok(hdr) = parse_segment_header(&bytes) else {
-            return Vec::new();
-        };
-        let body = &bytes[hdr.header_len()..];
-        let frames = if hdr.is_compressed() {
-            match decompress_frames(body) {
-                Ok(f) => f,
-                Err(_) => return Vec::new(),
-            }
-        } else {
-            body.to_vec()
-        };
+    /// Decode every authenticated-home WAL frame to `{event_type, payload}`
+    /// JSON through the same bounded, encrypted, no-follow scanner production
+    /// reconciliation uses.
+    fn decode_wal_frames(home: &std::path::Path) -> Vec<serde_json::Value> {
         let mut out = Vec::new();
-        let mut cursor = 0usize;
-        while cursor < frames.len() {
-            let dec = match decode_frame(&frames[cursor..]) {
-                Ok(d) => d,
-                Err(_) => break,
-            };
-            let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
-            out.push(serde_json::json!({
-                "event_type": format!("0x{:02X}", dec.header.event_type),
-                "payload": payload,
-            }));
-            let total = dec.header.total_len as usize;
-            if total == 0 {
-                break;
-            }
-            cursor = cursor.saturating_add(total);
-        }
+        crate::wal::scan::for_each_frame_at_home(
+            home,
+            crate::wal::scan::HomeWalScanLimits::default(),
+            |_, dec| {
+                let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
+                out.push(serde_json::json!({
+                    "event_type": format!("0x{:02X}", dec.header.event_type),
+                    "event_subtype": format!("0x{:02X}", dec.header.event_subtype),
+                    "payload": payload,
+                }));
+                Ok(())
+            },
+        )
+        .unwrap();
         out
     }
 
@@ -1359,40 +1406,59 @@ mod tests {
         // audit trail. No daemon here → the direct home-bound WAL writer (append
         // mode), so both frames must persist in order with skill-specific keys.
         let home = tempfile::TempDir::new().unwrap();
-        let op = "op-skill-1";
-        let preflight = installer::InstallPreflight {
-            id: "demo_skill".into(),
-            source_manifest_sha256: "man789".into(),
-            source_generation_sha256: "gen789".into(),
-            replacing_existing: true,
-            target_generation_sha256: Some("old111".into()),
+        let op = "0123456789abcdef0123456789abcdef";
+        let source = "7".repeat(64);
+        let prior = "1".repeat(64);
+        let binding = installer::SkillMutationAuditBinding {
+            operation_id: op.into(),
+            kind: installer::SkillMutationKind::Replace,
+            origin: installer::SkillMutationOrigin::CliInstall,
+            skill_id: "demo_skill".into(),
+            source_generation_sha256: Some(source.clone()),
+            prior_generation_sha256: Some(prior.clone()),
+            prior_object_identity_sha256: Some("4".repeat(64)),
+            intent_receipt: None,
+            commit_boundary_sha256: None,
+            phase: installer::SkillMutationPhase::Prepared,
+            observed_generation_sha256: None,
+            error_sha256: None,
+            created_at_unix: 1,
         };
-        super::emit_skill_install_intent(home.path(), op, &preflight)
+        let super::SkillIntentDelivery::Durable(receipt) =
+            super::deliver_skill_mutation_intent(home.path(), &binding)
+                .await
+                .unwrap()
+        else {
+            panic!("intent must be durable");
+        };
+        let mut terminal = binding.clone();
+        terminal.intent_receipt = Some(receipt);
+        terminal.commit_boundary_sha256 = Some("6".repeat(64));
+        terminal.phase = installer::SkillMutationPhase::Committed;
+        terminal.observed_generation_sha256 = Some(source.clone());
+        super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
             .await
             .unwrap();
-        super::emit_skill_install_result(
-            home.path(),
-            op,
-            "demo_skill",
-            "committed",
-            Some(true),
-            Some("gen789"),
-            None,
-        )
-        .await
-        .unwrap();
+        // Simulate cancellation after the first fsynced result but before the
+        // outbox acknowledgement: retry must observe, not append, that result.
+        super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
+            .await
+            .unwrap();
 
-        let frames = decode_wal_frames(&home.path().join("wal").join("000001.wal"));
+        let frames = decode_wal_frames(home.path());
         assert_eq!(frames.len(), 2, "intent + result frames must both persist");
         assert_eq!(frames[0]["event_type"], "0x00");
         assert_eq!(frames[1]["event_type"], "0x00");
+        assert_eq!(frames[0]["event_subtype"], "0x14");
+        assert_eq!(frames[1]["event_subtype"], "0x15");
         let intent = &frames[0]["payload"];
         assert_eq!(intent["phase"], "intent");
         assert_eq!(intent["operation_id"], op);
         assert_eq!(intent["skill_id"], "demo_skill");
-        assert_eq!(intent["source_generation_sha256"], "gen789");
+        assert_eq!(intent["source_generation_sha256"], source);
         assert_eq!(intent["replacing_existing"], true);
-        assert_eq!(intent["target_generation_sha256"], "old111");
+        assert_eq!(intent["target_generation_sha256"], prior);
+        assert_eq!(intent["prior_anchor_state"], "present");
         let result = &frames[1]["payload"];
         assert_eq!(result["status"], "committed");
         assert_eq!(
@@ -1401,6 +1467,228 @@ mod tests {
         );
         assert_eq!(result["skill_id"], "demo_skill");
         assert_eq!(result["replaced_existing"], true);
-        assert_eq!(result["installed_generation_sha256"], "gen789");
+        assert_eq!(result["installed_generation_sha256"], source);
+    }
+
+    #[tokio::test]
+    async fn skill_removal_emits_correlated_intent_and_committed_wal() {
+        let home = tempfile::TempDir::new().unwrap();
+        let op = "fedcba9876543210fedcba9876543210";
+        let prior = "1".repeat(64);
+        let binding = installer::SkillMutationAuditBinding {
+            operation_id: op.into(),
+            kind: installer::SkillMutationKind::Remove,
+            origin: installer::SkillMutationOrigin::CliUninstall,
+            skill_id: "demo_skill".into(),
+            source_generation_sha256: None,
+            prior_generation_sha256: Some(prior.clone()),
+            prior_object_identity_sha256: Some("5".repeat(64)),
+            intent_receipt: None,
+            commit_boundary_sha256: None,
+            phase: installer::SkillMutationPhase::Prepared,
+            observed_generation_sha256: None,
+            error_sha256: None,
+            created_at_unix: 2,
+        };
+        let super::SkillIntentDelivery::Durable(receipt) =
+            super::deliver_skill_mutation_intent(home.path(), &binding)
+                .await
+                .unwrap()
+        else {
+            panic!("intent must be durable");
+        };
+        let mut terminal = binding.clone();
+        terminal.intent_receipt = Some(receipt);
+        terminal.commit_boundary_sha256 = Some("6".repeat(64));
+        terminal.phase = installer::SkillMutationPhase::Committed;
+        super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
+            .await
+            .unwrap();
+
+        let frames = decode_wal_frames(home.path());
+        assert_eq!(frames.len(), 2, "intent + result frames must both persist");
+        assert_eq!(frames[0]["event_type"], "0x00");
+        assert_eq!(frames[1]["event_type"], "0x00");
+        assert_eq!(frames[0]["event_subtype"], "0x17");
+        assert_eq!(frames[1]["event_subtype"], "0x18");
+        let intent = &frames[0]["payload"];
+        assert_eq!(intent["phase"], "intent");
+        assert_eq!(intent["operation_id"], op);
+        assert_eq!(intent["skill_id"], "demo_skill");
+        assert_eq!(intent["target_generation_sha256"], prior);
+        assert_eq!(intent["prior_anchor_state"], "present");
+        let result = &frames[1]["payload"];
+        assert_eq!(result["status"], "committed");
+        assert_eq!(result["operation_id"], op);
+        assert_eq!(result["skill_id"], "demo_skill");
+        assert_eq!(result["removed"], true);
+        assert_eq!(result["removed_generation_sha256"], prior);
+    }
+
+    #[tokio::test]
+    async fn failed_skill_install_keeps_the_prepared_operation_id_in_terminal_audit() {
+        let home = tempfile::TempDir::new().unwrap();
+        let op = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let source = "2".repeat(64);
+        let error_sha256 = "3".repeat(64);
+        let binding = installer::SkillMutationAuditBinding {
+            operation_id: op.into(),
+            kind: installer::SkillMutationKind::Install,
+            origin: installer::SkillMutationOrigin::CliInstall,
+            skill_id: "failed_skill".into(),
+            source_generation_sha256: Some(source),
+            prior_generation_sha256: None,
+            prior_object_identity_sha256: None,
+            intent_receipt: None,
+            commit_boundary_sha256: None,
+            phase: installer::SkillMutationPhase::Prepared,
+            observed_generation_sha256: None,
+            error_sha256: None,
+            created_at_unix: 3,
+        };
+        let super::SkillIntentDelivery::Durable(receipt) =
+            super::deliver_skill_mutation_intent(home.path(), &binding)
+                .await
+                .unwrap()
+        else {
+            panic!("intent must be durable");
+        };
+        let mut terminal = binding.clone();
+        terminal.intent_receipt = Some(receipt);
+        terminal.commit_boundary_sha256 = Some("6".repeat(64));
+        terminal.phase = installer::SkillMutationPhase::Aborted;
+        terminal.error_sha256 = Some(error_sha256.clone());
+        super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
+            .await
+            .unwrap();
+
+        let frames = decode_wal_frames(home.path());
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["payload"]["operation_id"], op);
+        assert_eq!(frames[1]["payload"]["operation_id"], op);
+        assert_eq!(frames[1]["payload"]["status"], "aborted");
+        assert_eq!(frames[1]["payload"]["error_sha256"], error_sha256);
+    }
+
+    #[tokio::test]
+    async fn failed_intent_delivery_aborts_only_after_wal_proves_it_was_not_recorded() {
+        let home = tempfile::TempDir::new().unwrap();
+        let source_root = tempfile::TempDir::new().unwrap();
+        let source = source_root.path().join("intent_failure_source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(
+            source.join("skill.yaml"),
+            "id: intent_failure\n\
+             description: failed intent delivery\n\
+             trigger_keywords: [failure]\n\
+             system_prompt: fail closed\n",
+        )
+        .unwrap();
+        let skills_dir = home.path().join("skills");
+        let prepared = installer::prepare_install_from_local_with_expectation(
+            &source,
+            &skills_dir,
+            false,
+            None,
+            "67676767676767676767676767676767",
+        )
+        .unwrap();
+        let binding = prepared.audit_binding();
+
+        super::fail_next_skill_audit_deliveries(1);
+        let delivery = super::deliver_skill_mutation_intent(home.path(), &binding)
+            .await
+            .unwrap();
+        let super::SkillIntentDelivery::DefinitelyNotRecorded(error) = delivery else {
+            panic!("injected pre-append failure must be proven not recorded");
+        };
+        assert!(format!("{error:#}").contains("injected Skill mutation WAL delivery failure"));
+        prepared.abort_without_intent().unwrap();
+
+        assert!(!skills_dir.join("intent_failure").exists());
+        assert!(!skills_dir.join(".neoth-skill-mutation.json").exists());
+        assert!(std::fs::read_dir(&skills_dir).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".neoth-install-intent_failure-")
+        }));
+    }
+
+    #[tokio::test]
+    async fn result_cancel_recovery_reuses_operation_and_never_duplicates_terminal() {
+        let home = tempfile::TempDir::new().unwrap();
+        let source_root = tempfile::TempDir::new().unwrap();
+        let source = source_root.path().join("cancel_source");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(
+            source.join("skill.yaml"),
+            "id: cancel_recovery\n\
+             description: cancellation recovery\n\
+             trigger_keywords: [cancel]\n\
+             system_prompt: recover\n",
+        )
+        .unwrap();
+        let skills_dir = home.path().join("skills");
+        let operation_id = "34343434343434343434343434343434";
+        let mut prepared = installer::prepare_install_from_local_with_expectation(
+            &source,
+            &skills_dir,
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_submitting().unwrap();
+        let intent = prepared.audit_binding();
+        let super::SkillIntentDelivery::Durable(intent_receipt) =
+            super::deliver_skill_mutation_intent(home.path(), &intent)
+                .await
+                .unwrap()
+        else {
+            panic!("test intent must be durable");
+        };
+        prepared
+            .mark_intent_durable_authenticated(intent_receipt)
+            .unwrap();
+        prepared.commit().unwrap();
+
+        // Simulate cancellation after the fsynced terminal append but before
+        // the local outbox acknowledgement/cleanup.
+        let mut pending = installer::open_pending_skill_mutation_reconciliation(&skills_dir)
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        super::fail_next_skill_audit_deliveries(1);
+        let failure = super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
+            .await
+            .unwrap_err();
+        assert!(format!("{failure:#}").contains("injected Skill mutation WAL delivery failure"));
+        assert!(
+            skills_dir.join(".neoth-skill-mutation.json").exists(),
+            "failed terminal delivery must retain the exact outbox"
+        );
+        super::deliver_skill_mutation_terminal_once(home.path(), &terminal)
+            .await
+            .unwrap();
+        drop(pending);
+
+        super::reconcile_pending_skill_mutation(home.path(), &skills_dir)
+            .await
+            .unwrap();
+        assert!(
+            !skills_dir.join(".neoth-skill-mutation.json").exists(),
+            "existing terminal WAL evidence must allow durable outbox cleanup"
+        );
+        let frames = decode_wal_frames(home.path());
+        let results = frames
+            .iter()
+            .filter(|frame| {
+                frame["event_subtype"] == "0x15" && frame["payload"]["operation_id"] == operation_id
+            })
+            .count();
+        assert_eq!(results, 1, "terminal result must be exactly once");
     }
 }

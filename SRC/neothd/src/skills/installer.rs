@@ -8,11 +8,11 @@
 //!
 //! This module provides:
 //!
-//! - [`install_from_local`] — copy a local skill directory into
-//!   `~/.neoth/skills/<id>/`. Validates the manifest before copy so
-//!   broken YAML never lands in the skills dir.
-//! - [`uninstall`] — remove `~/.neoth/skills/<id>/`, idempotent
-//!   (missing is Ok, the operator wanted it gone either way).
+//! - [`prepare_install_from_local_with_expectation`] — validate and privately
+//!   stage a local skill while retaining the mutation lock. The caller durably
+//!   ACKs its exact binding before [`PreparedSkillInstall::commit`].
+//! - [`prepare_uninstall_with_expectation`] — capture one public generation
+//!   under that same lock before a durable removal intent and commit.
 //! - [`list_installed`] — return every skill currently present under
 //!   `~/.neoth/skills/`. Mirrors `skills::loader::load_all` but
 //!   surfaces broken installs (no skill.yaml, malformed YAML) so
@@ -22,13 +22,13 @@
 //!
 //! - **GitHub fetch.** The cc-switch installer downloads a repo ZIP
 //!   from `https://github.com/<owner>/<repo>/archive/<ref>.zip`,
-//!   extracts, validates, then calls `install_from_local`. Adding
+//!   extracts, validates, then enters the prepared mutation lifecycle. Adding
 //!   that here means a new outbound HTTP surface; per the AIO hard
 //!   rule (`[[neoth-aio-cross-platform]]`) that fetch belongs in
 //!   `src/installers/` not in `src/skills/` (the providers/+installers/
 //!   path is the only network-allowed band per `tests/no_outbound_network.rs`).
 //!   Follow-up: `installers::skill_github::fetch` chains into this
-//!   module's `install_from_local` after the ZIP is unpacked.
+//!   module's authenticated intent/commit path after the ZIP is unpacked.
 //! - **Symlinks.** cc-switch supports symlink installs for editable
 //!   skill development; that's a power-user feature. Operators get
 //!   copy-install in v0.1; symlink installs ship when there's an
@@ -41,7 +41,7 @@ use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
@@ -53,9 +53,9 @@ use sha2::{Digest as _, Sha256};
 
 use super::schema::SkillManifest;
 use super::store::{
-    BoundDirectory, cap_metadata_is_link_like, open_bound_directory, open_real_child_dir,
-    open_regular_file, read_regular_file_bounded, remove_child_file, remove_real_directory_tree,
-    rename_child,
+    BoundChildObject, BoundDirectory, bind_child_object, cap_metadata_is_link_like,
+    open_bound_directory, open_real_child_dir, open_regular_file, read_regular_file_bounded,
+    remove_child_file, remove_real_directory_tree, rename_child, valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -64,21 +64,110 @@ const MAX_SKILL_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_SKILL_ENTRIES: usize = 4096;
 const MAX_SKILL_TREE_DEPTH: usize = 32;
 const SKILL_MUTATION_LOCK_FILE: &str = ".neoth-skills.lock";
+const SKILL_MUTATION_JOURNAL_FILE: &str = ".neoth-skill-mutation.json";
+const SKILL_MUTATION_JOURNAL_STAGE_PREFIX: &str = ".neoth-skill-mutation-write-";
+const SKILL_MUTATION_JOURNAL_VERSION: u32 = 2;
+const MAX_SKILL_MUTATION_JOURNAL_BYTES: usize = 16 * 1024;
 const INSTALL_TRANSACTION_PREFIX: &str = ".neoth-install-";
 const BACKUP_TRANSACTION_PREFIX: &str = ".neoth-backup-";
 const DELETE_TRANSACTION_PREFIX: &str = ".neoth-delete-";
 const CREATOR_DIRECTORY_STAGE_PREFIX: &str = ".skill-create-stage-";
 const CREATOR_MANIFEST_STAGE_PREFIX: &str = ".skill-yaml.stage-";
 const FILE_REPLACEMENT_STAGE_PREFIX: &str = ".neoth-replace-";
-static SKILL_MUTATION_LOCK: Mutex<()> = Mutex::new(());
+static SKILL_MUTATION_PROCESS_NONCE: OnceLock<String> = OnceLock::new();
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FinalLookupSwapPoint {
+    Replace,
+    RemoveDirectory,
+    RemoveLeaf,
+}
+
+#[cfg(test)]
+struct TestFinalLookupSwap {
+    point: FinalLookupSwapPoint,
+    replacement_name: OsString,
+    displaced_name: OsString,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_FINAL_LOOKUP_SWAP: std::cell::RefCell<Option<TestFinalLookupSwap>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn arm_final_lookup_swap(
+    point: FinalLookupSwapPoint,
+    replacement_name: impl Into<OsString>,
+    displaced_name: impl Into<OsString>,
+) {
+    TEST_FINAL_LOOKUP_SWAP.with(|slot| {
+        *slot.borrow_mut() = Some(TestFinalLookupSwap {
+            point,
+            replacement_name: replacement_name.into(),
+            displaced_name: displaced_name.into(),
+        });
+    });
+}
+
+fn maybe_inject_final_lookup_swap(
+    root: &BoundDirectory,
+    public_name: &str,
+    point: FinalLookupSwapPoint,
+) -> Result<()> {
+    #[cfg(not(test))]
+    {
+        let _ = (root, public_name, point);
+        Ok(())
+    }
+    #[cfg(test)]
+    {
+        let Some(swap) = TEST_FINAL_LOOKUP_SWAP.with(|slot| {
+            if slot
+                .borrow()
+                .as_ref()
+                .is_some_and(|armed| armed.point == point)
+            {
+                slot.borrow_mut().take()
+            } else {
+                None
+            }
+        }) else {
+            return Ok(());
+        };
+        let public = root.display_path.join(public_name);
+        let displaced = root.display_path.join(&swap.displaced_name);
+        let replacement = root.display_path.join(&swap.replacement_name);
+        rename_child(
+            &root.dir,
+            OsStr::new(public_name),
+            &root.dir,
+            &swap.displaced_name,
+            false,
+            &public,
+            &displaced,
+        )
+        .context("test hook displace preflight-bound Skill object")?;
+        rename_child(
+            &root.dir,
+            &swap.replacement_name,
+            &root.dir,
+            OsStr::new(public_name),
+            false,
+            &replacement,
+            &public,
+        )
+        .context("test hook publish same-name replacement in final lookup gap")
+    }
+}
 
 /// Default skills dir: `~/.neoth/skills/`.
 pub fn default_skills_dir() -> PathBuf {
     crate::config::FreedomConfig::default_neoth_home().join("skills")
 }
 
-/// Report of one installation operation. Returned by [`install_from_local`]
-/// so the CLI can surface what landed where.
+/// Report of one committed installation operation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InstallReport {
     /// The skill id (matches the directory name + the manifest's `id`).
@@ -103,6 +192,58 @@ pub struct InstallReport {
     pub warnings: Vec<String>,
 }
 
+/// The only top-level package documents that generated/runtime writers may
+/// replace. Keeping this typed prevents a writer-controlled path from turning
+/// the installed-Skill lifecycle into an arbitrary package-file mutation API.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SkillPackageDocument {
+    Manifest,
+    Instructions,
+}
+
+impl SkillPackageDocument {
+    #[must_use]
+    fn file_name(self) -> &'static OsStr {
+        match self {
+            Self::Manifest => OsStr::new("skill.yaml"),
+            Self::Instructions => OsStr::new("skill.md"),
+        }
+    }
+
+    #[must_use]
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Manifest => "skill.yaml",
+            Self::Instructions => "skill.md",
+        }
+    }
+}
+
+/// Owned, thread-safe input for one generated/runtime package write. Bound
+/// filesystem capabilities and the OS mutation lock are constructed only
+/// after this request reaches its dedicated transaction runtime.
+#[derive(Clone, Debug)]
+pub(crate) struct SkillDocumentMutationRequest {
+    pub(crate) target_skills_dir: PathBuf,
+    pub(crate) id: String,
+    pub(crate) document: SkillPackageDocument,
+    pub(crate) replacement: Vec<u8>,
+    pub(crate) existing: super::creator::ExistingSkillPolicy,
+    /// `None` means no preflight was supplied. `Some(None)` binds an absent
+    /// target; `Some(Some(hash))` binds that exact package generation.
+    pub(crate) expected_target_generation_sha256: Option<Option<String>>,
+    /// When present, the live document must still equal these exact bytes
+    /// under the mutation lock. Self-Improve uses this in addition to the full
+    /// package-generation expectation.
+    pub(crate) expected_document: Option<Vec<u8>>,
+    pub(crate) origin: SkillMutationOrigin,
+}
+
+pub(crate) enum PreparedSkillDocumentMutation {
+    Unchanged(InstallReport),
+    Prepared(PreparedSkillInstall),
+}
+
 /// Read-only result used before a GUI asks whether an existing skill may be
 /// replaced. The later install must present both fields as an expectation;
 /// otherwise a changed source manifest cannot inherit the earlier consent.
@@ -120,6 +261,821 @@ pub struct InstallExpectation {
     pub id: String,
     pub source_generation_sha256: String,
     pub target_generation_sha256: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillMutationKind {
+    Install,
+    Replace,
+    Remove,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillMutationOrigin {
+    CliInstall,
+    CliUninstall,
+    CliCreate,
+    ProactiveAccept,
+    ProactiveCurator,
+    Teacher,
+    SelfImproveAccept,
+    SelfImproveRollback,
+}
+
+impl SkillMutationOrigin {
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::CliInstall => "cli_install",
+            Self::CliUninstall => "cli_uninstall",
+            Self::CliCreate => "cli_create",
+            Self::ProactiveAccept => "proactive_accept",
+            Self::ProactiveCurator => "proactive_curator",
+            Self::Teacher => "teacher",
+            Self::SelfImproveAccept => "self_improve_accept",
+            Self::SelfImproveRollback => "self_improve_rollback",
+        }
+    }
+}
+
+impl SkillMutationKind {
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Install => "install",
+            Self::Replace => "replace",
+            Self::Remove => "remove",
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn is_install(self) -> bool {
+        matches!(self, Self::Install | Self::Replace)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SkillMutationPhase {
+    Prepared,
+    IntentSubmitting,
+    IntentDurable,
+    CommitStarted,
+    Committed,
+    Aborted,
+    Indeterminate,
+}
+
+impl SkillMutationPhase {
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::IntentSubmitting => "intent_submitting",
+            Self::IntentDurable => "intent_durable",
+            Self::CommitStarted => "commit_started",
+            Self::Committed => "committed",
+            Self::Aborted => "aborted",
+            Self::Indeterminate => "indeterminate",
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn is_terminal(self) -> bool {
+        matches!(self, Self::Committed | Self::Aborted | Self::Indeterminate)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SkillTerminalDeliveryState {
+    NotStarted,
+    Submitting,
+    Durable,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum SkillCleanupArtifactKind {
+    InstallStage,
+    ReplacementBackup,
+    RemovalTombstone,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SkillCleanupState {
+    artifact_name: String,
+    artifact_kind: SkillCleanupArtifactKind,
+    object_identity: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SkillMutationAuditReceipt {
+    pub(crate) audit_event_id: String,
+    pub(crate) payload_sha256: String,
+    pub(crate) segment_name: String,
+    pub(crate) segment_generation: u32,
+    pub(crate) segment_seq: u64,
+    pub(crate) segment_start_ts_ns: u64,
+    pub(crate) segment_node_id_hex: String,
+    pub(crate) logical_offset: u64,
+    pub(crate) event_id: u64,
+    pub(crate) event_hlc_physical_ns: u64,
+    pub(crate) event_hlc_logical: u32,
+    pub(crate) event_node_id_hex: String,
+}
+
+/// Durable, metadata-only operation record. The record is written before the
+/// intent may be emitted and retained until exactly one correlated terminal
+/// result is observed in the WAL. Raw source or destination paths never land
+/// here.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SkillMutationJournal {
+    version: u32,
+    operation_id: String,
+    kind: SkillMutationKind,
+    origin: SkillMutationOrigin,
+    skill_id: String,
+    source_generation_sha256: Option<String>,
+    prior_generation_sha256: Option<String>,
+    prior_object_identity: Option<String>,
+    intent_delivery_owner_nonce: Option<String>,
+    intent_receipt: Option<SkillMutationAuditReceipt>,
+    commit_boundary_nonce: Option<String>,
+    phase: SkillMutationPhase,
+    observed_generation_sha256: Option<String>,
+    error_sha256: Option<String>,
+    terminal_delivery_state: SkillTerminalDeliveryState,
+    terminal_delivery_owner_nonce: Option<String>,
+    terminal_receipt: Option<SkillMutationAuditReceipt>,
+    cleanup_started: Option<SkillCleanupState>,
+    created_at_unix: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SkillMutationAuditBinding {
+    pub(crate) operation_id: String,
+    pub(crate) kind: SkillMutationKind,
+    pub(crate) origin: SkillMutationOrigin,
+    pub(crate) skill_id: String,
+    pub(crate) source_generation_sha256: Option<String>,
+    pub(crate) prior_generation_sha256: Option<String>,
+    pub(crate) prior_object_identity_sha256: Option<String>,
+    pub(crate) intent_receipt: Option<SkillMutationAuditReceipt>,
+    pub(crate) commit_boundary_sha256: Option<String>,
+    pub(crate) phase: SkillMutationPhase,
+    pub(crate) observed_generation_sha256: Option<String>,
+    pub(crate) error_sha256: Option<String>,
+    pub(crate) created_at_unix: i64,
+}
+
+impl SkillMutationAuditBinding {
+    #[must_use]
+    pub(crate) fn intent_audit_event_id(&self) -> String {
+        derive_skill_mutation_audit_event_id(self, "intent")
+    }
+
+    #[must_use]
+    pub(crate) fn terminal_audit_event_id(&self) -> String {
+        derive_skill_mutation_audit_event_id(self, self.phase.as_str())
+    }
+}
+
+impl SkillMutationJournal {
+    fn audit_binding(&self) -> SkillMutationAuditBinding {
+        SkillMutationAuditBinding {
+            operation_id: self.operation_id.clone(),
+            kind: self.kind,
+            origin: self.origin,
+            skill_id: self.skill_id.clone(),
+            source_generation_sha256: self.source_generation_sha256.clone(),
+            prior_generation_sha256: self.prior_generation_sha256.clone(),
+            prior_object_identity_sha256: self
+                .prior_object_identity
+                .as_deref()
+                .map(|identity| hex::encode(Sha256::digest(identity.as_bytes()))),
+            intent_receipt: self.intent_receipt.clone(),
+            commit_boundary_sha256: self
+                .commit_boundary_nonce
+                .as_deref()
+                .map(|nonce| hex::encode(Sha256::digest(nonce.as_bytes()))),
+            phase: self.phase,
+            observed_generation_sha256: self.observed_generation_sha256.clone(),
+            error_sha256: self.error_sha256.clone(),
+            created_at_unix: self.created_at_unix,
+        }
+    }
+}
+
+fn derive_skill_mutation_audit_event_id(
+    binding: &SkillMutationAuditBinding,
+    audit_phase: &str,
+) -> String {
+    fn hash_optional(digest: &mut Sha256, value: Option<&str>) {
+        match value {
+            Some(value) => {
+                digest.update([1]);
+                digest.update((value.len() as u64).to_le_bytes());
+                digest.update(value.as_bytes());
+            }
+            None => digest.update([0]),
+        }
+    }
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth:skill-mutation:audit-event:v1\0");
+    for value in [
+        binding.operation_id.as_str(),
+        binding.kind.as_str(),
+        binding.origin.as_str(),
+        binding.skill_id.as_str(),
+        audit_phase,
+    ] {
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value.as_bytes());
+    }
+    hash_optional(&mut digest, binding.source_generation_sha256.as_deref());
+    hash_optional(&mut digest, binding.prior_generation_sha256.as_deref());
+    hash_optional(&mut digest, binding.prior_object_identity_sha256.as_deref());
+    if audit_phase != "intent" {
+        hash_optional(
+            &mut digest,
+            binding
+                .intent_receipt
+                .as_ref()
+                .map(|receipt| receipt.audit_event_id.as_str()),
+        );
+        hash_optional(&mut digest, binding.commit_boundary_sha256.as_deref());
+        hash_optional(&mut digest, binding.observed_generation_sha256.as_deref());
+        hash_optional(&mut digest, binding.error_sha256.as_deref());
+    }
+    digest.update(binding.created_at_unix.to_le_bytes());
+    hex::encode(digest.finalize())
+}
+
+fn validate_skill_mutation_journal(record: &SkillMutationJournal) -> Result<()> {
+    fn validate_receipt(label: &str, receipt: &SkillMutationAuditReceipt) -> Result<()> {
+        if !valid_sha256(&receipt.audit_event_id) || !valid_sha256(&receipt.payload_sha256) {
+            anyhow::bail!(
+                "skill mutation {label} receipt carries an invalid event or payload digest"
+            );
+        }
+        if [&receipt.segment_node_id_hex, &receipt.event_node_id_hex]
+            .into_iter()
+            .any(|node| {
+                node.len() != 32
+                    || !node
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        {
+            anyhow::bail!("skill mutation {label} receipt carries an invalid node id");
+        }
+        if !crate::wal::scan::canonical_segment_name(OsStr::new(&receipt.segment_name)) {
+            anyhow::bail!("skill mutation {label} receipt has an invalid segment name");
+        }
+        Ok(())
+    }
+
+    if record.version != SKILL_MUTATION_JOURNAL_VERSION {
+        anyhow::bail!(
+            "unsupported skill mutation journal version {}",
+            record.version
+        );
+    }
+    validate_mutation_operation_id(&record.operation_id)?;
+    validate_installed_skill_dir_name(&record.skill_id)?;
+    for (label, digest) in [
+        (
+            "source generation",
+            record.source_generation_sha256.as_deref(),
+        ),
+        (
+            "prior generation",
+            record.prior_generation_sha256.as_deref(),
+        ),
+        (
+            "observed generation",
+            record.observed_generation_sha256.as_deref(),
+        ),
+        ("error", record.error_sha256.as_deref()),
+    ] {
+        if digest.is_some_and(|value| !valid_sha256(value)) {
+            anyhow::bail!(
+                "skill mutation journal {label} SHA-256 must be 64 lowercase hex characters"
+            );
+        }
+    }
+    if record
+        .prior_object_identity
+        .as_deref()
+        .is_some_and(|identity| !valid_child_identity_token(identity))
+    {
+        anyhow::bail!("skill mutation journal carries an invalid prior object identity");
+    }
+    match record.kind {
+        SkillMutationKind::Install
+            if record.source_generation_sha256.is_some()
+                && record.prior_generation_sha256.is_none()
+                && record.prior_object_identity.is_none() => {}
+        SkillMutationKind::Replace
+            if record.source_generation_sha256.is_some()
+                && record.prior_generation_sha256.is_some()
+                && record.prior_object_identity.is_some() => {}
+        SkillMutationKind::Remove
+            if record.source_generation_sha256.is_none()
+                && record.prior_generation_sha256.is_some()
+                    == record.prior_object_identity.is_some() => {}
+        _ => anyhow::bail!(
+            "skill mutation journal generation bindings do not match mutation kind {}",
+            record.kind.as_str()
+        ),
+    }
+    if record.created_at_unix < 0 {
+        anyhow::bail!("skill mutation journal timestamp must not be negative");
+    }
+    if record
+        .intent_delivery_owner_nonce
+        .as_deref()
+        .is_some_and(|nonce| !valid_operation_nonce(nonce))
+    {
+        anyhow::bail!("skill mutation journal carries an invalid delivery-owner nonce");
+    }
+    if record
+        .commit_boundary_nonce
+        .as_deref()
+        .is_some_and(|nonce| !valid_operation_nonce(nonce))
+    {
+        anyhow::bail!("skill mutation journal carries an invalid commit-boundary nonce");
+    }
+    if record
+        .terminal_delivery_owner_nonce
+        .as_deref()
+        .is_some_and(|nonce| !valid_operation_nonce(nonce))
+    {
+        anyhow::bail!("skill mutation journal carries an invalid terminal-delivery owner");
+    }
+    if let Some(receipt) = record.intent_receipt.as_ref() {
+        validate_receipt("intent", receipt)?;
+    }
+    if let Some(receipt) = record.terminal_receipt.as_ref() {
+        validate_receipt("terminal", receipt)?;
+    }
+    if record.phase == SkillMutationPhase::Prepared && record.intent_delivery_owner_nonce.is_some()
+    {
+        anyhow::bail!("prepared skill mutation unexpectedly has a delivery owner");
+    }
+    if matches!(
+        record.phase,
+        SkillMutationPhase::IntentSubmitting
+            | SkillMutationPhase::IntentDurable
+            | SkillMutationPhase::CommitStarted
+    ) && record.intent_delivery_owner_nonce.is_none()
+    {
+        anyhow::bail!("active submitted skill mutation is missing its delivery-owner nonce");
+    }
+    if matches!(
+        record.phase,
+        SkillMutationPhase::IntentDurable | SkillMutationPhase::CommitStarted
+    ) || record.phase.is_terminal()
+    {
+        if record.intent_receipt.is_none() {
+            anyhow::bail!("durable skill mutation is missing its authenticated intent receipt");
+        }
+    } else if record.intent_receipt.is_some() {
+        anyhow::bail!("pre-durability skill mutation unexpectedly has an intent receipt");
+    }
+    if matches!(record.phase, SkillMutationPhase::CommitStarted) || record.phase.is_terminal() {
+        if record.commit_boundary_nonce.is_none() {
+            anyhow::bail!("committing skill mutation is missing its durable boundary");
+        }
+    } else if record.commit_boundary_nonce.is_some() {
+        anyhow::bail!("pre-commit skill mutation unexpectedly has a commit boundary");
+    }
+    match record.terminal_delivery_state {
+        SkillTerminalDeliveryState::NotStarted => {
+            if record.terminal_delivery_owner_nonce.is_some() || record.terminal_receipt.is_some() {
+                anyhow::bail!("terminal delivery state does not match its owner/receipt");
+            }
+        }
+        SkillTerminalDeliveryState::Submitting => {
+            if !record.phase.is_terminal()
+                || record.terminal_delivery_owner_nonce.is_none()
+                || record.terminal_receipt.is_some()
+            {
+                anyhow::bail!("terminal submitting state is incomplete or non-terminal");
+            }
+        }
+        SkillTerminalDeliveryState::Durable => {
+            if !record.phase.is_terminal()
+                || record.terminal_delivery_owner_nonce.is_none()
+                || record.terminal_receipt.is_none()
+            {
+                anyhow::bail!("terminal durable state is incomplete or non-terminal");
+            }
+        }
+    }
+    if let Some(cleanup) = record.cleanup_started.as_ref() {
+        if !record.phase.is_terminal()
+            || !valid_child_identity_token(&cleanup.object_identity)
+            || cleanup.artifact_name.is_empty()
+            || cleanup.artifact_name.contains(['\0', '/', '\\'])
+        {
+            anyhow::bail!("skill mutation cleanup-started binding is invalid");
+        }
+        let expected = match cleanup.artifact_kind {
+            SkillCleanupArtifactKind::InstallStage => mutation_install_stage_name(record),
+            SkillCleanupArtifactKind::ReplacementBackup => mutation_backup_name(record),
+            SkillCleanupArtifactKind::RemovalTombstone => mutation_tombstone_name(record),
+        };
+        if expected != OsStr::new(&cleanup.artifact_name) {
+            anyhow::bail!("skill mutation cleanup-started artifact is not operation-bound");
+        }
+    }
+    if !record.phase.is_terminal()
+        && (record.observed_generation_sha256.is_some() || record.error_sha256.is_some())
+    {
+        anyhow::bail!(
+            "non-terminal skill mutation journal unexpectedly carries terminal observations"
+        );
+    }
+    Ok(())
+}
+
+fn read_skill_mutation_journal(root: &BoundDirectory) -> Result<Option<SkillMutationJournal>> {
+    let display = root.display_path.join(SKILL_MUTATION_JOURNAL_FILE);
+    let bytes = match read_regular_file_bounded(
+        &root.dir,
+        OsStr::new(SKILL_MUTATION_JOURNAL_FILE),
+        &display,
+        MAX_SKILL_MUTATION_JOURNAL_BYTES,
+    ) {
+        Ok(bytes) => bytes,
+        Err(error)
+            if error
+                .root_cause()
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+        {
+            return Ok(None);
+        }
+        Err(error) => return Err(error).context("read pending skill mutation journal"),
+    };
+    let record: SkillMutationJournal = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse skill mutation journal {}", display.display()))?;
+    validate_skill_mutation_journal(&record)
+        .with_context(|| format!("validate skill mutation journal {}", display.display()))?;
+    Ok(Some(record))
+}
+
+fn skill_mutation_journal_stage_name(operation_id: &str) -> OsString {
+    OsString::from(format!(
+        "{SKILL_MUTATION_JOURNAL_STAGE_PREFIX}{operation_id}"
+    ))
+}
+
+fn write_private_metadata_file_create_new(
+    parent: &Dir,
+    name: &OsStr,
+    display: &Path,
+    bytes: &[u8],
+) -> Result<()> {
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = parent
+        .open_with(name, &options)
+        .with_context(|| format!("create private skill metadata {}", display.display()))?;
+    std::io::Write::write_all(&mut file, bytes)
+        .with_context(|| format!("write private skill metadata {}", display.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync private skill metadata {}", display.display()))
+}
+
+fn remove_private_metadata_stage_if_present(
+    root: &BoundDirectory,
+    stage_name: &OsStr,
+) -> Result<()> {
+    let display = root.display_path.join(stage_name);
+    match root.dir.symlink_metadata(stage_name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(metadata) if metadata.is_file() && !cap_metadata_is_link_like(&metadata) => {
+            remove_child_file(&root.dir, stage_name, &display)
+        }
+        Ok(_) => anyhow::bail!(
+            "private skill mutation journal stage is not a regular file: {}",
+            display.display()
+        ),
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect skill mutation journal stage {}", display.display())),
+    }
+}
+
+fn persist_skill_mutation_journal(
+    root: &BoundDirectory,
+    record: &SkillMutationJournal,
+) -> Result<()> {
+    validate_skill_mutation_journal(record)?;
+    if let Some(existing) = read_skill_mutation_journal(root)?
+        && existing.operation_id != record.operation_id
+    {
+        anyhow::bail!(
+            "pending skill mutation {} must be reconciled before starting {}",
+            existing.operation_id,
+            record.operation_id
+        );
+    }
+    let mut bytes =
+        serde_json::to_vec_pretty(record).context("serialize skill mutation journal")?;
+    bytes.push(b'\n');
+    if bytes.len() > MAX_SKILL_MUTATION_JOURNAL_BYTES {
+        anyhow::bail!(
+            "skill mutation journal is {} bytes, exceeding the {}-byte limit",
+            bytes.len(),
+            MAX_SKILL_MUTATION_JOURNAL_BYTES
+        );
+    }
+
+    let stage_name = skill_mutation_journal_stage_name(&record.operation_id);
+    let stage_display = root.display_path.join(&stage_name);
+    remove_private_metadata_stage_if_present(root, &stage_name)?;
+    write_private_metadata_file_create_new(&root.dir, &stage_name, &stage_display, &bytes)?;
+    if let Err(error) = rename_child(
+        &root.dir,
+        &stage_name,
+        &root.dir,
+        OsStr::new(SKILL_MUTATION_JOURNAL_FILE),
+        true,
+        &stage_display,
+        &root.display_path.join(SKILL_MUTATION_JOURNAL_FILE),
+    ) {
+        let _ = remove_private_metadata_stage_if_present(root, &stage_name);
+        return Err(error).context("publish skill mutation journal");
+    }
+    sync_directory(&root.dir, &root.display_path).context("sync skill mutation journal")
+}
+
+fn clear_skill_mutation_journal(root: &BoundDirectory) -> Result<()> {
+    let display = root.display_path.join(SKILL_MUTATION_JOURNAL_FILE);
+    match root
+        .dir
+        .symlink_metadata(OsStr::new(SKILL_MUTATION_JOURNAL_FILE))
+    {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(metadata) if metadata.is_file() && !cap_metadata_is_link_like(&metadata) => {
+            remove_child_file(&root.dir, OsStr::new(SKILL_MUTATION_JOURNAL_FILE), &display)?;
+        }
+        Ok(_) => anyhow::bail!(
+            "skill mutation journal is not a regular file: {}",
+            display.display()
+        ),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect skill mutation journal {}", display.display()));
+        }
+    }
+    sync_directory(&root.dir, &root.display_path)
+        .context("sync acknowledged skill mutation journal removal")
+}
+
+fn transition_skill_mutation_phase(
+    root: &BoundDirectory,
+    record: &mut SkillMutationJournal,
+    phase: SkillMutationPhase,
+    observed_generation_sha256: Option<String>,
+    error_sha256: Option<String>,
+) -> Result<()> {
+    let legal = matches!(
+        (record.phase, phase),
+        (
+            SkillMutationPhase::Prepared,
+            SkillMutationPhase::IntentSubmitting
+                | SkillMutationPhase::Aborted
+                | SkillMutationPhase::Indeterminate
+        ) | (
+            SkillMutationPhase::IntentSubmitting,
+            SkillMutationPhase::IntentDurable
+                | SkillMutationPhase::Aborted
+                | SkillMutationPhase::Indeterminate
+        ) | (
+            SkillMutationPhase::IntentDurable,
+            SkillMutationPhase::CommitStarted
+                | SkillMutationPhase::Aborted
+                | SkillMutationPhase::Indeterminate
+        ) | (
+            SkillMutationPhase::CommitStarted,
+            SkillMutationPhase::Committed
+                | SkillMutationPhase::Aborted
+                | SkillMutationPhase::Indeterminate
+        ) | (
+            SkillMutationPhase::Committed | SkillMutationPhase::Aborted,
+            SkillMutationPhase::Indeterminate
+        )
+    ) || record.phase == phase;
+    if !legal {
+        anyhow::bail!(
+            "illegal skill mutation journal transition {} -> {} for {}",
+            record.phase.as_str(),
+            phase.as_str(),
+            record.operation_id
+        );
+    }
+    let prior = record.clone();
+    if (phase == SkillMutationPhase::CommitStarted || phase.is_terminal())
+        && record.commit_boundary_nonce.is_none()
+    {
+        record.commit_boundary_nonce = Some(uuid::Uuid::now_v7().simple().to_string());
+    }
+    record.phase = phase;
+    record.observed_generation_sha256 = observed_generation_sha256;
+    record.error_sha256 = error_sha256;
+    if phase.is_terminal() && !prior.phase.is_terminal() {
+        record.terminal_delivery_state = SkillTerminalDeliveryState::NotStarted;
+        record.terminal_delivery_owner_nonce = None;
+        record.terminal_receipt = None;
+    }
+    if let Err(error) = persist_skill_mutation_journal(root, record) {
+        *record = prior;
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Exact, read-only binding carried by a prepared install while the shared
+/// cross-process mutation lock remains held. Callers must durably acknowledge
+/// this binding before calling [`PreparedSkillInstall::commit`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(test)]
+pub(crate) struct SkillInstallIntentBinding {
+    pub(crate) operation_id: String,
+    pub(crate) id: String,
+    pub(crate) source_generation_sha256: String,
+    pub(crate) replacing_existing: bool,
+    pub(crate) target_generation_sha256: Option<String>,
+}
+
+/// Opaque install prepared under the same lock that guards its later public
+/// commit. Staging is private; dropping this value can leave only a private
+/// recovery artifact and can never publish a Skill.
+pub(crate) struct PreparedSkillInstall {
+    target_root: BoundDirectory,
+    _mutation_guard: SkillMutationGuard,
+    journal: SkillMutationJournal,
+    target_identity: Option<BoundChildObject>,
+    stage_identity: BoundChildObject,
+    id: String,
+    manifest_sha256: String,
+    generation_sha256: String,
+    stage_name: OsString,
+    backup_candidate: OsString,
+    replaced_generation_sha256: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SkillMutationFailureState {
+    /// The public anchor is unchanged (or was restored) and the requested
+    /// mutation did not commit.
+    Aborted,
+    /// Recovery state was retained because the public anchor could not be
+    /// proven restored after a failed commit attempt.
+    Indeterminate,
+}
+
+impl SkillMutationFailureState {
+    #[must_use]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Aborted => "aborted",
+            Self::Indeterminate => "indeterminate",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SkillMutationCommitError {
+    state: SkillMutationFailureState,
+    error: anyhow::Error,
+}
+
+impl SkillMutationCommitError {
+    fn aborted(error: anyhow::Error) -> Self {
+        Self {
+            state: SkillMutationFailureState::Aborted,
+            error,
+        }
+    }
+
+    fn indeterminate(error: anyhow::Error) -> Self {
+        Self {
+            state: SkillMutationFailureState::Indeterminate,
+            error,
+        }
+    }
+
+    #[must_use]
+    pub(crate) const fn state(&self) -> SkillMutationFailureState {
+        self.state
+    }
+
+    #[must_use]
+    pub(crate) fn into_inner(self) -> anyhow::Error {
+        self.error
+    }
+}
+
+impl std::fmt::Display for SkillMutationCommitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl std::error::Error for SkillMutationCommitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.error.as_ref())
+    }
+}
+
+impl PreparedSkillInstall {
+    #[must_use]
+    pub(crate) fn audit_binding(&self) -> SkillMutationAuditBinding {
+        self.journal.audit_binding()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn intent_binding(&self) -> SkillInstallIntentBinding {
+        SkillInstallIntentBinding {
+            operation_id: self.journal.operation_id.clone(),
+            id: self.id.clone(),
+            source_generation_sha256: self.generation_sha256.clone(),
+            replacing_existing: self.replaced_generation_sha256.is_some(),
+            target_generation_sha256: self.replaced_generation_sha256.clone(),
+        }
+    }
+
+    /// Persist that the exact intent received a durable WAL acknowledgement.
+    /// This transition happens while the original mutation lock is still held.
+    pub(crate) fn mark_intent_submitting(&mut self) -> Result<()> {
+        mark_skill_mutation_intent_submitting(&self.target_root, &mut self.journal)
+    }
+
+    pub(crate) fn mark_intent_durable_authenticated(
+        &mut self,
+        receipt: SkillMutationAuditReceipt,
+    ) -> Result<()> {
+        if receipt.audit_event_id != self.journal.audit_binding().intent_audit_event_id() {
+            anyhow::bail!("authenticated Skill install receipt does not match its exact intent");
+        }
+        self.journal.intent_receipt = Some(receipt);
+        transition_skill_mutation_phase(
+            &self.target_root,
+            &mut self.journal,
+            SkillMutationPhase::IntentDurable,
+            None,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_intent_durable(&mut self) -> Result<()> {
+        if self.journal.phase == SkillMutationPhase::Prepared {
+            self.mark_intent_submitting()?;
+        }
+        self.mark_intent_durable_authenticated(test_audit_receipt(
+            self.journal.audit_binding().intent_audit_event_id(),
+        ))
+    }
+
+    /// Abort a prepared operation only after the caller proved that no matching
+    /// intent frame exists. An ambiguous delivery must go through the journal
+    /// reconciler instead.
+    pub(crate) fn abort_without_intent(self) -> Result<()> {
+        if !matches!(
+            self.journal.phase,
+            SkillMutationPhase::Prepared | SkillMutationPhase::IntentSubmitting
+        ) {
+            anyhow::bail!(
+                "skill mutation {} cannot abort without intent from phase {}",
+                self.journal.operation_id,
+                self.journal.phase.as_str()
+            );
+        }
+        remove_transaction_artifact_if_present(&self.target_root, &self.stage_name)
+            .context("remove uncommitted prepared skill install")?;
+        clear_skill_mutation_journal(&self.target_root)
+    }
 }
 
 /// Read-only binding for one public entry below the skills root. The digest is
@@ -147,6 +1103,111 @@ pub struct CurrentSkillGeneration {
 pub struct UninstallExpectation {
     pub id: String,
     pub target_generation_sha256: String,
+}
+
+/// Exact public-anchor state carried by a prepared removal while the shared
+/// cross-process mutation lock remains held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg(test)]
+pub(crate) struct SkillRemovalIntentBinding {
+    pub(crate) operation_id: String,
+    pub(crate) id: String,
+    pub(crate) target_generation_sha256: String,
+}
+
+/// Preparation resolves an already-absent target before any mutation journal
+/// exists. Only `Prepared` may enter the intent/terminal WAL lifecycle.
+pub(crate) enum PreparedSkillRemovalOutcome {
+    Unchanged(UninstallReport),
+    Prepared(PreparedSkillRemoval),
+}
+
+#[cfg(test)]
+impl PreparedSkillRemovalOutcome {
+    fn into_prepared_for_test(self) -> PreparedSkillRemoval {
+        match self {
+            Self::Prepared(prepared) => prepared,
+            Self::Unchanged(report) => {
+                panic!(
+                    "expected prepared removal, got unchanged report for {}",
+                    report.id
+                )
+            }
+        }
+    }
+}
+
+/// Opaque removal prepared under the same lock that guards its public commit.
+/// No public directory entry is changed until [`PreparedSkillRemoval::commit`].
+pub(crate) struct PreparedSkillRemoval {
+    root: BoundDirectory,
+    _mutation_guard: SkillMutationGuard,
+    journal: SkillMutationJournal,
+    target_identity: BoundChildObject,
+    id: String,
+    target_generation_sha256: String,
+}
+
+impl PreparedSkillRemoval {
+    #[must_use]
+    pub(crate) fn audit_binding(&self) -> SkillMutationAuditBinding {
+        self.journal.audit_binding()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn intent_binding(&self) -> SkillRemovalIntentBinding {
+        SkillRemovalIntentBinding {
+            operation_id: self.journal.operation_id.clone(),
+            id: self.id.clone(),
+            target_generation_sha256: self.target_generation_sha256.clone(),
+        }
+    }
+
+    pub(crate) fn mark_intent_submitting(&mut self) -> Result<()> {
+        mark_skill_mutation_intent_submitting(&self.root, &mut self.journal)
+    }
+
+    pub(crate) fn mark_intent_durable_authenticated(
+        &mut self,
+        receipt: SkillMutationAuditReceipt,
+    ) -> Result<()> {
+        if receipt.audit_event_id != self.journal.audit_binding().intent_audit_event_id() {
+            anyhow::bail!("authenticated Skill removal receipt does not match its exact intent");
+        }
+        self.journal.intent_receipt = Some(receipt);
+        transition_skill_mutation_phase(
+            &self.root,
+            &mut self.journal,
+            SkillMutationPhase::IntentDurable,
+            None,
+            None,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn mark_intent_durable(&mut self) -> Result<()> {
+        if self.journal.phase == SkillMutationPhase::Prepared {
+            self.mark_intent_submitting()?;
+        }
+        self.mark_intent_durable_authenticated(test_audit_receipt(
+            self.journal.audit_binding().intent_audit_event_id(),
+        ))
+    }
+
+    pub(crate) fn abort_without_intent(self) -> Result<()> {
+        if !matches!(
+            self.journal.phase,
+            SkillMutationPhase::Prepared | SkillMutationPhase::IntentSubmitting
+        ) {
+            anyhow::bail!(
+                "skill mutation {} cannot abort without intent from phase {}",
+                self.journal.operation_id,
+                self.journal.phase.as_str()
+            );
+        }
+        clear_skill_mutation_journal(&self.root)
+    }
 }
 
 struct ValidatedInstallSource {
@@ -241,6 +1302,65 @@ fn valid_sha256(digest: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn validate_mutation_operation_id(operation_id: &str) -> Result<()> {
+    if !valid_operation_nonce(operation_id) {
+        anyhow::bail!("skill mutation operation id must be 32 lowercase hex characters");
+    }
+    Ok(())
+}
+
+fn valid_operation_nonce(value: &str) -> bool {
+    value.len() == 32
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn skill_mutation_process_nonce() -> &'static str {
+    SKILL_MUTATION_PROCESS_NONCE
+        .get_or_init(|| uuid::Uuid::now_v7().simple().to_string())
+        .as_str()
+}
+
+#[cfg(test)]
+fn test_audit_receipt(audit_event_id: String) -> SkillMutationAuditReceipt {
+    SkillMutationAuditReceipt {
+        audit_event_id,
+        payload_sha256: "11".repeat(32),
+        segment_name: "000001.wal".to_string(),
+        segment_generation: 0,
+        segment_seq: 1,
+        segment_start_ts_ns: 1,
+        segment_node_id_hex: "00".repeat(16),
+        logical_offset: 60,
+        event_id: 1,
+        event_hlc_physical_ns: 1,
+        event_hlc_logical: 0,
+        event_node_id_hex: "00".repeat(16),
+    }
+}
+
+fn mark_skill_mutation_intent_submitting(
+    root: &BoundDirectory,
+    journal: &mut SkillMutationJournal,
+) -> Result<()> {
+    if journal.phase != SkillMutationPhase::Prepared {
+        anyhow::bail!(
+            "skill mutation {} cannot begin intent delivery from phase {}",
+            journal.operation_id,
+            journal.phase.as_str()
+        );
+    }
+    let prior = journal.clone();
+    journal.phase = SkillMutationPhase::IntentSubmitting;
+    journal.intent_delivery_owner_nonce = Some(skill_mutation_process_nonce().to_string());
+    if let Err(error) = persist_skill_mutation_journal(root, journal) {
+        *journal = prior;
+        return Err(error);
+    }
+    Ok(())
+}
+
 /// Bind any direct public entry without following it. Healthy/repairable real
 /// directories retain the canonical package-generation algorithm. If the
 /// directory contains a link/special entry, or the public child itself is a
@@ -266,7 +1386,8 @@ pub(crate) fn installed_entry_generation_locked(
             return Ok(Some(generation));
         }
         let mut hasher = Sha256::new();
-        hasher.update(b"NEOTH_INSTALLED_ENTRY_GENERATION\0v1\0");
+        hasher.update(b"NEOTH_INSTALLED_ENTRY_GENERATION\0v2\0");
+        hash_installed_record_header(&mut hasher, b'D', Path::new(""), 0, &metadata)?;
         let mut budget = CopyBudget::default();
         hash_installed_entry_directory(
             &directory,
@@ -280,7 +1401,7 @@ pub(crate) fn installed_entry_generation_locked(
     }
 
     let mut hasher = Sha256::new();
-    hasher.update(b"NEOTH_INSTALLED_ENTRY_GENERATION\0v1\0");
+    hasher.update(b"NEOTH_INSTALLED_ENTRY_GENERATION\0v2\0");
     hash_installed_leaf(
         &root.dir,
         OsStr::new(id),
@@ -379,7 +1500,8 @@ pub fn inspect_local_install(
     })
 }
 
-/// Copy `<source_dir>/skill.yaml` (+ any sibling files) into
+/// Test-only compatibility wrapper that copies `<source_dir>/skill.yaml`
+/// (+ any sibling files) into
 /// `<target_skills_dir>/<id>/`, where `<id>` is the manifest's id
 /// field. Validates the manifest before the copy starts — a broken
 /// YAML never lands in the operator's skills dir.
@@ -388,7 +1510,8 @@ pub fn inspect_local_install(
 /// `true` stages the replacement and keeps the prior tree available for
 /// rollback until commit. Operators get the safe behaviour by default; the
 /// CLI exposes `--force` to enable replacement.
-pub fn install_from_local(
+#[cfg(test)]
+pub(crate) fn install_from_local(
     source_dir: &Path,
     target_skills_dir: &Path,
     replace_existing: bool,
@@ -396,12 +1519,60 @@ pub fn install_from_local(
     install_from_local_with_expectation(source_dir, target_skills_dir, replace_existing, None)
 }
 
-pub fn install_from_local_with_expectation(
+#[cfg(test)]
+pub(crate) fn install_from_local_with_expectation(
     source_dir: &Path,
     target_skills_dir: &Path,
     replace_existing: bool,
     expectation: Option<&InstallExpectation>,
 ) -> Result<InstallReport> {
+    let operation_id = uuid::Uuid::now_v7().simple().to_string();
+    let mut prepared = prepare_install_from_local_with_expectation(
+        source_dir,
+        target_skills_dir,
+        replace_existing,
+        expectation,
+        &operation_id,
+    )?;
+    prepared.mark_intent_submitting()?;
+    prepared.mark_intent_durable()?;
+    let report = prepared
+        .commit()
+        .map_err(SkillMutationCommitError::into_inner)?;
+    acknowledge_test_skill_mutation(target_skills_dir)?;
+    Ok(report)
+}
+
+/// Validate and privately stage an install while retaining the cross-process
+/// mutation lock. This performs no public Skill mutation. The returned binding
+/// is therefore the only race-free payload that may be durably ACKed as the
+/// corresponding install intent.
+pub(crate) fn prepare_install_from_local_with_expectation(
+    source_dir: &Path,
+    target_skills_dir: &Path,
+    replace_existing: bool,
+    expectation: Option<&InstallExpectation>,
+    operation_id: &str,
+) -> Result<PreparedSkillInstall> {
+    prepare_install_from_local_with_expectation_and_origin(
+        source_dir,
+        target_skills_dir,
+        replace_existing,
+        expectation,
+        operation_id,
+        SkillMutationOrigin::CliInstall,
+    )
+}
+
+pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
+    source_dir: &Path,
+    target_skills_dir: &Path,
+    replace_existing: bool,
+    expectation: Option<&InstallExpectation>,
+    operation_id: &str,
+    origin: SkillMutationOrigin,
+) -> Result<PreparedSkillInstall> {
+    validate_mutation_operation_id(operation_id)?;
     // Re-open and revalidate after any GUI confirmation. Consent is bound to
     // both the exact manifest bytes and their declared id before the target
     // namespace is opened or changed.
@@ -450,6 +1621,15 @@ pub fn install_from_local_with_expectation(
     let target_dir = target_root.display_path.join(&manifest.id);
     let replaced_generation_sha256 = target_generation_locked(&target_root, &manifest.id)?;
     let replacing = replaced_generation_sha256.is_some();
+    let target_identity = if replacing {
+        Some(bind_child_object(
+            &target_root.dir,
+            OsStr::new(&manifest.id),
+            &target_dir,
+        )?)
+    } else {
+        None
+    };
     if let Some(expectation) = expectation
         && expectation.target_generation_sha256 != replaced_generation_sha256
     {
@@ -468,14 +1648,17 @@ pub fn install_from_local_with_expectation(
     // Copy into a private sibling first. A parse/read/copy failure never
     // exposes a partial skill directory and never destroys the prior install.
     let (stage_name, backup_candidate, stage_dir) =
-        create_install_transaction(&target_root.dir, &manifest.id)?;
+        create_install_transaction(&target_root.dir, &manifest.id, operation_id)?;
     let stage_display = target_root.display_path.join(&stage_name);
     let copy_result = copy_dir_recursive(
         &source.dir,
         &stage_dir,
         &source.display_path,
         &stage_display,
-        Some(&manifest_bytes),
+        Some(RootFileOverride {
+            name: OsStr::new("skill.yaml"),
+            bytes: &manifest_bytes,
+        }),
         0,
         &mut CopyBudget::default(),
     )
@@ -504,172 +1687,783 @@ pub fn install_from_local_with_expectation(
             "partial skill staging directory",
         ));
     }
+    let stage_identity = match bind_child_object(&target_root.dir, &stage_name, &stage_display) {
+        Ok(identity) => identity,
+        Err(error) => {
+            return Err(cleanup_after_failed_operation(
+                error.context("bind the exact prepared Skill staging object"),
+                &target_root.dir,
+                &stage_name,
+                "prepared skill staging directory",
+            ));
+        }
+    };
     sync_directory(&target_root.dir, &target_root.display_path)?;
 
-    let mut backup_name = None;
-    let mut warnings = Vec::new();
-    if replacing {
-        // Revalidate at the commit point, then move the prior tree aside. The
-        // old install remains available for rollback until the staged tree is
-        // atomically renamed into the public id.
-        let prepare_backup = (|| -> Result<OsString> {
-            if target_generation_locked(&target_root, &manifest.id)? != replaced_generation_sha256 {
-                anyhow::bail!(
-                    "skill `{}` destination changed while staging; refusing the stale replacement",
-                    manifest.id
-                );
-            }
-            drop(open_real_child_dir(
-                &target_root.dir,
-                OsStr::new(&manifest.id),
-                &target_dir,
-            )?);
-            rename_child(
-                &target_root.dir,
-                OsStr::new(&manifest.id),
-                &target_root.dir,
-                &backup_candidate,
-                false,
-                &target_dir,
-                &target_root.display_path.join(&backup_candidate),
-            )
-            .with_context(|| format!("stage prior install at {}", target_dir.display()))?;
-            Ok(backup_candidate)
-        })();
-        match prepare_backup {
-            Ok(candidate) => {
-                backup_name = Some(candidate);
-                if let Err(error) = sync_directory(&target_root.dir, &target_root.display_path) {
-                    // The namespace rename already committed. Returning Err
-                    // here would falsely report failure while hiding the live
-                    // prior generation under its recoverable backup name.
-                    warnings.push(format!(
-                        "prior generation is in a recoverable backup, but that namespace transition was not durably synced: {error:#}"
-                    ));
-                }
-            }
-            Err(error) => {
-                return Err(cleanup_after_failed_operation(
-                    error,
-                    &target_root.dir,
-                    &stage_name,
-                    "uncommitted skill staging directory",
-                ));
-            }
-        }
+    let kind = if replacing {
+        SkillMutationKind::Replace
     } else {
-        match target_root.dir.symlink_metadata(&manifest.id) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) => {
-                let error = anyhow::anyhow!(
-                    "skill `{}` appeared at `{}` during install; refusing to replace it",
-                    manifest.id,
-                    target_dir.display()
-                );
-                return Err(cleanup_after_failed_operation(
-                    error,
-                    &target_root.dir,
-                    &stage_name,
-                    "uncommitted skill staging directory",
-                ));
-            }
-            Err(error) => {
-                let error = anyhow::Error::new(error).context(format!(
-                    "recheck target before commit at {}",
-                    target_dir.display()
-                ));
-                return Err(cleanup_after_failed_operation(
-                    error,
-                    &target_root.dir,
-                    &stage_name,
-                    "uncommitted skill staging directory",
-                ));
-            }
-        }
-    }
-
-    if let Err(commit_error) = rename_child(
-        &target_root.dir,
-        &stage_name,
-        &target_root.dir,
-        OsStr::new(&manifest.id),
-        false,
-        &stage_display,
-        &target_dir,
-    ) {
-        let mut error =
-            commit_error.context(format!("commit staged skill at {}", target_dir.display()));
-        if let Some(backup) = backup_name.as_ref()
-            && let Err(rollback_error) = rename_child(
-                &target_root.dir,
-                backup,
-                &target_root.dir,
-                OsStr::new(&manifest.id),
-                false,
-                &target_root.display_path.join(backup),
-                &target_dir,
-            )
+        SkillMutationKind::Install
+    };
+    let journal = SkillMutationJournal {
+        version: SKILL_MUTATION_JOURNAL_VERSION,
+        operation_id: operation_id.to_string(),
+        kind,
+        origin,
+        skill_id: manifest.id.clone(),
+        source_generation_sha256: Some(generation_sha256.clone()),
+        prior_generation_sha256: replaced_generation_sha256.clone(),
+        prior_object_identity: target_identity
+            .as_ref()
+            .map(|identity| identity.identity_token().to_string()),
+        intent_delivery_owner_nonce: None,
+        intent_receipt: None,
+        commit_boundary_nonce: None,
+        phase: SkillMutationPhase::Prepared,
+        observed_generation_sha256: None,
+        error_sha256: None,
+        terminal_delivery_state: SkillTerminalDeliveryState::NotStarted,
+        terminal_delivery_owner_nonce: None,
+        terminal_receipt: None,
+        cleanup_started: None,
+        created_at_unix: crate::time::now_unix_i64(),
+    };
+    if let Err(error) = persist_skill_mutation_journal(&target_root, &journal) {
+        if target_root
+            .dir
+            .symlink_metadata(OsStr::new(SKILL_MUTATION_JOURNAL_FILE))
+            .is_ok()
         {
-            error = error.context(format!(
-                "rollback also failed for prior install at {}: {rollback_error}",
-                target_dir.display()
-            ));
-        } else if backup_name.is_some()
-            && let Err(sync_error) = sync_directory(&target_root.dir, &target_root.display_path)
-        {
-            error = error.context(format!(
-                "rollback restored the prior install, but syncing its directory entry failed: {sync_error:#}"
+            return Err(error.context(
+                "prepared skill mutation journal may be durable; private stage retained for recovery",
             ));
         }
         return Err(cleanup_after_failed_operation(
             error,
             &target_root.dir,
             &stage_name,
-            "uncommitted skill staging directory",
+            "prepared skill staging directory",
         ));
     }
-    let commit_namespace_durable = match sync_directory(&target_root.dir, &target_root.display_path)
-    {
-        Ok(()) => true,
-        Err(sync_error) => {
-            warnings.push(format!(
-                "skill is committed and live, but its namespace durability could not be confirmed: {sync_error:#}"
-            ));
-            false
-        }
+
+    Ok(PreparedSkillInstall {
+        target_root,
+        _mutation_guard,
+        journal,
+        target_identity,
+        stage_identity,
+        id: manifest.id,
+        manifest_sha256,
+        generation_sha256,
+        stage_name,
+        backup_candidate,
+        replaced_generation_sha256,
+    })
+}
+
+/// Prepare one generated/runtime document write as a complete package
+/// replacement. Existing packages are cloned through bound, no-follow handles
+/// while the mutation lock is held; only the typed root document is
+/// substituted. Sibling assets therefore survive byte-for-byte and the WAL
+/// binding covers the resulting full package generation.
+pub(crate) fn prepare_skill_document_mutation(
+    request: &SkillDocumentMutationRequest,
+    operation_id: &str,
+) -> Result<PreparedSkillDocumentMutation> {
+    validate_mutation_operation_id(operation_id)?;
+    super::creator::validate_skill_id(&request.id).context("validate generated Skill id")?;
+    let document_name = request.document.file_name();
+    let document_display_name = request.document.display_name();
+    let document_limit = match request.document {
+        SkillPackageDocument::Manifest => MAX_SKILL_MANIFEST_BYTES,
+        SkillPackageDocument::Instructions => MAX_SKILL_FILE_BYTES as usize,
     };
-    if let Some(backup) = backup_name {
-        if !commit_namespace_durable {
-            // The public rename may disappear after a host interruption. Keep
-            // the known-good prior generation until a later recovery pass can
-            // prove which public namespace entry survived.
-            warnings.push(format!(
-                "prior generation `{}` was retained for crash recovery because the new namespace commit was not durably synced",
-                target_root.display_path.join(&backup).display()
-            ));
-        } else if let Err(cleanup_error) = remove_transaction_directory(&target_root, &backup) {
-            warnings.push(format!(
-                "skill is installed, but cleanup of prior tree `{}` failed: {cleanup_error}",
-                target_root.display_path.join(backup).display()
-            ));
-        } else if let Err(cleanup_error) =
-            sync_directory(&target_root.dir, &target_root.display_path)
-        {
-            warnings.push(format!(
-                "skill is installed, but transaction cleanup was not durably synced: {cleanup_error:#}"
-            ));
+    if request.replacement.len() > document_limit {
+        anyhow::bail!(
+            "{document_display_name} exceeds the {document_limit}-byte installed-Skill limit"
+        );
+    }
+    if request.document == SkillPackageDocument::Instructions {
+        std::str::from_utf8(&request.replacement)
+            .context("generated skill.md replacement is not valid UTF-8")?;
+    }
+    if let Some(expected) = request
+        .expected_target_generation_sha256
+        .as_ref()
+        .and_then(Option::as_ref)
+        && !valid_sha256(expected)
+    {
+        anyhow::bail!(
+            "expected installed-Skill package generation must be 64 lowercase hex characters"
+        );
+    }
+    if request.document == SkillPackageDocument::Manifest {
+        let manifest: SkillManifest = serde_yaml::from_slice(&request.replacement)
+            .context("parse generated skill manifest before staging")?;
+        if manifest.id != request.id {
+            anyhow::bail!(
+                "generated skill manifest id `{}` does not match target directory `{}`",
+                manifest.id,
+                request.id
+            );
+        }
+        if manifest.description.trim().is_empty() {
+            anyhow::bail!("generated skill manifest description must not be empty");
         }
     }
 
-    Ok(InstallReport {
-        id: manifest.id,
-        installed_at: target_dir,
-        replaced_existing: replacing,
-        source_manifest_sha256: manifest_sha256,
-        source_generation_sha256: generation_sha256,
-        replaced_generation_sha256,
-        warnings,
-    })
+    let target_root = open_bound_directory(&request.target_skills_dir, true, "skills root")?
+        .context("created skills root is unexpectedly absent")?;
+    let mutation_guard = lock_skill_mutations(&target_root)?;
+    recover_pending_transactions_locked(&target_root)?;
+    let target_display = target_root.display_path.join(&request.id);
+    let replaced_generation_sha256 = installed_entry_generation_locked(&target_root, &request.id)?;
+    if let Some(expected) = request.expected_target_generation_sha256.as_ref()
+        && expected != &replaced_generation_sha256
+    {
+        return Err(super::store::ConditionalReplacePreconditionFailed::at(&target_display).into());
+    }
+
+    let target_identity = match replaced_generation_sha256.as_ref() {
+        Some(_) => Some(bind_child_object(
+            &target_root.dir,
+            OsStr::new(&request.id),
+            &target_display,
+        )?),
+        None => None,
+    };
+    let source_directory = match replaced_generation_sha256.as_ref() {
+        Some(_) => Some(open_real_child_dir(
+            &target_root.dir,
+            OsStr::new(&request.id),
+            &target_display,
+        )?),
+        None => None,
+    };
+
+    if source_directory.is_none() && request.document != SkillPackageDocument::Manifest {
+        anyhow::bail!(
+            "cannot write {document_display_name} for absent installed Skill `{}`",
+            request.id
+        );
+    }
+    if let Some(source_directory) = source_directory.as_ref() {
+        let document_display = target_display.join(document_name);
+        let current = read_regular_file_bounded(
+            source_directory,
+            document_name,
+            &document_display,
+            document_limit,
+        )
+        .with_context(|| {
+            format!(
+                "read current installed-Skill {document_display_name} at {}",
+                document_display.display()
+            )
+        })?;
+        if request
+            .expected_document
+            .as_ref()
+            .is_some_and(|expected| expected != &current)
+        {
+            return Err(
+                super::store::ConditionalReplacePreconditionFailed::at(document_display).into(),
+            );
+        }
+        match request.existing {
+            super::creator::ExistingSkillPolicy::Refuse => {
+                anyhow::bail!(
+                    "skill `{}` already exists at `{}`; explicit replacement is required",
+                    request.id,
+                    target_display.display()
+                );
+            }
+            super::creator::ExistingSkillPolicy::KeepIfIdentical => {
+                if current != request.replacement {
+                    anyhow::bail!(
+                        "skill `{}` already exists with a different {document_display_name} at `{}`; explicit replacement preflight is required",
+                        request.id,
+                        document_display.display()
+                    );
+                }
+            }
+            super::creator::ExistingSkillPolicy::Replace => {}
+        }
+        if current == request.replacement {
+            let manifest_display = target_display.join("skill.yaml");
+            let manifest_bytes = read_regular_file_bounded(
+                source_directory,
+                OsStr::new("skill.yaml"),
+                &manifest_display,
+                MAX_SKILL_MANIFEST_BYTES,
+            )?;
+            let manifest: SkillManifest =
+                serde_yaml::from_slice(&manifest_bytes).with_context(|| {
+                    format!("parse installed manifest at {}", manifest_display.display())
+                })?;
+            if manifest.id != request.id {
+                anyhow::bail!(
+                    "installed manifest id `{}` does not match target directory `{}`",
+                    manifest.id,
+                    request.id
+                );
+            }
+            let generation = replaced_generation_sha256
+                .clone()
+                .context("identical installed package generation is unexpectedly absent")?;
+            return Ok(PreparedSkillDocumentMutation::Unchanged(InstallReport {
+                id: request.id.clone(),
+                installed_at: target_display,
+                replaced_existing: false,
+                source_manifest_sha256: hex::encode(Sha256::digest(&manifest_bytes)),
+                source_generation_sha256: generation,
+                replaced_generation_sha256: None,
+                warnings: Vec::new(),
+            }));
+        }
+    }
+
+    let (stage_name, backup_candidate, stage_dir) =
+        create_install_transaction(&target_root.dir, &request.id, operation_id)?;
+    let stage_display = target_root.display_path.join(&stage_name);
+    let stage_result = match source_directory.as_ref() {
+        Some(source_directory) => copy_dir_recursive(
+            source_directory,
+            &stage_dir,
+            &target_display,
+            &stage_display,
+            Some(RootFileOverride {
+                name: document_name,
+                bytes: &request.replacement,
+            }),
+            0,
+            &mut CopyBudget::default(),
+        ),
+        None => write_regular_file_create_new(
+            &stage_dir,
+            OsStr::new("skill.yaml"),
+            &request.replacement,
+            &stage_display.join("skill.yaml"),
+            None,
+        ),
+    }
+    .and_then(|()| sync_directory(&stage_dir, &stage_display))
+    .and_then(|()| {
+        let manifest_display = stage_display.join("skill.yaml");
+        let manifest_bytes = read_regular_file_bounded(
+            &stage_dir,
+            OsStr::new("skill.yaml"),
+            &manifest_display,
+            MAX_SKILL_MANIFEST_BYTES,
+        )?;
+        let manifest: SkillManifest =
+            serde_yaml::from_slice(&manifest_bytes).with_context(|| {
+                format!(
+                    "parse staged skill manifest at {}",
+                    manifest_display.display()
+                )
+            })?;
+        if manifest.id != request.id {
+            anyhow::bail!(
+                "staged skill manifest id `{}` does not match target directory `{}`",
+                manifest.id,
+                request.id
+            );
+        }
+        if manifest.description.trim().is_empty() {
+            anyhow::bail!("staged skill manifest description must not be empty");
+        }
+        let generation = skill_tree_generation_sha256(&stage_dir, &stage_display, None)?;
+        Ok((manifest_bytes, generation))
+    });
+    drop(stage_dir);
+    let (manifest_bytes, generation_sha256) = match stage_result {
+        Ok(staged) => staged,
+        Err(error) => {
+            return Err(cleanup_after_failed_operation(
+                error,
+                &target_root.dir,
+                &stage_name,
+                "prepared generated-Skill staging directory",
+            ));
+        }
+    };
+    let manifest_sha256 = hex::encode(Sha256::digest(&manifest_bytes));
+    let stage_identity = match bind_child_object(&target_root.dir, &stage_name, &stage_display) {
+        Ok(identity) => identity,
+        Err(error) => {
+            return Err(cleanup_after_failed_operation(
+                error.context("bind exact generated-Skill staging object"),
+                &target_root.dir,
+                &stage_name,
+                "prepared generated-Skill staging directory",
+            ));
+        }
+    };
+    sync_directory(&target_root.dir, &target_root.display_path)?;
+
+    let kind = if replaced_generation_sha256.is_some() {
+        SkillMutationKind::Replace
+    } else {
+        SkillMutationKind::Install
+    };
+    let journal = SkillMutationJournal {
+        version: SKILL_MUTATION_JOURNAL_VERSION,
+        operation_id: operation_id.to_string(),
+        kind,
+        origin: request.origin,
+        skill_id: request.id.clone(),
+        source_generation_sha256: Some(generation_sha256.clone()),
+        prior_generation_sha256: replaced_generation_sha256.clone(),
+        prior_object_identity: target_identity
+            .as_ref()
+            .map(|identity| identity.identity_token().to_string()),
+        intent_delivery_owner_nonce: None,
+        intent_receipt: None,
+        commit_boundary_nonce: None,
+        phase: SkillMutationPhase::Prepared,
+        observed_generation_sha256: None,
+        error_sha256: None,
+        terminal_delivery_state: SkillTerminalDeliveryState::NotStarted,
+        terminal_delivery_owner_nonce: None,
+        terminal_receipt: None,
+        cleanup_started: None,
+        created_at_unix: crate::time::now_unix_i64(),
+    };
+    if let Err(error) = persist_skill_mutation_journal(&target_root, &journal) {
+        if target_root
+            .dir
+            .symlink_metadata(OsStr::new(SKILL_MUTATION_JOURNAL_FILE))
+            .is_ok()
+        {
+            return Err(error.context(
+                "generated Skill mutation journal may be durable; private stage retained for recovery",
+            ));
+        }
+        return Err(cleanup_after_failed_operation(
+            error,
+            &target_root.dir,
+            &stage_name,
+            "prepared generated-Skill staging directory",
+        ));
+    }
+
+    Ok(PreparedSkillDocumentMutation::Prepared(
+        PreparedSkillInstall {
+            target_root,
+            _mutation_guard: mutation_guard,
+            journal,
+            target_identity,
+            stage_identity,
+            id: request.id.clone(),
+            manifest_sha256,
+            generation_sha256,
+            stage_name,
+            backup_candidate,
+            replaced_generation_sha256,
+        },
+    ))
+}
+
+fn persist_skill_mutation_failure(
+    root: &BoundDirectory,
+    journal: &mut SkillMutationJournal,
+    state: SkillMutationFailureState,
+    observed_generation_sha256: Option<String>,
+    error: anyhow::Error,
+) -> SkillMutationCommitError {
+    let error_sha256 = hex::encode(Sha256::digest(format!("{error:#}").as_bytes()));
+    let phase = match state {
+        SkillMutationFailureState::Aborted => SkillMutationPhase::Aborted,
+        SkillMutationFailureState::Indeterminate => SkillMutationPhase::Indeterminate,
+    };
+    match transition_skill_mutation_phase(
+        root,
+        journal,
+        phase,
+        observed_generation_sha256,
+        Some(error_sha256),
+    ) {
+        Ok(()) => match state {
+            SkillMutationFailureState::Aborted => SkillMutationCommitError::aborted(error),
+            SkillMutationFailureState::Indeterminate => {
+                SkillMutationCommitError::indeterminate(error)
+            }
+        },
+        Err(journal_error) => SkillMutationCommitError::indeterminate(error.context(format!(
+            "persist terminal skill mutation phase `{}` failed; journal retained for reconciliation: {journal_error:#}",
+            phase.as_str()
+        ))),
+    }
+}
+
+impl PreparedSkillInstall {
+    /// Publish the prepared generation while the same mutation lock remains
+    /// held. For replacement the old public anchor is moved to a private
+    /// rollback name first; the new public `<skills>/<id>` anchor is the last
+    /// visible rename and therefore the commit point.
+    pub(crate) fn commit(mut self) -> std::result::Result<InstallReport, SkillMutationCommitError> {
+        let target_dir = self.target_root.display_path.join(&self.id);
+        let stage_display = self.target_root.display_path.join(&self.stage_name);
+        let replacing = self.replaced_generation_sha256.is_some();
+
+        if let Err(error) = transition_skill_mutation_phase(
+            &self.target_root,
+            &mut self.journal,
+            SkillMutationPhase::CommitStarted,
+            None,
+            None,
+        ) {
+            return Err(persist_skill_mutation_failure(
+                &self.target_root,
+                &mut self.journal,
+                SkillMutationFailureState::Aborted,
+                self.replaced_generation_sha256.clone(),
+                error.context("persist commit-start boundary before skill namespace mutation"),
+            ));
+        }
+
+        let mut backup_name = None;
+        if replacing {
+            if let Err(error) = (|| -> Result<()> {
+                let target_identity = self
+                    .target_identity
+                    .as_ref()
+                    .context("prepared replacement is missing its bound target identity")?;
+                if !target_identity.matches_child(
+                    &self.target_root.dir,
+                    OsStr::new(&self.id),
+                    &target_dir,
+                )? {
+                    anyhow::bail!(
+                        "skill `{}` target identity changed before replacement commit",
+                        self.id
+                    );
+                }
+                if target_generation_locked(&self.target_root, &self.id)?
+                    != self.replaced_generation_sha256
+                {
+                    anyhow::bail!(
+                        "skill `{}` destination changed while staging; refusing the stale replacement",
+                        self.id
+                    );
+                }
+                if !target_identity.matches_child(
+                    &self.target_root.dir,
+                    OsStr::new(&self.id),
+                    &target_dir,
+                )? {
+                    anyhow::bail!(
+                        "skill `{}` target identity changed while its generation was revalidated",
+                        self.id
+                    );
+                }
+                maybe_inject_final_lookup_swap(
+                    &self.target_root,
+                    &self.id,
+                    FinalLookupSwapPoint::Replace,
+                )?;
+                rename_child(
+                    &self.target_root.dir,
+                    OsStr::new(&self.id),
+                    &self.target_root.dir,
+                    &self.backup_candidate,
+                    false,
+                    &target_dir,
+                    &self.target_root.display_path.join(&self.backup_candidate),
+                )
+                .with_context(|| format!("stage prior install at {}", target_dir.display()))
+            })() {
+                return Err(persist_skill_mutation_failure(
+                    &self.target_root,
+                    &mut self.journal,
+                    SkillMutationFailureState::Aborted,
+                    self.replaced_generation_sha256.clone(),
+                    error,
+                ));
+            }
+            backup_name = Some(self.backup_candidate.clone());
+            let moved_prior = (|| -> Result<()> {
+                let target_identity = self
+                    .target_identity
+                    .as_ref()
+                    .context("prepared replacement is missing its bound target identity")?;
+                let backup_display = self.target_root.display_path.join(&self.backup_candidate);
+                if !target_identity.matches_child(
+                    &self.target_root.dir,
+                    &self.backup_candidate,
+                    &backup_display,
+                )? {
+                    anyhow::bail!(
+                        "replacement rename moved a different object than the preflight-bound target"
+                    );
+                }
+                let backup_name = self
+                    .backup_candidate
+                    .to_str()
+                    .context("private replacement backup name is not UTF-8")?;
+                if installed_entry_generation_locked(&self.target_root, backup_name)?
+                    != self.replaced_generation_sha256
+                {
+                    anyhow::bail!(
+                        "replacement backup generation differs from the preflight-bound target"
+                    );
+                }
+                Ok(())
+            })();
+            if let Err(error) = moved_prior {
+                return Err(persist_skill_mutation_failure(
+                    &self.target_root,
+                    &mut self.journal,
+                    SkillMutationFailureState::Indeterminate,
+                    installed_entry_generation_locked(&self.target_root, &self.id)
+                        .ok()
+                        .flatten(),
+                    error.context(
+                        "replacement final-lookup identity verification failed; private artifacts retained",
+                    ),
+                ));
+            }
+            if let Err(error) =
+                sync_directory(&self.target_root.dir, &self.target_root.display_path)
+            {
+                return Err(persist_skill_mutation_failure(
+                    &self.target_root,
+                    &mut self.journal,
+                    SkillMutationFailureState::Indeterminate,
+                    None,
+                    error.context(
+                        "prior generation was moved to its private backup, but the parent directory was not durably synced",
+                    ),
+                ));
+            }
+        } else {
+            match self.target_root.dir.symlink_metadata(&self.id) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Ok(_) => {
+                    let error = anyhow::anyhow!(
+                        "skill `{}` appeared at `{}` during install; refusing to replace it",
+                        self.id,
+                        target_dir.display()
+                    );
+                    return Err(persist_skill_mutation_failure(
+                        &self.target_root,
+                        &mut self.journal,
+                        SkillMutationFailureState::Aborted,
+                        installed_entry_generation_locked(&self.target_root, &self.id)
+                            .ok()
+                            .flatten(),
+                        error,
+                    ));
+                }
+                Err(error) => {
+                    let error = anyhow::Error::new(error).context(format!(
+                        "recheck target before commit at {}",
+                        target_dir.display()
+                    ));
+                    return Err(persist_skill_mutation_failure(
+                        &self.target_root,
+                        &mut self.journal,
+                        SkillMutationFailureState::Aborted,
+                        None,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        let publish_result = (|| -> Result<()> {
+            if !self.stage_identity.matches_child(
+                &self.target_root.dir,
+                &self.stage_name,
+                &stage_display,
+            )? {
+                anyhow::bail!("prepared Skill staging object identity changed before publication");
+            }
+            let stage_name = self
+                .stage_name
+                .to_str()
+                .context("private install stage name is not UTF-8")?;
+            if installed_entry_generation_locked(&self.target_root, stage_name)?
+                != Some(self.generation_sha256.clone())
+            {
+                anyhow::bail!("prepared Skill staging generation changed before publication");
+            }
+            if !self.stage_identity.matches_child(
+                &self.target_root.dir,
+                &self.stage_name,
+                &stage_display,
+            )? {
+                anyhow::bail!(
+                    "prepared Skill staging object identity changed while its generation was revalidated"
+                );
+            }
+            rename_child(
+                &self.target_root.dir,
+                &self.stage_name,
+                &self.target_root.dir,
+                OsStr::new(&self.id),
+                false,
+                &stage_display,
+                &target_dir,
+            )
+            .with_context(|| format!("commit staged skill at {}", target_dir.display()))?;
+            if !self.stage_identity.matches_child(
+                &self.target_root.dir,
+                OsStr::new(&self.id),
+                &target_dir,
+            )? {
+                anyhow::bail!(
+                    "Skill publication rename moved a different object than the prepared stage"
+                );
+            }
+            if installed_entry_generation_locked(&self.target_root, &self.id)?
+                != Some(self.generation_sha256.clone())
+            {
+                anyhow::bail!(
+                    "published Skill generation differs from the exact prepared generation"
+                );
+            }
+            Ok(())
+        })();
+        if let Err(commit_error) = publish_result {
+            let mut error = commit_error;
+            let stage_may_have_moved = match self.target_root.dir.symlink_metadata(&self.stage_name)
+            {
+                Ok(_) => false,
+                Err(stage_error) if stage_error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(_) => true,
+            };
+            let mut state = if stage_may_have_moved {
+                SkillMutationFailureState::Indeterminate
+            } else {
+                SkillMutationFailureState::Aborted
+            };
+            let mut observed = installed_entry_generation_locked(&self.target_root, &self.id)
+                .ok()
+                .flatten();
+            if let Some(backup) = backup_name.as_ref() {
+                let rollback = (|| -> Result<()> {
+                    let target_identity = self
+                        .target_identity
+                        .as_ref()
+                        .context("replacement rollback lacks its bound prior identity")?;
+                    let backup_display = self.target_root.display_path.join(backup);
+                    if !target_identity.matches_child(
+                        &self.target_root.dir,
+                        backup,
+                        &backup_display,
+                    )? {
+                        anyhow::bail!(
+                            "replacement rollback object no longer matches the preflight-bound target"
+                        );
+                    }
+                    let backup_name = backup
+                        .to_str()
+                        .context("private replacement backup name is not UTF-8")?;
+                    if installed_entry_generation_locked(&self.target_root, backup_name)?
+                        != self.replaced_generation_sha256
+                    {
+                        anyhow::bail!(
+                            "replacement rollback generation no longer matches the preflight-bound target"
+                        );
+                    }
+                    rename_child(
+                        &self.target_root.dir,
+                        backup,
+                        &self.target_root.dir,
+                        OsStr::new(&self.id),
+                        false,
+                        &backup_display,
+                        &target_dir,
+                    )?;
+                    if !target_identity.matches_child(
+                        &self.target_root.dir,
+                        OsStr::new(&self.id),
+                        &target_dir,
+                    )? {
+                        anyhow::bail!(
+                            "replacement rollback rename restored a different object than the bound prior target"
+                        );
+                    }
+                    if installed_entry_generation_locked(&self.target_root, &self.id)?
+                        != self.replaced_generation_sha256
+                    {
+                        anyhow::bail!(
+                            "replacement rollback restored a generation other than the bound prior target"
+                        );
+                    }
+                    sync_directory(&self.target_root.dir, &self.target_root.display_path)
+                        .context("sync restored prior Skill generation")
+                })();
+                match rollback {
+                    Ok(()) => {
+                        state = SkillMutationFailureState::Aborted;
+                        observed = self.replaced_generation_sha256.clone();
+                    }
+                    Err(rollback_error) => {
+                        state = SkillMutationFailureState::Indeterminate;
+                        observed = installed_entry_generation_locked(&self.target_root, &self.id)
+                            .ok()
+                            .flatten();
+                        error = error.context(format!(
+                            "rollback also failed for prior install at {}: {rollback_error}",
+                            target_dir.display()
+                        ));
+                    }
+                }
+            }
+            return Err(persist_skill_mutation_failure(
+                &self.target_root,
+                &mut self.journal,
+                state,
+                observed,
+                error,
+            ));
+        }
+
+        if let Err(error) = sync_directory(&self.target_root.dir, &self.target_root.display_path) {
+            return Err(persist_skill_mutation_failure(
+                &self.target_root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                Some(self.generation_sha256.clone()),
+                error.context(
+                    "new public skill generation is visible, but its parent directory was not durably synced",
+                ),
+            ));
+        }
+        if let Err(error) = transition_skill_mutation_phase(
+            &self.target_root,
+            &mut self.journal,
+            SkillMutationPhase::Committed,
+            Some(self.generation_sha256.clone()),
+            None,
+        ) {
+            return Err(persist_skill_mutation_failure(
+                &self.target_root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                Some(self.generation_sha256.clone()),
+                error.context(
+                    "public skill generation is durable, but its committed outbox phase was not",
+                ),
+            ));
+        }
+
+        // Backup/stage cleanup is intentionally deferred until the correlated
+        // terminal WAL frame is proven present. Cancellation after this return
+        // therefore retains everything required for same-operation recovery.
+        Ok(InstallReport {
+            id: self.id,
+            installed_at: target_dir,
+            replaced_existing: replacing,
+            source_manifest_sha256: self.manifest_sha256,
+            source_generation_sha256: self.generation_sha256,
+            replaced_generation_sha256: self.replaced_generation_sha256,
+            warnings: Vec::new(),
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -683,21 +2477,77 @@ pub struct UninstallReport {
     pub warnings: Vec<String>,
 }
 
-/// Compatibility wrapper for internal callers that only need the desired-state
-/// bit. Operator surfaces use [`uninstall_with_report`] and show warnings.
-pub fn uninstall(target_skills_dir: &Path, id: &str) -> Result<bool> {
+/// Test-only compatibility wrapper for assertions that only need the
+/// desired-state bit. Production operator surfaces use the prepared
+/// intent/commit contract below.
+#[cfg(test)]
+pub(crate) fn uninstall(target_skills_dir: &Path, id: &str) -> Result<bool> {
     Ok(uninstall_with_report(target_skills_dir, id)?.removed)
 }
 
-pub fn uninstall_with_report(target_skills_dir: &Path, id: &str) -> Result<UninstallReport> {
+#[cfg(test)]
+pub(crate) fn uninstall_with_report(target_skills_dir: &Path, id: &str) -> Result<UninstallReport> {
     uninstall_with_report_and_expectation(target_skills_dir, id, None)
 }
 
-pub fn uninstall_with_report_and_expectation(
+#[cfg(test)]
+pub(crate) fn uninstall_with_report_and_expectation(
     target_skills_dir: &Path,
     id: &str,
     expectation: Option<&UninstallExpectation>,
 ) -> Result<UninstallReport> {
+    let operation_id = uuid::Uuid::now_v7().simple().to_string();
+    let mut prepared = match prepare_uninstall_with_expectation(
+        target_skills_dir,
+        id,
+        expectation,
+        &operation_id,
+    )? {
+        PreparedSkillRemovalOutcome::Unchanged(report) => return Ok(report),
+        PreparedSkillRemovalOutcome::Prepared(prepared) => prepared,
+    };
+    prepared.mark_intent_submitting()?;
+    prepared.mark_intent_durable()?;
+    let report = prepared
+        .commit()
+        .map_err(SkillMutationCommitError::into_inner)?;
+    acknowledge_test_skill_mutation(target_skills_dir)?;
+    Ok(report)
+}
+
+#[cfg(test)]
+fn acknowledge_test_skill_mutation(target_skills_dir: &Path) -> Result<()> {
+    let pending = open_pending_skill_mutation_reconciliation(target_skills_dir)?
+        .context("test mutation unexpectedly lacks its terminal journal")?;
+    pending.acknowledge_terminal()
+}
+
+/// Capture the exact public anchor under the mutation lock without changing
+/// it. Callers must durably ACK [`PreparedSkillRemoval::intent_binding`] before
+/// invoking the commit.
+pub(crate) fn prepare_uninstall_with_expectation(
+    target_skills_dir: &Path,
+    id: &str,
+    expectation: Option<&UninstallExpectation>,
+    operation_id: &str,
+) -> Result<PreparedSkillRemovalOutcome> {
+    prepare_uninstall_with_expectation_and_origin(
+        target_skills_dir,
+        id,
+        expectation,
+        operation_id,
+        SkillMutationOrigin::CliUninstall,
+    )
+}
+
+pub(crate) fn prepare_uninstall_with_expectation_and_origin(
+    target_skills_dir: &Path,
+    id: &str,
+    expectation: Option<&UninstallExpectation>,
+    operation_id: &str,
+    origin: SkillMutationOrigin,
+) -> Result<PreparedSkillRemovalOutcome> {
+    validate_mutation_operation_id(operation_id)?;
     validate_installed_skill_dir_name(id)?;
     if let Some(expectation) = expectation {
         validate_installed_skill_dir_name(&expectation.id)?;
@@ -711,124 +2561,1128 @@ pub fn uninstall_with_report_and_expectation(
         }
     }
 
-    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
-        if expectation.is_some() {
-            anyhow::bail!(
-                "skill uninstall destination changed after preflight; inspect it again before uninstalling"
-            );
-        }
-        return Ok(UninstallReport {
-            id: id.to_string(),
-            removed: false,
-            removed_generation_sha256: None,
-            warnings: Vec::new(),
-        });
-    };
-    let _mutation_guard = lock_skill_mutations(&root)?;
+    let root = open_bound_directory(target_skills_dir, true, "skills root")?
+        .context("created skills root is unexpectedly absent")?;
+    let mutation_guard = lock_skill_mutations(&root)?;
     recover_pending_transactions_locked(&root)?;
-    let target = root.display_path.join(id);
-    let removed_generation_sha256 = installed_entry_generation_locked(&root, id)?;
+    let target_generation_sha256 = installed_entry_generation_locked(&root, id)?;
     if let Some(expectation) = expectation
-        && removed_generation_sha256.as_deref()
+        && target_generation_sha256.as_deref()
             != Some(expectation.target_generation_sha256.as_str())
     {
         anyhow::bail!(
             "skill uninstall destination changed after preflight; inspect it again before uninstalling"
         );
     }
-    let metadata = match root.dir.symlink_metadata(id) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(UninstallReport {
-                id: id.to_string(),
-                removed: false,
-                removed_generation_sha256: None,
-                warnings: Vec::new(),
-            });
-        }
-        Err(error) => {
-            return Err(error)
-                .with_context(|| format!("inspect installed skill {}", target.display()));
-        }
+    let Some(target_generation_sha256) = target_generation_sha256 else {
+        return Ok(PreparedSkillRemovalOutcome::Unchanged(UninstallReport {
+            id: id.to_string(),
+            removed: false,
+            removed_generation_sha256: None,
+            warnings: Vec::new(),
+        }));
     };
+    let target_identity =
+        bind_child_object(&root.dir, OsStr::new(id), &root.display_path.join(id))?;
 
-    let mut warnings = Vec::new();
-    if cap_metadata_is_link_like(&metadata) || !metadata.is_dir() {
-        // A broken link/reparse/file entry is itself the public object. Unlink
-        // that handle-bound leaf atomically; never follow its target.
-        remove_child_file(&root.dir, OsStr::new(id), &target)
-            .with_context(|| format!("remove broken installed skill {}", target.display()))?;
-        if let Err(error) = sync_directory(&root.dir, &root.display_path) {
-            warnings.push(format!(
-                "skill entry is removed, but its namespace durability could not be confirmed: {error:#}"
+    let journal = SkillMutationJournal {
+        version: SKILL_MUTATION_JOURNAL_VERSION,
+        operation_id: operation_id.to_string(),
+        kind: SkillMutationKind::Remove,
+        origin,
+        skill_id: id.to_string(),
+        source_generation_sha256: None,
+        prior_generation_sha256: Some(target_generation_sha256.clone()),
+        prior_object_identity: Some(target_identity.identity_token().to_string()),
+        intent_delivery_owner_nonce: None,
+        intent_receipt: None,
+        commit_boundary_nonce: None,
+        phase: SkillMutationPhase::Prepared,
+        observed_generation_sha256: None,
+        error_sha256: None,
+        terminal_delivery_state: SkillTerminalDeliveryState::NotStarted,
+        terminal_delivery_owner_nonce: None,
+        terminal_receipt: None,
+        cleanup_started: None,
+        created_at_unix: crate::time::now_unix_i64(),
+    };
+    persist_skill_mutation_journal(&root, &journal)?;
+
+    Ok(PreparedSkillRemovalOutcome::Prepared(
+        PreparedSkillRemoval {
+            root,
+            _mutation_guard: mutation_guard,
+            journal,
+            target_identity,
+            id: id.to_string(),
+            target_generation_sha256,
+        },
+    ))
+}
+
+impl PreparedSkillRemoval {
+    /// Remove the public anchor while the same preparation lock is held.
+    /// Directory installs commit as one rename to a private tombstone; broken
+    /// leaf entries commit as one no-follow unlink.
+    pub(crate) fn commit(
+        mut self,
+    ) -> std::result::Result<UninstallReport, SkillMutationCommitError> {
+        let target = self.root.display_path.join(&self.id);
+        if let Err(error) = transition_skill_mutation_phase(
+            &self.root,
+            &mut self.journal,
+            SkillMutationPhase::CommitStarted,
+            None,
+            None,
+        ) {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Aborted,
+                Some(self.target_generation_sha256.clone()),
+                error.context("persist commit-start boundary before skill removal"),
             ));
         }
-    } else {
-        // Public removal commits as one exclusive rename. Recursive cleanup is
-        // performed only on the private tombstone, so a sharing/permission
-        // failure can never expose a partially deleted live generation.
-        let tombstone = allocate_delete_transaction_name(&root, id)?;
-        let tombstone_path = root.display_path.join(&tombstone);
-        rename_child(
-            &root.dir,
-            OsStr::new(id),
-            &root.dir,
+
+        let bound_identity = &self.target_identity;
+        let precommit = (|| -> Result<FinalLookupSwapPoint> {
+            if !bound_identity.matches_child(&self.root.dir, OsStr::new(&self.id), &target)? {
+                anyhow::bail!("skill uninstall target identity changed before commit");
+            }
+            let observed = installed_entry_generation_locked(&self.root, &self.id)?;
+            if observed.as_deref() != Some(self.target_generation_sha256.as_str()) {
+                anyhow::bail!(
+                    "skill uninstall destination changed after its intent was acknowledged"
+                );
+            }
+            if !bound_identity.matches_child(&self.root.dir, OsStr::new(&self.id), &target)? {
+                anyhow::bail!(
+                    "skill uninstall target identity changed while its generation was revalidated"
+                );
+            }
+            let metadata =
+                self.root.dir.symlink_metadata(&self.id).with_context(|| {
+                    format!("inspect bound removal target {}", target.display())
+                })?;
+            Ok(
+                if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
+                    FinalLookupSwapPoint::RemoveDirectory
+                } else {
+                    FinalLookupSwapPoint::RemoveLeaf
+                },
+            )
+        })();
+        let swap_point = match precommit {
+            Ok(point) => point,
+            Err(error) => {
+                return Err(persist_skill_mutation_failure(
+                    &self.root,
+                    &mut self.journal,
+                    SkillMutationFailureState::Aborted,
+                    installed_entry_generation_locked(&self.root, &self.id)
+                        .ok()
+                        .flatten(),
+                    error.context("revalidate bound skill removal object"),
+                ));
+            }
+        };
+        if let Err(error) = maybe_inject_final_lookup_swap(&self.root, &self.id, swap_point) {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                installed_entry_generation_locked(&self.root, &self.id)
+                    .ok()
+                    .flatten(),
+                error.context("inject deterministic final-lookup removal swap"),
+            ));
+        }
+
+        // Every removal, including broken leaves and reparse points, commits as
+        // one no-follow rename to a private tombstone. Only the verified bound
+        // object may later be recursively deleted.
+        let tombstone = match allocate_delete_transaction_name(
+            &self.root,
+            &self.id,
+            &self.journal.operation_id,
+        ) {
+            Ok(tombstone) => tombstone,
+            Err(error) => {
+                return Err(persist_skill_mutation_failure(
+                    &self.root,
+                    &mut self.journal,
+                    SkillMutationFailureState::Aborted,
+                    Some(self.target_generation_sha256.clone()),
+                    error,
+                ));
+            }
+        };
+        let tombstone_path = self.root.display_path.join(&tombstone);
+        if let Err(error) = rename_child(
+            &self.root.dir,
+            OsStr::new(&self.id),
+            &self.root.dir,
             &tombstone,
             false,
             &target,
             &tombstone_path,
         )
-        .with_context(|| format!("commit uninstall of {}", target.display()))?;
-        let namespace_durable = match sync_directory(&root.dir, &root.display_path) {
-            Ok(()) => true,
-            Err(error) => {
-                warnings.push(format!(
-                    "skill is removed, but its namespace durability could not be confirmed; private tombstone `{}` was retained for crash recovery: {error:#}",
-                    tombstone_path.display()
-                ));
-                false
-            }
-        };
-        if namespace_durable {
-            if let Err(error) = remove_transaction_directory(&root, &tombstone) {
-                warnings.push(format!(
-                    "skill is removed, but private cleanup remains pending: {error:#}"
-                ));
-            } else if let Err(error) = sync_directory(&root.dir, &root.display_path) {
-                warnings.push(format!(
-                    "skill is removed, but tombstone cleanup was not durably synced: {error:#}"
-                ));
-            }
+        .with_context(|| format!("commit uninstall of {}", target.display()))
+        {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Aborted,
+                Some(self.target_generation_sha256.clone()),
+                error,
+            ));
         }
+        let moved_target = (|| -> Result<()> {
+            if !bound_identity.matches_child(&self.root.dir, &tombstone, &tombstone_path)? {
+                anyhow::bail!(
+                    "removal rename moved a different object than the preflight-bound target"
+                );
+            }
+            let tombstone_name = tombstone
+                .to_str()
+                .context("private removal tombstone name is not UTF-8")?;
+            if installed_entry_generation_locked(&self.root, tombstone_name)?.as_deref()
+                != Some(self.target_generation_sha256.as_str())
+            {
+                anyhow::bail!(
+                    "removal tombstone generation differs from the preflight-bound target"
+                );
+            }
+            Ok(())
+        })();
+        if let Err(error) = moved_target {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                installed_entry_generation_locked(&self.root, &self.id)
+                    .ok()
+                    .flatten(),
+                error.context(
+                    "removal final-lookup identity verification failed; tombstone retained",
+                ),
+            ));
+        }
+        if let Err(error) = sync_directory(&self.root.dir, &self.root.display_path) {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                None,
+                error.context(format!(
+                    "skill is absent, but its parent directory was not durably synced; \
+                     private tombstone `{}` was retained",
+                    tombstone_path.display()
+                )),
+            ));
+        }
+
+        if let Err(error) = transition_skill_mutation_phase(
+            &self.root,
+            &mut self.journal,
+            SkillMutationPhase::Committed,
+            None,
+            None,
+        ) {
+            return Err(persist_skill_mutation_failure(
+                &self.root,
+                &mut self.journal,
+                SkillMutationFailureState::Indeterminate,
+                None,
+                error.context("skill removal is durable, but its committed outbox phase was not"),
+            ));
+        }
+
+        Ok(UninstallReport {
+            id: self.id,
+            removed: true,
+            removed_generation_sha256: Some(self.target_generation_sha256),
+            warnings: Vec::new(),
+        })
     }
-    Ok(UninstallReport {
-        id: id.to_string(),
-        removed: true,
-        removed_generation_sha256,
-        warnings,
-    })
 }
 
-fn allocate_delete_transaction_name(root: &BoundDirectory, id: &str) -> Result<OsString> {
-    for _ in 0..8 {
-        let name = OsString::from(format!(
-            "{DELETE_TRANSACTION_PREFIX}{id}-{}",
-            uuid::Uuid::new_v4().simple()
-        ));
-        match root.dir.symlink_metadata(&name) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(name),
-            Ok(_) => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "inspect private uninstall name `{}`",
-                        name.to_string_lossy()
-                    )
-                });
-            }
+fn allocate_delete_transaction_name(
+    root: &BoundDirectory,
+    id: &str,
+    operation_id: &str,
+) -> Result<OsString> {
+    let name = OsString::from(format!("{DELETE_TRANSACTION_PREFIX}{id}-{operation_id}"));
+    match root.dir.symlink_metadata(&name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(name),
+        Ok(_) => {
+            anyhow::bail!("private uninstall transaction already exists for the prepared operation")
+        }
+        Err(error) => Err(error).context("inspect private uninstall transaction name"),
+    }
+}
+
+fn mutation_install_stage_name(record: &SkillMutationJournal) -> OsString {
+    OsString::from(format!(
+        "{INSTALL_TRANSACTION_PREFIX}{}-{}",
+        record.skill_id, record.operation_id
+    ))
+}
+
+fn mutation_backup_name(record: &SkillMutationJournal) -> OsString {
+    OsString::from(format!(
+        "{BACKUP_TRANSACTION_PREFIX}{}-{}",
+        record.skill_id, record.operation_id
+    ))
+}
+
+fn mutation_tombstone_name(record: &SkillMutationJournal) -> OsString {
+    OsString::from(format!(
+        "{DELETE_TRANSACTION_PREFIX}{}-{}",
+        record.skill_id, record.operation_id
+    ))
+}
+
+fn private_artifact_exists(root: &BoundDirectory, name: &OsStr) -> Result<bool> {
+    match root.dir.symlink_metadata(name) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).with_context(|| {
+            format!(
+                "inspect private skill artifact {}",
+                root.display_path.join(name).display()
+            )
+        }),
+    }
+}
+
+fn restore_prior_backup_if_present(
+    root: &BoundDirectory,
+    record: &SkillMutationJournal,
+) -> Result<bool> {
+    let Some(prior) = record.prior_generation_sha256.as_deref() else {
+        return Ok(false);
+    };
+    let Some(prior_identity) = record.prior_object_identity.as_deref() else {
+        anyhow::bail!(
+            "skill mutation {} has a prior generation without a bound object identity",
+            record.operation_id
+        );
+    };
+    let backup = mutation_backup_name(record);
+    if !private_artifact_exists(root, &backup)? {
+        return Ok(false);
+    }
+    let backup_display = root.display_path.join(&backup);
+    let bound_backup = bind_child_object(&root.dir, &backup, &backup_display)?;
+    if bound_backup.identity_token() != prior_identity {
+        return Ok(false);
+    }
+    let backup_generation = installed_entry_generation_locked(
+        root,
+        backup
+            .to_str()
+            .context("private skill backup name is not UTF-8")?,
+    )?;
+    if backup_generation.as_deref() != Some(prior) {
+        anyhow::bail!(
+            "private backup for skill mutation {} does not match its bound prior generation",
+            record.operation_id
+        );
+    }
+    if !bound_backup.matches_child(&root.dir, &backup, &backup_display)? {
+        return Ok(false);
+    }
+    let current = installed_entry_generation_locked(root, &record.skill_id)?;
+    if current.is_some() {
+        return Ok(false);
+    }
+    if !bound_backup.matches_child(&root.dir, &backup, &backup_display)? {
+        anyhow::bail!(
+            "private backup identity changed at the final recovery lookup for {}",
+            record.operation_id
+        );
+    }
+    rename_child(
+        &root.dir,
+        &backup,
+        &root.dir,
+        OsStr::new(&record.skill_id),
+        false,
+        &root.display_path.join(&backup),
+        &root.display_path.join(&record.skill_id),
+    )
+    .context("restore bound prior skill generation during reconciliation")?;
+    if !bound_backup.matches_child(
+        &root.dir,
+        OsStr::new(&record.skill_id),
+        &root.display_path.join(&record.skill_id),
+    )? {
+        anyhow::bail!(
+            "restored public Skill object does not match the journal-bound prior object for {}",
+            record.operation_id
+        );
+    }
+    if installed_entry_generation_locked(root, &record.skill_id)?.as_deref() != Some(prior) {
+        anyhow::bail!(
+            "restored public Skill generation does not match the journal-bound prior generation for {}",
+            record.operation_id
+        );
+    }
+    sync_directory(&root.dir, &root.display_path)
+        .context("sync restored prior skill generation during reconciliation")?;
+    Ok(true)
+}
+
+fn restore_prior_removal_tombstone(
+    root: &BoundDirectory,
+    record: &SkillMutationJournal,
+) -> Result<()> {
+    if record.kind != SkillMutationKind::Remove {
+        anyhow::bail!("skill mutation {} is not a removal", record.operation_id);
+    }
+    let prior = record
+        .prior_generation_sha256
+        .as_deref()
+        .context("indeterminate skill removal lacks its bound prior generation")?;
+    let prior_identity = record
+        .prior_object_identity
+        .as_deref()
+        .context("indeterminate skill removal lacks its bound prior object identity")?;
+    let expected_tombstone = mutation_tombstone_name(record);
+    let entries = root.dir.entries().with_context(|| {
+        format!(
+            "enumerate removal tombstones under {}",
+            root.display_path.display()
+        )
+    })?;
+    let mut candidate_tombstones = Vec::<OsString>::new();
+    let mut root_entry_count = 0usize;
+    for entry in entries {
+        root_entry_count = root_entry_count
+            .checked_add(1)
+            .context("removal tombstone recovery entry counter overflow")?;
+        if root_entry_count > MAX_SKILL_ENTRIES {
+            anyhow::bail!(
+                "removal tombstone recovery under {} exceeds the {MAX_SKILL_ENTRIES}-entry limit",
+                root.display_path.display()
+            );
+        }
+        let entry = entry.with_context(|| {
+            format!(
+                "read removal tombstone candidate under {}",
+                root.display_path.display()
+            )
+        })?;
+        let name = entry.file_name();
+        if parse_delete_transaction_artifact(&name)?.as_deref() == Some(record.skill_id.as_str()) {
+            candidate_tombstones.push(name);
         }
     }
-    anyhow::bail!("could not allocate a unique private uninstall tombstone after 8 attempts")
+    match candidate_tombstones.as_slice() {
+        [] => anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: operation-bound tombstone is missing",
+            record.operation_id
+        ),
+        [only] if only != &expected_tombstone => anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: sole tombstone belongs to another operation",
+            record.operation_id
+        ),
+        [_] => {}
+        candidates => anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: {} candidate tombstones are ambiguous",
+            record.operation_id,
+            candidates.len()
+        ),
+    }
+
+    let tombstone_display = root.display_path.join(&expected_tombstone);
+    let bound_tombstone = bind_child_object(&root.dir, &expected_tombstone, &tombstone_display)?;
+    if bound_tombstone.identity_token() != prior_identity {
+        anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: tombstone is not the bound prior object",
+            record.operation_id
+        );
+    }
+    let tombstone_name = expected_tombstone
+        .to_str()
+        .context("private removal tombstone name is not UTF-8")?;
+    if installed_entry_generation_locked(root, tombstone_name)?.as_deref() != Some(prior) {
+        anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: tombstone does not match the bound v2 prior generation",
+            record.operation_id
+        );
+    }
+    if installed_entry_generation_locked(root, &record.skill_id)?.is_some() {
+        anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: public anchor is no longer absent",
+            record.operation_id
+        );
+    }
+    if !bound_tombstone.matches_child(&root.dir, &expected_tombstone, &tombstone_display)? {
+        anyhow::bail!(
+            "cannot restore indeterminate skill removal {}: tombstone identity changed during verification",
+            record.operation_id
+        );
+    }
+
+    let public_display = root.display_path.join(&record.skill_id);
+    rename_child(
+        &root.dir,
+        &expected_tombstone,
+        &root.dir,
+        OsStr::new(&record.skill_id),
+        false,
+        &tombstone_display,
+        &public_display,
+    )
+    .context("atomically restore bound removal tombstone during reconciliation")?;
+    if !bound_tombstone.matches_child(&root.dir, OsStr::new(&record.skill_id), &public_display)? {
+        anyhow::bail!(
+            "restored removal object does not match the journal-bound prior object for {}",
+            record.operation_id
+        );
+    }
+    if installed_entry_generation_locked(root, &record.skill_id)?.as_deref() != Some(prior) {
+        anyhow::bail!(
+            "restored removal generation does not match the journal-bound v2 prior generation for {}",
+            record.operation_id
+        );
+    }
+    sync_directory(&root.dir, &root.display_path)
+        .context("sync restored prior skill removal generation during reconciliation")
+}
+
+fn public_anchor_matches_prior_binding(
+    root: &BoundDirectory,
+    record: &SkillMutationJournal,
+    observed_generation: &Option<String>,
+) -> Result<bool> {
+    if observed_generation != &record.prior_generation_sha256 {
+        return Ok(false);
+    }
+    match (
+        record.prior_generation_sha256.as_ref(),
+        record.prior_object_identity.as_deref(),
+    ) {
+        (None, None) => Ok(true),
+        (Some(_), Some(expected_identity)) => {
+            let display = root.display_path.join(&record.skill_id);
+            let bound = bind_child_object(&root.dir, OsStr::new(&record.skill_id), &display)?;
+            Ok(bound.identity_token() == expected_identity
+                && bound.matches_child(&root.dir, OsStr::new(&record.skill_id), &display)?)
+        }
+        _ => anyhow::bail!(
+            "skill mutation {} has inconsistent prior generation/object identity",
+            record.operation_id
+        ),
+    }
+}
+
+/// Holds the same process + OS mutation lock while a crashed operation is
+/// reconciled against both WAL evidence and the real public anchor.
+pub(crate) struct PendingSkillMutationReconciliation {
+    root: BoundDirectory,
+    _mutation_guard: SkillMutationGuard,
+    record: SkillMutationJournal,
+}
+
+pub(crate) fn open_pending_skill_mutation_reconciliation(
+    target_skills_dir: &Path,
+) -> Result<Option<PendingSkillMutationReconciliation>> {
+    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
+        return Ok(None);
+    };
+    let mutation_guard = lock_skill_mutations(&root)?;
+    cleanup_skill_mutation_journal_stages_locked(&root)?;
+    let Some(record) = read_skill_mutation_journal(&root)? else {
+        recover_pending_transactions_locked(&root)?;
+        return Ok(None);
+    };
+    Ok(Some(PendingSkillMutationReconciliation {
+        root,
+        _mutation_guard: mutation_guard,
+        record,
+    }))
+}
+
+impl PendingSkillMutationReconciliation {
+    #[must_use]
+    pub(crate) fn audit_binding(&self) -> SkillMutationAuditBinding {
+        self.record.audit_binding()
+    }
+
+    #[must_use]
+    pub(crate) fn intent_delivery_owned_by_current_process(&self) -> bool {
+        self.record.phase == SkillMutationPhase::IntentSubmitting
+            && self.record.intent_delivery_owner_nonce.as_deref()
+                == Some(skill_mutation_process_nonce())
+    }
+
+    pub(crate) fn mark_intent_durable_authenticated(
+        &mut self,
+        receipt: SkillMutationAuditReceipt,
+    ) -> Result<()> {
+        if !matches!(
+            self.record.phase,
+            SkillMutationPhase::IntentSubmitting | SkillMutationPhase::IntentDurable
+        ) {
+            anyhow::bail!(
+                "skill mutation {} cannot bind an intent receipt from phase {}",
+                self.record.operation_id,
+                self.record.phase.as_str()
+            );
+        }
+        if let Some(existing) = self.record.intent_receipt.as_ref() {
+            if existing != &receipt {
+                anyhow::bail!(
+                    "skill mutation {} conflicts with its persisted intent receipt",
+                    self.record.operation_id
+                );
+            }
+            return Ok(());
+        }
+        if receipt.audit_event_id != self.record.audit_binding().intent_audit_event_id() {
+            anyhow::bail!(
+                "skill mutation {} received an authenticated receipt for another intent",
+                self.record.operation_id
+            );
+        }
+        self.record.intent_receipt = Some(receipt);
+        transition_skill_mutation_phase(
+            &self.root,
+            &mut self.record,
+            SkillMutationPhase::IntentDurable,
+            None,
+            None,
+        )
+    }
+
+    #[must_use]
+    pub(crate) fn terminal_delivery_owned_by_current_process(&self) -> bool {
+        self.record.terminal_delivery_state == SkillTerminalDeliveryState::Submitting
+            && self.record.terminal_delivery_owner_nonce.as_deref()
+                == Some(skill_mutation_process_nonce())
+    }
+
+    pub(crate) fn mark_terminal_submitting(&mut self) -> Result<()> {
+        if !self.record.phase.is_terminal() {
+            anyhow::bail!(
+                "skill mutation {} cannot submit a terminal audit from phase {}",
+                self.record.operation_id,
+                self.record.phase.as_str()
+            );
+        }
+        match self.record.terminal_delivery_state {
+            SkillTerminalDeliveryState::Durable => return Ok(()),
+            SkillTerminalDeliveryState::Submitting => {
+                if self.terminal_delivery_owned_by_current_process() {
+                    return Ok(());
+                }
+            }
+            SkillTerminalDeliveryState::NotStarted => {}
+        }
+        let prior = self.record.clone();
+        self.record.terminal_delivery_state = SkillTerminalDeliveryState::Submitting;
+        self.record.terminal_delivery_owner_nonce =
+            Some(skill_mutation_process_nonce().to_string());
+        self.record.terminal_receipt = None;
+        if let Err(error) = persist_skill_mutation_journal(&self.root, &self.record) {
+            self.record = prior;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn mark_terminal_durable(
+        &mut self,
+        receipt: SkillMutationAuditReceipt,
+    ) -> Result<()> {
+        if !self.record.phase.is_terminal()
+            || self.record.terminal_delivery_state == SkillTerminalDeliveryState::NotStarted
+        {
+            anyhow::bail!(
+                "skill mutation {} cannot bind a terminal receipt before submitting it",
+                self.record.operation_id
+            );
+        }
+        if receipt.audit_event_id != self.record.audit_binding().terminal_audit_event_id() {
+            anyhow::bail!(
+                "skill mutation {} received an authenticated receipt for another terminal",
+                self.record.operation_id
+            );
+        }
+        if let Some(existing) = self.record.terminal_receipt.as_ref()
+            && existing != &receipt
+        {
+            anyhow::bail!(
+                "skill mutation {} conflicts with its persisted terminal receipt",
+                self.record.operation_id
+            );
+        }
+        let prior = self.record.clone();
+        self.record.terminal_delivery_state = SkillTerminalDeliveryState::Durable;
+        self.record.terminal_receipt = Some(receipt);
+        if let Err(error) = persist_skill_mutation_journal(&self.root, &self.record) {
+            self.record = prior;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Resolve the durable journal to one terminal state. `intent_seen` comes
+    /// from a full WAL scan for this exact operation and audit-event id.
+    ///
+    /// `Ok(None)` means the prepared journal had no durable intent and was
+    /// safely removed without emitting a terminal result.
+    pub(crate) fn reconcile(
+        &mut self,
+        intent_seen: bool,
+    ) -> Result<Option<SkillMutationAuditBinding>> {
+        if !intent_seen {
+            match self.record.phase {
+                SkillMutationPhase::Prepared => {}
+                SkillMutationPhase::IntentSubmitting => {
+                    anyhow::bail!(
+                        "skill mutation {} entered intent delivery but has no durable WAL frame \
+                         yet; exact same-operation delivery/reconciliation must retry later",
+                        self.record.operation_id
+                    );
+                }
+                _ => {
+                    anyhow::bail!(
+                        "skill mutation {} is in phase {}, but its durable intent is missing from the WAL",
+                        self.record.operation_id,
+                        self.record.phase.as_str()
+                    );
+                }
+            }
+            if self.record.kind.is_install() {
+                let stage = mutation_install_stage_name(&self.record);
+                remove_transaction_artifact_if_present(&self.root, &stage)?;
+            }
+            clear_skill_mutation_journal(&self.root)?;
+            return Ok(None);
+        }
+
+        match self.record.phase {
+            SkillMutationPhase::Prepared
+            | SkillMutationPhase::IntentSubmitting
+            | SkillMutationPhase::IntentDurable => {
+                let current = installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+                let (phase, error_sha256) =
+                    if public_anchor_matches_prior_binding(&self.root, &self.record, &current)? {
+                        (
+                            SkillMutationPhase::Aborted,
+                            Some(recovery_error_sha256(
+                                "intent was durable but commit never started",
+                            )),
+                        )
+                    } else {
+                        (
+                            SkillMutationPhase::Indeterminate,
+                            Some(recovery_error_sha256(
+                                "public anchor changed before the durable commit-start boundary",
+                            )),
+                        )
+                    };
+                transition_skill_mutation_phase(
+                    &self.root,
+                    &mut self.record,
+                    phase,
+                    current,
+                    error_sha256,
+                )?;
+            }
+            SkillMutationPhase::CommitStarted => {
+                self.reconcile_commit_started()?;
+            }
+            SkillMutationPhase::Committed => {
+                let current = installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+                let expected = if self.record.kind.is_install() {
+                    self.record.source_generation_sha256.clone()
+                } else {
+                    None
+                };
+                if current != expected {
+                    transition_skill_mutation_phase(
+                        &self.root,
+                        &mut self.record,
+                        SkillMutationPhase::Indeterminate,
+                        current,
+                        Some(recovery_error_sha256(
+                            "committed journal conflicts with the current public anchor",
+                        )),
+                    )?;
+                }
+            }
+            SkillMutationPhase::Aborted => {
+                let current = installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+                if !public_anchor_matches_prior_binding(&self.root, &self.record, &current)? {
+                    transition_skill_mutation_phase(
+                        &self.root,
+                        &mut self.record,
+                        SkillMutationPhase::Indeterminate,
+                        current,
+                        Some(recovery_error_sha256(
+                            "aborted journal conflicts with the bound prior anchor",
+                        )),
+                    )?;
+                }
+            }
+            SkillMutationPhase::Indeterminate => {}
+        }
+        Ok(Some(self.record.audit_binding()))
+    }
+
+    fn reconcile_commit_started(&mut self) -> Result<()> {
+        let current = installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+        let prior = self.record.prior_generation_sha256.clone();
+        let desired = self.record.source_generation_sha256.clone();
+        let (phase, error) = match self.record.kind {
+            SkillMutationKind::Install => {
+                if current.is_none() {
+                    (
+                        SkillMutationPhase::Aborted,
+                        "fresh install did not reach its public anchor",
+                    )
+                } else {
+                    (
+                        SkillMutationPhase::Indeterminate,
+                        "fresh install crossed commit-start without a durable terminal phase",
+                    )
+                }
+            }
+            SkillMutationKind::Replace => {
+                if public_anchor_matches_prior_binding(&self.root, &self.record, &current)? {
+                    (
+                        SkillMutationPhase::Aborted,
+                        "replacement restored its bound prior generation",
+                    )
+                } else if current == desired {
+                    (
+                        SkillMutationPhase::Indeterminate,
+                        "replacement published its desired generation without a durable terminal phase",
+                    )
+                } else if current.is_none()
+                    && restore_prior_backup_if_present(&self.root, &self.record)?
+                {
+                    (
+                        SkillMutationPhase::Indeterminate,
+                        "replacement was interrupted with only its private rollback generation",
+                    )
+                } else {
+                    (
+                        SkillMutationPhase::Indeterminate,
+                        "replacement anchor does not match either bound generation",
+                    )
+                }
+            }
+            SkillMutationKind::Remove => {
+                if prior.is_none() && current.is_none() {
+                    (
+                        SkillMutationPhase::Committed,
+                        "idempotent removal confirmed the anchor was absent",
+                    )
+                } else if public_anchor_matches_prior_binding(&self.root, &self.record, &current)? {
+                    (
+                        SkillMutationPhase::Aborted,
+                        "removal left its bound prior generation live",
+                    )
+                } else {
+                    (
+                        SkillMutationPhase::Indeterminate,
+                        "removal crossed commit-start without a durable terminal phase",
+                    )
+                }
+            }
+        };
+        transition_skill_mutation_phase(
+            &self.root,
+            &mut self.record,
+            phase,
+            current,
+            if phase == SkillMutationPhase::Committed {
+                None
+            } else {
+                Some(recovery_error_sha256(error))
+            },
+        )
+    }
+
+    /// Remove the outbox only after the caller proved that the exact terminal
+    /// audit event exists once in the WAL. Indeterminate namespace states are
+    /// first settled durably while their backup/tombstone is still retained.
+    pub(crate) fn acknowledge_terminal(mut self) -> Result<()> {
+        if !self.record.phase.is_terminal() {
+            anyhow::bail!(
+                "skill mutation {} is not terminal",
+                self.record.operation_id
+            );
+        }
+        #[cfg(not(test))]
+        if self.record.terminal_delivery_state != SkillTerminalDeliveryState::Durable
+            || self.record.terminal_receipt.is_none()
+        {
+            anyhow::bail!(
+                "skill mutation {} terminal audit is not durably authenticated",
+                self.record.operation_id
+            );
+        }
+        self.settle_terminal_namespace()?;
+        clear_skill_mutation_journal(&self.root)
+    }
+
+    fn settle_terminal_namespace(&mut self) -> Result<()> {
+        let mut current = installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+        if self.record.phase == SkillMutationPhase::Indeterminate {
+            if current.is_none() && self.record.prior_generation_sha256.is_some() {
+                match self.record.kind {
+                    SkillMutationKind::Install | SkillMutationKind::Replace => {
+                        if restore_prior_backup_if_present(&self.root, &self.record)? {
+                            current = installed_entry_generation_locked(
+                                &self.root,
+                                &self.record.skill_id,
+                            )?;
+                        }
+                    }
+                    SkillMutationKind::Remove => {
+                        restore_prior_removal_tombstone(&self.root, &self.record)?;
+                        current =
+                            installed_entry_generation_locked(&self.root, &self.record.skill_id)?;
+                    }
+                }
+            }
+            if !public_anchor_matches_prior_binding(&self.root, &self.record, &current)? {
+                anyhow::bail!(
+                    "cannot settle indeterminate skill mutation {}: the exact bound prior namespace \
+                     is not restored; desired state and rollback evidence are retained and Skill \
+                     activation remains blocked",
+                    self.record.operation_id
+                );
+            }
+        }
+        if let Some(active) = self.record.cleanup_started.clone() {
+            cleanup_transaction_artifact_restartable(
+                &self.root,
+                &mut self.record,
+                OsStr::new(&active.artifact_name),
+                active.artifact_kind,
+                None,
+            )?;
+        }
+        match self.record.kind {
+            SkillMutationKind::Install | SkillMutationKind::Replace => {
+                let desired = self.record.source_generation_sha256.clone();
+                let prior = self.record.prior_generation_sha256.clone();
+                if current.is_none()
+                    && prior.is_some()
+                    && restore_prior_backup_if_present(&self.root, &self.record)?
+                {
+                    // The operation remains `indeterminate` in its already
+                    // emitted audit result, but the namespace is now safely
+                    // settled back to the bound prior generation.
+                } else if current != desired && current != prior {
+                    anyhow::bail!(
+                        "cannot settle skill mutation {}: public anchor matches neither bound generation",
+                        self.record.operation_id
+                    );
+                } else {
+                    sync_directory(&self.root.dir, &self.root.display_path).context(
+                        "durably settle public skill anchor before outbox acknowledgement",
+                    )?;
+                }
+                let stage = mutation_install_stage_name(&self.record);
+                if private_artifact_exists(&self.root, &stage)? {
+                    let stage_name = stage
+                        .to_str()
+                        .context("private install stage name is not UTF-8")?;
+                    if installed_entry_generation_locked(&self.root, stage_name)?
+                        != self.record.source_generation_sha256
+                    {
+                        anyhow::bail!(
+                            "cannot settle skill mutation {}: private stage no longer matches the desired generation",
+                            self.record.operation_id
+                        );
+                    }
+                    cleanup_transaction_artifact_restartable(
+                        &self.root,
+                        &mut self.record,
+                        &stage,
+                        SkillCleanupArtifactKind::InstallStage,
+                        None,
+                    )?;
+                }
+                let backup = mutation_backup_name(&self.record);
+                if private_artifact_exists(&self.root, &backup)? {
+                    let expected_identity = self
+                        .record
+                        .prior_object_identity
+                        .clone()
+                        .context("replacement backup lacks its bound object identity")?;
+                    let backup_display = self.root.display_path.join(&backup);
+                    let bound_backup = bind_child_object(&self.root.dir, &backup, &backup_display)?;
+                    let backup_name = backup
+                        .to_str()
+                        .context("private replacement backup name is not UTF-8")?;
+                    if bound_backup.identity_token() != expected_identity
+                        || installed_entry_generation_locked(&self.root, backup_name)?
+                            != self.record.prior_generation_sha256
+                        || !bound_backup.matches_child(&self.root.dir, &backup, &backup_display)?
+                    {
+                        anyhow::bail!(
+                            "cannot settle skill mutation {}: private backup is not the authorized prior object",
+                            self.record.operation_id
+                        );
+                    }
+                    cleanup_transaction_artifact_restartable(
+                        &self.root,
+                        &mut self.record,
+                        &backup,
+                        SkillCleanupArtifactKind::ReplacementBackup,
+                        Some(&expected_identity),
+                    )?;
+                }
+            }
+            SkillMutationKind::Remove => {
+                let prior = self.record.prior_generation_sha256.clone();
+                if current.is_some() && current != prior {
+                    anyhow::bail!(
+                        "cannot settle skill removal {}: public anchor changed to an unbound generation",
+                        self.record.operation_id
+                    );
+                }
+                sync_directory(&self.root.dir, &self.root.display_path)
+                    .context("durably settle skill removal anchor")?;
+                let tombstone = mutation_tombstone_name(&self.record);
+                if private_artifact_exists(&self.root, &tombstone)? {
+                    let expected_identity = self
+                        .record
+                        .prior_object_identity
+                        .clone()
+                        .context("removal tombstone lacks its bound object identity")?;
+                    let tombstone_display = self.root.display_path.join(&tombstone);
+                    let bound_tombstone =
+                        bind_child_object(&self.root.dir, &tombstone, &tombstone_display)?;
+                    if bound_tombstone.identity_token() != expected_identity {
+                        anyhow::bail!(
+                            "cannot settle skill removal {}: tombstone identity is not the authorized object",
+                            self.record.operation_id
+                        );
+                    }
+                    let tombstone_name = tombstone
+                        .to_str()
+                        .context("private removal tombstone name is not UTF-8")?;
+                    if installed_entry_generation_locked(&self.root, tombstone_name)?
+                        != self.record.prior_generation_sha256
+                    {
+                        anyhow::bail!(
+                            "cannot settle skill removal {}: tombstone generation is not the authorized object",
+                            self.record.operation_id
+                        );
+                    }
+                    if !bound_tombstone.matches_child(
+                        &self.root.dir,
+                        &tombstone,
+                        &tombstone_display,
+                    )? {
+                        anyhow::bail!(
+                            "cannot settle skill removal {}: tombstone identity changed during verification",
+                            self.record.operation_id
+                        );
+                    }
+                    cleanup_transaction_artifact_restartable(
+                        &self.root,
+                        &mut self.record,
+                        &tombstone,
+                        SkillCleanupArtifactKind::RemovalTombstone,
+                        Some(&expected_identity),
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn recovery_error_sha256(message: &str) -> String {
+    hex::encode(Sha256::digest(message.as_bytes()))
+}
+
+fn cleanup_transaction_artifact_restartable(
+    root: &BoundDirectory,
+    record: &mut SkillMutationJournal,
+    name: &OsStr,
+    kind: SkillCleanupArtifactKind,
+    expected_identity: Option<&str>,
+) -> Result<()> {
+    let name_text = name
+        .to_str()
+        .context("private cleanup artifact name is not UTF-8")?;
+    if let Some(active) = record.cleanup_started.as_ref()
+        && (active.artifact_name != name_text || active.artifact_kind != kind)
+    {
+        anyhow::bail!(
+            "skill mutation {} must finish cleanup of `{}` before starting `{name_text}`",
+            record.operation_id,
+            active.artifact_name
+        );
+    }
+    let display = root.display_path.join(name);
+    let exists = match root.dir.symlink_metadata(name) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect cleanup artifact {}", display.display()));
+        }
+    };
+
+    if exists {
+        let bound = bind_child_object(&root.dir, name, &display)?;
+        if let Some(active) = record.cleanup_started.as_ref() {
+            if bound.identity_token() != active.object_identity
+                || !bound.matches_child(&root.dir, name, &display)?
+            {
+                anyhow::bail!(
+                    "skill mutation {} cleanup artifact `{name_text}` changed identity",
+                    record.operation_id
+                );
+            }
+        } else {
+            if expected_identity.is_some_and(|expected| expected != bound.identity_token()) {
+                anyhow::bail!(
+                    "skill mutation {} cleanup artifact `{name_text}` is not the authorized object",
+                    record.operation_id
+                );
+            }
+            let prior = record.clone();
+            record.cleanup_started = Some(SkillCleanupState {
+                artifact_name: name_text.to_string(),
+                artifact_kind: kind,
+                object_identity: bound.identity_token().to_string(),
+            });
+            if let Err(error) = persist_skill_mutation_journal(root, record) {
+                *record = prior;
+                return Err(error).context("persist restartable Skill cleanup boundary");
+            }
+        }
+        remove_transaction_artifact_if_present(root, name)?;
+    } else if record.cleanup_started.is_none() {
+        return Ok(());
+    }
+
+    // The top-level object is now absent through the bound parent capability.
+    // Make that namespace change durable before clearing CleanupStarted.
+    sync_directory(&root.dir, &root.display_path)
+        .context("sync restartable Skill cleanup parent")?;
+    let prior = record.clone();
+    record.cleanup_started = None;
+    if let Err(error) = persist_skill_mutation_journal(root, record) {
+        *record = prior;
+        return Err(error).context("clear durable Skill cleanup boundary");
+    }
+    Ok(())
 }
 
 fn validate_installed_skill_dir_name(id: &str) -> Result<()> {
@@ -884,6 +3738,13 @@ pub struct InstalledEntry {
 /// List every entry under `<target_skills_dir>`. Includes broken ones.
 /// Sorted by `dir_name` for stable output.
 pub fn list_installed(target_skills_dir: &Path) -> Result<Vec<InstalledEntry>> {
+    list_installed_with_limit(target_skills_dir, MAX_SKILL_ENTRIES)
+}
+
+fn list_installed_with_limit(
+    target_skills_dir: &Path,
+    max_root_entries: usize,
+) -> Result<Vec<InstalledEntry>> {
     let mut out = Vec::new();
     let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
         return Ok(out);
@@ -896,7 +3757,17 @@ pub fn list_installed(target_skills_dir: &Path) -> Result<Vec<InstalledEntry>> {
             root.display_path.display()
         )
     })?;
+    let mut root_entry_count = 0usize;
     for entry in entries {
+        root_entry_count = root_entry_count
+            .checked_add(1)
+            .context("installed skill inventory entry counter overflow")?;
+        if root_entry_count > max_root_entries {
+            anyhow::bail!(
+                "installed skill inventory under {} exceeds the {max_root_entries}-entry limit",
+                root.display_path.display()
+            );
+        }
         let entry = entry.with_context(|| {
             format!(
                 "read installed skill entry under {}",
@@ -1033,14 +3904,72 @@ pub(crate) fn skill_tree_generation_sha256(
     display_root: &Path,
     validated_root_manifest: Option<&[u8]>,
 ) -> Result<String> {
+    let root_override = validated_root_manifest.map(|bytes| RootFileOverride {
+        name: SkillPackageDocument::Manifest.file_name(),
+        bytes,
+    });
+    skill_tree_generation_sha256_with_root_override(root, display_root, root_override)
+}
+
+/// Compute the exact canonical package generation that would result from
+/// replacing one typed root document while retaining every other package
+/// entry and its permission metadata.
+///
+/// Staging callers use this before publication so their expected generation is
+/// guaranteed to share the installer's versioned hashing contract. Keeping the
+/// override typed prevents this helper from becoming an arbitrary path-hashing
+/// API.
+pub(crate) fn skill_tree_generation_sha256_with_document_override(
+    root: &Dir,
+    display_root: &Path,
+    document: SkillPackageDocument,
+    replacement: &[u8],
+) -> Result<String> {
+    let max_bytes = match document {
+        SkillPackageDocument::Manifest => MAX_SKILL_MANIFEST_BYTES,
+        SkillPackageDocument::Instructions => {
+            usize::try_from(MAX_SKILL_FILE_BYTES).expect("skill file limit fits usize")
+        }
+    };
+    if replacement.len() > max_bytes {
+        anyhow::bail!(
+            "{} exceeds the {max_bytes}-byte installed-Skill limit",
+            document.display_name()
+        );
+    }
+    skill_tree_generation_sha256_with_root_override(
+        root,
+        display_root,
+        Some(RootFileOverride {
+            name: document.file_name(),
+            bytes: replacement,
+        }),
+    )
+}
+
+fn skill_tree_generation_sha256_with_root_override(
+    root: &Dir,
+    display_root: &Path,
+    root_override: Option<RootFileOverride<'_>>,
+) -> Result<String> {
     let mut hasher = Sha256::new();
-    hasher.update(b"NEOTH_SKILL_PACKAGE_GENERATION\0v1\0");
+    hasher.update(b"NEOTH_SKILL_PACKAGE_GENERATION\0v2\0");
+    let root_metadata = root
+        .dir_metadata()
+        .with_context(|| format!("inspect skill package root {}", display_root.display()))?;
+    if !root_metadata.is_dir() || cap_metadata_is_link_like(&root_metadata) {
+        anyhow::bail!(
+            "skill package root is linked or not a directory: {}",
+            display_root.display()
+        );
+    }
+    hash_tree_record_header(&mut hasher, b'D', "", 0, &root_metadata)?;
     let mut budget = CopyBudget::default();
     hash_skill_tree_directory(
         root,
         display_root,
         "",
-        validated_root_manifest,
+        root_override,
         0,
         &mut budget,
         &mut hasher,
@@ -1052,7 +3981,7 @@ fn hash_skill_tree_directory(
     directory: &Dir,
     display_directory: &Path,
     relative_prefix: &str,
-    validated_root_manifest: Option<&[u8]>,
+    root_override: Option<RootFileOverride<'_>>,
     depth: usize,
     budget: &mut CopyBudget,
     hasher: &mut Sha256,
@@ -1080,13 +4009,13 @@ fn hash_skill_tree_directory(
             })?,
         );
     }
-    if validated_root_manifest.is_some()
-        && !names.iter().any(|name| name == OsStr::new("skill.yaml"))
+    if let Some(root_override) = root_override
+        && !names.iter().any(|name| name == root_override.name)
     {
         if names.len() >= remaining_entry_budget {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
-        names.push(OsString::from("skill.yaml"));
+        names.push(root_override.name.to_os_string());
     }
     names.sort();
 
@@ -1111,26 +4040,31 @@ fn hash_skill_tree_directory(
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
 
-        if depth == 0
-            && name == OsStr::new("skill.yaml")
-            && let Some(bytes) = validated_root_manifest
-        {
-            hash_skill_file_record(hasher, &relative, bytes, budget)?;
-            continue;
-        }
-
-        let file_type = directory
+        let metadata = directory
             .symlink_metadata(&name)
-            .with_context(|| format!("inspect skill package entry {}", display.display()))?
-            .file_type();
+            .with_context(|| format!("inspect skill package entry {}", display.display()))?;
+        let file_type = metadata.file_type();
         if file_type.is_symlink() {
             anyhow::bail!(
                 "skill package contains unsupported linked or reparse entry: {}",
                 display.display()
             );
         }
+        if depth == 0
+            && let Some(root_override) = root_override
+            && name == root_override.name
+        {
+            if !file_type.is_file() || cap_metadata_is_link_like(&metadata) {
+                anyhow::bail!(
+                    "replacement skill document is not a real regular file: {}",
+                    display.display()
+                );
+            }
+            hash_skill_file_record(hasher, &relative, root_override.bytes, &metadata, budget)?;
+            continue;
+        }
         if file_type.is_dir() {
-            hash_tree_record_header(hasher, b'D', &relative, 0)?;
+            hash_tree_record_header(hasher, b'D', &relative, 0, &metadata)?;
             let child = open_real_child_dir(directory, &name, &display)?;
             hash_skill_tree_directory(
                 &child,
@@ -1148,7 +4082,7 @@ fn hash_skill_tree_directory(
                 &display,
                 usize::try_from(MAX_SKILL_FILE_BYTES).expect("skill file limit fits usize"),
             )?;
-            hash_skill_file_record(hasher, &relative, &bytes, budget)?;
+            hash_skill_file_record(hasher, &relative, &bytes, &metadata, budget)?;
         } else {
             anyhow::bail!(
                 "skill package contains unsupported special entry: {}",
@@ -1163,6 +4097,7 @@ fn hash_skill_file_record(
     hasher: &mut Sha256,
     relative: &str,
     bytes: &[u8],
+    metadata: &cap_std::fs::Metadata,
     budget: &mut CopyBudget,
 ) -> Result<()> {
     budget.bytes = budget
@@ -1172,7 +4107,7 @@ fn hash_skill_file_record(
     if budget.bytes > MAX_SKILL_TOTAL_BYTES {
         anyhow::bail!("skill tree exceeds {MAX_SKILL_TOTAL_BYTES} total bytes");
     }
-    hash_tree_record_header(hasher, b'F', relative, bytes.len() as u64)?;
+    hash_tree_record_header(hasher, b'F', relative, bytes.len() as u64, metadata)?;
     hasher.update(bytes);
     Ok(())
 }
@@ -1182,13 +4117,28 @@ fn hash_tree_record_header(
     kind: u8,
     relative: &str,
     byte_len: u64,
+    metadata: &cap_std::fs::Metadata,
 ) -> Result<()> {
     let path_len = u64::try_from(relative.len()).context("skill package path length overflow")?;
     hasher.update([kind]);
     hasher.update(path_len.to_le_bytes());
     hasher.update(relative.as_bytes());
     hasher.update(byte_len.to_le_bytes());
+    let (permission_kind, permission_bits) = skill_permission_fingerprint(metadata);
+    hasher.update([permission_kind]);
+    hasher.update(permission_bits.to_le_bytes());
     Ok(())
+}
+
+#[cfg(unix)]
+fn skill_permission_fingerprint(metadata: &cap_std::fs::Metadata) -> (u8, u32) {
+    use cap_std::fs::PermissionsExt as _;
+    (b'U', metadata.permissions().mode() & 0o7777)
+}
+
+#[cfg(not(unix))]
+fn skill_permission_fingerprint(metadata: &cap_std::fs::Metadata) -> (u8, u32) {
+    (b'P', u32::from(metadata.permissions().readonly()))
 }
 
 fn hash_installed_entry_directory(
@@ -1245,7 +4195,7 @@ fn hash_installed_entry_directory(
             .symlink_metadata(&name)
             .with_context(|| format!("inspect installed skill entry {}", display.display()))?;
         if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
-            hash_installed_record_header(hasher, b'D', &relative, 0)?;
+            hash_installed_record_header(hasher, b'D', &relative, 0, &metadata)?;
             let child = open_real_child_dir(directory, &name, &display)?;
             hash_installed_entry_directory(&child, &display, &relative, depth + 1, budget, hasher)?;
         } else {
@@ -1280,7 +4230,7 @@ fn hash_installed_leaf(
         if budget.bytes > MAX_SKILL_TOTAL_BYTES {
             anyhow::bail!("installed skill entry exceeds {MAX_SKILL_TOTAL_BYTES} total bytes");
         }
-        hash_installed_record_header(hasher, b'F', relative, bytes.len() as u64)?;
+        hash_installed_record_header(hasher, b'F', relative, bytes.len() as u64, metadata)?;
         hasher.update(&bytes);
         return Ok(());
     }
@@ -1289,21 +4239,27 @@ fn hash_installed_leaf(
         match parent.read_link(name) {
             Ok(target) => {
                 let target_bytes = os_string_bytes(target.as_os_str());
-                hash_installed_record_header(hasher, b'L', relative, target_bytes.len() as u64)?;
+                hash_installed_record_header(
+                    hasher,
+                    b'L',
+                    relative,
+                    target_bytes.len() as u64,
+                    metadata,
+                )?;
                 hasher.update(target_bytes);
             }
             Err(_) => {
                 // Some Windows reparse kinds do not expose a symbolic-link
                 // target. Bind the no-follow metadata instead of opening the
                 // reparse target or pretending the entry is absent.
-                hash_installed_record_header(hasher, b'R', relative, metadata.len())?;
+                hash_installed_record_header(hasher, b'R', relative, metadata.len(), metadata)?;
                 hash_metadata_fingerprint(hasher, metadata);
             }
         }
         return Ok(());
     }
 
-    hash_installed_record_header(hasher, b'X', relative, metadata.len())?;
+    hash_installed_record_header(hasher, b'X', relative, metadata.len(), metadata)?;
     hash_metadata_fingerprint(hasher, metadata);
     Ok(())
 }
@@ -1313,6 +4269,7 @@ fn hash_installed_record_header(
     kind: u8,
     relative: &Path,
     byte_len: u64,
+    metadata: &cap_std::fs::Metadata,
 ) -> Result<()> {
     let path_bytes = os_string_bytes(relative.as_os_str());
     let path_len =
@@ -1321,6 +4278,9 @@ fn hash_installed_record_header(
     hasher.update(path_len.to_le_bytes());
     hasher.update(path_bytes);
     hasher.update(byte_len.to_le_bytes());
+    let (permission_kind, permission_bits) = skill_permission_fingerprint(metadata);
+    hasher.update([permission_kind]);
+    hasher.update(permission_bits.to_le_bytes());
     Ok(())
 }
 
@@ -1362,16 +4322,22 @@ fn os_string_bytes(value: &OsStr) -> Vec<u8> {
     value.to_string_lossy().as_bytes().to_vec()
 }
 
+#[derive(Clone, Copy)]
+struct RootFileOverride<'a> {
+    name: &'a OsStr,
+    bytes: &'a [u8],
+}
+
 /// Recursively copy one already-bound source directory into one already-bound
-/// private stage. All opens are no-follow and handle-relative. At the root,
-/// `skill.yaml` is written from the exact bytes that passed validation so a
-/// concurrent source edit cannot install a different manifest generation.
+/// private stage. All opens are no-follow and handle-relative. At the root, an
+/// optional typed package document is written from the exact validated bytes,
+/// so concurrent source edits cannot substitute that document.
 fn copy_dir_recursive(
     source: &Dir,
     destination: &Dir,
     source_display: &Path,
     destination_display: &Path,
-    validated_root_manifest: Option<&[u8]>,
+    root_override: Option<RootFileOverride<'_>>,
     depth: usize,
     budget: &mut CopyBudget,
 ) -> Result<()> {
@@ -1381,19 +4347,51 @@ fn copy_dir_recursive(
             source_display.display()
         );
     }
+    let source_metadata = source.dir_metadata().with_context(|| {
+        format!(
+            "inspect skill source directory {}",
+            source_display.display()
+        )
+    })?;
+    if !source_metadata.is_dir() || cap_metadata_is_link_like(&source_metadata) {
+        anyhow::bail!(
+            "skill source is linked or not a directory: {}",
+            source_display.display()
+        );
+    }
+    let source_permissions = source_metadata.permissions();
 
-    if let Some(manifest) = validated_root_manifest {
-        if manifest.len() > MAX_SKILL_MANIFEST_BYTES {
+    if let Some(root_override) = root_override {
+        if root_override.bytes.len() as u64 > MAX_SKILL_FILE_BYTES {
             anyhow::bail!(
-                "skill manifest exceeds {MAX_SKILL_MANIFEST_BYTES} bytes at {}",
-                source_display.join("skill.yaml").display()
+                "skill package document exceeds {MAX_SKILL_FILE_BYTES} bytes at {}",
+                source_display.join(root_override.name).display()
+            );
+        }
+        let source_document_display = source_display.join(root_override.name);
+        let source_document_metadata =
+            source
+                .symlink_metadata(root_override.name)
+                .with_context(|| {
+                    format!(
+                        "inspect overridden package document {}",
+                        source_document_display.display()
+                    )
+                })?;
+        if cap_metadata_is_link_like(&source_document_metadata)
+            || !source_document_metadata.is_file()
+        {
+            anyhow::bail!(
+                "overridden package document must be a real regular file: {}",
+                source_document_display.display()
             );
         }
         write_regular_file_create_new(
             destination,
-            OsStr::new("skill.yaml"),
-            manifest,
-            &destination_display.join("skill.yaml"),
+            root_override.name,
+            root_override.bytes,
+            &destination_display.join(root_override.name),
+            Some(source_document_metadata.permissions()),
         )?;
         budget.entries = budget
             .entries
@@ -1404,7 +4402,7 @@ fn copy_dir_recursive(
         }
         budget.bytes = budget
             .bytes
-            .checked_add(manifest.len() as u64)
+            .checked_add(root_override.bytes.len() as u64)
             .context("skill copy byte counter overflow")?;
         if budget.bytes > MAX_SKILL_TOTAL_BYTES {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_TOTAL_BYTES} total bytes");
@@ -1417,7 +4415,7 @@ fn copy_dir_recursive(
     for entry in entries {
         let entry = entry.with_context(|| format!("enumerate {}", source_display.display()))?;
         let name = entry.file_name();
-        if validated_root_manifest.is_some() && name == OsStr::new("skill.yaml") {
+        if root_override.is_some_and(|root_override| name == root_override.name) {
             continue;
         }
         budget.entries = budget
@@ -1496,6 +4494,14 @@ fn copy_dir_recursive(
             );
         }
     }
+    destination
+        .set_permissions(".", source_permissions)
+        .with_context(|| {
+            format!(
+                "preserve permissions on skill destination directory {}",
+                destination_display.display()
+            )
+        })?;
     sync_directory(destination, destination_display)
 }
 
@@ -1566,6 +4572,7 @@ fn write_regular_file_create_new(
     name: &OsStr,
     bytes: &[u8],
     target_display: &Path,
+    permissions: Option<cap_std::fs::Permissions>,
 ) -> Result<()> {
     let mut options = OpenOptions::new();
     options
@@ -1577,6 +4584,14 @@ fn write_regular_file_create_new(
         .with_context(|| format!("create skill target {}", target_display.display()))?;
     std::io::Write::write_all(&mut output, bytes)
         .with_context(|| format!("write skill target {}", target_display.display()))?;
+    if let Some(permissions) = permissions {
+        output.set_permissions(permissions).with_context(|| {
+            format!(
+                "preserve permissions on generated Skill document {}",
+                target_display.display()
+            )
+        })?;
+    }
     output
         .sync_all()
         .with_context(|| format!("sync skill target {}", target_display.display()))?;
@@ -1615,43 +4630,27 @@ fn ensure_real_cap_directory(dir: &Dir, display_path: &Path, label: &str) -> Res
     Ok(())
 }
 
-fn create_install_transaction(root: &Dir, id: &str) -> Result<(OsString, OsString, Dir)> {
-    for _ in 0..8 {
-        let nonce = uuid::Uuid::new_v4().simple().to_string();
-        let stage_name = OsString::from(format!("{INSTALL_TRANSACTION_PREFIX}{id}-{nonce}"));
-        let backup_name = OsString::from(format!("{BACKUP_TRANSACTION_PREFIX}{id}-{nonce}"));
-        match root.symlink_metadata(&backup_name) {
-            Ok(_) => continue,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "inspect private skill backup name `{}`",
-                        backup_name.to_string_lossy()
-                    )
-                });
-            }
-        }
-        match create_private_directory(root, &stage_name, Path::new(&stage_name)) {
-            Ok(()) => {
-                let dir = root.open_dir_nofollow(&stage_name).with_context(|| {
-                    format!(
-                        "open private skill stage `{}`",
-                        stage_name.to_string_lossy()
-                    )
-                })?;
-                ensure_real_cap_directory(&dir, Path::new(&stage_name), "private skill stage")?;
-                return Ok((stage_name, backup_name, dir));
-            }
-            Err(error)
-                if error
-                    .root_cause()
-                    .downcast_ref::<std::io::Error>()
-                    .is_some_and(|io| io.kind() == std::io::ErrorKind::AlreadyExists) => {}
-            Err(error) => return Err(error),
+fn create_install_transaction(
+    root: &Dir,
+    id: &str,
+    operation_id: &str,
+) -> Result<(OsString, OsString, Dir)> {
+    let stage_name = OsString::from(format!("{INSTALL_TRANSACTION_PREFIX}{id}-{operation_id}"));
+    let backup_name = OsString::from(format!("{BACKUP_TRANSACTION_PREFIX}{id}-{operation_id}"));
+    match root.symlink_metadata(&backup_name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(_) => anyhow::bail!("private install backup already exists for the prepared operation"),
+        Err(error) => {
+            return Err(error).context("inspect private skill backup transaction name");
         }
     }
-    anyhow::bail!("could not allocate a unique private skill stage after 8 attempts")
+    create_private_directory(root, &stage_name, Path::new(&stage_name))
+        .with_context(|| "create private skill stage for the prepared operation")?;
+    let dir = root
+        .open_dir_nofollow(&stage_name)
+        .context("open private skill stage for the prepared operation")?;
+    ensure_real_cap_directory(&dir, Path::new(&stage_name), "private skill stage")?;
+    Ok((stage_name, backup_name, dir))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1682,7 +4681,72 @@ pub fn recover_pending_transactions(target_skills_dir: &Path) -> Result<()> {
     recover_pending_transactions_locked(&root)
 }
 
+fn cleanup_skill_mutation_journal_stages_locked(root: &BoundDirectory) -> Result<()> {
+    cleanup_skill_mutation_journal_stages_with_limit(root, MAX_SKILL_ENTRIES)
+}
+
+fn cleanup_skill_mutation_journal_stages_with_limit(
+    root: &BoundDirectory,
+    max_root_entries: usize,
+) -> Result<()> {
+    let entries = root.dir.entries().with_context(|| {
+        format!(
+            "enumerate skill mutation journal stages under {}",
+            root.display_path.display()
+        )
+    })?;
+    let mut journal_stages = Vec::new();
+    let mut root_entry_count = 0usize;
+    for entry in entries {
+        root_entry_count = root_entry_count
+            .checked_add(1)
+            .context("skill mutation journal cleanup entry counter overflow")?;
+        if root_entry_count > max_root_entries {
+            anyhow::bail!(
+                "skill mutation journal cleanup under {} exceeds the {max_root_entries}-entry limit",
+                root.display_path.display()
+            );
+        }
+        let entry = entry.with_context(|| {
+            format!(
+                "read skill mutation journal stage under {}",
+                root.display_path.display()
+            )
+        })?;
+        let name = entry.file_name();
+        let Some(name_text) = name.to_str() else {
+            continue;
+        };
+        let Some(operation_id) = name_text.strip_prefix(SKILL_MUTATION_JOURNAL_STAGE_PREFIX) else {
+            continue;
+        };
+        validate_mutation_operation_id(operation_id)
+            .context("malformed private skill mutation journal stage")?;
+        journal_stages.push(name);
+    }
+    // Finish the bounded, validating preflight before mutating anything. A
+    // later over-budget or malformed entry must not leave a partially-cleaned
+    // root that makes the failed operation look more successful than it was.
+    for name in &journal_stages {
+        remove_private_metadata_stage_if_present(root, name)?;
+    }
+    if !journal_stages.is_empty() {
+        sync_directory(&root.dir, &root.display_path)
+            .context("sync orphaned skill mutation journal stage cleanup")?;
+    }
+    Ok(())
+}
+
 pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Result<()> {
+    if let Some(record) = read_skill_mutation_journal(root)? {
+        anyhow::bail!(
+            "pending audited skill mutation {} ({}/{}) requires WAL reconciliation",
+            record.operation_id,
+            record.kind.as_str(),
+            record.phase.as_str()
+        );
+    }
+    cleanup_skill_mutation_journal_stages_locked(root)?;
     let mut pending = BTreeMap::<String, PendingTransaction>::new();
     let mut delete_tombstones = Vec::<OsString>::new();
     let mut creator_directory_stages = Vec::<OsString>::new();
@@ -1761,6 +4825,18 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
         }
     }
 
+    if let Some((id, transaction)) = pending
+        .iter()
+        .find(|(_, transaction)| !transaction.backups.is_empty())
+    {
+        anyhow::bail!(
+            "legacy skill recovery found {} journal-less backup generation(s) for `{id}` under {}; \
+             refusing to publish or delete unauthenticated rollback evidence",
+            transaction.backups.len(),
+            root.display_path.display()
+        );
+    }
+
     // A tombstone is the only recoverable proof that the public uninstall
     // rename happened. Persist that rename before deleting the tombstone;
     // otherwise a crash can resurrect the public name after recovery already
@@ -1788,7 +4864,7 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
         cleanup_private_file_stages(&directory, &display_path)?;
     }
 
-    for (id, mut transaction) in pending {
+    for (id, transaction) in pending {
         transaction.stages.sort();
         transaction.backups.sort();
         let public_path = root.display_path.join(&id);
@@ -1808,39 +4884,6 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
                 });
             }
         };
-
-        if !public_exists {
-            match transaction.backups.as_slice() {
-                [] => {}
-                [backup] => {
-                    rename_child(
-                        &root.dir,
-                        backup,
-                        &root.dir,
-                        OsStr::new(&id),
-                        false,
-                        &root.display_path.join(backup),
-                        &public_path,
-                    )
-                    .with_context(|| {
-                        format!(
-                            "restore interrupted skill backup {} to {}",
-                            root.display_path.join(backup).display(),
-                            public_path.display()
-                        )
-                    })?;
-                    sync_directory(&root.dir, &root.display_path)?;
-                    transaction.backups.clear();
-                }
-                backups => {
-                    anyhow::bail!(
-                        "cannot recover skill `{id}`: {} backup generations are present under {}",
-                        backups.len(),
-                        root.display_path.display()
-                    );
-                }
-            }
-        }
 
         // When a public generation and a private rollback generation coexist,
         // first make the observed winner + rollback namespace durable. Only
@@ -2049,19 +5092,52 @@ fn remove_transaction_directory(root: &BoundDirectory, name: &OsStr) -> Result<(
     })
 }
 
+fn remove_transaction_artifact_if_present(root: &BoundDirectory, name: &OsStr) -> Result<()> {
+    let display = root.display_path.join(name);
+    match root.dir.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(metadata) if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) => {
+            remove_transaction_directory(root, name)
+        }
+        Ok(_) => remove_child_file(&root.dir, name, &display)
+            .with_context(|| format!("remove private skill artifact {}", display.display())),
+        Err(error) => Err(error)
+            .with_context(|| format!("inspect private skill artifact {}", display.display())),
+    }
+}
+
 fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
     #[cfg(test)]
-    TEST_SYNC_FAILURES.with(|remaining| {
-        let count = remaining.get();
-        if count > 0 {
-            remaining.set(count - 1);
+    {
+        let fail_at = TEST_SYNC_FAIL_AT.with(|target| {
+            let call = TEST_SYNC_CALLS.with(|calls| {
+                let next = calls.get().saturating_add(1);
+                calls.set(next);
+                next
+            });
+            if target.get() == Some(call) {
+                target.set(None);
+                true
+            } else {
+                false
+            }
+        });
+        let fail_next = TEST_SYNC_FAILURES.with(|remaining| {
+            let count = remaining.get();
+            if count > 0 {
+                remaining.set(count - 1);
+                true
+            } else {
+                false
+            }
+        });
+        if fail_at || fail_next {
             anyhow::bail!(
                 "injected skill directory sync failure for {}",
                 display_path.display()
             );
         }
-        Ok(())
-    })?;
+    }
     #[cfg(unix)]
     {
         directory
@@ -2070,18 +5146,40 @@ fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
             .with_context(|| format!("sync skill directory {}", display_path.display()))?;
     }
     #[cfg(not(unix))]
-    let _ = (directory, display_path);
+    {
+        // Windows namespace commits in `skills::store::{rename_child,
+        // remove_child_file}` use no-follow handles opened with
+        // FILE_FLAG_WRITE_THROUGH. There is no portable cap-std equivalent of
+        // fsyncing a directory handle there; the handle-bound mutation itself
+        // is the durability boundary.
+        let _ = (directory, display_path);
+    }
     Ok(())
 }
 
 #[cfg(test)]
 thread_local! {
     static TEST_SYNC_FAILURES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_SYNC_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_SYNC_FAIL_AT: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 #[cfg(test)]
 fn fail_next_directory_syncs(count: usize) {
     TEST_SYNC_FAILURES.with(|remaining| remaining.set(count));
+}
+
+#[cfg(test)]
+fn fail_directory_sync_call(call: usize) {
+    TEST_SYNC_CALLS.with(|calls| calls.set(0));
+    TEST_SYNC_FAIL_AT.with(|target| target.set(Some(call)));
+}
+
+#[cfg(test)]
+fn clear_directory_sync_failure() {
+    TEST_SYNC_FAILURES.with(|remaining| remaining.set(0));
+    TEST_SYNC_CALLS.with(|calls| calls.set(0));
+    TEST_SYNC_FAIL_AT.with(|target| target.set(None));
 }
 
 fn cleanup_after_failed_operation(
@@ -2107,15 +5205,17 @@ fn cleanup_after_failed_operation(
     }
 }
 
+/// Cross-thread-capable ownership of the capability-bound OS lock.
+///
+/// The file lock is the single serialization authority for both threads and
+/// processes. Keeping a `std::sync::MutexGuard` here made every audited async
+/// reconciliation future non-`Send`, so registry hot reload could not run in
+/// its Tokio task.
 pub(crate) struct SkillMutationGuard {
-    _process: MutexGuard<'static, ()>,
     _file: std::fs::File,
 }
 
 pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutationGuard> {
-    let process = SKILL_MUTATION_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let started = std::time::Instant::now();
     loop {
         let mut options = OpenOptions::new();
@@ -2188,10 +5288,7 @@ pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutatio
                 });
             }
         }
-        return Ok(SkillMutationGuard {
-            _process: process,
-            _file: file,
-        });
+        return Ok(SkillMutationGuard { _file: file });
     }
 }
 
@@ -2250,6 +5347,38 @@ mod tests {
             format!("{INSTALL_TRANSACTION_PREFIX}{id}-{nonce}"),
             format!("{BACKUP_TRANSACTION_PREFIX}{id}-{nonce}"),
         )
+    }
+
+    fn force_indeterminate_removal_after_parent_sync_failure(
+        skills_dir: &Path,
+        id: &str,
+        operation_id: &str,
+    ) -> PathBuf {
+        let public = skills_dir.join(id);
+        write_skill(&public, id, &good_yaml(id));
+        std::fs::write(public.join("sentinel"), b"recoverable").unwrap();
+        let mut prepared = prepare_uninstall_with_expectation(skills_dir, id, None, operation_id)
+            .unwrap()
+            .into_prepared_for_test();
+        prepared.mark_intent_durable().unwrap();
+
+        // commit-start journal sync is call 1; the tombstone rename's parent
+        // fsync is call 2 and must leave exact rollback evidence.
+        fail_directory_sync_call(2);
+        let error = prepared.commit().unwrap_err();
+        clear_directory_sync_failure();
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(!public.exists());
+
+        let tombstone = skills_dir.join(format!("{DELETE_TRANSACTION_PREFIX}{id}-{operation_id}"));
+        assert!(tombstone.exists());
+        tombstone
+    }
+
+    #[test]
+    fn skill_mutation_guard_can_cross_async_worker_threads() {
+        fn assert_send<T: Send>() {}
+        assert_send::<SkillMutationGuard>();
     }
 
     #[test]
@@ -2324,6 +5453,773 @@ mod tests {
         assert!(!report.replaced_existing);
         assert!(report.installed_at.exists());
         assert!(report.installed_at.join("skill.yaml").exists());
+    }
+
+    #[test]
+    fn prepared_install_keeps_public_anchor_absent_until_commit_and_retries_cleanly() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "prepared", &good_yaml("prepared"));
+        std::fs::write(source.join("asset.txt"), b"prepared bytes").unwrap();
+        let operation_id = "0123456789abcdef0123456789abcdef";
+
+        let prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        let binding = prepared.intent_binding();
+        assert_eq!(binding.operation_id, operation_id);
+        assert_eq!(binding.id, "prepared");
+        assert!(!binding.replacing_existing);
+        assert_eq!(binding.target_generation_sha256, None);
+        assert!(
+            !dest.path().join("prepared").exists(),
+            "private preparation must not publish the public Skill anchor"
+        );
+        assert!(
+            dest.path()
+                .join(format!(
+                    "{INSTALL_TRANSACTION_PREFIX}prepared-{operation_id}"
+                ))
+                .exists(),
+            "the private stage must be bound to the operation id"
+        );
+
+        // Simulate interruption after preparation but before the intent ACK.
+        // Recovery proves that no WAL intent exists, removes only the private
+        // stage/journal, and the SAME operation id remains safe to retry.
+        drop(prepared);
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .expect("prepared journal must survive interruption");
+        assert_eq!(pending.audit_binding().operation_id, operation_id);
+        assert!(pending.reconcile(false).unwrap().is_none());
+        assert!(!dest.path().join("prepared").exists());
+        drop(pending);
+        let mut retry = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        assert_eq!(retry.intent_binding(), binding);
+        retry.mark_intent_durable().unwrap();
+        let report = retry.commit().unwrap();
+        assert_eq!(
+            report.source_generation_sha256,
+            binding.source_generation_sha256
+        );
+        assert_eq!(
+            std::fs::read(dest.path().join("prepared").join("asset.txt")).unwrap(),
+            b"prepared bytes"
+        );
+    }
+
+    #[test]
+    fn prepared_replace_binds_old_anchor_and_keeps_it_live_until_commit() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        write_skill(&old_source, "replace_me", &good_yaml("replace_me"));
+        std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
+        let old = install_from_local(&old_source, dest.path(), false).unwrap();
+
+        let new_source = staging.path().join("new");
+        write_skill(&new_source, "replace_me", &good_yaml("replace_me"));
+        std::fs::write(new_source.join("asset.txt"), b"new").unwrap();
+        let operation_id = "11111111111111111111111111111111";
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        let binding = prepared.intent_binding();
+
+        assert!(binding.replacing_existing);
+        assert_eq!(
+            binding.target_generation_sha256.as_deref(),
+            Some(old.source_generation_sha256.as_str())
+        );
+        assert_eq!(
+            std::fs::read(dest.path().join("replace_me").join("asset.txt")).unwrap(),
+            b"old",
+            "prepare must leave the old public anchor unchanged"
+        );
+
+        prepared.mark_intent_durable().unwrap();
+        let report = prepared.commit().unwrap();
+        assert!(report.replaced_existing);
+        assert_eq!(
+            report.replaced_generation_sha256,
+            binding.target_generation_sha256
+        );
+        assert_eq!(
+            std::fs::read(dest.path().join("replace_me").join("asset.txt")).unwrap(),
+            b"new"
+        );
+    }
+
+    #[test]
+    fn prepared_install_abort_removes_only_private_stage() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "abort_me", &good_yaml("abort_me"));
+        let operation_id = "22222222222222222222222222222222";
+        let stage = dest.path().join(format!(
+            "{INSTALL_TRANSACTION_PREFIX}abort_me-{operation_id}"
+        ));
+
+        let prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        assert!(stage.exists());
+        prepared.abort_without_intent().unwrap();
+
+        assert!(!stage.exists());
+        assert!(!dest.path().join("abort_me").exists());
+    }
+
+    #[test]
+    fn crash_after_intent_before_commit_recovers_same_operation_as_aborted() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "intent_crash", &good_yaml("intent_crash"));
+        let operation_id = "abababababababababababababababab";
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let stage = dest
+            .path()
+            .join(mutation_install_stage_name(&prepared.journal));
+        drop(prepared);
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.audit_binding().operation_id, operation_id);
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Aborted);
+        assert!(stage.exists(), "evidence remains until terminal WAL ACK");
+        pending.acknowledge_terminal().unwrap();
+        assert!(!stage.exists());
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn crash_at_commit_started_before_rename_is_aborted_not_committed() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "before_rename", &good_yaml("before_rename"));
+        let operation_id = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc";
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        transition_skill_mutation_phase(
+            &prepared.target_root,
+            &mut prepared.journal,
+            SkillMutationPhase::CommitStarted,
+            None,
+            None,
+        )
+        .unwrap();
+        drop(prepared);
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Aborted);
+        assert!(!dest.path().join("before_rename").exists());
+        pending.acknowledge_terminal().unwrap();
+    }
+
+    #[test]
+    fn crash_after_public_rename_before_dirsync_is_indeterminate() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "after_rename", &good_yaml("after_rename"));
+        let operation_id = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        transition_skill_mutation_phase(
+            &prepared.target_root,
+            &mut prepared.journal,
+            SkillMutationPhase::CommitStarted,
+            None,
+            None,
+        )
+        .unwrap();
+        let stage = prepared.stage_name.clone();
+        rename_child(
+            &prepared.target_root.dir,
+            &stage,
+            &prepared.target_root.dir,
+            OsStr::new("after_rename"),
+            false,
+            &prepared.target_root.display_path.join(&stage),
+            &prepared.target_root.display_path.join("after_rename"),
+        )
+        .unwrap();
+        // Deliberately skip the parent-directory fsync and terminal transition.
+        drop(prepared);
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        assert!(dest.path().join("after_rename").exists());
+        let error = pending.acknowledge_terminal().unwrap_err();
+        assert!(format!("{error:#}").contains("exact bound prior namespace"));
+        assert!(dest.path().join("after_rename").exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn parent_sync_failure_never_reports_fresh_install_committed() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "sync_install", &good_yaml("sync_install"));
+        let operation_id = "dededededededededededededededede";
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        fail_directory_sync_call(2);
+        let error = prepared.commit().unwrap_err();
+        clear_directory_sync_failure();
+
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(dest.path().join("sync_install").exists());
+        let record = {
+            let root = open_bound_directory(dest.path(), false, "skills")
+                .unwrap()
+                .unwrap();
+            read_skill_mutation_journal(&root).unwrap().unwrap()
+        };
+        assert_eq!(record.operation_id, operation_id);
+        assert_eq!(record.phase, SkillMutationPhase::Indeterminate);
+    }
+
+    #[test]
+    fn parent_sync_failure_never_reports_replace_committed_and_retains_backup() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        write_skill(&old_source, "sync_replace", &good_yaml("sync_replace"));
+        std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
+        install_from_local(&old_source, dest.path(), false).unwrap();
+
+        let new_source = staging.path().join("new");
+        write_skill(&new_source, "sync_replace", &good_yaml("sync_replace"));
+        std::fs::write(new_source.join("asset.txt"), b"new").unwrap();
+        let operation_id = "efefefefefefefefefefefefefefefef";
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let backup = dest.path().join(mutation_backup_name(&prepared.journal));
+        // commit-start journal=1, prior->backup sync=2, desired-anchor sync=3.
+        fail_directory_sync_call(3);
+        let error = prepared.commit().unwrap_err();
+        clear_directory_sync_failure();
+
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(
+            backup.exists(),
+            "rollback generation must remain recoverable"
+        );
+        assert_eq!(
+            std::fs::read(dest.path().join("sync_replace").join("asset.txt")).unwrap(),
+            b"new"
+        );
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        assert!(backup.exists());
+        let error = pending.acknowledge_terminal().unwrap_err();
+        assert!(format!("{error:#}").contains("exact bound prior namespace"));
+        assert!(backup.exists());
+        assert_eq!(
+            std::fs::read(dest.path().join("sync_replace").join("asset.txt")).unwrap(),
+            b"new"
+        );
+    }
+
+    #[test]
+    fn prior_backup_sync_failure_restores_only_after_indeterminate_terminal_ack() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        write_skill(&old_source, "backup_sync", &good_yaml("backup_sync"));
+        std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
+        install_from_local(&old_source, dest.path(), false).unwrap();
+
+        let new_source = staging.path().join("new");
+        write_skill(&new_source, "backup_sync", &good_yaml("backup_sync"));
+        std::fs::write(new_source.join("asset.txt"), b"new").unwrap();
+        let operation_id = "56565656565656565656565656565656";
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let backup = dest.path().join(mutation_backup_name(&prepared.journal));
+        let stage = dest
+            .path()
+            .join(mutation_install_stage_name(&prepared.journal));
+
+        // commit-start journal=1; prior->backup parent sync=2.
+        fail_directory_sync_call(2);
+        let error = prepared.commit().unwrap_err();
+        clear_directory_sync_failure();
+
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(!dest.path().join("backup_sync").exists());
+        assert!(
+            backup.exists(),
+            "the bound rollback generation must survive"
+        );
+        assert!(
+            stage.exists(),
+            "the uncommitted desired generation remains private"
+        );
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        pending.acknowledge_terminal().unwrap();
+        assert_eq!(
+            std::fs::read(dest.path().join("backup_sync").join("asset.txt")).unwrap(),
+            b"old"
+        );
+        assert!(!backup.exists());
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn cleanup_started_resumes_the_same_partial_backup_after_restart() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        write_skill(&old_source, "cleanup_resume", &good_yaml("cleanup_resume"));
+        std::fs::create_dir(old_source.join("nested")).unwrap();
+        std::fs::write(old_source.join("nested/a.txt"), b"a").unwrap();
+        std::fs::write(old_source.join("nested/b.txt"), b"b").unwrap();
+        install_from_local(&old_source, dest.path(), false).unwrap();
+
+        let new_source = staging.path().join("new");
+        write_skill(&new_source, "cleanup_resume", &good_yaml("cleanup_resume"));
+        std::fs::write(new_source.join("new.txt"), b"new").unwrap();
+        let operation_id = "78787878787878787878787878787878";
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let backup = dest.path().join(mutation_backup_name(&prepared.journal));
+        prepared.commit().unwrap();
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Committed
+        );
+        crate::skills::store::fail_delete_after_work_units(2);
+        let error = pending.acknowledge_terminal().unwrap_err();
+        assert!(format!("{error:#}").contains("injected recursive Skill cleanup"));
+        assert!(
+            backup.exists(),
+            "partial top-level backup must remain bound"
+        );
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+
+        let mut resumed = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resumed.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Committed
+        );
+        resumed.acknowledge_terminal().unwrap();
+        assert!(!backup.exists());
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn crash_after_dirsync_before_result_retains_committed_same_operation_outbox() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "result_pending", &good_yaml("result_pending"));
+        let operation_id = "12121212121212121212121212121212";
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let report = prepared.commit().unwrap();
+        assert_eq!(report.id, "result_pending");
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Committed);
+        pending.acknowledge_terminal().unwrap();
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn prepared_removal_keeps_anchor_until_commit_and_same_id_retry_is_idempotent() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "remove_me", &good_yaml("remove_me"));
+        let installed = install_from_local(&source, dest.path(), false).unwrap();
+        let operation_id = "33333333333333333333333333333333";
+
+        let mut prepared =
+            prepare_uninstall_with_expectation(dest.path(), "remove_me", None, operation_id)
+                .unwrap()
+                .into_prepared_for_test();
+        let binding = prepared.intent_binding();
+        assert_eq!(binding.operation_id, operation_id);
+        assert_eq!(
+            binding.target_generation_sha256,
+            installed.source_generation_sha256
+        );
+        assert!(dest.path().join("remove_me").exists());
+        prepared.mark_intent_durable().unwrap();
+        let removed = prepared.commit().unwrap();
+        assert!(removed.removed);
+        assert!(!dest.path().join("remove_me").exists());
+        acknowledge_test_skill_mutation(dest.path()).unwrap();
+
+        let no_op =
+            match prepare_uninstall_with_expectation(dest.path(), "remove_me", None, operation_id)
+                .unwrap()
+            {
+                PreparedSkillRemovalOutcome::Unchanged(report) => report,
+                PreparedSkillRemovalOutcome::Prepared(_) => {
+                    panic!("already-absent removal must not enter the WAL lifecycle")
+                }
+            };
+        assert!(!no_op.removed);
+        assert!(
+            !dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists(),
+            "already-absent removal must not create a mutation outbox"
+        );
+    }
+
+    #[test]
+    fn prepared_removal_refuses_generation_drift_after_intent_binding() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "drifted_remove", &good_yaml("drifted_remove"));
+        std::fs::write(source.join("asset.txt"), b"old").unwrap();
+        install_from_local(&source, dest.path(), false).unwrap();
+        let live_asset = dest.path().join("drifted_remove").join("asset.txt");
+
+        let mut prepared = prepare_uninstall_with_expectation(
+            dest.path(),
+            "drifted_remove",
+            None,
+            "44444444444444444444444444444444",
+        )
+        .unwrap()
+        .into_prepared_for_test();
+        prepared.mark_intent_durable().unwrap();
+        std::fs::write(&live_asset, b"changed outside the cooperative lock").unwrap();
+
+        let error = prepared.commit().unwrap_err();
+        assert!(format!("{error:#}").contains("changed after its intent was acknowledged"));
+        assert_eq!(
+            std::fs::read(live_asset).unwrap(),
+            b"changed outside the cooperative lock"
+        );
+    }
+
+    #[test]
+    fn replacement_final_lookup_swap_is_indeterminate_even_with_identical_prior_bytes() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        write_skill(
+            &old_source,
+            "identity_replace",
+            &good_yaml("identity_replace"),
+        );
+        std::fs::write(old_source.join("asset.txt"), b"same prior bytes").unwrap();
+        install_from_local(&old_source, dest.path(), false).unwrap();
+
+        let new_source = staging.path().join("new");
+        write_skill(
+            &new_source,
+            "identity_replace",
+            &good_yaml("identity_replace"),
+        );
+        std::fs::write(new_source.join("asset.txt"), b"desired bytes").unwrap();
+        let operation_id = "78787878787878787878787878787878";
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        let replacement_name = ".test-swap-replace-attacker";
+        let displaced_name = ".test-swap-replace-original";
+        let replacement = dest.path().join(replacement_name);
+        std::fs::create_dir(&replacement).unwrap();
+        std::fs::write(
+            replacement.join("skill.yaml"),
+            good_yaml("identity_replace"),
+        )
+        .unwrap();
+        std::fs::write(replacement.join("asset.txt"), b"same prior bytes").unwrap();
+        arm_final_lookup_swap(
+            FinalLookupSwapPoint::Replace,
+            replacement_name,
+            displaced_name,
+        );
+
+        prepared.mark_intent_durable().unwrap();
+        let error = prepared.commit().unwrap_err();
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(
+            format!("{error:#}").contains("different object"),
+            "identity mismatch, not content, must trip the final gap"
+        );
+        assert!(dest.path().join(displaced_name).exists());
+        assert!(
+            dest.path()
+                .join(format!(
+                    "{BACKUP_TRANSACTION_PREFIX}identity_replace-{operation_id}"
+                ))
+                .exists()
+        );
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        assert!(
+            pending.acknowledge_terminal().is_err(),
+            "a same-content but different-identity backup must never be restored or deleted"
+        );
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn directory_removal_final_lookup_swap_preserves_both_objects_as_indeterminate() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(
+            &source,
+            "identity_remove_dir",
+            &good_yaml("identity_remove_dir"),
+        );
+        std::fs::write(source.join("asset.txt"), b"same removal bytes").unwrap();
+        install_from_local(&source, dest.path(), false).unwrap();
+        let operation_id = "89898989898989898989898989898989";
+        let mut prepared = prepare_uninstall_with_expectation(
+            dest.path(),
+            "identity_remove_dir",
+            None,
+            operation_id,
+        )
+        .unwrap()
+        .into_prepared_for_test();
+        let replacement_name = ".test-swap-remove-dir-attacker";
+        let displaced_name = ".test-swap-remove-dir-original";
+        let replacement = dest.path().join(replacement_name);
+        std::fs::create_dir(&replacement).unwrap();
+        std::fs::write(
+            replacement.join("skill.yaml"),
+            good_yaml("identity_remove_dir"),
+        )
+        .unwrap();
+        std::fs::write(replacement.join("asset.txt"), b"same removal bytes").unwrap();
+        arm_final_lookup_swap(
+            FinalLookupSwapPoint::RemoveDirectory,
+            replacement_name,
+            displaced_name,
+        );
+
+        prepared.mark_intent_durable().unwrap();
+        let error = prepared.commit().unwrap_err();
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(format!("{error:#}").contains("different object"));
+        let tombstone = dest.path().join(format!(
+            "{DELETE_TRANSACTION_PREFIX}identity_remove_dir-{operation_id}"
+        ));
+        assert!(tombstone.exists());
+        assert!(dest.path().join(displaced_name).exists());
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        assert!(
+            pending.acknowledge_terminal().is_err(),
+            "a mismatched tombstone must remain operator-visible"
+        );
+        assert!(tombstone.exists());
+    }
+
+    #[test]
+    fn leaf_removal_final_lookup_swap_renames_but_never_unlinks_the_swapped_leaf() {
+        let dest = tempdir().unwrap();
+        let target = dest.path().join("identity_remove_leaf");
+        std::fs::write(&target, b"same leaf bytes").unwrap();
+        let operation_id = "90909090909090909090909090909090";
+        let mut prepared = prepare_uninstall_with_expectation(
+            dest.path(),
+            "identity_remove_leaf",
+            None,
+            operation_id,
+        )
+        .unwrap()
+        .into_prepared_for_test();
+        let replacement_name = ".test-swap-remove-leaf-attacker";
+        let displaced_name = ".test-swap-remove-leaf-original";
+        std::fs::write(dest.path().join(replacement_name), b"same leaf bytes").unwrap();
+        arm_final_lookup_swap(
+            FinalLookupSwapPoint::RemoveLeaf,
+            replacement_name,
+            displaced_name,
+        );
+
+        prepared.mark_intent_durable().unwrap();
+        let error = prepared.commit().unwrap_err();
+        assert_eq!(error.state(), SkillMutationFailureState::Indeterminate);
+        assert!(format!("{error:#}").contains("different object"));
+        let tombstone = dest.path().join(format!(
+            "{DELETE_TRANSACTION_PREFIX}identity_remove_leaf-{operation_id}"
+        ));
+        assert_eq!(std::fs::read(&tombstone).unwrap(), b"same leaf bytes");
+        assert_eq!(
+            std::fs::read(dest.path().join(displaced_name)).unwrap(),
+            b"same leaf bytes"
+        );
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        assert!(pending.acknowledge_terminal().is_err());
+        assert!(tombstone.exists(), "mismatched leaf must not be unlinked");
+    }
+
+    #[test]
+    fn prepared_skill_mutations_reject_unbound_operation_ids() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        write_skill(&source, "invalid_op", &good_yaml("invalid_op"));
+
+        let install_error = prepare_install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            None,
+            "not-a-bound-id",
+        )
+        .err()
+        .expect("invalid install operation id must fail");
+        assert!(format!("{install_error:#}").contains("32 lowercase hex"));
+
+        let remove_error =
+            prepare_uninstall_with_expectation(dest.path(), "invalid_op", None, "ABC")
+                .err()
+                .expect("invalid removal operation id must fail");
+        assert!(format!("{remove_error:#}").contains("32 lowercase hex"));
     }
 
     #[test]
@@ -2441,6 +6337,114 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn package_generation_binds_and_install_preserves_unix_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let source = staging.path().join("source");
+        let assets = source.join("assets");
+        let payload = assets.join("payload.bin");
+        write_skill(&source, "mode-bound", &good_yaml("mode-bound"));
+        std::fs::create_dir(&assets).unwrap();
+        std::fs::write(&payload, b"payload").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o750)).unwrap();
+        std::fs::set_permissions(&assets, std::fs::Permissions::from_mode(0o711)).unwrap();
+        std::fs::set_permissions(&payload, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let original = inspect_local_install(&source, dest.path()).unwrap();
+        std::fs::set_permissions(&assets, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let nested_chmod = inspect_local_install(&source, dest.path()).unwrap();
+        assert_ne!(
+            nested_chmod.source_generation_sha256,
+            original.source_generation_sha256
+        );
+        std::fs::set_permissions(&assets, std::fs::Permissions::from_mode(0o711)).unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let root_chmod = inspect_local_install(&source, dest.path()).unwrap();
+        assert_ne!(
+            root_chmod.source_generation_sha256,
+            original.source_generation_sha256
+        );
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o750)).unwrap();
+        let restored = inspect_local_install(&source, dest.path()).unwrap();
+        assert_eq!(
+            restored.source_generation_sha256,
+            original.source_generation_sha256
+        );
+
+        install_from_local_with_expectation(
+            &source,
+            dest.path(),
+            false,
+            Some(&InstallExpectation {
+                id: restored.id,
+                source_generation_sha256: restored.source_generation_sha256,
+                target_generation_sha256: restored.target_generation_sha256,
+            }),
+        )
+        .unwrap();
+        let installed = dest.path().join("mode-bound");
+        assert_eq!(
+            std::fs::metadata(&installed).unwrap().permissions().mode() & 0o7777,
+            0o750
+        );
+        assert_eq!(
+            std::fs::metadata(installed.join("assets"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o711
+        );
+        assert_eq!(
+            std::fs::metadata(installed.join("assets").join("payload.bin"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o640
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepared_replacement_rejects_unix_directory_mode_drift() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let old_source = staging.path().join("old");
+        let new_source = staging.path().join("new");
+        write_skill(&old_source, "mode-drift", &good_yaml("mode-drift"));
+        std::fs::create_dir(old_source.join("assets")).unwrap();
+        std::fs::write(old_source.join("assets").join("payload"), b"old").unwrap();
+        install_from_local(&old_source, dest.path(), false).unwrap();
+        write_skill(&new_source, "mode-drift", &good_yaml("mode-drift"));
+        std::fs::write(new_source.join("replacement"), b"new").unwrap();
+
+        let mut prepared = prepare_install_from_local_with_expectation(
+            &new_source,
+            dest.path(),
+            true,
+            None,
+            "61616161616161616161616161616161",
+        )
+        .unwrap();
+        prepared.mark_intent_durable().unwrap();
+        let live_assets = dest.path().join("mode-drift").join("assets");
+        std::fs::set_permissions(&live_assets, std::fs::Permissions::from_mode(0o711)).unwrap();
+
+        let error = prepared.commit().unwrap_err();
+        assert!(format!("{error:#}").contains("destination changed while staging"));
+        assert_eq!(
+            std::fs::metadata(live_assets).unwrap().permissions().mode() & 0o7777,
+            0o711
+        );
+    }
+
     #[test]
     fn replacement_expectation_rejects_a_destination_generation_that_changed() {
         let staging = tempdir().unwrap();
@@ -2502,6 +6506,29 @@ mod tests {
 
         assert!(format!("{error:#}").contains("exceeds 4096 entries"));
         assert_eq!(budget.entries, MAX_SKILL_ENTRIES);
+    }
+
+    #[test]
+    fn journal_stage_cleanup_bounds_all_root_entries_before_filtering() {
+        let skills = tempdir().unwrap();
+        std::fs::write(skills.path().join("unrelated-one"), b"").unwrap();
+        std::fs::write(skills.path().join("unrelated-two"), b"").unwrap();
+        let root = open_bound_directory(skills.path(), false, "cleanup limit fixture")
+            .unwrap()
+            .unwrap();
+
+        let error = cleanup_skill_mutation_journal_stages_with_limit(&root, 1).unwrap_err();
+        assert!(format!("{error:#}").contains("exceeds the 1-entry limit"));
+    }
+
+    #[test]
+    fn installed_inventory_bounds_hidden_and_unrelated_root_entries() {
+        let skills = tempdir().unwrap();
+        std::fs::write(skills.path().join(".unrelated-one"), b"").unwrap();
+        std::fs::write(skills.path().join(".unrelated-two"), b"").unwrap();
+
+        let error = list_installed_with_limit(skills.path(), 1).unwrap_err();
+        assert!(format!("{error:#}").contains("exceeds the 1-entry limit"));
     }
 
     #[test]
@@ -2618,7 +6645,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_retains_backup_until_public_namespace_sync_succeeds() {
+    fn recovery_never_discards_journal_less_backup_even_with_public_winner() {
         let dest = tempdir().unwrap();
         let (_, backup_name) = transaction_names("recoverable");
         let public = dest.path().join("recoverable");
@@ -2628,23 +6655,23 @@ mod tests {
         write_skill(&backup, "recoverable", &good_yaml("recoverable"));
         std::fs::write(backup.join("VERSION"), b"old").unwrap();
 
-        fail_next_directory_syncs(1);
         let error = recover_pending_transactions(dest.path()).unwrap_err();
 
-        assert!(format!("{error:#}").contains("injected skill directory sync failure"));
+        assert!(format!("{error:#}").contains("journal-less backup"));
         assert!(public.exists(), "the observed public winner remains live");
         assert!(
             backup.exists(),
             "the only rollback generation must survive a failed parent sync"
         );
 
-        recover_pending_transactions(dest.path()).unwrap();
+        let retry = recover_pending_transactions(dest.path()).unwrap_err();
+        assert!(format!("{retry:#}").contains("journal-less backup"));
         assert!(public.exists());
-        assert!(!backup.exists());
+        assert!(backup.exists());
     }
 
     #[test]
-    fn list_recovery_restores_backup_when_crash_left_public_id_missing() {
+    fn list_recovery_refuses_to_publish_journal_less_backup() {
         let dest = tempdir().unwrap();
         let (stage_name, backup_name) = transaction_names("recoverable");
         let backup = dest.path().join(&backup_name);
@@ -2654,14 +6681,13 @@ mod tests {
         write_skill(&stage, "recoverable", &good_yaml("recoverable"));
         std::fs::write(stage.join("VERSION"), b"new").unwrap();
 
-        let rows = list_installed(dest.path()).unwrap();
+        let error = list_installed(dest.path()).unwrap_err();
 
         let public = dest.path().join("recoverable");
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].dir_name, "recoverable");
-        assert_eq!(std::fs::read(public.join("VERSION")).unwrap(), b"old");
-        assert!(!backup.exists());
-        assert!(!stage.exists());
+        assert!(format!("{error:#}").contains("journal-less backup"));
+        assert!(!public.exists());
+        assert!(backup.exists());
+        assert!(stage.exists());
     }
 
     #[test]
@@ -2680,7 +6706,7 @@ mod tests {
     }
 
     #[test]
-    fn install_recovers_backup_before_checking_replace_policy() {
+    fn install_blocks_on_journal_less_backup_without_mutating_it() {
         let source_root = tempdir().unwrap();
         let dest = tempdir().unwrap();
         let source = source_root.path().join("source");
@@ -2698,17 +6724,14 @@ mod tests {
 
         let error = install_from_local(&source, dest.path(), false).unwrap_err();
 
-        assert!(format!("{error:#}").contains("already installed"));
-        assert_eq!(
-            std::fs::read(dest.path().join("recoverable").join("VERSION")).unwrap(),
-            b"old"
-        );
-        assert!(!backup.exists());
-        assert!(!dest.path().join(stage_name).exists());
+        assert!(format!("{error:#}").contains("journal-less backup"));
+        assert!(!dest.path().join("recoverable").exists());
+        assert!(backup.exists());
+        assert!(dest.path().join(stage_name).exists());
     }
 
     #[test]
-    fn uninstall_recovers_backup_before_removal() {
+    fn uninstall_blocks_on_journal_less_backup_without_mutating_it() {
         let dest = tempdir().unwrap();
         let (stage_name, backup_name) = transaction_names("recoverable");
         write_skill(
@@ -2722,49 +6745,247 @@ mod tests {
             &good_yaml("recoverable"),
         );
 
-        assert!(uninstall(dest.path(), "recoverable").unwrap());
+        let error = uninstall(dest.path(), "recoverable").unwrap_err();
+        assert!(format!("{error:#}").contains("journal-less backup"));
         assert!(!dest.path().join("recoverable").exists());
-        assert!(!dest.path().join(backup_name).exists());
-        assert!(!dest.path().join(stage_name).exists());
+        assert!(dest.path().join(backup_name).exists());
+        assert!(dest.path().join(stage_name).exists());
     }
 
     #[test]
-    fn uninstall_retains_tombstone_when_namespace_sync_fails() {
+    fn uninstall_retains_tombstone_until_indeterminate_rollback_is_acked() {
         let dest = tempdir().unwrap();
         let public = dest.path().join("doomed");
-        write_skill(&public, "doomed", &good_yaml("doomed"));
-        std::fs::write(public.join("sentinel"), b"recoverable").unwrap();
-
-        fail_next_directory_syncs(1);
-        let report = uninstall_with_report(dest.path(), "doomed").unwrap();
-
-        assert!(report.removed);
-        assert!(!public.exists());
-        assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("retained for crash recovery"))
+        let operation_id = "55555555555555555555555555555555";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "doomed",
+            operation_id,
         );
-        let tombstones = std::fs::read_dir(dest.path())
-            .unwrap()
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name().is_some_and(|name| {
-                    name.to_string_lossy()
-                        .starts_with(DELETE_TRANSACTION_PREFIX)
-                })
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(tombstones.len(), 1);
         assert_eq!(
-            std::fs::read(tombstones[0].join("sentinel")).unwrap(),
+            std::fs::read(tombstone.join("sentinel")).unwrap(),
             b"recoverable"
         );
 
-        recover_pending_transactions(dest.path()).unwrap();
-        assert!(!tombstones[0].exists());
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        pending.acknowledge_terminal().unwrap();
+
+        assert_eq!(
+            std::fs::read(public.join("sentinel")).unwrap(),
+            b"recoverable"
+        );
+        assert!(!tombstone.exists());
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn crash_after_removal_rename_before_parent_sync_restores_prior_on_ack() {
+        let dest = tempdir().unwrap();
+        let public = dest.path().join("crash_remove");
+        write_skill(&public, "crash_remove", &good_yaml("crash_remove"));
+        std::fs::write(public.join("sentinel"), b"prior").unwrap();
+        let operation_id = "56565656565656565656565656565656";
+        let mut prepared =
+            prepare_uninstall_with_expectation(dest.path(), "crash_remove", None, operation_id)
+                .unwrap()
+                .into_prepared_for_test();
+        prepared.mark_intent_durable().unwrap();
+        transition_skill_mutation_phase(
+            &prepared.root,
+            &mut prepared.journal,
+            SkillMutationPhase::CommitStarted,
+            None,
+            None,
+        )
+        .unwrap();
+        let tombstone_name = mutation_tombstone_name(&prepared.journal);
+        let tombstone = dest.path().join(&tombstone_name);
+        rename_child(
+            &prepared.root.dir,
+            OsStr::new("crash_remove"),
+            &prepared.root.dir,
+            &tombstone_name,
+            false,
+            &public,
+            &tombstone,
+        )
+        .unwrap();
+        // Simulate host loss: no parent fsync and no terminal journal phase.
+        drop(prepared);
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = pending.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.operation_id, operation_id);
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        pending.acknowledge_terminal().unwrap();
+
+        assert_eq!(std::fs::read(public.join("sentinel")).unwrap(), b"prior");
+        assert!(!tombstone.exists());
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn indeterminate_removal_rollback_retries_parent_sync_before_ack() {
+        let dest = tempdir().unwrap();
+        let public = dest.path().join("retry_remove");
+        let operation_id = "57575757575757575757575757575757";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "retry_remove",
+            operation_id,
+        );
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Indeterminate
+        );
+
+        fail_next_directory_syncs(1);
+        let error = pending.acknowledge_terminal().unwrap_err();
+        clear_directory_sync_failure();
+        assert!(format!("{error:#}").contains("sync restored prior skill removal generation"));
+        assert!(
+            public.exists(),
+            "atomic rollback rename must already be live"
+        );
+        assert!(!tombstone.exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+
+        let mut resumed = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        let terminal = resumed.reconcile(true).unwrap().unwrap();
+        assert_eq!(terminal.phase, SkillMutationPhase::Indeterminate);
+        resumed.acknowledge_terminal().unwrap();
+        assert_eq!(
+            std::fs::read(public.join("sentinel")).unwrap(),
+            b"recoverable"
+        );
+        assert!(!dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn indeterminate_removal_without_tombstone_fails_closed() {
+        let dest = tempdir().unwrap();
+        let operation_id = "58585858585858585858585858585858";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "missing_remove",
+            operation_id,
+        );
+        std::fs::remove_dir_all(&tombstone).unwrap();
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Indeterminate
+        );
+        let error = pending.acknowledge_terminal().unwrap_err();
+
+        assert!(format!("{error:#}").contains("operation-bound tombstone is missing"));
+        assert!(!dest.path().join("missing_remove").exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn indeterminate_removal_with_other_operation_tombstone_fails_closed() {
+        let dest = tempdir().unwrap();
+        let operation_id = "59595959595959595959595959595959";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "wrong_operation",
+            operation_id,
+        );
+        let wrong_tombstone = dest.path().join(format!(
+            "{DELETE_TRANSACTION_PREFIX}wrong_operation-60606060606060606060606060606060"
+        ));
+        std::fs::rename(&tombstone, &wrong_tombstone).unwrap();
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Indeterminate
+        );
+        let error = pending.acknowledge_terminal().unwrap_err();
+
+        assert!(format!("{error:#}").contains("sole tombstone belongs to another operation"));
+        assert!(!dest.path().join("wrong_operation").exists());
+        assert!(!tombstone.exists());
+        assert!(wrong_tombstone.exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn indeterminate_removal_with_generation_drift_fails_closed() {
+        let dest = tempdir().unwrap();
+        let operation_id = "61616161616161616161616161616161";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "drifted_tombstone",
+            operation_id,
+        );
+        std::fs::write(tombstone.join("tampered"), b"changed generation").unwrap();
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Indeterminate
+        );
+        let error = pending.acknowledge_terminal().unwrap_err();
+
+        assert!(format!("{error:#}").contains("bound v2 prior generation"));
+        assert!(!dest.path().join("drifted_tombstone").exists());
+        assert!(tombstone.exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
+    }
+
+    #[test]
+    fn indeterminate_removal_with_multiple_tombstones_fails_closed() {
+        let dest = tempdir().unwrap();
+        let operation_id = "62626262626262626262626262626262";
+        let tombstone = force_indeterminate_removal_after_parent_sync_failure(
+            dest.path(),
+            "ambiguous_remove",
+            operation_id,
+        );
+        let other_tombstone = dest.path().join(format!(
+            "{DELETE_TRANSACTION_PREFIX}ambiguous_remove-63636363636363636363636363636363"
+        ));
+        write_skill(
+            &other_tombstone,
+            "ambiguous_remove",
+            &good_yaml("ambiguous_remove"),
+        );
+
+        let mut pending = open_pending_skill_mutation_reconciliation(dest.path())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            pending.reconcile(true).unwrap().unwrap().phase,
+            SkillMutationPhase::Indeterminate
+        );
+        let error = pending.acknowledge_terminal().unwrap_err();
+
+        assert!(format!("{error:#}").contains("2 candidate tombstones are ambiguous"));
+        assert!(!dest.path().join("ambiguous_remove").exists());
+        assert!(tombstone.exists());
+        assert!(other_tombstone.exists());
+        assert!(dest.path().join(SKILL_MUTATION_JOURNAL_FILE).exists());
     }
 
     #[test]
@@ -2785,7 +7006,7 @@ mod tests {
 
         let error = list_installed(dest.path()).unwrap_err();
 
-        assert!(format!("{error:#}").contains("2 backup generations"));
+        assert!(format!("{error:#}").contains("2 journal-less backup"));
         assert!(!dest.path().join("ambiguous").exists());
     }
 

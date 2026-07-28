@@ -13,8 +13,9 @@
 //! daemons writing the same WAL (frame corruption). The lock makes
 //! acquisition atomic: only one process can hold it. It also removes the
 //! PID-recycling false-positive (a stale PID reused by an unrelated live
-//! process no longer blocks startup) and the stale-file problem (the lock
-//! auto-releases when the holder dies, even on a crash).
+//! process no longer blocks startup). The lock auto-releases when the holder
+//! dies, even on a crash; Unix deliberately retains the stable lock inode so a
+//! departing owner can never unlink a successor's newly acquired lock path.
 //!
 //! ## Cross-platform, dependency-free, readers stay un-blocked
 //!
@@ -29,7 +30,7 @@
 //! running" message); the lock, not the content, is the source of truth.
 
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek as _, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -46,10 +47,11 @@ pub fn default_pidfile() -> PathBuf {
 /// automatic on process death, even a crash).
 pub struct PidGuard {
     path: PathBuf,
-    /// The locked PID file. `Option` so [`Drop`] can close the handle
-    /// (releasing the lock) BEFORE removing the file — Windows refuses to
-    /// delete a file that still has an open handle without share-delete.
+    /// The locked PID file. `Option` lets [`Drop`] release the handle before
+    /// Windows performs its best-effort cleanup. Unix retains the stable path
+    /// and inode across owners to avoid an unlock-then-unlink race.
     lock: Option<File>,
+    endpoint_published: bool,
 }
 
 impl PidGuard {
@@ -57,15 +59,75 @@ impl PidGuard {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Publish the discovery nonce for the daemon's mandatory internal RPC
+    /// endpoint while this exact PID-file lock is still held. The endpoint
+    /// sidecar is written first; this fsynced second line is the commit point
+    /// that makes the sidecar usable by clients.
+    pub(crate) fn publish_endpoint_nonce(&mut self, nonce: &str) -> Result<()> {
+        if nonce.len() != 32
+            || !nonce
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            anyhow::bail!("daemon endpoint nonce must be 32 lowercase hex characters");
+        }
+        if self.endpoint_published {
+            anyhow::bail!("daemon endpoint nonce was already published for this PID lock");
+        }
+        let file = self
+            .lock
+            .as_mut()
+            .context("daemon PID lock is no longer held")?;
+        // `acquire` leaves the file as exactly `PID\n`. Append the nonce
+        // instead of truncating/re-writing: `live_daemon_pid` must never see
+        // an empty first line and incorrectly conclude that no daemon owns the
+        // WAL during endpoint publication. A reader may see a partial nonce,
+        // which merely keeps endpoint discovery unavailable until sync.
+        file.seek(SeekFrom::End(0))
+            .with_context(|| format!("seek pidfile {}", self.path.display()))?;
+        file.write_all(format!("{nonce}\n").as_bytes())
+            .with_context(|| format!("publish daemon endpoint nonce {}", self.path.display()))?;
+        file.flush()
+            .with_context(|| format!("flush pidfile {}", self.path.display()))?;
+        file.sync_data()
+            .with_context(|| format!("sync pidfile {}", self.path.display()))?;
+        self.endpoint_published = true;
+        Ok(())
+    }
 }
 
 impl Drop for PidGuard {
-    /// Release the lock + remove the PID file on clean shutdown. The handle
-    /// is dropped first so the unlink succeeds on Windows. Errors are
-    /// swallowed — the process is going away anyway, and a leftover file is
-    /// harmless (the next start re-locks it and overwrites).
+    /// Release the lock on clean shutdown.
+    ///
+    /// Unix must not unlink after releasing `flock`: a successor can acquire
+    /// the same inode between unlock and unlink, after which deleting the path
+    /// would make ownership probes miss that live daemon and let a third
+    /// process create a second lock inode. The next owner safely re-locks and
+    /// truncates the retained file. Windows may clean up after closing because
+    /// a successor opens without share-delete, so `remove_file` cannot delete
+    /// a live successor's path. Cleanup errors are harmless.
     fn drop(&mut self) {
+        // Invalidate this incarnation's discovery tuple while its lock is
+        // still authoritative. Without this ordering a cleanly-shutting-down
+        // process can remain alive long enough for a successor to acquire the
+        // stable inode, while readers still observe the predecessor's PID and
+        // endpoint nonce.
+        if let Some(file) = self.lock.as_mut()
+            && let Err(error) = file
+                .set_len(0)
+                .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+                .and_then(|()| file.flush())
+                .and_then(|()| file.sync_data())
+        {
+            tracing::warn!(
+                path = %self.path.display(),
+                error = %error,
+                "failed to invalidate daemon pidfile before releasing its ownership lock"
+            );
+        }
         self.lock.take();
+        #[cfg(windows)]
         let _ = std::fs::remove_file(&self.path);
     }
 }
@@ -132,23 +194,193 @@ fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
     }
 }
 
-/// Check whether a live daemon currently owns the lock at `path`.
-/// Pure read — no side effects. Returns `Ok(Some(pid))` when an alive
-/// pid sits in the file, `Ok(None)` otherwise (missing / stale / un-
-/// parseable). Callers like `neoth ingest` use this to avoid racing
-/// WAL writes against a live daemon.
-pub fn live_daemon_pid(path: &Path) -> Result<Option<u32>> {
-    if !path.exists() {
-        return Ok(None);
+enum ExistingLockState {
+    Missing,
+    Held,
+    Available(File),
+}
+
+/// Probe the existing PID-file lock without creating or modifying the file.
+/// A successful `Available` handle owns the lock until dropped.
+fn probe_existing_lock(path: &Path) -> std::io::Result<ExistingLockState> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)
+        {
+            Ok(file) => Ok(ExistingLockState::Available(file)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ExistingLockState::Missing)
+            }
+            Err(error) if error.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => {
+                Ok(ExistingLockState::Held)
+            }
+            Err(error) => Err(error),
+        }
     }
-    let pid = match read_pid(path) {
-        Ok(p) => p,
-        Err(_) => return Ok(None),
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd as _;
+        let file = match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(ExistingLockState::Missing);
+            }
+            Err(error) => return Err(error),
+        };
+        // SAFETY: `file` is an owned live descriptor and remains open for the
+        // entire non-blocking flock call.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if result == 0 {
+            Ok(ExistingLockState::Available(file))
+        } else {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                Ok(ExistingLockState::Held)
+            } else {
+                Err(error)
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        match OpenOptions::new().read(true).write(true).open(path) {
+            Ok(file) => Ok(ExistingLockState::Available(file)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(ExistingLockState::Missing)
+            }
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// Check whether a live daemon currently owns the lock at `path`.
+/// Pure read/lock probe — no file creation or content mutation. Returns
+/// `Ok(Some(pid))` only when the OS lock is held and its PID is valid and
+/// alive. Missing and unlocked stale files return `Ok(None)`. A held but
+/// unreadable, malformed, or dead-PID file fails closed.
+pub fn live_daemon_pid(path: &Path) -> Result<Option<u32>> {
+    live_daemon_pid_with_hook(path, || {})
+}
+
+fn live_daemon_pid_with_hook(path: &Path, after_initial_pid: impl FnOnce()) -> Result<Option<u32>> {
+    match probe_existing_lock(path)
+        .with_context(|| format!("probe daemon pidfile lock {}", path.display()))?
+    {
+        ExistingLockState::Missing => Ok(None),
+        ExistingLockState::Available(lock) => {
+            drop(lock);
+            Ok(None)
+        }
+        ExistingLockState::Held => {
+            let pid =
+                read_pid(path).context("daemon PID lock is held but its owner is unreadable")?;
+            if !pid_is_alive(pid) {
+                anyhow::bail!(
+                    "daemon PID lock is held, but recorded PID {pid} is not alive at {}",
+                    path.display()
+                );
+            }
+            after_initial_pid();
+            match probe_existing_lock(path)
+                .with_context(|| format!("revalidate daemon pidfile lock {}", path.display()))?
+            {
+                ExistingLockState::Held => {}
+                ExistingLockState::Missing | ExistingLockState::Available(_) => return Ok(None),
+            }
+            let revalidated_pid =
+                read_pid(path).context("re-read daemon PID after lock revalidation")?;
+            if pid != revalidated_pid {
+                return Ok(None);
+            }
+            match probe_existing_lock(path)
+                .with_context(|| format!("finalize daemon pidfile lock proof {}", path.display()))?
+            {
+                // The prior owner can exit and a successor can acquire the
+                // stable lock inode between probes. Require the same PID
+                // sandwiched by Held observations, then recheck the recorded
+                // process after the final observation. The endpoint nonce may
+                // legitimately be appended while this PID remains the owner.
+                ExistingLockState::Held if pid_is_alive(pid) => Ok(Some(pid)),
+                ExistingLockState::Held => Ok(None),
+                ExistingLockState::Missing | ExistingLockState::Available(_) => Ok(None),
+            }
+        }
+    }
+}
+
+/// Verify the exact endpoint discovery tuple committed by the process that
+/// currently holds the daemon PID-file lock.
+pub(crate) fn live_daemon_endpoint(
+    path: &Path,
+    expected_pid: u32,
+    expected_nonce: &str,
+) -> Result<bool> {
+    live_daemon_endpoint_with_hook(path, expected_pid, expected_nonce, || {})
+}
+
+fn live_daemon_endpoint_with_hook(
+    path: &Path,
+    expected_pid: u32,
+    expected_nonce: &str,
+    after_initial_snapshot: impl FnOnce(),
+) -> Result<bool> {
+    match probe_existing_lock(path)
+        .with_context(|| format!("probe daemon pidfile lock {}", path.display()))?
+    {
+        ExistingLockState::Missing | ExistingLockState::Available(_) => return Ok(false),
+        ExistingLockState::Held => {}
+    }
+    let body = match std::fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read pidfile {}", path.display()));
+        }
     };
-    if pid_is_alive(pid) {
-        Ok(Some(pid))
-    } else {
-        Ok(None)
+    let mut lines = body.lines();
+    let pid = lines
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        .context("daemon pidfile has no valid PID")?;
+    let nonce = lines
+        .next()
+        .context("daemon pidfile has no endpoint nonce")?;
+    if lines.any(|line| !line.is_empty()) {
+        anyhow::bail!("daemon pidfile has unexpected trailing content");
+    }
+    if pid != expected_pid || nonce != expected_nonce || !pid_is_alive(pid) {
+        return Ok(false);
+    }
+    after_initial_snapshot();
+    match probe_existing_lock(path)
+        .with_context(|| format!("revalidate daemon pidfile lock {}", path.display()))?
+    {
+        ExistingLockState::Held => {}
+        ExistingLockState::Missing | ExistingLockState::Available(_) => return Ok(false),
+    }
+    let revalidated_body = match std::fs::read_to_string(path) {
+        Ok(body) => body,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("re-read pidfile after lock proof {}", path.display()));
+        }
+    };
+    if revalidated_body != body {
+        return Ok(false);
+    }
+    match probe_existing_lock(path)
+        .with_context(|| format!("finalize daemon endpoint lock proof {}", path.display()))?
+    {
+        ExistingLockState::Held => Ok(pid_is_alive(pid)),
+        ExistingLockState::Missing | ExistingLockState::Available(_) => Ok(false),
     }
 }
 
@@ -196,20 +428,26 @@ pub fn acquire(path: &Path) -> Result<PidGuard> {
     Ok(PidGuard {
         path: path.to_path_buf(),
         lock: Some(file),
+        endpoint_published: false,
     })
 }
 
 fn read_pid(path: &Path) -> Result<u32> {
+    read_pid_snapshot(path).map(|(_, pid)| pid)
+}
+
+fn read_pid_snapshot(path: &Path) -> Result<(String, u32)> {
     let body = std::fs::read_to_string(path)
         .with_context(|| format!("read pidfile {}", path.display()))?;
-    let trimmed = body.trim();
-    trimmed.parse::<u32>().with_context(|| {
+    let first_line = body.lines().next().unwrap_or_default();
+    let pid = first_line.parse::<u32>().with_context(|| {
         format!(
-            "pidfile {} contains non-numeric body: {:?}",
+            "pidfile {} contains non-numeric PID line: {:?}",
             path.display(),
-            trimmed
+            first_line
         )
-    })
+    })?;
+    Ok((body, pid))
 }
 
 /// Is the process with this PID currently alive?
@@ -289,8 +527,34 @@ mod tests {
         assert_eq!(body.trim().parse::<u32>().unwrap(), std::process::id());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn drop_removes_pidfile() {
+    fn drop_retains_the_stable_unix_lock_inode() {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let first_inode;
+        {
+            let _guard = acquire(&path).expect("acquire");
+            assert!(path.exists());
+            first_inode = std::fs::metadata(&path).unwrap().ino();
+        }
+        assert!(
+            path.exists(),
+            "Unix guard drop must retain the stable lock path"
+        );
+        let _next = acquire(&path).expect("the retained inode must be re-lockable");
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().ino(),
+            first_inode,
+            "a successor must lock the same path identity, not a replacement inode"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn drop_removes_pidfile_when_the_platform_cleanup_is_race_safe() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("neothd.pid");
         {
@@ -340,13 +604,151 @@ mod tests {
     }
 
     #[test]
+    fn live_daemon_pid_tolerates_endpoint_publish_by_the_same_owner() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let mut held = acquire(&path).expect("acquire");
+        let live = live_daemon_pid_with_hook(&path, || {
+            held.publish_endpoint_nonce("00112233445566778899aabbccddeeff")
+                .unwrap();
+        })
+        .unwrap();
+        assert_eq!(
+            live,
+            Some(std::process::id()),
+            "publishing the endpoint nonce must not look like a lock-owner transition"
+        );
+    }
+
+    #[test]
+    fn live_daemon_pid_rejects_an_unlocked_file_with_a_reused_live_pid() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let body = format!("{}\n", std::process::id());
+        std::fs::write(&path, &body).unwrap();
+
+        assert_eq!(
+            live_daemon_pid(&path).unwrap(),
+            None,
+            "live PID text without the OS lock is stale, not daemon ownership"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            body,
+            "the ownership probe must not create, truncate, or rewrite pidfiles"
+        );
+    }
+
+    #[test]
+    fn live_daemon_pid_fails_closed_when_held_content_is_partial() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let mut held = open_exclusive(&path).unwrap().unwrap();
+        held.set_len(0).unwrap();
+        held.seek(SeekFrom::Start(0)).unwrap();
+        held.write_all(b"partial").unwrap();
+        held.sync_all().unwrap();
+
+        let error =
+            live_daemon_pid(&path).expect_err("a held malformed PID cannot mean no daemon writer");
+        assert!(format!("{error:#}").contains("lock is held"));
+    }
+
+    #[test]
+    fn endpoint_discovery_requires_the_exact_fsynced_nonce_and_locked_owner() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let mut held = acquire(&path).expect("acquire");
+        let nonce = "00112233445566778899aabbccddeeff";
+        assert!(
+            !live_daemon_endpoint(&path, std::process::id(), nonce).unwrap_or(false),
+            "the PID-only preparation state must not publish an endpoint"
+        );
+        assert_eq!(live_daemon_pid(&path).unwrap(), Some(std::process::id()));
+
+        held.publish_endpoint_nonce(nonce).unwrap();
+        assert_eq!(
+            live_daemon_pid(&path).unwrap(),
+            Some(std::process::id()),
+            "endpoint publication must never hide the live WAL owner"
+        );
+        assert!(held.publish_endpoint_nonce(nonce).is_err());
+        assert!(live_daemon_endpoint(&path, std::process::id(), nonce).unwrap());
+        assert!(
+            !live_daemon_endpoint(
+                &path,
+                std::process::id(),
+                "ffeeddccbbaa99887766554433221100"
+            )
+            .unwrap(),
+            "a sidecar from another daemon incarnation must not match"
+        );
+        assert!(
+            !live_daemon_endpoint(&path, std::process::id().wrapping_add(1), nonce).unwrap(),
+            "the endpoint nonce cannot authorize a different PID"
+        );
+    }
+
+    #[test]
+    fn endpoint_discovery_rejects_a_successor_lock_owner_transition() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let predecessor_nonce = "00112233445566778899aabbccddeeff";
+        let successor_nonce = "ffeeddccbbaa99887766554433221100";
+        let mut predecessor = acquire(&path).expect("acquire predecessor");
+        predecessor
+            .publish_endpoint_nonce(predecessor_nonce)
+            .unwrap();
+        let mut predecessor = Some(predecessor);
+        let mut successor = None;
+
+        let accepted =
+            live_daemon_endpoint_with_hook(&path, std::process::id(), predecessor_nonce, || {
+                drop(predecessor.take());
+                let mut next = acquire(&path).expect("successor acquires stable lock inode");
+                next.publish_endpoint_nonce(successor_nonce).unwrap();
+                successor = Some(next);
+            })
+            .unwrap();
+
+        assert!(
+            !accepted,
+            "a Held observation from a successor must not authorize the predecessor's tuple"
+        );
+        assert!(
+            successor.is_some(),
+            "successor lock remains held during proof"
+        );
+    }
+
+    #[test]
+    fn endpoint_discovery_rejects_an_unlocked_current_pid_and_nonce() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let mut held = acquire(&path).expect("acquire");
+        let nonce = "0123456789abcdeffedcba9876543210";
+        held.publish_endpoint_nonce(nonce).unwrap();
+        let stale_body = std::fs::read(&path).unwrap();
+        drop(held);
+
+        // Unix deliberately retains the stable inode after invalidating it.
+        // Windows removes the released pidfile. Recreate the exact stale tuple
+        // on both so the proof cannot pass on text equality alone.
+        std::fs::write(&path, stale_body).unwrap();
+        assert!(
+            !live_daemon_endpoint(&path, std::process::id(), nonce).unwrap(),
+            "an exact live PID + nonce without the OS lock is stale, not endpoint authority"
+        );
+    }
+
+    #[test]
     fn lock_releases_on_drop_so_next_acquire_succeeds() {
         // Dropping the guard releases the OS lock; a fresh acquire then wins.
         let dir = tempdir().unwrap();
         let path = dir.path().join("neothd.pid");
         {
             let _g = acquire(&path).expect("first acquire");
-        } // guard dropped → lock released + file removed
+        } // guard dropped → lock released; Unix intentionally retains the inode
         let _g2 = acquire(&path).expect("re-acquire after release must succeed");
         assert!(path.exists());
     }

@@ -128,11 +128,35 @@ pub enum ParsedSegmentHeader {
 }
 
 impl ParsedSegmentHeader {
+    pub fn generation(&self) -> u32 {
+        match self {
+            Self::V1(h) => h.generation,
+            Self::V2(h) => h.generation,
+            Self::V3(h) => h.generation,
+        }
+    }
+
     pub fn segment_seq(&self) -> u64 {
         match self {
             Self::V1(h) => h.segment_seq,
             Self::V2(h) => h.segment_seq,
             Self::V3(h) => h.segment_seq,
+        }
+    }
+
+    pub fn segment_start_ts_ns(&self) -> u64 {
+        match self {
+            Self::V1(h) => h.segment_start_ts_ns,
+            Self::V2(h) => h.segment_start_ts_ns,
+            Self::V3(h) => h.segment_start_ts_ns,
+        }
+    }
+
+    pub fn node_id(&self) -> [u8; 16] {
+        match self {
+            Self::V1(h) => h.node_id,
+            Self::V2(h) => h.node_id,
+            Self::V3(h) => h.node_id,
         }
     }
 

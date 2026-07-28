@@ -3915,19 +3915,19 @@ pub(crate) fn spawn_healthz(
     }
 }
 
-/// Audit-RPC loopback listener (AUDIT-RPC-01). Off by default. When
-/// `freedom.yaml::audit_rpc.enabled`, one-shot CLIs forward their `0xA5..=0xAD`
-/// audit frames to this (the WAL-owning) daemon. Returns BOTH the listener task
+/// Mandatory loopback control listener. The internal Skill-mutation route is
+/// always present while this daemon owns the WAL; `audit_rpc.enabled` controls
+/// only the optional public audit/token routes. Returns BOTH the listener task
 /// AND the `SidecarGuard` — the guard MUST be bound for the daemon lifetime in
 /// `run_serve` (its `Drop` removes the sidecar + token), so it is returned, not
 /// dropped here. Membership-enabled daemons fail startup if this authority
-/// listener cannot be established; audit-only mode preserves the historical
-/// optional-listener behavior. Async (binds the socket). WAL-emitting via the
-/// listener's writer clone.
+/// listener cannot be established. Async (binds the socket). WAL-emitting via
+/// the listener's writer clone.
 pub(crate) async fn spawn_audit_rpc(
     config: &FreedomConfig,
     home: &std::path::Path,
     writer: &WalWriterHandle,
+    pid_guard: &mut crate::daemon::pidfile::PidGuard,
     #[cfg(feature = "cluster")] membership: std::sync::Arc<
         crate::cluster::membership::MembershipController,
     >,
@@ -3935,70 +3935,56 @@ pub(crate) async fn spawn_audit_rpc(
     Option<JoinHandle<anyhow::Result<()>>>,
     Option<crate::daemon::audit_rpc::SidecarGuard>,
 )> {
-    #[cfg(feature = "cluster")]
-    let membership_required = config.cluster.enabled || home.join("cluster-membership.db").exists();
-    #[cfg(not(feature = "cluster"))]
-    let membership_required = false;
-    if !config.audit_rpc.enabled && !membership_required {
-        return Ok((None, None));
-    }
     let home = home.to_path_buf();
     // Clear any sidecar+token a PRIOR daemon left behind on a crash (no clean
     // SidecarGuard drop) BEFORE minting fresh ones — closes the
     // stale-token-disclosure window (recycled port).
     crate::daemon::audit_rpc::remove_sidecar(&home);
-    match crate::daemon::audit_rpc::init_rpc_token(&home) {
-        Ok(token) => {
-            let state = crate::daemon::audit_rpc::AuditRpcState {
-                token: token.clone(),
-                writer: writer.clone(),
-                cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
-                // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
-                fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),
-                #[cfg(feature = "cluster")]
-                membership: Some(membership),
-                audit_routes_enabled: config.audit_rpc.enabled,
-            };
-            match crate::daemon::audit_rpc::bind_and_serve(state).await {
-                Ok((addr, task)) => {
-                    if let Err(e) = crate::daemon::audit_rpc::write_sidecar(
-                        &home,
-                        addr.port(),
-                        std::process::id(),
-                        &token,
-                    ) {
-                        task.abort();
-                        crate::daemon::audit_rpc::remove_sidecar(&home);
-                        if membership_required {
-                            return Err(e)
-                                .context("write required membership-RPC discovery sidecar");
-                        }
-                        warn!(error = %e, "audit-RPC sidecar write failed; one-shots can't find the port");
-                        return Ok((None, None));
-                    }
-                    info!(port = addr.port(), "audit-RPC listener up (127.0.0.1)");
-                    Ok((
-                        Some(task),
-                        Some(crate::daemon::audit_rpc::SidecarGuard::new(home.clone())),
-                    ))
-                }
-                Err(e) => {
-                    if membership_required {
-                        return Err(e).context("bind required membership-RPC listener");
-                    }
-                    warn!(error = %e, "audit-RPC listener failed to bind; one-shot audit forwarding disabled");
-                    Ok((None, None))
-                }
-            }
-        }
-        Err(e) => {
-            if membership_required {
-                return Err(e).context("mint required membership-RPC token");
-            }
-            warn!(error = %e, "audit-RPC token mint failed; listener not started");
-            Ok((None, None))
-        }
+    let token = crate::daemon::audit_rpc::init_rpc_token(&home)
+        .context("mint mandatory daemon internal-RPC token")?;
+    let state = crate::daemon::audit_rpc::AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+        // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
+        fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: Some(membership),
+        audit_routes_enabled: config.audit_rpc.enabled,
+    };
+    let (addr, task) = crate::daemon::audit_rpc::bind_and_serve(state)
+        .await
+        .context("bind mandatory daemon internal-RPC listener")?;
+    let endpoint_nonce = uuid::Uuid::now_v7().simple().to_string();
+    if let Err(error) = crate::daemon::audit_rpc::write_sidecar(
+        &home,
+        addr.port(),
+        std::process::id(),
+        &token,
+        &endpoint_nonce,
+    ) {
+        task.abort();
+        crate::daemon::audit_rpc::remove_sidecar(&home);
+        return Err(error).context("write mandatory daemon internal-RPC discovery sidecar");
     }
+    if let Err(error) = pid_guard.publish_endpoint_nonce(&endpoint_nonce) {
+        task.abort();
+        crate::daemon::audit_rpc::remove_sidecar(&home);
+        return Err(error).context("commit daemon internal-RPC endpoint to PID lock");
+    }
+    info!(
+        port = addr.port(),
+        public_audit_routes = config.audit_rpc.enabled,
+        "mandatory daemon internal-RPC listener up (127.0.0.1)"
+    );
+    let listener_abort = task.abort_handle();
+    Ok((
+        Some(task),
+        Some(crate::daemon::audit_rpc::SidecarGuard::with_listener(
+            home,
+            listener_abort,
+        )),
+    ))
 }
 
 /// R-02 Phase 4c / ADR-003 nightly Dream calendar task. Off by default
@@ -6291,6 +6277,21 @@ pub(crate) fn prepare_wal(
 ) -> anyhow::Result<WalSetup> {
     let wal_dir = home.join("wal");
     let segment_path = wal_segment.unwrap_or_else(|| wal_dir.join("000001.wal"));
+    let absolute_wal_dir = std::path::absolute(&wal_dir)
+        .with_context(|| format!("resolve instance WAL directory {}", wal_dir.display()))?;
+    let absolute_segment = std::path::absolute(&segment_path)
+        .with_context(|| format!("resolve WAL segment {}", segment_path.display()))?;
+    if absolute_segment.parent() != Some(absolute_wal_dir.as_path())
+        || !absolute_segment
+            .file_name()
+            .is_some_and(crate::wal::scan::canonical_segment_name)
+    {
+        anyhow::bail!(
+            "WAL segment must be a canonically named direct child of the instance WAL directory {}",
+            absolute_wal_dir.display()
+        );
+    }
+    let segment_path = absolute_segment;
 
     if let Some(parent) = segment_path.parent() {
         std::fs::create_dir_all(parent)
@@ -6450,7 +6451,7 @@ pub(crate) fn check_onboarding_complete(
 }
 
 /// GOLD-ARCH-01: post-config runtime-service priming, run after config load and
-/// before WAL setup. Validates the complete OMI mode/credential contract, runs
+/// WAL-writer setup. Validates the complete OMI mode/credential contract, runs
 /// the V03-08 + A-2 consent gate (bails with an actionable error if any cloud
 /// provider is unconsented), primes the process-wide `SkillRegistry` + its
 /// filesystem watcher, and installs the GOLD-WIRE-10 domain-event bus. The
@@ -6464,8 +6465,41 @@ pub(crate) async fn prime_runtime_services(
     config: &FreedomConfig,
     credentials: &crate::config::credentials::Credentials,
     neoth_home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
     reload_controller: std::sync::Arc<ReloadController>,
 ) -> anyhow::Result<Option<crate::skills::registry::WatcherHandle>> {
+    // Recovery is independent of provider credentials/consent. Run it as soon
+    // as the daemon-owned writer exists so a broken provider preflight cannot
+    // strand an already persisted Skill lifecycle across otherwise normal
+    // restarts.
+    let skills_dir = neoth_home.join("skills");
+    crate::skills::mutation_lifecycle::reconcile_pending(neoth_home, &skills_dir, Some(writer))
+        .await
+        .with_context(|| {
+            format!(
+                "recover pending audited Skill mutation before daemon registry load at {}",
+                skills_dir.display()
+            )
+        })?;
+
+    // A Self-Improve accept/rollback owns a second, higher-level journal.
+    // Reconcile the package mutation first, then interpret that proposal
+    // journal against the settled public generation. Reversing this order can
+    // retire Self-Improve evidence while an intent-durable package write is
+    // still waiting to publish.
+    let recovery_home = neoth_home.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        crate::self_improve::recover_pending_journal(&recovery_home)
+    })
+    .await
+    .context("join Self-Improve journal recovery before daemon registry load")?
+    .with_context(|| {
+        format!(
+            "recover Self-Improve journal after installed-Skill reconciliation under {}",
+            neoth_home.display()
+        )
+    })?;
+
     config
         .omi
         .validate_with_credentials(credentials)
@@ -6494,7 +6528,6 @@ pub(crate) async fn prime_runtime_services(
     // edits to `~/.neoth/skills/<id>/skill.yaml` propagate to the next chat turn
     // (250ms debounce). The watcher handle is owned by the daemon lifetime.
     let skill_watcher = {
-        let skills_dir = neoth_home.join("skills");
         let reg = crate::skills::SkillRegistry::load_with_reload_controller(
             &skills_dir,
             reload_controller,
@@ -6590,10 +6623,11 @@ pub(crate) fn run_preflight_guards(
 /// GOLD-ARCH-01: every background-task handle + teardown-only local produced
 /// between WAL setup and the idle-wait, grouped so the ~230-LOC shutdown
 /// sequence can move out of `run_serve` into [`shutdown_background_tasks`].
-/// RAII guards (`_pid_guard` / `_skill_watcher` / `_audit_rpc_guard`) are
-/// deliberately NOT here — they stay bound in `run_serve` so their `Drop` fires
-/// at fn-end AFTER the writer drain. `writer` + `writer_join` are passed
-/// separately (the idle-wait `select!` borrows `&mut writer_join` before the call).
+/// RAII guards (`pid_guard` / `_skill_watcher`) are deliberately NOT here —
+/// they stay bound in `run_serve` through the writer drain. Audit-RPC discovery
+/// is withdrawn at the shutdown decision before this function is called.
+/// `writer` + `writer_join` are passed separately (the idle-wait `select!`
+/// borrows `&mut writer_join` before the call).
 pub(crate) struct BackgroundHandles {
     /// Owns the concrete process-wide WASM invoker. Its Drop unregisters the
     /// invoker and releases its WAL sender before shutdown joins the writer.
@@ -6987,7 +7021,8 @@ pub(crate) async fn shutdown_background_tasks(
     // freely. In-flight connections finish on their own.
     // COR-34: await the abort so the handle isn't dropped mid-run.
     crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
-    // _audit_rpc_guard drops here at fn end → removes the sidecar + token.
+    // Its discovery guard already removed the sidecar + token at shutdown
+    // admission, before the listener port could be recycled.
     crate::cli::serve_tasks::abort_optional(healthz_task).await;
 
     // Abort the Hebbian decay task. It runs against the SQLite views db, so
@@ -8494,20 +8529,132 @@ mod tests {
         let config_path = home.path().join("operator-instance.yaml");
         std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
         let reload_controller = Arc::new(ReloadController::new(config.clone(), config_path));
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, writer_join) = crate::wal::spawn_for_home(
+            wal_dir.join("prime-runtime-services.wal"),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
 
         let result = prime_runtime_services(
             &config,
             &crate::config::credentials::Credentials::default(),
             home.path(),
+            &writer,
             reload_controller,
         )
         .await;
 
+        drop(writer);
+        writer_join.await.ok();
         if let Err(error) = result {
             panic!(
                 "consent recorded in the custom config home must authorize runtime priming: {error:#}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn daemon_startup_reconciles_skill_intent_without_operator_skills_command() {
+        let home = tempfile::tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let source = home.path().join("incoming-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("skill.yaml"),
+            "id: restart_probe\n\
+             description: Restart recovery probe\n\
+             trigger_keywords: [restart]\n\
+             system_prompt: Recover exactly once.\n",
+        )
+        .unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, writer_join) = crate::wal::spawn_for_home(
+            wal_dir.join("daemon-startup-recovery-000001.wal"),
+            home.path().to_path_buf(),
+        )
+        .unwrap();
+
+        let operation_id = "deadc0dedeadc0dedeadc0dedeadc0de";
+        let mut prepared = crate::skills::installer::prepare_install_from_local_with_expectation(
+            &source,
+            &skills_dir,
+            false,
+            None,
+            operation_id,
+        )
+        .unwrap();
+        prepared.mark_intent_submitting().unwrap();
+        let binding = prepared.audit_binding();
+        let crate::skills::mutation_lifecycle::IntentDelivery::Durable(intent_receipt) =
+            crate::skills::mutation_lifecycle::deliver_intent(home.path(), Some(&writer), &binding)
+                .await
+                .unwrap()
+        else {
+            panic!("daemon startup fixture intent must be durable");
+        };
+        prepared
+            .mark_intent_durable_authenticated(intent_receipt)
+            .unwrap();
+        drop(prepared); // crash after durable intent, before public commit
+
+        let config = FreedomConfig::default();
+        let config_path = home.path().join("operator-instance.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let reload_controller = Arc::new(ReloadController::new(config.clone(), config_path));
+        let watcher = prime_runtime_services(
+            &config,
+            &crate::config::credentials::Credentials::default(),
+            home.path(),
+            &writer,
+            reload_controller,
+        )
+        .await
+        .expect("normal daemon startup must reconcile the pending Skill mutation");
+
+        assert!(
+            !skills_dir.join(".neoth-skill-mutation.json").exists(),
+            "startup must acknowledge and clear the recovered lifecycle journal"
+        );
+        assert!(
+            !skills_dir.join("restart_probe").exists(),
+            "a crash before commit must recover to the bound absent anchor"
+        );
+
+        drop(watcher);
+        drop(writer);
+        writer_join.await.ok();
+        let mut terminal_frames = 0usize;
+        for entry in std::fs::read_dir(&wal_dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|value| value.to_str()) != Some("wal") {
+                continue;
+            }
+            let bytes = std::fs::read(path).unwrap();
+            crate::wal::scan::for_each_frame(&bytes, |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::SkillInstallResult as u8
+                {
+                    let value: serde_json::Value = serde_json::from_slice(frame.payload)?;
+                    if value
+                        .get("operation_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(operation_id)
+                    {
+                        terminal_frames += 1;
+                    }
+                }
+                Ok(())
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            terminal_frames, 1,
+            "normal startup must emit exactly one correlated terminal result"
+        );
     }
 
     /// B17: malformed credentials must surface their parse error before the

@@ -275,11 +275,14 @@ fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &st
     };
 
     let yaml = serde_yaml::to_string(&manifest)?;
-    let report = crate::skills::creator::write_skill_yaml(
+    let report = crate::skills::creator::write_skill_yaml_audited(
+        home,
         &home.join("skills"),
         skill_id,
         &yaml,
         crate::skills::creator::ExistingSkillPolicy::Replace,
+        None,
+        crate::skills::installer::SkillMutationOrigin::Teacher,
     )?;
     for warning in crate::skills::operator_skill_warnings(&report.warnings) {
         tracing::warn!(skill_id, %warning, "teacher skill committed with durability warning");

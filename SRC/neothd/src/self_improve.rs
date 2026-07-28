@@ -338,6 +338,13 @@ fn with_state_lock<T>(home: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
         &state_lock_path(home),
         "self-improvement state",
     )?;
+    // The installed-Skill journal owns publication of a complete package
+    // generation. Settle it before interpreting the higher-level
+    // Self-Improve accept journal; otherwise a crash between intent and commit
+    // could make the proposal recovery inspect the predecessor generation and
+    // retire evidence for a package mutation that later commits.
+    crate::skills::mutation_lifecycle::reconcile_pending_blocking(home, &home.join("skills"))
+        .context("reconcile installed-Skill mutation before Self-Improve state recovery")?;
     recover_transactions_locked(home)?;
     f()
 }
@@ -449,10 +456,6 @@ fn require_proposal_document_bounds(proposal: &Proposal) -> Result<()> {
 }
 
 const SELF_IMPROVE_MANIFEST_MAX_BYTES: usize = 1024 * 1024;
-const SELF_IMPROVE_SKILL_TREE_FILE_MAX_BYTES: usize = 64 * 1024 * 1024;
-const SELF_IMPROVE_SKILL_TREE_MAX_BYTES: u64 = 256 * 1024 * 1024;
-const SELF_IMPROVE_SKILL_TREE_MAX_ENTRIES: usize = 4096;
-const SELF_IMPROVE_SKILL_TREE_MAX_DEPTH: usize = 32;
 
 #[derive(Debug)]
 struct InstalledSkillTarget {
@@ -630,6 +633,7 @@ fn with_locked_installed_skill<T>(
     })
 }
 
+#[cfg(test)]
 fn replace_installed_skill_document_if_matches(
     target: &InstalledSkillTarget,
     view: &InstalledSkillView<'_>,
@@ -642,6 +646,52 @@ fn replace_installed_skill_document_if_matches(
         view.content.as_bytes(),
         replacement,
     )
+}
+
+fn mutate_installed_skill_document_audited(
+    home: &Path,
+    target: &InstalledSkillTarget,
+    expected_document: &str,
+    replacement: &str,
+    generations: InstalledGenerationTransition<'_>,
+    origin: crate::skills::installer::SkillMutationOrigin,
+) -> Result<()> {
+    let report = crate::skills::mutation_lifecycle::apply_skill_document_mutation_blocking(
+        home,
+        crate::skills::installer::SkillDocumentMutationRequest {
+            target_skills_dir: target.root.clone(),
+            id: target.id.clone(),
+            document: crate::skills::installer::SkillPackageDocument::Instructions,
+            replacement: replacement.as_bytes().to_vec(),
+            existing: crate::skills::creator::ExistingSkillPolicy::Replace,
+            expected_target_generation_sha256: Some(Some(generations.base.to_string())),
+            expected_document: Some(expected_document.as_bytes().to_vec()),
+            origin,
+        },
+    )?;
+    if !report.warnings.is_empty() {
+        let public_skill = crate::security::redact::sanitize_tool_output(&target.id);
+        let warnings = crate::skills::operator_skill_warnings(&report.warnings).join("; ");
+        anyhow::bail!(
+            "installed skill `{public_skill}` replacement is visible, but namespace durability is unconfirmed: {warnings}; journal preserved"
+        );
+    }
+    if report.source_generation_sha256 != generations.target {
+        anyhow::bail!(
+            "installed skill `{}` committed unexpected package generation; journal preserved",
+            target.id
+        );
+    }
+    if expected_document != replacement
+        && (!report.replaced_existing
+            || report.replaced_generation_sha256.as_deref() != Some(generations.base))
+    {
+        anyhow::bail!(
+            "installed skill `{}` replacement receipt does not bind the expected predecessor generation; journal preserved",
+            target.id
+        );
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -707,191 +757,27 @@ fn require_installed_generation(
     Ok(())
 }
 
-#[derive(Default)]
-struct GenerationHashBudget {
-    entries: usize,
-    bytes: u64,
-}
-
 /// Compute the installer's canonical complete-tree generation while replacing
 /// only the root `skill.md` record in memory. This lets the pre-write journal
-/// bind its intended generation without mutating production first.
+/// bind its intended generation without mutating production first. The
+/// installer owns the versioned path/kind/byte/permission hashing contract;
+/// Self-Improve must never duplicate or lag that contract.
 fn skill_tree_generation_sha256_with_skill_override(
     root: &cap_std::fs::Dir,
     display_root: &Path,
     skill_bytes: &[u8],
 ) -> Result<String> {
-    use sha2::{Digest as _, Sha256};
-
     if skill_bytes.len() > SELF_IMPROVE_SKILL_MAX_BYTES {
         anyhow::bail!(
             "proposed skill.md exceeds the {SELF_IMPROVE_SKILL_MAX_BYTES}-byte self-improvement limit"
         );
     }
-    let mut hasher = Sha256::new();
-    hasher.update(b"NEOTH_SKILL_PACKAGE_GENERATION\0v1\0");
-    hash_skill_tree_directory_with_override(
+    crate::skills::installer::skill_tree_generation_sha256_with_document_override(
         root,
         display_root,
-        "",
+        crate::skills::installer::SkillPackageDocument::Instructions,
         skill_bytes,
-        0,
-        &mut GenerationHashBudget::default(),
-        &mut hasher,
-    )?;
-    Ok(hex::encode(hasher.finalize()))
-}
-
-fn hash_skill_tree_directory_with_override(
-    directory: &cap_std::fs::Dir,
-    display_directory: &Path,
-    relative_prefix: &str,
-    root_skill_bytes: &[u8],
-    depth: usize,
-    budget: &mut GenerationHashBudget,
-    hasher: &mut sha2::Sha256,
-) -> Result<()> {
-    use crate::skills::store::{open_real_child_dir, read_regular_file_bounded};
-
-    if depth > SELF_IMPROVE_SKILL_TREE_MAX_DEPTH {
-        anyhow::bail!(
-            "skill tree exceeds maximum depth {SELF_IMPROVE_SKILL_TREE_MAX_DEPTH} at {}",
-            display_directory.display()
-        );
-    }
-    let mut names = Vec::new();
-    for entry in directory
-        .entries()
-        .with_context(|| format!("enumerate skill package {}", display_directory.display()))?
-    {
-        if names.len() >= SELF_IMPROVE_SKILL_TREE_MAX_ENTRIES.saturating_sub(budget.entries) {
-            anyhow::bail!("skill tree exceeds {SELF_IMPROVE_SKILL_TREE_MAX_ENTRIES} entries");
-        }
-        names.push(
-            entry.map(|entry| entry.file_name()).with_context(|| {
-                format!("enumerate skill package {}", display_directory.display())
-            })?,
-        );
-    }
-    if depth == 0
-        && !names.iter().any(|name| {
-            path_component_eq(
-                Component::Normal(name),
-                Component::Normal(OsStr::new("skill.md")),
-            )
-        })
-    {
-        anyhow::bail!(
-            "installed skill has no root skill.md at {}",
-            display_directory.display()
-        );
-    }
-    names.sort();
-
-    for name in names {
-        let name_text = name.to_str().ok_or_else(|| {
-            anyhow::anyhow!(
-                "skill package entry name is not UTF-8 under {}",
-                display_directory.display()
-            )
-        })?;
-        let relative = if relative_prefix.is_empty() {
-            name_text.to_string()
-        } else {
-            format!("{relative_prefix}/{name_text}")
-        };
-        let display = display_directory.join(&name);
-        budget.entries = budget
-            .entries
-            .checked_add(1)
-            .context("skill package entry counter overflow")?;
-        if budget.entries > SELF_IMPROVE_SKILL_TREE_MAX_ENTRIES {
-            anyhow::bail!("skill tree exceeds {SELF_IMPROVE_SKILL_TREE_MAX_ENTRIES} entries");
-        }
-
-        let file_type = directory
-            .symlink_metadata(&name)
-            .with_context(|| format!("inspect skill package entry {}", display.display()))?
-            .file_type();
-        if file_type.is_symlink() {
-            anyhow::bail!(
-                "skill package contains unsupported linked or reparse entry: {}",
-                display.display()
-            );
-        }
-        if file_type.is_dir() {
-            hash_generation_record_header(hasher, b'D', &relative, 0)?;
-            let child = open_real_child_dir(directory, &name, &display)?;
-            hash_skill_tree_directory_with_override(
-                &child,
-                &display,
-                &relative,
-                root_skill_bytes,
-                depth + 1,
-                budget,
-                hasher,
-            )?;
-        } else if file_type.is_file() {
-            let is_root_skill = depth == 0
-                && path_component_eq(
-                    Component::Normal(&name),
-                    Component::Normal(OsStr::new("skill.md")),
-                );
-            if is_root_skill {
-                hash_generation_file_record(hasher, &relative, root_skill_bytes, budget)?;
-            } else {
-                let bytes = read_regular_file_bounded(
-                    directory,
-                    &name,
-                    &display,
-                    SELF_IMPROVE_SKILL_TREE_FILE_MAX_BYTES,
-                )?;
-                hash_generation_file_record(hasher, &relative, &bytes, budget)?;
-            }
-        } else {
-            anyhow::bail!(
-                "skill package contains unsupported special entry: {}",
-                display.display()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn hash_generation_file_record(
-    hasher: &mut sha2::Sha256,
-    relative: &str,
-    bytes: &[u8],
-    budget: &mut GenerationHashBudget,
-) -> Result<()> {
-    use sha2::Digest as _;
-
-    budget.bytes = budget
-        .bytes
-        .checked_add(bytes.len() as u64)
-        .context("skill package byte counter overflow")?;
-    if budget.bytes > SELF_IMPROVE_SKILL_TREE_MAX_BYTES {
-        anyhow::bail!("skill tree exceeds {SELF_IMPROVE_SKILL_TREE_MAX_BYTES} total bytes");
-    }
-    hash_generation_record_header(hasher, b'F', relative, bytes.len() as u64)?;
-    hasher.update(bytes);
-    Ok(())
-}
-
-fn hash_generation_record_header(
-    hasher: &mut sha2::Sha256,
-    kind: u8,
-    relative: &str,
-    byte_len: u64,
-) -> Result<()> {
-    use sha2::Digest as _;
-
-    let path_len = u64::try_from(relative.len()).context("skill package path length overflow")?;
-    hasher.update([kind]);
-    hasher.update(path_len.to_le_bytes());
-    hasher.update(relative.as_bytes());
-    hasher.update(byte_len.to_le_bytes());
-    Ok(())
+    )
 }
 
 /// Structured execution specification attached to a staged proposal (IMPR-01).
@@ -1033,7 +919,7 @@ pub fn describe_discardable_journal(home: &Path) -> Result<Option<DiscardableJou
     else {
         return Ok(None);
     };
-    let journal_sha256 = sha256_hex(&String::from_utf8_lossy(&bytes));
+    let journal_sha256 = sha256_bytes(&bytes);
     let parsed: Option<AcceptJournal> = serde_json::from_slice(&bytes).ok();
     Ok(Some(match parsed {
         Some(journal) => DiscardableJournal {
@@ -1081,27 +967,26 @@ pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
         );
     }
 
-    // The cross-process file lock is held for the WHOLE sequence — it is what
-    // excludes another process. The in-process mutex is taken in short scopes
-    // around each synchronous step instead of across the audit await: holding a
-    // std guard over an await point can park the guard on a suspended task.
-    // Order within each scope stays mutex-then-file-lock, matching
-    // `with_state_lock`, so the two can never deadlock against each other.
-    let _oslock = crate::util::locked_file::lock_file_blocking(
-        &state_lock_path(home),
-        "self-improvement state",
-    )?;
-
     // NOTE: deliberately NOT `with_state_lock` — that runs recovery, which is
-    // the thing being bypassed.
-    let summary = {
+    // the thing being bypassed. Acquire in the same mutex-then-file-lock order
+    // as `with_state_lock`. The OS lock is retained across the audit await, but
+    // the non-async mutex is released first so no std guard is parked with the
+    // task. Normal state operations can then hold the mutex while waiting for
+    // this OS lock, but this path never reacquires the mutex and therefore
+    // cannot form the inverse file-lock -> mutex deadlock.
+    let (summary, _oslock) = {
         let _guard = SELF_IMPROVE_STATE_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match describe_discardable_journal(home)? {
+        let oslock = crate::util::locked_file::lock_file_blocking(
+            &state_lock_path(home),
+            "self-improvement state",
+        )?;
+        let summary = match describe_discardable_journal(home)? {
             Some(summary) => summary,
             None => anyhow::bail!("no self-improvement journal to discard"),
-        }
+        };
+        (summary, oslock)
     };
 
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -1123,12 +1008,10 @@ pub async fn discard_journal(home: &Path) -> Result<DiscardableJournal> {
     .await
     .context("the discard was NOT recorded; the journal was left in place")?;
 
-    {
-        let _guard = SELF_IMPROVE_STATE_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        remove_journal(&journal_path(home))?;
-    }
+    // `_oslock` still excludes every cooperating state operation. Do not
+    // reacquire the process mutex here: another caller may already hold it
+    // while waiting for this file lock.
+    remove_journal(&journal_path(home))?;
     Ok(summary)
 }
 
@@ -1973,53 +1856,36 @@ pub fn accept_proposal(home: &Path, id: &str) -> Result<()> {
             );
         }
         match proposal_installed_target(home, &p)? {
-            Some(target) => with_locked_installed_skill(&target, |view| {
-                require_installed_generation(
-                    &p,
-                    &view,
-                    &p.before,
-                    InstalledGenerationState::Staged,
-                )?;
+            Some(target) => {
+                let current = with_locked_installed_skill(&target, |view| {
+                    require_installed_generation(
+                        &p,
+                        &view,
+                        &p.before,
+                        InstalledGenerationState::Staged,
+                    )?;
+                    Ok(view.content)
+                })?;
                 let generations = installed_generation_transition(&p, ProposalStatus::Accepted)?;
                 commit_accept_skill_write_locked(
                     home,
                     &jp,
                     &id_owned,
                     &p,
-                    &view.content,
+                    &current,
                     Some(generations),
                     || {
-                        let report = replace_installed_skill_document_if_matches(
+                        mutate_installed_skill_document_audited(
+                            home,
                             &target,
-                            &view,
-                            p.after.as_bytes(),
-                        )?;
-                        if !report.warnings.is_empty() {
-                            let public_skill =
-                                crate::security::redact::sanitize_tool_output(&p.skill);
-                            let warnings =
-                                crate::skills::operator_skill_warnings(&report.warnings).join("; ");
-                            anyhow::bail!(
-                                "installed skill `{}` replacement is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                                public_skill,
-                                warnings
-                            );
-                        }
-                        let actual = crate::skills::installer::skill_tree_generation_sha256(
-                            view.dir,
-                            &target.root.join(&target.id),
-                            None,
-                        )?;
-                        if actual != generations.target {
-                            anyhow::bail!(
-                                "installed skill `{}` changed full package generation during acceptance; journal preserved",
-                                p.skill
-                            );
-                        }
-                        Ok(())
+                            &current,
+                            &p.after,
+                            generations,
+                            crate::skills::installer::SkillMutationOrigin::SelfImproveAccept,
+                        )
                     },
                 )
-            }),
+            }
             None => {
                 let path = Path::new(&p.skill_path);
                 let target =
@@ -2178,54 +2044,37 @@ pub fn rollback_proposal(home: &Path, id: &str) -> Result<()> {
             .clone()
             .ok_or_else(|| anyhow::anyhow!("proposal `{id_owned}` has no backup"))?;
         match proposal_installed_target(home, &p)? {
-            Some(target) => with_locked_installed_skill(&target, |view| {
-                require_installed_generation(
-                    &p,
-                    &view,
-                    &p.after,
-                    InstalledGenerationState::Accepted,
-                )?;
+            Some(target) => {
+                let current = with_locked_installed_skill(&target, |view| {
+                    require_installed_generation(
+                        &p,
+                        &view,
+                        &p.after,
+                        InstalledGenerationState::Accepted,
+                    )?;
+                    Ok(view.content)
+                })?;
                 let generations = installed_generation_transition(&p, ProposalStatus::RolledBack)?;
                 commit_rollback_skill_write_locked(
                     home,
                     &jp,
                     &id_owned,
                     &p,
-                    &view.content,
+                    &current,
                     &backup,
                     Some(generations),
                     || {
-                        let report = replace_installed_skill_document_if_matches(
+                        mutate_installed_skill_document_audited(
+                            home,
                             &target,
-                            &view,
-                            backup.as_bytes(),
-                        )?;
-                        if !report.warnings.is_empty() {
-                            let public_skill =
-                                crate::security::redact::sanitize_tool_output(&p.skill);
-                            let warnings =
-                                crate::skills::operator_skill_warnings(&report.warnings).join("; ");
-                            anyhow::bail!(
-                                "installed skill `{}` rollback is visible, but namespace durability is unconfirmed: {}; journal preserved",
-                                public_skill,
-                                warnings
-                            );
-                        }
-                        let actual = crate::skills::installer::skill_tree_generation_sha256(
-                            view.dir,
-                            &target.root.join(&target.id),
-                            None,
-                        )?;
-                        if actual != generations.target {
-                            anyhow::bail!(
-                                "installed skill `{}` changed full package generation during rollback; journal preserved",
-                                p.skill
-                            );
-                        }
-                        Ok(())
+                            &current,
+                            &backup,
+                            generations,
+                            crate::skills::installer::SkillMutationOrigin::SelfImproveRollback,
+                        )
                     },
                 )
-            }),
+            }
             None => {
                 let path = Path::new(&p.skill_path);
                 let target =
@@ -4267,12 +4116,36 @@ mod tests {
     }
 
     #[test]
-    fn installed_accept_and_rollback_retain_journal_until_namespace_is_durable() {
+    fn installed_accept_and_rollback_do_not_use_the_legacy_leaf_writer() {
         let _env_lock = crate::test_env::lock();
         let _sync_failure_reset = ParentSyncFailureReset;
         let home = tempfile::tempdir().unwrap();
         install_test_skill(home.path(), "source-v1", "generation-one", "live-v1", false);
         let skill = home.path().join("skills").join("pinned").join("skill.md");
+        let asset = home
+            .path()
+            .join("skills")
+            .join("pinned")
+            .join("assets/keep.bin");
+        std::fs::create_dir_all(asset.parent().unwrap()).unwrap();
+        std::fs::write(&asset, b"\0self-improve-asset\0").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            std::fs::set_permissions(
+                skill.parent().unwrap(),
+                std::fs::Permissions::from_mode(0o750),
+            )
+            .unwrap();
+            std::fs::set_permissions(
+                asset.parent().unwrap(),
+                std::fs::Permissions::from_mode(0o710),
+            )
+            .unwrap();
+            std::fs::set_permissions(&skill, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::set_permissions(&asset, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
         let id = stage_proposal(
             home.path(),
             installed_proposal(home.path(), "durability", "live-v1", "improved"),
@@ -4280,60 +4153,124 @@ mod tests {
         .unwrap();
         force_verified_approved(home.path(), &id);
 
+        // This hook belongs to the external-file leaf replacement primitive.
+        // Installed Skills must now go through the authenticated complete-package
+        // lifecycle instead; its own commit/recovery fault matrix lives in
+        // `skills::installer` and `skills::mutation_lifecycle`.
         crate::skills::store::force_parent_sync_failure_for_test(true);
-        let accept_error = accept_proposal(home.path(), &id)
-            .expect_err("accept must not commit metadata after a namespace-sync warning");
-        assert!(format!("{accept_error:#}").contains("namespace durability is unconfirmed"));
+        accept_proposal(home.path(), &id)
+            .expect("installed accept must not use the legacy leaf replacement primitive");
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "improved");
-        assert!(journal_path(home.path()).exists());
-        assert_eq!(
-            load_proposals_raw(home.path()).unwrap()[0].status,
-            ProposalStatus::VerifiedApproved
-        );
-
-        let recovery_error = recover_pending_journal(home.path())
-            .expect_err("recovery must retry durability before finalizing acceptance");
-        assert!(format!("{recovery_error:#}").contains("namespace durability is unconfirmed"));
-        assert!(journal_path(home.path()).exists());
-        assert_eq!(
-            load_proposals_raw(home.path()).unwrap()[0].status,
-            ProposalStatus::VerifiedApproved
-        );
-
-        crate::skills::store::force_parent_sync_failure_for_test(false);
-        recover_pending_journal(home.path()).unwrap();
         assert!(!journal_path(home.path()).exists());
         assert_eq!(
             load_proposals_raw(home.path()).unwrap()[0].status,
             ProposalStatus::Accepted
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
 
-        crate::skills::store::force_parent_sync_failure_for_test(true);
-        let rollback_error = rollback_proposal(home.path(), &id)
-            .expect_err("rollback must not commit metadata after a namespace-sync warning");
-        assert!(format!("{rollback_error:#}").contains("namespace durability is unconfirmed"));
+            assert_eq!(
+                std::fs::metadata(skill.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o750
+            );
+            assert_eq!(
+                std::fs::metadata(asset.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o710
+            );
+            assert_eq!(
+                std::fs::metadata(&skill).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(&asset).unwrap().permissions().mode() & 0o7777,
+                0o640
+            );
+        }
+
+        rollback_proposal(home.path(), &id)
+            .expect("installed rollback must not use the legacy leaf replacement primitive");
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "live-v1");
-        assert!(journal_path(home.path()).exists());
         assert_eq!(
-            load_proposals_raw(home.path()).unwrap()[0].status,
-            ProposalStatus::Accepted
+            std::fs::read(&asset).unwrap(),
+            b"\0self-improve-asset\0",
+            "accept and rollback must preserve every sibling package asset"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
 
-        let recovery_error = recover_pending_journal(home.path())
-            .expect_err("recovery must retry durability before finalizing rollback");
-        assert!(format!("{recovery_error:#}").contains("namespace durability is unconfirmed"));
-        assert!(journal_path(home.path()).exists());
-        assert_eq!(
-            load_proposals_raw(home.path()).unwrap()[0].status,
-            ProposalStatus::Accepted
-        );
-
-        crate::skills::store::force_parent_sync_failure_for_test(false);
-        recover_pending_journal(home.path()).unwrap();
+            assert_eq!(
+                std::fs::metadata(skill.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o750
+            );
+            assert_eq!(
+                std::fs::metadata(asset.parent().unwrap())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o7777,
+                0o710
+            );
+            assert_eq!(
+                std::fs::metadata(&skill).unwrap().permissions().mode() & 0o7777,
+                0o600
+            );
+            assert_eq!(
+                std::fs::metadata(&asset).unwrap().permissions().mode() & 0o7777,
+                0o640
+            );
+        }
         assert!(!journal_path(home.path()).exists());
         assert_eq!(
             load_proposals_raw(home.path()).unwrap()[0].status,
             ProposalStatus::RolledBack
+        );
+
+        let mut origins = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::HomeWalScanLimits::default(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && matches!(
+                        frame.header.event_subtype,
+                        subtype
+                            if subtype
+                                == crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8
+                                || subtype
+                                    == crate::wal::events::ExtendedSubtype::SkillInstallResult as u8
+                    )
+                {
+                    let payload: serde_json::Value = serde_json::from_slice(frame.payload)?;
+                    if payload["skill_id"] == "pinned" {
+                        origins.push(payload["origin"].as_str().unwrap_or_default().to_string());
+                    }
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            origins,
+            vec![
+                "self_improve_accept".to_string(),
+                "self_improve_accept".to_string(),
+                "self_improve_rollback".to_string(),
+                "self_improve_rollback".to_string(),
+            ]
         );
     }
 
@@ -4504,14 +4441,35 @@ mod tests {
 
         let discarded = discard_journal(home.path()).await.unwrap();
         assert_eq!(discarded.journal_sha256, summary.journal_sha256);
+
+        let mut discard_records = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::HomeWalScanLimits::default(),
+            |_, frame| {
+                if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+                    && frame.header.event_subtype
+                        == crate::wal::events::ExtendedSubtype::SelfImproveJournalDiscarded as u8
+                {
+                    discard_records.push(
+                        serde_json::from_slice::<serde_json::Value>(frame.payload)
+                            .context("decode SelfImproveJournalDiscarded payload")?,
+                    );
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            discard_records.len(),
+            1,
+            "the abandonment must have exactly one durable audit record"
+        );
+        assert_eq!(discard_records[0]["proposal_id"], "wedged-1");
+        assert_eq!(discard_records[0]["journal_sha256"], summary.journal_sha256);
         assert!(
             !journal_path(home.path()).exists(),
             "the journal must be gone after a confirmed discard"
-        );
-        let segment = home.path().join("wal").join("000001.wal");
-        assert!(
-            segment.exists() && std::fs::metadata(&segment).unwrap().len() > 0,
-            "the abandonment must be durably recorded BEFORE the delete"
         );
     }
 

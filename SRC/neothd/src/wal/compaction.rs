@@ -166,16 +166,7 @@ pub struct MarkerPayload {
 /// `~/.neoth/wal/hmac.key`.
 pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
     if path.exists() {
-        let body =
-            std::fs::read(path).with_context(|| format!("read HMAC key {}", path.display()))?;
-        let key_bytes = maybe_unwrap_dpapi(&body, path)?;
-        if key_bytes.len() < 16 {
-            anyhow::bail!(
-                "HMAC key at {} is shorter than 16 bytes; refuse to use weak key",
-                path.display()
-            );
-        }
-        return Ok(key_bytes);
+        return load_existing_key(path);
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -191,6 +182,31 @@ pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
 
     write_key_securely(path, &key)?;
     Ok(key)
+}
+
+/// Load an already-created WAL HMAC key without silently generating a new
+/// identity. Proof readers use this fail-closed path: an absent key means the
+/// existing WAL cannot be authenticated and must not be treated as empty.
+pub(crate) fn load_existing_key(path: &Path) -> Result<Vec<u8>> {
+    let body = std::fs::read(path)
+        .with_context(|| format!("read existing HMAC key {}", path.display()))?;
+    decode_existing_key(&body, path)
+}
+
+/// Decode key bytes read through a capability-bound no-follow handle.
+///
+/// Keeping the storage decoding separate lets security-sensitive scanners
+/// avoid reopening `hmac.key` through an ambient path after they already bound
+/// `<home>/wal`.
+pub(crate) fn decode_existing_key(body: &[u8], display_path: &Path) -> Result<Vec<u8>> {
+    let key_bytes = maybe_unwrap_dpapi(body, display_path)?;
+    if key_bytes.len() < 16 {
+        anyhow::bail!(
+            "HMAC key at {} is shorter than 16 bytes; refuse to use weak key",
+            display_path.display()
+        );
+    }
+    Ok(key_bytes)
 }
 
 /// SC-09 Tier-1 recovery: re-wrap an operator-supplied RAW HMAC key for
@@ -244,8 +260,12 @@ pub(crate) fn maybe_unwrap_dpapi(body: &[u8], _path: &Path) -> Result<Vec<u8>> {
 
 #[cfg(unix)]
 pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
-    crate::util::atomic_write::write_private_create_new(path, key)
-        .with_context(|| format!("create HMAC key at {} with mode 0600", path.display()))?;
+    crate::util::atomic_write::write_private_create_new_durable(path, key).with_context(|| {
+        format!(
+            "durably create HMAC key at {} with mode 0600",
+            path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -277,8 +297,8 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     // and fall back to plaintext + DACL — the file stays as protected
     // as it was pre-K-Sec-4 instead of failing key generation.
     let payload = encode_key_for_storage(path, key)?;
-    crate::util::atomic_write::write_private_create_new(path, &payload)
-        .with_context(|| format!("create private HMAC key at {}", path.display()))?;
+    crate::util::atomic_write::write_private_create_new_durable(path, &payload)
+        .with_context(|| format!("durably create private HMAC key at {}", path.display()))?;
     Ok(())
 }
 
@@ -328,11 +348,24 @@ pub(crate) fn logical_segment_bytes_at_home<'a>(
     raw: &'a [u8],
     home: &Path,
 ) -> Result<(usize, Cow<'a, [u8]>)> {
+    logical_segment_bytes_at_home_capped(raw, home, crate::wal::compress::MAX_DECOMPRESSED_BYTES)
+}
+
+/// Home-bound reconstruction with a caller-selected logical-frame ceiling.
+///
+/// Security-sensitive scanners use a substantially smaller cap than the
+/// general forensic reader and must never fall back to the process-global
+/// segment key for a custom instance home.
+pub(crate) fn logical_segment_bytes_at_home_capped<'a>(
+    raw: &'a [u8],
+    home: &Path,
+    max_frame_bytes: u64,
+) -> Result<(usize, Cow<'a, [u8]>)> {
     if segment_body_is_encrypted(raw) {
         let key = crate::wal::master_key::segment_key_at(home);
-        return logical_segment_bytes_with_key(raw, key.as_ref());
+        return logical_segment_bytes_with_key_capped(raw, key.as_ref(), max_frame_bytes);
     }
-    logical_segment_bytes_with_key(raw, None)
+    logical_segment_bytes_with_key_capped(raw, None, max_frame_bytes)
 }
 
 /// True when a parsed segment's body begins with the AEAD frame magic.
@@ -360,6 +393,14 @@ pub(crate) fn logical_segment_bytes_with_key<'a>(
     raw: &'a [u8],
     key: Option<&crate::wal::crypto::WalSegmentKey>,
 ) -> Result<(usize, Cow<'a, [u8]>)> {
+    logical_segment_bytes_with_key_capped(raw, key, crate::wal::compress::MAX_DECOMPRESSED_BYTES)
+}
+
+pub(crate) fn logical_segment_bytes_with_key_capped<'a>(
+    raw: &'a [u8],
+    key: Option<&crate::wal::crypto::WalSegmentKey>,
+    max_frame_bytes: u64,
+) -> Result<(usize, Cow<'a, [u8]>)> {
     use crate::wal::crypto;
     // A file without a parseable segment header — a bare frame stream (minimal
     // test fixture) or a pre-header artifact — is treated as raw, frames starting
@@ -379,8 +420,22 @@ pub(crate) fn logical_segment_bytes_with_key<'a>(
         let (nonce, ct) = crypto::split_encrypted(body)?;
         let plain = crypto::decrypt_blob(k, &nonce, &raw[..header_len], ct)
             .context("decrypt sealed WAL segment")?;
+        if plain.len() as u64 > max_frame_bytes {
+            anyhow::bail!(
+                "decrypted WAL frame body is {} bytes, exceeding the {}-byte scanner cap",
+                plain.len(),
+                max_frame_bytes
+            );
+        }
         Cow::Owned(plain)
     } else {
+        if body.len() as u64 > max_frame_bytes {
+            anyhow::bail!(
+                "WAL frame body is {} bytes, exceeding the {}-byte scanner cap",
+                body.len(),
+                max_frame_bytes
+            );
+        }
         Cow::Borrowed(body)
     };
 
@@ -399,7 +454,8 @@ pub(crate) fn logical_segment_bytes_with_key<'a>(
             }
         };
     }
-    let frames = decompress_frames(&frame_blob).context("decompress segment frame blob")?;
+    let frames = crate::wal::compress::decompress_frames_capped(&frame_blob, max_frame_bytes)
+        .context("decompress segment frame blob")?;
     let mut logical = Vec::with_capacity(header_len + frames.len());
     logical.extend_from_slice(&raw[..header_len]);
     logical.extend_from_slice(&frames);
@@ -582,9 +638,16 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("hmac.key");
         assert!(!path.exists());
+        let sync_attempts_before =
+            crate::util::atomic_write::create_new_parent_sync_attempts_for_test();
         let key = load_or_init_key(&path).unwrap();
         assert_eq!(key.len(), 32);
         assert!(path.exists());
+        assert!(
+            crate::util::atomic_write::create_new_parent_sync_attempts_for_test()
+                > sync_attempts_before,
+            "fresh HMAC-key creation must durably commit its directory entry"
+        );
         // Second call returns the same key.
         let key2 = load_or_init_key(&path).unwrap();
         assert_eq!(key, key2);

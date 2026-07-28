@@ -5,7 +5,7 @@
 //! build a validated [`SkillManifest`], and write
 //! `~/.neoth/skills/<id>/skill.yaml` — the same shape the loader reads.
 //!
-//! The pure builder ([`build_manifest`] / [`write_skill_yaml`]) is fully
+//! The pure builder ([`build_manifest`]) and audited package writer are fully
 //! testable without a TTY; the interactive dialoguer wrapper is gated
 //! behind `cfg(feature = "wizard")`, mirroring `cli/init.rs`.
 //!
@@ -14,20 +14,26 @@
 //! running as the same OS user; that process can directly modify the user's
 //! skill files outside NEOTH.
 
+#[cfg(test)]
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+#[cfg(test)]
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+#[cfg(test)]
 use cap_std::fs::{Dir, OpenOptions};
+#[cfg(test)]
 use sha2::{Digest as _, Sha256};
 
 use crate::skills::schema::SkillManifest;
+#[cfg(test)]
 use crate::skills::store::{
     cap_metadata_is_link_like, open_bound_directory, open_real_child_dir, open_regular_file,
     read_regular_file_bounded, remove_child_file, remove_real_directory_tree, rename_child,
 };
 
+#[cfg(test)]
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
 
 /// Parameters gathered from CLI flags or interactive prompts.
@@ -48,8 +54,8 @@ pub enum ExistingSkillPolicy {
     /// Treat an already-identical manifest as an idempotent success, but
     /// preserve and reject every differing or broken existing generation.
     KeepIfIdentical,
-    /// Atomically replace only the existing `skill.yaml`, preserving sibling
-    /// assets in the skill directory.
+    /// Atomically publish a complete cloned package generation with only
+    /// `skill.yaml` replaced, preserving every sibling asset byte-for-byte.
     Replace,
 }
 
@@ -148,7 +154,8 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
 /// is handle-relative and no-follow. Existing sibling assets are left in
 /// place. Existing manifests follow the mandatory `existing` policy. Returns
 /// a typed report recording whether this operation replaced one.
-pub fn write_skill_yaml(
+#[cfg(test)]
+pub(crate) fn write_skill_yaml(
     skills_dir: &Path,
     id: &str,
     yaml: &str,
@@ -157,7 +164,8 @@ pub fn write_skill_yaml(
     write_skill_yaml_with_expectation(skills_dir, id, yaml, existing, None)
 }
 
-pub fn write_skill_yaml_with_expectation(
+#[cfg(test)]
+pub(crate) fn write_skill_yaml_with_expectation(
     skills_dir: &Path,
     id: &str,
     yaml: &str,
@@ -286,6 +294,7 @@ pub fn write_skill_yaml_with_expectation(
     })
 }
 
+#[cfg(test)]
 fn replace_manifest_in_skill(
     skill_dir: &Dir,
     display_dir: &Path,
@@ -347,6 +356,7 @@ fn replace_manifest_in_skill(
     ))
 }
 
+#[cfg(test)]
 fn create_skill_directory(
     root: &Dir,
     display_root: &Path,
@@ -424,6 +434,7 @@ fn create_skill_directory(
     ))
 }
 
+#[cfg(test)]
 fn post_commit_sync_warnings(sync_result: Result<()>, context: &str) -> Vec<String> {
     match sync_result {
         Ok(()) => Vec::new(),
@@ -434,6 +445,7 @@ fn post_commit_sync_warnings(sync_result: Result<()>, context: &str) -> Vec<Stri
 /// Persist directory-entry changes on Unix. Windows intentionally has no
 /// claim here: Rust/cap-std exposes no supported equivalent of directory
 /// `fsync`, and this code does not invent a `FlushFileBuffers` guarantee.
+#[cfg(test)]
 fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -447,6 +459,7 @@ fn sync_directory(directory: &Dir, display_path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn write_staged_manifest(
     skill_dir: &Dir,
     display_dir: &Path,
@@ -472,11 +485,13 @@ fn write_staged_manifest(
     anyhow::bail!("could not allocate a unique staged skill manifest after 8 attempts")
 }
 
+#[cfg(test)]
 fn write_manifest_create_new(skill_dir: &Dir, display_dir: &Path, yaml: &[u8]) -> Result<()> {
     let display = display_dir.join("skill.yaml");
     write_file_create_new(skill_dir, OsStr::new("skill.yaml"), &display, yaml, None)
 }
 
+#[cfg(test)]
 fn write_file_create_new(
     parent: &Dir,
     name: &OsStr,
@@ -532,6 +547,7 @@ fn write_file_create_new(
     Ok(())
 }
 
+#[cfg(test)]
 fn create_private_stage_directory(root: &Dir, display_root: &Path) -> Result<(OsString, Dir)> {
     for _ in 0..8 {
         let name = OsString::from(format!(
@@ -556,6 +572,7 @@ fn create_private_stage_directory(root: &Dir, display_root: &Path) -> Result<(Os
     anyhow::bail!("could not allocate a unique staged skill directory after 8 attempts")
 }
 
+#[cfg(test)]
 fn create_private_directory(parent: &Dir, name: &OsStr, display: &Path) -> Result<()> {
     #[cfg(unix)]
     {
@@ -575,6 +592,7 @@ fn create_private_directory(parent: &Dir, name: &OsStr, display: &Path) -> Resul
     Ok(())
 }
 
+#[cfg(test)]
 fn cleanup_staged_file(
     error: anyhow::Error,
     parent: &Dir,
@@ -598,6 +616,7 @@ fn cleanup_staged_file(
     }
 }
 
+#[cfg(test)]
 fn cleanup_staged_directory(
     error: anyhow::Error,
     root: &Dir,
@@ -622,7 +641,8 @@ fn cleanup_staged_directory(
 }
 
 /// Top-level create: build + write + return the report.
-pub fn create_skill(
+#[cfg(test)]
+pub(crate) fn create_skill(
     skills_dir: &Path,
     params: CreateParams,
     existing: ExistingSkillPolicy,
@@ -630,7 +650,8 @@ pub fn create_skill(
     create_skill_with_expectation(skills_dir, params, existing, None)
 }
 
-pub fn create_skill_with_expectation(
+#[cfg(test)]
+pub(crate) fn create_skill_with_expectation(
     skills_dir: &Path,
     params: CreateParams,
     existing: ExistingSkillPolicy,
@@ -638,6 +659,66 @@ pub fn create_skill_with_expectation(
 ) -> Result<CreateReport> {
     let (_, yaml) = build_manifest(&params)?;
     write_skill_yaml_with_expectation(skills_dir, &params.id, &yaml, existing, expectation)
+}
+
+fn audited_create_report(report: super::installer::InstallReport) -> CreateReport {
+    CreateReport {
+        id: report.id,
+        path: report.installed_at.join("skill.yaml"),
+        manifest_sha256: report.source_manifest_sha256,
+        target_generation_sha256: report.source_generation_sha256,
+        replaced_generation_sha256: report.replaced_generation_sha256,
+        replaced_existing: report.replaced_existing,
+        warnings: report.warnings,
+    }
+}
+
+/// Production generated-manifest entry point. Unlike the legacy direct store
+/// primitive above (retained for its focused filesystem fault tests), this
+/// clones the complete package and requires the authenticated mutation intent
+/// before publishing any new generation.
+pub(crate) fn write_skill_yaml_audited(
+    home: &Path,
+    skills_dir: &Path,
+    id: &str,
+    yaml: &str,
+    existing: ExistingSkillPolicy,
+    expectation: Option<&CreateExpectation>,
+    origin: super::installer::SkillMutationOrigin,
+) -> Result<CreateReport> {
+    let request = super::installer::SkillDocumentMutationRequest {
+        target_skills_dir: skills_dir.to_path_buf(),
+        id: id.to_string(),
+        document: super::installer::SkillPackageDocument::Manifest,
+        replacement: yaml.as_bytes().to_vec(),
+        existing,
+        expected_target_generation_sha256: expectation
+            .map(|expectation| expectation.target_generation_sha256.clone()),
+        expected_document: None,
+        origin,
+    };
+    super::mutation_lifecycle::apply_skill_document_mutation_blocking(home, request)
+        .map(audited_create_report)
+}
+
+pub(crate) fn create_skill_with_expectation_audited(
+    home: &Path,
+    skills_dir: &Path,
+    params: CreateParams,
+    existing: ExistingSkillPolicy,
+    expectation: Option<&CreateExpectation>,
+    origin: super::installer::SkillMutationOrigin,
+) -> Result<CreateReport> {
+    let (_, yaml) = build_manifest(&params)?;
+    write_skill_yaml_audited(
+        home,
+        skills_dir,
+        &params.id,
+        &yaml,
+        existing,
+        expectation,
+        origin,
+    )
 }
 
 // ── Param collection: flags (non-interactive) or dialoguer prompts ───

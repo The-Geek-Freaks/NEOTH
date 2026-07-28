@@ -7,11 +7,25 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use base64::Engine;
+use sha2::Digest as _;
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use crate::n8n_api::auth::AuthCooldown;
+
+const TEST_ENDPOINT_NONCE: &str = "00112233445566778899aabbccddeeff";
+
+fn publish_test_endpoint(
+    home: &std::path::Path,
+    port: u16,
+    token: &str,
+) -> crate::daemon::pidfile::PidGuard {
+    let mut guard = crate::daemon::pidfile::acquire(&home.join("neothd.pid")).unwrap();
+    write_sidecar(home, port, std::process::id(), token, TEST_ENDPOINT_NONCE).unwrap();
+    guard.publish_endpoint_nonce(TEST_ENDPOINT_NONCE).unwrap();
+    guard
+}
 
 async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
     raw_post_path(addr, "/audit", token, body).await.0
@@ -123,6 +137,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let plugin_removal_result = crate::wal::events::ExtendedSubtype::PluginRemovalResult as u8;
     let skill_install_intent = crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8;
     let skill_install_result = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
+    let skill_removal_intent = crate::wal::events::ExtendedSubtype::SkillRemovalIntent as u8;
+    let skill_removal_result = crate::wal::events::ExtendedSubtype::SkillRemovalResult as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[
@@ -134,12 +150,16 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             plugin_removal_result,
             skill_install_intent,
             skill_install_result,
+            skill_removal_intent,
+            skill_removal_result,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_result));
     assert!(is_allowed_client_event_pair(0x00, skill_install_intent));
     assert!(is_allowed_client_event_pair(0x00, skill_install_result));
+    assert!(is_allowed_client_event_pair(0x00, skill_removal_intent));
+    assert!(is_allowed_client_event_pair(0x00, skill_removal_result));
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(is_allowed_client_event_pair(0x00, communication_controlled));
     assert!(!is_allowed_client_event_pair(0x00, 0));
@@ -179,7 +199,14 @@ fn token_round_trips_through_secure_write() {
 #[test]
 fn sidecar_round_trips_port_without_full_token() {
     let dir = tempdir().unwrap();
-    write_sidecar(dir.path(), 54321, std::process::id(), "supersecrettoken").unwrap();
+    write_sidecar(
+        dir.path(),
+        54321,
+        std::process::id(),
+        "supersecrettoken",
+        TEST_ENDPOINT_NONCE,
+    )
+    .unwrap();
     assert_eq!(read_sidecar(dir.path()).unwrap().0, 54321);
     // The full token must NEVER be in the sidecar — only an 8-char hint.
     let raw = std::fs::read(sidecar_path(dir.path())).unwrap();
@@ -193,11 +220,34 @@ fn sidecar_round_trips_port_without_full_token() {
 fn sidecar_guard_removes_on_drop() {
     let dir = tempdir().unwrap();
     let t = init_rpc_token(dir.path()).unwrap();
-    write_sidecar(dir.path(), 1, std::process::id(), &t).unwrap();
+    write_sidecar(dir.path(), 1, std::process::id(), &t, TEST_ENDPOINT_NONCE).unwrap();
     {
         let _g = SidecarGuard::new(dir.path().to_path_buf());
         assert!(sidecar_path(dir.path()).exists());
     }
+    assert!(!sidecar_path(dir.path()).exists());
+    assert!(!rpc_token_path(dir.path()).exists());
+}
+
+#[tokio::test]
+async fn daemon_sidecar_guard_aborts_its_published_listener_on_early_return() {
+    let dir = tempdir().unwrap();
+    let token = init_rpc_token(dir.path()).unwrap();
+    write_sidecar(
+        dir.path(),
+        1,
+        std::process::id(),
+        &token,
+        TEST_ENDPOINT_NONCE,
+    )
+    .unwrap();
+    let task = tokio::spawn(std::future::pending::<()>());
+    let guard = SidecarGuard::with_listener(dir.path().to_path_buf(), task.abort_handle());
+    drop(guard);
+    let error = task
+        .await
+        .expect_err("listener must be aborted with discovery");
+    assert!(error.is_cancelled());
     assert!(!sidecar_path(dir.path()).exists());
     assert!(!rpc_token_path(dir.path()).exists());
 }
@@ -537,6 +587,488 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
 }
 
 #[tokio::test]
+async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_disabled() {
+    let home = tempdir().unwrap();
+    let source = home.path().join("incoming-internal-route");
+    let skills_dir = home.path().join("skills");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("skill.yaml"),
+        "id: internal_route\n\
+         description: Mandatory internal audit route\n\
+         trigger_keywords: [internal]\n\
+         system_prompt: Exercise the daemon-owned lifecycle.\n",
+    )
+    .unwrap();
+
+    let wal = home.path().join("wal");
+    std::fs::create_dir_all(&wal).unwrap();
+    let segment = wal.join("000001.wal");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+    let token = init_rpc_token(home.path()).unwrap();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: false,
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let _pid_guard = publish_test_endpoint(home.path(), addr.port(), &token);
+
+    assert_eq!(
+        raw_post_path(addr, "/health", Some(&token), "{}").await.0,
+        200,
+        "authenticated endpoint discovery must remain available"
+    );
+    assert_eq!(
+        raw_post_path(addr, "/audit", Some(&token), "{}").await.0,
+        404,
+        "the operator-disabled public audit route must stay disabled"
+    );
+
+    let mut prepared = crate::skills::installer::prepare_install_from_local_with_expectation(
+        &source,
+        &skills_dir,
+        false,
+        None,
+        "a17e0000a17e0000a17e0000a17e0000",
+    )
+    .unwrap();
+    prepared.mark_intent_submitting().unwrap();
+    let intent = crate::skills::mutation_lifecycle::deliver_intent(
+        home.path(),
+        None,
+        &prepared.audit_binding(),
+    )
+    .await
+    .unwrap();
+    let crate::skills::mutation_lifecycle::IntentDelivery::Durable(receipt) = intent else {
+        panic!("mandatory internal route must durably deliver the exact intent");
+    };
+    prepared.mark_intent_durable_authenticated(receipt).unwrap();
+    prepared.commit().unwrap();
+    crate::skills::mutation_lifecycle::reconcile_pending(home.path(), &skills_dir, None)
+        .await
+        .unwrap();
+
+    assert!(skills_dir.join("internal_route/skill.yaml").is_file());
+    assert!(!skills_dir.join(".neoth-skill-mutation.json").exists());
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+}
+
+#[tokio::test]
+async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("skill-dedup.wal");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
+    let state = AuditRpcState {
+        token: "skill-dedup-token".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let subtype = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
+    let operation_id = "deadbeefdeadbeefdeadbeefdeadbeef";
+    let audit_event_id = "9".repeat(64);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "audit_event_id": audit_event_id,
+        "skill_id": "dedup_skill",
+        "status": "committed",
+    }))
+    .unwrap();
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(&payload);
+    let request =
+        format!("{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}");
+
+    assert_eq!(
+        raw_post(addr, Some("skill-dedup-token"), &request).await,
+        200
+    );
+    assert_eq!(
+        raw_post(addr, Some("skill-dedup-token"), &request).await,
+        200,
+        "retry after a lost response must ACK the existing audit id"
+    );
+
+    let conflicting = serde_json::to_vec(&serde_json::json!({
+        "operation_id": operation_id,
+        "audit_event_id": audit_event_id,
+        "skill_id": "different_skill",
+        "status": "committed",
+    }))
+    .unwrap();
+    let conflicting_b64 = base64::engine::general_purpose::STANDARD.encode(conflicting);
+    let conflicting_request = format!(
+        "{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{conflicting_b64:?}}}"
+    );
+    assert_eq!(
+        raw_post(addr, Some("skill-dedup-token"), &conflicting_request).await,
+        409
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+    let mut cursor = header.header_len();
+    let mut matching_results = 0usize;
+    while cursor < bytes.len() {
+        let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+            && frame.header.event_subtype == subtype
+        {
+            matching_results += 1;
+        }
+        cursor += frame.header.total_len as usize;
+    }
+    assert_eq!(
+        matching_results, 1,
+        "one deterministic audit id may produce exactly one terminal frame"
+    );
+}
+
+#[tokio::test]
+async fn skill_mutation_dedup_survives_caller_cancellation_after_durable_append() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("skill-cancel-dedup.wal");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
+    let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+    let subtype = crate::wal::events::ExtendedSubtype::SkillRemovalResult as u8;
+    let audit_event_id = "7".repeat(64);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "operation_id": "facade00facade00facade00facade00",
+        "audit_event_id": audit_event_id,
+        "skill_id": "cancelled_skill",
+        "status": "committed",
+    }))
+    .unwrap();
+    let dedup_key = format!("{subtype:02x}:{audit_event_id}");
+    let payload_sha256 = hex::encode(sha2::Sha256::digest(&payload));
+
+    let cancelled_caller = tokio::spawn(super::server::append_skill_audit_idempotently(
+        writer.clone().with_test_ack_gate(gate.clone()),
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        subtype,
+        payload.clone(),
+        dedup_key.clone(),
+        payload_sha256.clone(),
+    ));
+    gate.wait_until_durable().await;
+    cancelled_caller.abort();
+    let _ = cancelled_caller.await;
+    gate.release();
+
+    let retry = super::server::append_skill_audit_idempotently(
+        writer.clone(),
+        crate::wal::events::EVENT_TYPE_EXTENDED,
+        subtype,
+        payload,
+        dedup_key,
+        payload_sha256,
+    )
+    .await
+    .unwrap();
+    assert!(
+        matches!(retry, super::server::SkillAuditAppendOutcome::Duplicate),
+        "a cancelled caller must not reopen the append window"
+    );
+
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+    let mut cursor = header.header_len();
+    let mut matching_results = 0usize;
+    while cursor < bytes.len() {
+        let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+        if frame.header.event_type == crate::wal::events::EVENT_TYPE_EXTENDED
+            && frame.header.event_subtype == subtype
+        {
+            matching_results += 1;
+        }
+        cursor += frame.header.total_len as usize;
+    }
+    assert_eq!(matching_results, 1);
+}
+
+#[tokio::test]
+async fn cancelled_pre_durability_rpc_append_retains_then_recovers_exact_journal() {
+    let home = tempdir().unwrap();
+    let source = home.path().join("incoming-rpc-cancel");
+    let skills_dir = home.path().join("skills");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("skill.yaml"),
+        "id: rpc_cancel\n\
+         description: RPC cancellation recovery\n\
+         trigger_keywords: [rpc]\n\
+         system_prompt: Keep the exact lifecycle binding.\n",
+    )
+    .unwrap();
+    let mut prepared = crate::skills::installer::prepare_install_from_local_with_expectation(
+        &source,
+        &skills_dir,
+        false,
+        None,
+        "a11d0000a11d0000a11d0000a11d0000",
+    )
+    .unwrap();
+    prepared.mark_intent_submitting().unwrap();
+    let binding = prepared.audit_binding();
+    drop(prepared);
+
+    let wal_dir = home.path().join("wal");
+    std::fs::create_dir_all(&wal_dir).unwrap();
+    let (writer, wal_join) = crate::wal::spawn_for_home(
+        wal_dir.join("rpc-pre-durable-cancel-000001.wal"),
+        home.path().to_path_buf(),
+    )
+    .unwrap();
+    let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+    let blocker_payload = br#"{"rpc_blocker":true}"#.to_vec();
+    let blocker_header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_EXTENDED, &blocker_payload)
+            .event_subtype(
+                crate::wal::events::ExtendedSubtype::CommunicationProfileControlled as u8,
+            )
+            .build();
+    let blocker_writer = writer.clone().with_test_ack_gate(gate.clone());
+    let blocker =
+        tokio::spawn(async move { blocker_writer.append(blocker_header, blocker_payload).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), gate.wait_until_durable())
+        .await
+        .expect("blocker must hold the WAL writer before the Skill frame");
+
+    let subtype = crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8;
+    let key = crate::wal::compaction::load_existing_key(&wal_dir.join("hmac.key")).unwrap();
+    let payload =
+        crate::skills::mutation_lifecycle::skill_mutation_audit_payload(&binding, false, &key)
+            .unwrap();
+    let payload_sha256 = hex::encode(sha2::Sha256::digest(&payload));
+    let dedup_key = format!("{subtype:02x}:{}", binding.intent_audit_event_id());
+    let coordinator = Arc::new(super::server::SkillAuditCoordinator::default());
+    let cancelled = tokio::spawn(
+        super::server::append_skill_audit_idempotently_with_coordinator(
+            Arc::clone(&coordinator),
+            writer.clone(),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            payload,
+            dedup_key,
+            payload_sha256,
+        ),
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if coordinator.inflight_count().await == 1 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Skill RPC append must enter the coordinator");
+    assert_eq!(coordinator.inflight_count().await, 1);
+    cancelled.abort();
+    let _ = cancelled.await;
+
+    assert_eq!(
+        crate::skills::mutation_lifecycle::scan_skill_mutation_audit_count(
+            home.path(),
+            &binding,
+            false,
+        )
+        .unwrap(),
+        0
+    );
+    let pending = crate::skills::mutation_lifecycle::reconcile_pending(
+        home.path(),
+        &skills_dir,
+        Some(&writer),
+    )
+    .await
+    .expect_err("an in-flight same-process append must keep its journal");
+    assert!(pending.to_string().contains("entered intent delivery"));
+    assert!(skills_dir.join(".neoth-skill-mutation.json").exists());
+
+    gate.release();
+    blocker.await.unwrap().unwrap();
+    for _ in 0..100 {
+        if crate::skills::mutation_lifecycle::scan_skill_mutation_audit_count(
+            home.path(),
+            &binding,
+            false,
+        )
+        .unwrap()
+            == 1
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(
+        crate::skills::mutation_lifecycle::scan_skill_mutation_audit_count(
+            home.path(),
+            &binding,
+            false,
+        )
+        .unwrap(),
+        1
+    );
+    crate::skills::mutation_lifecycle::reconcile_pending(home.path(), &skills_dir, Some(&writer))
+        .await
+        .unwrap();
+    assert!(!skills_dir.join(".neoth-skill-mutation.json").exists());
+    assert!(!skills_dir.join("rpc_cancel").exists());
+
+    drop(writer);
+    wal_join.await.ok();
+}
+
+#[tokio::test]
+async fn skill_mutation_singleflight_is_bounded_and_recovers_capacity() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("skill-singleflight-capacity.wal");
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
+    let coordinator = Arc::new(super::server::SkillAuditCoordinator::default());
+    let gate = crate::wal::writer::TestAckGate::once(crate::wal::events::EVENT_TYPE_EXTENDED);
+    let subtype = crate::wal::events::ExtendedSubtype::SkillInstallIntent as u8;
+
+    let first_payload = br#"{"operation_id":"00000000000000000000000000000000"}"#.to_vec();
+    let first_sha256 = hex::encode(sha2::Sha256::digest(&first_payload));
+    let first = tokio::spawn(
+        super::server::append_skill_audit_idempotently_with_coordinator(
+            Arc::clone(&coordinator),
+            writer.clone().with_test_ack_gate(gate.clone()),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            first_payload.clone(),
+            "singleflight-00".to_string(),
+            first_sha256.clone(),
+        ),
+    );
+    gate.wait_until_durable().await;
+
+    let mut requests = Vec::new();
+    for index in 1..super::server::MAX_SKILL_AUDIT_INFLIGHT {
+        let payload = format!("{{\"operation_id\":\"{index:032x}\"}}").into_bytes();
+        let payload_sha256 = hex::encode(sha2::Sha256::digest(&payload));
+        requests.push(tokio::spawn(
+            super::server::append_skill_audit_idempotently_with_coordinator(
+                Arc::clone(&coordinator),
+                writer.clone(),
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                subtype,
+                payload,
+                format!("singleflight-{index:02}"),
+                payload_sha256,
+            ),
+        ));
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if coordinator.inflight_count().await == super::server::MAX_SKILL_AUDIT_INFLIGHT {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("all bounded Skill-audit workers must enter the coordinator");
+    assert_eq!(
+        coordinator.inflight_count().await,
+        super::server::MAX_SKILL_AUDIT_INFLIGHT
+    );
+
+    let overflow_payload = br#"{"operation_id":"ffffffffffffffffffffffffffffffff"}"#.to_vec();
+    let overflow_sha256 = hex::encode(sha2::Sha256::digest(&overflow_payload));
+    assert_eq!(
+        super::server::append_skill_audit_idempotently_with_coordinator(
+            Arc::clone(&coordinator),
+            writer.clone(),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            overflow_payload,
+            "singleflight-overflow".to_string(),
+            overflow_sha256,
+        )
+        .await
+        .unwrap(),
+        super::server::SkillAuditAppendOutcome::CapacityReached
+    );
+
+    let joined_retry = tokio::spawn(
+        super::server::append_skill_audit_idempotently_with_coordinator(
+            Arc::clone(&coordinator),
+            writer.clone(),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            first_payload,
+            "singleflight-00".to_string(),
+            first_sha256,
+        ),
+    );
+    tokio::task::yield_now().await;
+    assert_eq!(
+        coordinator.inflight_count().await,
+        super::server::MAX_SKILL_AUDIT_INFLIGHT,
+        "a retry must join the existing worker, not consume another slot"
+    );
+
+    gate.release();
+    assert!(matches!(
+        first.await.unwrap().unwrap(),
+        super::server::SkillAuditAppendOutcome::Appended(_)
+    ));
+    for request in requests {
+        assert!(matches!(
+            request.await.unwrap().unwrap(),
+            super::server::SkillAuditAppendOutcome::Appended(_)
+        ));
+    }
+    assert_eq!(
+        joined_retry.await.unwrap().unwrap(),
+        super::server::SkillAuditAppendOutcome::Duplicate
+    );
+    assert_eq!(coordinator.inflight_count().await, 0);
+
+    let after_payload = br#"{"operation_id":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"}"#.to_vec();
+    let after_sha256 = hex::encode(sha2::Sha256::digest(&after_payload));
+    assert!(matches!(
+        super::server::append_skill_audit_idempotently_with_coordinator(
+            coordinator,
+            writer.clone(),
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            subtype,
+            after_payload,
+            "singleflight-after-drain".to_string(),
+            after_sha256,
+        )
+        .await
+        .unwrap(),
+        super::server::SkillAuditAppendOutcome::Appended(_)
+    ));
+
+    drop(writer);
+    wal_join.await.ok();
+}
+
+#[tokio::test]
 async fn wrong_token_is_401_and_writes_no_frame() {
     let segdir = tempdir().unwrap();
     let seg = segdir.path().join("000001.wal");
@@ -566,6 +1098,40 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..])
             .is_err()
     );
+}
+
+#[tokio::test]
+async fn valid_bearer_bypasses_and_resets_shared_loopback_cooldown() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("000001.wal");
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, segdir.path().to_path_buf()).unwrap();
+    let cooldown = Arc::new(AuthCooldown::new());
+    let now = std::time::Instant::now();
+    for _ in 0..crate::n8n_api::AUTH_FAILURE_STRIKE_LIMIT {
+        cooldown.record_failure("127.0.0.1", now);
+    }
+    assert!(cooldown.is_locked("127.0.0.1", now));
+    let state = AuditRpcState {
+        token: "tok-valid".into(),
+        writer: writer.clone(),
+        cooldown: Arc::clone(&cooldown),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+
+    let (status, body) = raw_post_path(addr, "/health", Some("tok-valid"), "").await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        !cooldown.is_locked("127.0.0.1", std::time::Instant::now()),
+        "a valid bearer must clear a cooldown poisoned by another local client"
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
 }
 
 #[tokio::test]
@@ -618,8 +1184,7 @@ async fn client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
-    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
 
     // The CLIENT path: read sidecar+token, connect, POST.
     try_post_audit_frame(
@@ -658,8 +1223,7 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
-    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
     let binding = "ab".repeat(32);
     let approval = mint_jobs_run_token(home.path(), &binding)
         .await
@@ -714,8 +1278,7 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
-    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
 
     assert!(
         mint_jobs_run_token(home.path(), &"ab".repeat(32))
@@ -744,8 +1307,7 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
-    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
-    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+    let _daemon_owner = publish_test_endpoint(home.path(), addr.port(), &token);
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
 
     try_post_audit_frame_with_subtype(home.path(), 0x00, subtype, b"{}")
@@ -780,7 +1342,7 @@ async fn client_rejects_stale_sidecar_with_dead_pid() {
     // 999_999_999 is above any OS pid_max (and stays positive as an i32
     // pid_t, so the unix `kill(pid,0)` check can't alias to the -1
     // "whole process group" sentinel) — reliably a dead pid on all OSes.
-    write_sidecar(home.path(), 5000, 999_999_999, "tok").unwrap();
+    write_sidecar(home.path(), 5000, 999_999_999, "tok", TEST_ENDPOINT_NONCE).unwrap();
     let r = try_post_audit_frame(home.path(), 0xA8, b"{}").await;
     assert!(
         matches!(r, Err(AuditRpcClientError::Unavailable(ref m)) if m.contains("stale")),

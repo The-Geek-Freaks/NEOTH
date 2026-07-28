@@ -148,14 +148,18 @@ pub enum ExtendedSubtype {
     PluginRemovalResult = 0x13,
     /// R3-17 — mandatory pre-mutation intent for `neoth skills --install`, bound
     /// to its terminal `SkillInstallResult` by `operation_id`. A durable ACK
-    /// precedes any skill byte or replacement change (the skill set is the
-    /// agent's own capability surface). Payload (JSON): `{operation_id, skill_id,
-    /// source_generation_sha256, replacing_existing, target_generation_sha256?,
-    /// phase: "intent", source: "cli", ts_unix}`. No raw source path is logged.
+    /// precedes every public Skill/anchor change; exact source bytes may already
+    /// exist only in a private recovery stage under the retained mutation lock.
+    /// Payload (JSON): `{schema_version, audit_event_id, operation_id,
+    /// mutation, skill_id, source_generation_sha256,
+    /// prior_generation_sha256?, phase: "intent", source: "cli", ts_unix}`.
+    /// No raw source path is logged.
     SkillInstallIntent = 0x14,
     /// R3-17 — mandatory terminal outcome bound to `SkillInstallIntent`.
-    /// Payload (JSON): `{operation_id, skill_id, status: "committed"|"aborted",
-    /// replaced_existing?, installed_generation_sha256?, error_sha256?, ts_unix}`.
+    /// Payload (JSON): `{schema_version, audit_event_id, operation_id,
+    /// mutation, skill_id, status: "committed"|"aborted"|"indeterminate",
+    /// source_generation_sha256, prior_generation_sha256?,
+    /// observed_generation_sha256?, error_sha256?, ts_unix}`.
     SkillInstallResult = 0x15,
     /// An operator discarded a self-improvement journal that recovery refused
     /// to resolve. The journal governs skill-file accept/rollback — i.e. what
@@ -165,6 +169,19 @@ pub enum ExtendedSubtype {
     /// (JSON): `{skill: sanitized, intended_status, journal_sha256,
     /// proposal_id, source: "cli", ts_unix}`. No skill bytes are logged.
     SelfImproveJournalDiscarded = 0x16,
+    /// R3-17 — mandatory pre-mutation intent for `neoth skills --uninstall`,
+    /// bound to its terminal `SkillRemovalResult` by `operation_id`. Payload
+    /// (JSON): `{schema_version, audit_event_id, operation_id,
+    /// mutation: "remove", skill_id, prior_generation_sha256?,
+    /// phase: "intent", source: "cli", ts_unix}`.
+    SkillRemovalIntent = 0x17,
+    /// R3-17 — mandatory terminal outcome bound to `SkillRemovalIntent`.
+    /// Payload (JSON): `{schema_version, audit_event_id, operation_id,
+    /// mutation: "remove", skill_id,
+    /// status: "committed"|"aborted"|"indeterminate",
+    /// prior_generation_sha256?, observed_generation_sha256?,
+    /// removed?, removed_generation_sha256?, error_sha256?, ts_unix}`.
+    SkillRemovalResult = 0x18,
 }
 
 impl ExtendedSubtype {
@@ -193,6 +210,8 @@ impl ExtendedSubtype {
             ExtendedSubtype::SkillInstallIntent => "skill_install_intent",
             ExtendedSubtype::SkillInstallResult => "skill_install_result",
             ExtendedSubtype::SelfImproveJournalDiscarded => "self_improve_journal_discarded",
+            ExtendedSubtype::SkillRemovalIntent => "skill_removal_intent",
+            ExtendedSubtype::SkillRemovalResult => "skill_removal_result",
         }
     }
 
@@ -221,6 +240,8 @@ impl ExtendedSubtype {
             0x14 => Some(ExtendedSubtype::SkillInstallIntent),
             0x15 => Some(ExtendedSubtype::SkillInstallResult),
             0x16 => Some(ExtendedSubtype::SelfImproveJournalDiscarded),
+            0x17 => Some(ExtendedSubtype::SkillRemovalIntent),
+            0x18 => Some(ExtendedSubtype::SkillRemovalResult),
             _ => None,
         }
     }
@@ -251,6 +272,8 @@ impl ExtendedSubtype {
             Self::SkillInstallIntent,
             Self::SkillInstallResult,
             Self::SelfImproveJournalDiscarded,
+            Self::SkillRemovalIntent,
+            Self::SkillRemovalResult,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3620,6 +3643,8 @@ mod tests {
             ExtendedSubtype::SkillInstallIntent,
             ExtendedSubtype::SkillInstallResult,
             ExtendedSubtype::SelfImproveJournalDiscarded,
+            ExtendedSubtype::SkillRemovalIntent,
+            ExtendedSubtype::SkillRemovalResult,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

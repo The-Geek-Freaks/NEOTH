@@ -31,13 +31,8 @@ fn membership_outbox_replay_is_wired_before_any_carrier_supervisor_start() {
     assert!(between.contains("replay membership outbox before carrier startup"));
 }
 
-// Sets NEOTH_CONSENT_BYPASS (process-global) — hold the crate-wide
-// env lock across the run_serve().await so it can't race another env
-// test. The awaited serve path never re-locks it (bounded hold).
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn serve_one_shot_writes_boot_frame_and_binds_custom_instance_home() {
-    let _env = crate::test_env::lock();
     // Arrange: freedom.yaml + segment paths in temp dir
     let dir = tempdir().unwrap();
     let cfg_path = dir.path().join("freedom.yaml");
@@ -45,7 +40,9 @@ async fn serve_one_shot_writes_boot_frame_and_binds_custom_instance_home() {
     f.write_all(b"operator_id: alice\nrole: developer\nprovider_kind: claude_cli\n")
         .unwrap();
 
-    let seg_path = dir.path().join("000001.wal");
+    let seg_path = dir.path().join("wal").join("000001.wal");
+    crate::consent::grant(dir.path(), crate::cli::init::ProviderKind::ClaudeCli)
+        .expect("persist the exact durable consent fixture used by one-shot serve");
 
     let args = ServeArgs {
         config: Some(cfg_path),
@@ -54,19 +51,7 @@ async fn serve_one_shot_writes_boot_frame_and_binds_custom_instance_home() {
         allow_clock_rollback: false,
     };
 
-    // V03-08 consent gate would block this test against the real
-    // `~/.neoth/consent/claude_cli.granted` marker. Bypass via env var
-    // — this test pins WAL writer + BOOT frame shape, not consent.
-    // SAFETY: tests run single-threaded under `cargo test` only on the
-    // serve module so no other test races this var; restored below.
-    unsafe {
-        std::env::set_var("NEOTH_CONSENT_BYPASS", "1");
-    }
-    let result = run_serve(args).await;
-    unsafe {
-        std::env::remove_var("NEOTH_CONSENT_BYPASS");
-    }
-    result.expect("serve one-shot");
+    run_serve(args).await.expect("serve one-shot");
 
     // Assert: file exists; has SegmentHeader at offset 0; boot frame after.
     let bytes = read(&seg_path).await.unwrap();

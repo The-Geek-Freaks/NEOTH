@@ -202,8 +202,12 @@ pub fn reconcile_approved_skill(
     {
         return Ok(SkillReconciliation::OperatorModified { id: manifest.id });
     }
-    adopt_approved_skill(home, proposal)
-        .map(|report| SkillReconciliation::Adopted(Box::new(report)))
+    adopt_approved_skill_with_origin(
+        home,
+        proposal,
+        crate::skills::installer::SkillMutationOrigin::ProactiveCurator,
+    )
+    .map(|report| SkillReconciliation::Adopted(Box::new(report)))
 }
 
 /// The installed `skill.yaml` for `id`, or `None` when it is not installed.
@@ -237,12 +241,27 @@ fn installed_skill_yaml(home: &Path, id: &str) -> anyhow::Result<Option<String>>
 /// This is the single schema boundary used by both `neoth proactive accept`
 /// and the curator reconciliation cron. The draft is parsed as the real
 /// [`SkillManifest`], its id is validated as a safe directory component, and
-/// the shared atomic writer creates `<home>/skills/<id>/skill.yaml`.
+/// the authenticated complete-package lifecycle publishes
+/// `<home>/skills/<id>/skill.yaml` without dropping sibling assets.
 pub fn adopt_approved_skill(
     home: &Path,
     proposal: &ProposedAction,
 ) -> anyhow::Result<crate::skills::creator::CreateReport> {
-    use crate::skills::creator::{ExistingSkillPolicy, validate_skill_id, write_skill_yaml};
+    adopt_approved_skill_with_origin(
+        home,
+        proposal,
+        crate::skills::installer::SkillMutationOrigin::ProactiveAccept,
+    )
+}
+
+fn adopt_approved_skill_with_origin(
+    home: &Path,
+    proposal: &ProposedAction,
+    origin: crate::skills::installer::SkillMutationOrigin,
+) -> anyhow::Result<crate::skills::creator::CreateReport> {
+    use crate::skills::creator::{
+        ExistingSkillPolicy, validate_skill_id, write_skill_yaml_audited,
+    };
     use crate::skills::schema::SkillManifest;
     use anyhow::Context;
 
@@ -266,11 +285,14 @@ pub fn adopt_approved_skill(
         })?;
     validate_skill_id(&manifest.id)
         .with_context(|| format!("skill id {:?} is not a safe directory name", manifest.id))?;
-    write_skill_yaml(
+    write_skill_yaml_audited(
+        home,
         &home.join("skills"),
         &manifest.id,
         &proposal.draft_yaml,
         ExistingSkillPolicy::KeepIfIdentical,
+        None,
+        origin,
     )
 }
 

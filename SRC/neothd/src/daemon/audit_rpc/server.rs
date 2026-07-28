@@ -6,11 +6,13 @@
 //! `0xAE AUDIT_RPC_ACCEPT` / `0xAF AUDIT_RPC_REJECT` marker. See the module-level
 //! doc in `mod.rs` for the full security model.
 
+use std::collections::{BTreeMap, VecDeque};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use base64::Engine;
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
@@ -80,6 +82,8 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     ExtendedSubtype::PluginRemovalResult as u8,
     ExtendedSubtype::SkillInstallIntent as u8,
     ExtendedSubtype::SkillInstallResult as u8,
+    ExtendedSubtype::SkillRemovalIntent as u8,
+    ExtendedSubtype::SkillRemovalResult as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -94,6 +98,275 @@ const CONNECTION_TIMEOUT_SECS: u64 = 5;
 /// connections are dropped immediately (the one-shot falls back to its
 /// un-audited path, fail-open on availability).
 const MAX_CONCURRENT_CONNS: usize = 32;
+pub(super) const MAX_SKILL_AUDIT_INFLIGHT: usize = 32;
+const MAX_SKILL_AUDIT_COMPLETED: usize = 65_536;
+static SKILL_AUDIT_COORDINATOR: OnceLock<Arc<SkillAuditCoordinator>> = OnceLock::new();
+
+#[derive(Default)]
+pub(super) struct SkillAuditCoordinator {
+    state: tokio::sync::Mutex<SkillAuditCoordinatorState>,
+}
+
+#[derive(Default)]
+struct SkillAuditCoordinatorState {
+    entries: BTreeMap<String, SkillAuditEntry>,
+    completed_order: VecDeque<String>,
+    inflight: usize,
+}
+
+enum SkillAuditEntry {
+    InFlight {
+        payload_sha256: String,
+        receiver: tokio::sync::watch::Receiver<SkillAuditWorkerResult>,
+    },
+    Completed {
+        payload_sha256: String,
+        offset: u64,
+    },
+}
+
+#[derive(Clone)]
+enum SkillAuditWorkerResult {
+    Pending,
+    Appended(u64),
+    Failed(Arc<str>),
+}
+
+enum SkillAuditAdmission {
+    Wait(tokio::sync::watch::Receiver<SkillAuditWorkerResult>),
+    Complete(SkillAuditAppendOutcome),
+    Start {
+        sender: tokio::sync::watch::Sender<SkillAuditWorkerResult>,
+        receiver: tokio::sync::watch::Receiver<SkillAuditWorkerResult>,
+    },
+}
+
+fn skill_audit_coordinator() -> Arc<SkillAuditCoordinator> {
+    Arc::clone(SKILL_AUDIT_COORDINATOR.get_or_init(|| Arc::new(SkillAuditCoordinator::default())))
+}
+
+fn skill_audit_dedup_binding(
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> Result<Option<(String, String)>> {
+    if event_type != EVENT_TYPE_EXTENDED
+        || !matches!(
+            ExtendedSubtype::from_u8(event_subtype),
+            Some(
+                ExtendedSubtype::SkillInstallIntent
+                    | ExtendedSubtype::SkillInstallResult
+                    | ExtendedSubtype::SkillRemovalIntent
+                    | ExtendedSubtype::SkillRemovalResult
+            )
+        )
+    {
+        return Ok(None);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(payload).context("invalid Skill mutation audit payload")?;
+    let audit_event_id = value
+        .get("audit_event_id")
+        .and_then(serde_json::Value::as_str)
+        .context("Skill mutation audit payload is missing audit_event_id")?;
+    if audit_event_id.len() != 64
+        || !audit_event_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("Skill mutation audit_event_id must be 64 lowercase hex characters");
+    }
+    let operation_id = value
+        .get("operation_id")
+        .and_then(serde_json::Value::as_str)
+        .context("Skill mutation audit payload is missing operation_id")?;
+    if operation_id.len() != 32
+        || !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("Skill mutation operation_id must be 32 lowercase hex characters");
+    }
+    let key = format!("{event_subtype:02x}:{audit_event_id}");
+    let payload_sha256 = hex::encode(Sha256::digest(payload));
+    Ok(Some((key, payload_sha256)))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum SkillAuditAppendOutcome {
+    Appended(u64),
+    Duplicate,
+    Conflict,
+    CapacityReached,
+}
+
+impl SkillAuditCoordinator {
+    #[cfg(test)]
+    pub(super) async fn inflight_count(&self) -> usize {
+        self.state.lock().await.inflight
+    }
+
+    async fn finish(&self, dedup_key: &str, payload_sha256: &str, result: &Result<u64>) {
+        let mut state = self.state.lock().await;
+        let matches_worker = matches!(
+            state.entries.get(dedup_key),
+            Some(SkillAuditEntry::InFlight {
+                payload_sha256: existing,
+                ..
+            }) if existing == payload_sha256
+        );
+        if !matches_worker {
+            return;
+        }
+        state.inflight = state.inflight.saturating_sub(1);
+        match result {
+            Ok(offset) => {
+                state.entries.insert(
+                    dedup_key.to_string(),
+                    SkillAuditEntry::Completed {
+                        payload_sha256: payload_sha256.to_string(),
+                        offset: *offset,
+                    },
+                );
+                state.completed_order.push_back(dedup_key.to_string());
+                while state.completed_order.len() > MAX_SKILL_AUDIT_COMPLETED {
+                    let Some(expired) = state.completed_order.pop_front() else {
+                        break;
+                    };
+                    if matches!(
+                        state.entries.get(&expired),
+                        Some(SkillAuditEntry::Completed { .. })
+                    ) {
+                        state.entries.remove(&expired);
+                    }
+                }
+            }
+            Err(_) => {
+                state.entries.remove(dedup_key);
+            }
+        }
+    }
+}
+
+async fn await_skill_audit_worker(
+    mut receiver: tokio::sync::watch::Receiver<SkillAuditWorkerResult>,
+    joined_existing: bool,
+) -> Result<SkillAuditAppendOutcome> {
+    loop {
+        let result = receiver.borrow().clone();
+        match result {
+            SkillAuditWorkerResult::Pending => {
+                receiver
+                    .changed()
+                    .await
+                    .context("idempotent Skill audit worker ended without a result")?;
+            }
+            SkillAuditWorkerResult::Appended(offset) => {
+                return Ok(if joined_existing {
+                    SkillAuditAppendOutcome::Duplicate
+                } else {
+                    SkillAuditAppendOutcome::Appended(offset)
+                });
+            }
+            SkillAuditWorkerResult::Failed(error) => {
+                anyhow::bail!("append idempotent Skill mutation audit: {error}");
+            }
+        }
+    }
+}
+
+/// Join or start one bounded idempotent Skill-audit append. Connection
+/// cancellation drops only its watch receiver; the sole per-key worker remains
+/// bounded by `MAX_SKILL_AUDIT_INFLIGHT` and completes the durable append.
+pub(super) async fn append_skill_audit_idempotently_with_coordinator(
+    coordinator: Arc<SkillAuditCoordinator>,
+    writer: WalWriterHandle,
+    event_type: u8,
+    event_subtype: u8,
+    payload: Vec<u8>,
+    dedup_key: String,
+    payload_sha256: String,
+) -> Result<SkillAuditAppendOutcome> {
+    let admission = {
+        let mut state = coordinator.state.lock().await;
+        if let Some(entry) = state.entries.get(&dedup_key) {
+            match entry {
+                SkillAuditEntry::InFlight {
+                    payload_sha256: existing,
+                    receiver,
+                } if existing == &payload_sha256 => SkillAuditAdmission::Wait(receiver.clone()),
+                SkillAuditEntry::Completed {
+                    payload_sha256: existing,
+                    offset,
+                } if existing == &payload_sha256 => {
+                    let _ = offset;
+                    SkillAuditAdmission::Complete(SkillAuditAppendOutcome::Duplicate)
+                }
+                _ => SkillAuditAdmission::Complete(SkillAuditAppendOutcome::Conflict),
+            }
+        } else if state.inflight >= MAX_SKILL_AUDIT_INFLIGHT {
+            SkillAuditAdmission::Complete(SkillAuditAppendOutcome::CapacityReached)
+        } else {
+            let (sender, receiver) = tokio::sync::watch::channel(SkillAuditWorkerResult::Pending);
+            state.entries.insert(
+                dedup_key.clone(),
+                SkillAuditEntry::InFlight {
+                    payload_sha256: payload_sha256.clone(),
+                    receiver: receiver.clone(),
+                },
+            );
+            state.inflight += 1;
+            SkillAuditAdmission::Start { sender, receiver }
+        }
+    };
+    match admission {
+        SkillAuditAdmission::Complete(outcome) => Ok(outcome),
+        SkillAuditAdmission::Wait(receiver) => await_skill_audit_worker(receiver, true).await,
+        SkillAuditAdmission::Start { sender, receiver } => {
+            let worker_coordinator = Arc::clone(&coordinator);
+            let worker_key = dedup_key;
+            let worker_sha256 = payload_sha256;
+            tokio::spawn(async move {
+                let header = crate::wal::HeaderBuilder::new(event_type, &payload)
+                    .event_subtype(event_subtype)
+                    .build();
+                let result = writer
+                    .append(header, payload)
+                    .await
+                    .context("append idempotent Skill mutation audit");
+                worker_coordinator
+                    .finish(&worker_key, &worker_sha256, &result)
+                    .await;
+                let notification = match result {
+                    Ok(offset) => SkillAuditWorkerResult::Appended(offset),
+                    Err(error) => SkillAuditWorkerResult::Failed(Arc::from(format!("{error:#}"))),
+                };
+                sender.send_replace(notification);
+            });
+            await_skill_audit_worker(receiver, false).await
+        }
+    }
+}
+
+pub(super) async fn append_skill_audit_idempotently(
+    writer: WalWriterHandle,
+    event_type: u8,
+    event_subtype: u8,
+    payload: Vec<u8>,
+    dedup_key: String,
+    payload_sha256: String,
+) -> Result<SkillAuditAppendOutcome> {
+    append_skill_audit_idempotently_with_coordinator(
+        skill_audit_coordinator(),
+        writer,
+        event_type,
+        event_subtype,
+        payload,
+        dedup_key,
+        payload_sha256,
+    )
+    .await
+}
 
 /// `true` iff `event_type` may be forwarded by a one-shot CLI.
 pub fn is_allowed_client_event(event_type: u8) -> bool {
@@ -315,7 +588,10 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
             | "/jobs-run-token/mint"
             | "/jobs-run-token/consume"
     );
-    if req.method != "POST" || !(membership_route || state.audit_routes_enabled && audit_route) {
+    let internal_route = matches!(req_path.as_str(), "/health" | "/skill-mutation-audit");
+    if req.method != "POST"
+        || !(membership_route || internal_route || state.audit_routes_enabled && audit_route)
+    {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
             .await;
@@ -323,21 +599,26 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     }
 
-    // Layer 2 — bearer auth (cooldown → constant-time compare). Auth failures
-    // are NOT WAL-recorded (avoids a forged-frame paradox + WAL spam).
+    // Layer 2 — constant-time bearer verification before applying the
+    // source-wide cooldown. Every audit-RPC client is loopback, so all local
+    // users share the same source key. A bad local client must not be able to
+    // lock a valid CLI/GUI/Skill bearer out of its mandatory audit path.
+    // Auth failures are NOT WAL-recorded (avoids a forged-frame paradox + WAL
+    // spam).
     let now = std::time::Instant::now();
-    if state.cooldown.is_locked(&source, now) {
+    let ok = req
+        .bearer
+        .as_deref()
+        .is_some_and(|t| constant_time_token_eq(t, &state.token));
+    if ok {
+        state.cooldown.record_success(&source);
+    } else if state.cooldown.is_locked(&source, now) {
         let _ = stream
             .write_all(http_response(429, "auth cooldown active").as_bytes())
             .await;
         let _ = stream.shutdown().await;
         return Ok(());
-    }
-    let ok = req
-        .bearer
-        .as_deref()
-        .is_some_and(|t| constant_time_token_eq(t, &state.token));
-    if !ok {
+    } else {
         state.cooldown.record_failure(&source, now);
         let _ = stream
             .write_all(http_response(401, "unauthorized").as_bytes())
@@ -345,7 +626,6 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         let _ = stream.shutdown().await;
         return Ok(());
     }
-    state.cooldown.record_success(&source);
 
     if req_path == "/health" {
         let _ = stream
@@ -535,6 +815,26 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         }
     };
 
+    if req_path == "/skill-mutation-audit"
+        && !(event_type == EVENT_TYPE_EXTENDED
+            && matches!(
+                ExtendedSubtype::from_u8(event_subtype),
+                Some(
+                    ExtendedSubtype::SkillInstallIntent
+                        | ExtendedSubtype::SkillInstallResult
+                        | ExtendedSubtype::SkillRemovalIntent
+                        | ExtendedSubtype::SkillRemovalResult
+                )
+            ))
+    {
+        emit_reject(state, "internal_skill_audit_identity_not_allowed").await;
+        let _ = stream
+            .write_all(http_response(422, "internal_skill_audit_identity_not_allowed").as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
     // Layer 3 — compile-time event-type allowlist (anti-poisoning gate).
     if !is_allowed_client_event_pair(event_type, event_subtype) {
         let reason = if event_subtype == 0 && event_type != EVENT_TYPE_EXTENDED {
@@ -548,6 +848,66 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         let _ = stream
             .write_all(http_response(422, reason).as_bytes())
             .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
+    // Skill mutation intent/result payloads carry a deterministic audit id.
+    // Serialize identical deliveries through the daemon so a client whose
+    // response was cancelled after the fsynced append cannot race a retry into
+    // a second frame. A conflicting payload under the same id fails closed.
+    let skill_dedup = match skill_audit_dedup_binding(event_type, event_subtype, &payload) {
+        Ok(binding) => binding,
+        Err(error) => {
+            emit_reject(state, "invalid_skill_audit_binding").await;
+            let _ = stream
+                .write_all(http_response(400, &format!("{error:#}")).as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(());
+        }
+    };
+    if let Some((dedup_key, payload_sha256)) = skill_dedup {
+        match append_skill_audit_idempotently(
+            state.writer.clone(),
+            event_type,
+            event_subtype,
+            payload,
+            dedup_key,
+            payload_sha256,
+        )
+        .await
+        {
+            Ok(SkillAuditAppendOutcome::Appended(offset)) => {
+                emit_accept(state, event_type, event_subtype).await;
+                let body = format!("{{\"ok\":true,\"offset\":{offset}}}");
+                let _ = stream
+                    .write_all(http_response_json(200, &body).as_bytes())
+                    .await;
+            }
+            Ok(SkillAuditAppendOutcome::Duplicate) => {
+                let body = "{\"ok\":true,\"duplicate\":true}";
+                let _ = stream
+                    .write_all(http_response_json(200, body).as_bytes())
+                    .await;
+            }
+            Ok(SkillAuditAppendOutcome::Conflict) => {
+                emit_reject(state, "skill_audit_id_conflict").await;
+                let _ = stream
+                    .write_all(http_response(409, "skill audit id conflict").as_bytes())
+                    .await;
+            }
+            Ok(SkillAuditAppendOutcome::CapacityReached) => {
+                let _ = stream
+                    .write_all(http_response(503, "skill audit dedup capacity reached").as_bytes())
+                    .await;
+            }
+            Err(error) => {
+                let _ = stream
+                    .write_all(http_response(500, &format!("append failed: {error:#}")).as_bytes())
+                    .await;
+            }
+        }
         let _ = stream.shutdown().await;
         return Ok(());
     }
@@ -686,9 +1046,11 @@ fn http_response_json(status: u16, body: &str) -> String {
         401 => "Unauthorized",
         403 => "Forbidden",
         404 => "Not Found",
+        409 => "Conflict",
         422 => "Unprocessable Entity",
         429 => "Too Many Requests",
         500 => "Internal Server Error",
+        503 => "Service Unavailable",
         _ => "OK",
     };
     format!(

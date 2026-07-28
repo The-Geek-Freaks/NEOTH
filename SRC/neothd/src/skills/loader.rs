@@ -88,6 +88,18 @@ async fn load_all_from_policy_source(
     config_path: Option<&Path>,
     accepted_policy: Option<SkillPolicy>,
 ) -> Result<Vec<Skill>> {
+    // Installed bytes are never observable while their correlated mutation
+    // intent/result lifecycle is unresolved. This chokepoint covers CLI chat,
+    // mode/ecology routing, Doctor, hot reload, and direct registry bootstrap.
+    super::mutation_lifecycle::reconcile_for_runtime(skills_dir)
+        .await
+        .with_context(|| {
+            format!(
+                "reconcile audited Skill mutation before loading {}",
+                skills_dir.display()
+            )
+        })?;
+
     // ── Layer 1: bundled skills (always present) ────────────────────────
     let mut by_id = parse_bundled_skills()?;
 
@@ -928,7 +940,9 @@ system_prompt: |
         let skills_path = dir.path().join("skills");
         write(&skills_path, "not a directory").await.unwrap();
         let error = load_all(&skills_path).await.unwrap_err();
-        assert!(format!("{error:#}").contains("read skills directory"));
+        let detail = format!("{error:#}");
+        assert!(detail.contains("reconcile audited Skill mutation"));
+        assert!(detail.contains("real directory"));
     }
 
     #[tokio::test]
@@ -1004,7 +1018,7 @@ system_prompt: |
 
         let error = load_all(&linked).await.unwrap_err();
         let detail = format!("{error:#}");
-        assert!(detail.contains("read skills directory"));
+        assert!(detail.contains("reconcile audited Skill mutation"));
         assert!(detail.contains("real directory") || detail.contains("symlink"));
     }
 

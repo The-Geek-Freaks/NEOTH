@@ -1140,6 +1140,52 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   paragraph is retained as historical worktree prose only; counts and the open
   R3-17 box do not change.
 
+  **Mutation-WAL integrity checkpoint 2026-07-28 (R3-17 remains OPEN; counts
+  unchanged):** the current source now treats every cooperating NEOTH Skill
+  package mutation as a crash-recoverable operation rather than an unaudited
+  directory edit. CLI/GUI install, replace, create, remove, proactive
+  extraction, Curator, Teacher and Self-Improve all prepare under the same
+  capability-bound mutation authority; bind the observed public generation,
+  exact source package generation and expected operation; durably acknowledge
+  an authenticated intent before the first public rename; publish or remove
+  the public package under the retained lock; and append a correlated terminal
+  receipt. Startup reconciliation verifies the exact authenticated WAL frame
+  and physical segment identity before completing or rolling back an
+  interrupted operation. Indeterminate removal restores only its exact
+  operation-bound tombstone after object-identity and v2-generation proof,
+  with no-replace rename, post-rename verification and parent-directory sync;
+  missing, drifted or ambiguous evidence remains fail-closed. A genuinely
+  absent uninstall exits before intent or journal creation instead of
+  manufacturing a successful mutation record.
+
+  Package generations cover every path, entry kind, byte and relevant
+  permission bit; recursive copy preserves root, nested-directory and file
+  permissions. Capability-relative no-follow reads plus entry, depth,
+  physical-byte, logical-byte, segment, archive and whole-directory scan caps
+  make malformed links, special files, decompression expansion and unrelated
+  directory flooding fail closed; key discovery and segment discovery share
+  the same all-entry ceiling. Fresh HMAC-key creation durably commits both file
+  data and its directory entry. Lock waits, reconciliation, WAL/key scans and
+  tree I/O are offloaded from Tokio workers, with a deterministic single-worker
+  starvation regression. Daemon PID/endpoint discovery invalidates its tuple
+  while still holding the ownership lock and accepts an endpoint only when the
+  exact PID/nonce snapshot remains unchanged between lock proofs, so unlocked
+  or predecessor-owned stale tuples are not daemon authority.
+
+  This is mutation-integrity progress, **not installed-Skill activation
+  authority**. The versioned authority record, independent current anchor and
+  exact activation receipt consumed by loader/router/updater/extractor are
+  still absent and remain the blocking R3-17 slice described above. The
+  loopback audit RPC also still needs an OS-enforced same-user transport before
+  release to eliminate a lower-privileged local socket-exhaustion edge; its
+  bearer, bounded concurrency and deadlines do not prove peer identity.
+  Two independent adversarial full-slice reviews report zero
+  Critical/High/Medium/Low findings after the corrective passes. Deferred
+  Cargo/runtime gates and exact-head CI/Security/CodeQL evidence remain
+  required before this checkpoint can become completion evidence. Dashboard
+  counts remain **WS-R3 19 total / 13 done / 6 open** and **WS-R4 14 total / 1
+  done / 13 open**; this checkpoint closes no R3/R4 box.
+
   **External review 4/5 correction 2026-07-26 (narrow R3-17 slice; box remains
   OPEN):** routed Skills no longer inherit ambiguous MCP authority when their
   manifest omits `tool_allowlist`. The Skill schema, loader documentation,

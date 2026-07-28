@@ -19,8 +19,9 @@ use crate::proactive::action_staging::{
 ///
 /// The age gate uses `ProposedAction::generated_ts_unix`; approval uses the
 /// real `ProposalStatus::Approved`; the live YAML is the producer's
-/// `draft_yaml`. `adopt_approved_skill` parses the real `SkillManifest`,
-/// validates its id, and writes `<home>/skills/<id>/skill.yaml` atomically.
+/// `draft_yaml`. Reconciliation parses the real `SkillManifest`, validates its
+/// id, and publishes a complete cloned package generation only after its
+/// exact curator-origin intent is authenticated in the home-bound WAL.
 pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
     let home = home.to_path_buf();
     let cfg = *cfg;

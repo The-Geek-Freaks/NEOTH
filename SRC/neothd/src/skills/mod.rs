@@ -28,6 +28,7 @@ pub mod creator;
 pub mod installer;
 pub mod loader;
 pub mod mode_registry;
+pub(crate) mod mutation_lifecycle;
 /// GOLD-ADAPT-PWF-01 — plan-attestation prompt-injection guard for
 /// `writing_plans` / `executing_plans` skills. Fences `task_plan.md`
 /// into the skill layer and verifies the SHA-256 hash before every

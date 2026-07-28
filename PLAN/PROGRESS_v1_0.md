@@ -3,6 +3,31 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-28
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **Mutation-WAL integrity checkpoint 2026-07-28 (counts unchanged; R3-17
+> remains open):** CLI/GUI install, replace, create and remove plus proactive
+> extraction, Curator, Teacher and Self-Improve now use one capability-bound,
+> crash-recoverable mutation lifecycle. Exact package/target generations,
+> authenticated pre-rename intents, correlated terminal receipts and
+> restart reconciliation cover the public mutation boundary; absent uninstall
+> produces no false operation. An indeterminate removal restores only its exact
+> operation-bound tombstone after object-identity and v2-generation proof;
+> missing, drifted or ambiguous evidence stays blocked. Package generations
+> include paths, kinds, bytes and permission semantics, recursive copies
+> preserve directory/file modes, and home-WAL/key enumeration is bounded before
+> filtering as well as by aligned directory, segment, archive, byte and
+> decompression limits. Fresh HMAC-key creation durably commits the key's
+> directory entry. Lock waits, reconciliation, WAL/key scans and tree I/O run
+> outside Tokio workers, including a single-worker starvation regression.
+> Daemon endpoint discovery invalidates its tuple before releasing ownership
+> and accepts only an unchanged PID/nonce snapshot sandwiched by live OS-lock
+> proofs. This does not implement the still-missing installed-Skill authority
+> record, independent current anchor or activation receipt, and same-user OS
+> IPC remains a release hardening remainder. Two independent adversarial
+> full-slice reviews report zero Critical/High/Medium/Low findings after the
+> fixes. Deferred Cargo/runtime gates and exact-head CI/Security/CodeQL evidence
+> are still pending; current dashboard counts remain **WS-R3 19 total / 13 done
+> / 6 open** and **WS-R4 14 total / 1 done / 13 open**; no R3/R4 box is closed.
+>
 > **GUI release-capability parity checkpoint 2026-07-28 (counts unchanged):**
 > the GUI crate now forwards the core `release-desktop` feature, and the signed
 > release workflow plus Unix and Windows source-build instructions select that

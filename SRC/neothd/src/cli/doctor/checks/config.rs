@@ -865,9 +865,12 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                   before the daemon can publish the registry.",
         common_failures: "Malformed or unreadable `skill.yaml`; directory/id \
                          mismatch; malformed adjacent `freedom.yaml` skill \
-                         policy; two skills claiming the same mode id.",
-        fix: "Correct the reported file or rename one duplicate mode id. \
-              Missing `~/.neoth/skills` is valid and uses bundled skills.",
+                         policy; two skills claiming the same mode id; or a \
+                         pending audited install/remove lifecycle.",
+        fix: "Correct the reported file or rename one duplicate mode id. A \
+              pending audited mutation is reconciled automatically on normal \
+              daemon startup; preserve its journal and WAL artifacts. Missing \
+              `~/.neoth/skills` is valid and uses bundled skills.",
     },
     CheckDoc {
         name: "advisable: groundtruth injection",
@@ -1131,6 +1134,40 @@ modes:
     }
 
     #[test]
+    fn skill_mode_check_exposes_pending_audited_mutation() {
+        let home = tempdir().unwrap();
+        let source = home.path().join("incoming-doctor-skill");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(
+            source.join("skill.yaml"),
+            "id: doctor_pending\n\
+             description: Doctor lifecycle visibility\n\
+             trigger_keywords: [doctor]\n\
+             system_prompt: Report unresolved lifecycle state.\n",
+        )
+        .unwrap();
+        let mut prepared = crate::skills::installer::prepare_install_from_local_with_expectation(
+            &source,
+            &home.path().join("skills"),
+            false,
+            None,
+            "d0c70000d0c70000d0c70000d0c70000",
+        )
+        .unwrap();
+        prepared.mark_intent_submitting().unwrap();
+        drop(prepared);
+
+        let outcome = check_skill_mode_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Fail);
+        assert!(
+            outcome.detail.contains("reconcile audited Skill mutation")
+                && outcome.detail.contains("entered intent delivery"),
+            "Doctor must expose the bounded lifecycle block: {}",
+            outcome.detail
+        );
+    }
+
+    #[test]
     fn skill_mode_check_reports_duplicate_mode_ids() {
         let home = tempdir().unwrap();
         write_mode_skill(home.path(), "doctor-owner-a", "doctor-duplicate-mode");
@@ -1150,7 +1187,8 @@ modes:
 
         let outcome = check_skill_mode_registry(home.path());
         assert_eq!(outcome.status, CheckStatus::Fail);
-        assert!(outcome.detail.contains("read skills directory"));
+        assert!(outcome.detail.contains("reconcile audited Skill mutation"));
+        assert!(outcome.detail.contains("real directory"));
     }
 
     #[test]

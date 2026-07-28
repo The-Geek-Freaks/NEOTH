@@ -17,6 +17,7 @@ use super::sidecar::read_sidecar;
 use super::token::read_rpc_token;
 
 const MAX_RPC_RESPONSE_BYTES: usize = 1024 * 1024;
+const RPC_EXCHANGE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AuditRpcClientError {
@@ -30,10 +31,10 @@ pub enum AuditRpcClientError {
 /// disclosure to a recycled port; success additionally requires the live
 /// listener to accept the token and return the exact bounded health response.
 pub fn is_reachable(home: &Path) -> bool {
-    let Ok((port, pid)) = read_sidecar(home) else {
+    let Ok((port, pid, endpoint_nonce)) = read_sidecar(home) else {
         return false;
     };
-    if !exact_daemon_owner(home, pid) {
+    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
         return false;
     }
     let Ok(token) = read_rpc_token(home) else {
@@ -76,19 +77,9 @@ pub fn is_reachable(home: &Path) -> bool {
             .is_some_and(|(_, body)| body == "{\"ok\":true}")
 }
 
-fn exact_daemon_owner(home: &Path, pid: u32) -> bool {
+fn exact_daemon_owner(home: &Path, pid: u32, endpoint_nonce: &str) -> bool {
     let pidfile = home.join("neothd.pid");
-    if crate::daemon::pidfile::live_daemon_pid(&pidfile)
-        .ok()
-        .flatten()
-        != Some(pid)
-    {
-        return false;
-    }
-    matches!(
-        crate::util::locked_file::try_lock_file_once(&pidfile, "daemon pidfile"),
-        Ok(None)
-    )
+    crate::daemon::pidfile::live_daemon_endpoint(&pidfile, pid, endpoint_nonce).unwrap_or(false)
 }
 
 /// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.
@@ -137,13 +128,42 @@ pub async fn try_post_audit_frame_with_subtype(
     event_subtype: u8,
     payload: &[u8],
 ) -> std::result::Result<(), AuditRpcClientError> {
-    let (port, pid) =
+    try_post_frame_to_path(home, "/audit", event_type, event_subtype, payload).await
+}
+
+/// Mandatory internal Skill-mutation transport. This route remains available
+/// whenever the daemon owns the WAL even when the operator disables the
+/// optional public audit/token API.
+pub(crate) async fn try_post_skill_mutation_frame(
+    home: &Path,
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> std::result::Result<(), AuditRpcClientError> {
+    try_post_frame_to_path(
+        home,
+        "/skill-mutation-audit",
+        event_type,
+        event_subtype,
+        payload,
+    )
+    .await
+}
+
+async fn try_post_frame_to_path(
+    home: &Path,
+    path: &str,
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> std::result::Result<(), AuditRpcClientError> {
+    let (port, pid, endpoint_nonce) =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     // Anti-token-disclosure: a crashed daemon may have left a stale sidecar
     // whose port the OS recycled to an UNRELATED process — sending the bearer
     // token there would leak it. Only proceed if the daemon that wrote the
     // sidecar is still alive.
-    if !exact_daemon_owner(home, pid) {
+    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
         return Err(AuditRpcClientError::Unavailable(format!(
             "stale audit-RPC sidecar (daemon pid {pid} not alive)"
         )));
@@ -155,11 +175,8 @@ pub async fn try_post_audit_frame_with_subtype(
         "{{\"event_type\":{event_type},\"event_subtype\":{event_subtype},\"payload_b64\":{payload_b64:?}}}",
     );
     let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {addr}: {e}")))?;
     let req = format!(
-        "POST /audit HTTP/1.1\r\n\
+        "POST {path} HTTP/1.1\r\n\
          Host: 127.0.0.1\r\n\
          Authorization: Bearer {token}\r\n\
          Content-Type: application/json\r\n\
@@ -169,11 +186,7 @@ pub async fn try_post_audit_frame_with_subtype(
          {body}",
         len = body.len(),
     );
-    stream
-        .write_all(req.as_bytes())
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
-    let (status, _) = read_rpc_response(&mut stream).await?;
+    let (status, _) = exchange_rpc(addr, req).await?;
     if status == 200 {
         Ok(())
     } else {
@@ -189,9 +202,9 @@ async fn post_rpc(
     path: &str,
     body: &str,
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
-    let (port, pid) =
+    let (port, pid, endpoint_nonce) =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
-    if !exact_daemon_owner(home, pid) {
+    if !exact_daemon_owner(home, pid, &endpoint_nonce) {
         return Err(AuditRpcClientError::Unavailable(format!(
             "stale audit-RPC sidecar (daemon pid {pid} not alive)"
         )));
@@ -199,9 +212,6 @@ async fn post_rpc(
     let token =
         read_rpc_token(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
     let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
-    let mut stream = TcpStream::connect(addr)
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {addr}: {e}")))?;
     let req = format!(
         "POST {path} HTTP/1.1\r\n\
          Host: 127.0.0.1\r\n\
@@ -213,11 +223,30 @@ async fn post_rpc(
          {body}",
         len = body.len(),
     );
-    stream
-        .write_all(req.as_bytes())
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
-    read_rpc_response(&mut stream).await
+    exchange_rpc(addr, req).await
+}
+
+async fn exchange_rpc(
+    addr: SocketAddr,
+    request: String,
+) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    tokio::time::timeout(RPC_EXCHANGE_TIMEOUT, async move {
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .map_err(|e| AuditRpcClientError::Unavailable(format!("connect {addr}: {e}")))?;
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
+        read_rpc_response(&mut stream).await
+    })
+    .await
+    .map_err(|_| {
+        AuditRpcClientError::Unavailable(format!(
+            "RPC exchange with {addr} exceeded the {}s deadline",
+            RPC_EXCHANGE_TIMEOUT.as_secs()
+        ))
+    })?
 }
 
 async fn read_rpc_response(
