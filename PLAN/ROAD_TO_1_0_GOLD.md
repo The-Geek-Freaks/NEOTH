@@ -3361,6 +3361,10 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   or drop-newest overflow, logging-only dead-letter, process-local `Instant`
   deadlines, volatile in-flight ownership and free-text cancel/steer handoff.
   Saturation returns durable typed backpressure/rejection without silent loss.
+  Every in-flight handoff, steer and cancel transition survives coordinator
+  crash, timeout and missing ACK: recovery either resumes the exact fenced
+  attempt once or records a visible terminal/dead-letter outcome, never a
+  silently lost or duplicate operation.
 
 - [ ] **GOLD-NCT-15 — Fenced task ownership and generation-bound cluster
   sessions:** adapt the pinned Buzz
@@ -3394,6 +3398,11 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   `cluster.yaml` rows import once as `Pending`/`legacy_unattested`, never as
   cross-carrier Active identity; all runtime admission and operator surfaces
   cut over to one membership authority without an `old || new` bypass.
+  Golden/adversarial tests reject endpoint replacement, expired attestations,
+  unsafe or mixed multi-address advertisements, cross-carrier endpoint
+  substitution, transcript/SAS tampering and replay, and revoke during pairing
+  on both Peeroxide and Iroh; CLI, GUI, Buddy and Doctor expose the same typed
+  reason and fresh authoritative state.
 
 - [ ] **GOLD-NCT-17 — Distributed BudgetToken and provider-permit binding:**
   integrate `GOLD-LF-P2-19`'s consensus-backed budget authority with route
@@ -3527,6 +3536,11 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-ADOPT-BUZZ-01 — Pinned selective Buzz adoption with explicit
   non-adoptions and provenance:** pin reviewed upstream commit
   `00ecf2cac7544d986b4eb111ad0a8b1d7560791f` and each used source file.
+  A 2026-07-28 recheck observed upstream head
+  `d8f9d87c17131b952ea5b6c3767978c4637545fc`; among the fifteen reviewed
+  source files only `crates/buzz-acp/src/pool.rs` changed, and its
+  session-title/channel-lookup delta does not change any adopted Cluster
+  invariant, so the audited semantic pin remains unchanged.
   Independently implement only approved fenced-ownership, pairing/SAS,
   endpoint-attestation, bounded transport-policy, supervisor/progress and
   routing-hysteresis invariants in NEOTH-native modules. From
@@ -3537,9 +3551,12 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   dead-letter, volatile `Instant`/in-flight state and free-text handoff. Any
   Buzz agent-pool invariant remains evaluate-first until a
   file-by-file source, authority, lifecycle, failure and test review records
-  the exact approved/non-approved pieces. If code is copied, preserve
-  Apache-2.0 notices, mark modifications and add Buzz plus any MeshLLM code to
-  third-party notices/SBOM. Explicitly reject Buzz's
+  the exact approved/non-approved pieces. No Buzz implementation source is
+  transplanted for 1.0: NEOTH independently implements the reviewed invariants
+  so the MIT-or-Apache release contract remains unambiguous. Any future direct
+  copy requires a separately reviewed Apache-only boundary, preserved
+  copyright/license notices, marked modifications and third-party
+  notice/SBOM entries before merge. Explicitly reject Buzz's
   central-relay cluster model, Redis backend requirement, Nostr as a second
   authority, process-memory durability, free-text handoff as NIR, LWW/Phi
   Gossip replacement, fire-and-forget authority/audit paths, unfinished

@@ -1,6 +1,6 @@
 # PROGRESS — v1.0 working backlog
 
-**Created:** 2026-05-24  **Last updated:** 2026-07-27
+**Created:** 2026-05-24  **Last updated:** 2026-07-28
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
 > **Cognitive Transport / Cluster forensic adoption checkpoint 2026-07-27
@@ -53,6 +53,23 @@
 > conflict substrate remains authoritative. Only the reviewed specification-
 > binding box `GOLD-NCT-00` is complete; no implementation, qualification,
 > Buzz-adoption or Cluster contract was closed by this documentation decision.
+>
+> **NCT/Buzz completeness recheck 2026-07-28 (counts unchanged):**
+> the attached 2,481-line NCT draft is substantively preserved and strengthened
+> in `PLAN/NEOTH_COGNITIVE_TRANSPORT.md`: both have 162 ATX headings
+> and retain the R01-R28 research/source record; the repository version expands
+> 2,481 source lines to 3,285 and deliberately converts four historical
+> `pre-Gold`/`post-Gold`/optional headings into binding 1.0-Gold contracts.
+> No parallel NCT/Buzz workstream was added. The canonical Buzz repository was
+> rechecked at observed head
+> `d8f9d87c17131b952ea5b6c3767978c4637545fc`; only
+> `crates/buzz-acp/src/pool.rs` changed among the fifteen pinned review files,
+> with no Queue, Fence, Pairing, Endpoint, Transport or Lifecycle invariant
+> change. `GOLD-NCT-14` now explicitly requires crash-safe in-flight
+> handoff/steer/cancel recovery, `GOLD-NCT-16` pins unsafe multi-address,
+> endpoint-replacement, expiry, cross-carrier, SAS/replay and revoke-during-
+> pairing cases, and `GOLD-ADOPT-BUZZ-01` forbids source transplantation for
+> 1.0. Existing open counts remain honest.
 >
 > **Typed consumer-adoption checkpoint 2026-07-26 (R3-14 remains OPEN;
 > counts unchanged):** MCP catalogue assembly now returns a dedicated typed
