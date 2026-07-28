@@ -994,7 +994,9 @@ mod tests {
                 .snapshot()
                 .iter()
                 .any(|effect| {
-                    effect.stable_node_id == stable && effect.kind == "external_permit"
+                    effect.stable_node_id == stable
+                        && effect.kind
+                            == crate::cluster::membership::LiveMembershipKind::ExternalPermit
                 }),
             "provider start must transition the captured membership effect"
         );

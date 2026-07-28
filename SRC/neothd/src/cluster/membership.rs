@@ -721,6 +721,36 @@ pub struct MembershipAuthorityHealth {
     pub local_identity_valid: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiveMembershipKind {
+    Route,
+    Network,
+    QueuedProvider,
+    ExternalPermit,
+    InflightProvider,
+    DurableCommit,
+}
+
+impl LiveMembershipKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Route => "route",
+            Self::Network => "network",
+            Self::QueuedProvider => "queued_provider",
+            Self::ExternalPermit => "external_permit",
+            Self::InflightProvider => "inflight_provider",
+            Self::DurableCommit => "durable_commit",
+        }
+    }
+}
+
+impl std::fmt::Display for LiveMembershipKind {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LiveMembershipGeneration {
@@ -728,7 +758,19 @@ pub struct LiveMembershipGeneration {
     pub carrier: CarrierKind,
     pub auth_epoch: AuthEpoch,
     pub membership_epoch: MembershipEpoch,
-    pub kind: String,
+    pub kind: LiveMembershipKind,
+}
+
+fn compare_live_membership_generations(
+    left: &LiveMembershipGeneration,
+    right: &LiveMembershipGeneration,
+) -> std::cmp::Ordering {
+    left.stable_node_id
+        .cmp(&right.stable_node_id)
+        .then(left.carrier.cmp(&right.carrier))
+        .then(left.auth_epoch.cmp(&right.auth_epoch))
+        .then(left.membership_epoch.cmp(&right.membership_epoch))
+        .then(left.kind.as_str().cmp(right.kind.as_str()))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1155,17 +1197,6 @@ impl MembershipRuntimeHealth {
             StableNodeId::parse(generation.stable_node_id.as_str().to_string())?;
             AuthEpoch::new(generation.auth_epoch.get())?;
             MembershipEpoch::new(generation.membership_epoch.get())?;
-            anyhow::ensure!(
-                matches!(
-                    generation.kind.as_str(),
-                    "network"
-                        | "queued_provider"
-                        | "external_permit"
-                        | "inflight_provider"
-                        | "durable_commit"
-                ),
-                "membership runtime-health contains an unknown effect kind"
-            );
         }
         anyhow::ensure!(
             self.invalid_live_generations
@@ -1263,14 +1294,14 @@ pub enum ExternalEffectOutcome {
     Indeterminate,
 }
 
-impl MembershipEffectKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Network => "network",
-            Self::QueuedProvider => "queued_provider",
-            Self::ExternalPermit => "external_permit",
-            Self::InflightProvider => "inflight_provider",
-            Self::DurableCommit => "durable_commit",
+impl From<MembershipEffectKind> for LiveMembershipKind {
+    fn from(kind: MembershipEffectKind) -> Self {
+        match kind {
+            MembershipEffectKind::Network => Self::Network,
+            MembershipEffectKind::QueuedProvider => Self::QueuedProvider,
+            MembershipEffectKind::ExternalPermit => Self::ExternalPermit,
+            MembershipEffectKind::InflightProvider => Self::InflightProvider,
+            MembershipEffectKind::DurableCommit => Self::DurableCommit,
         }
     }
 }
@@ -1507,17 +1538,10 @@ impl GenerationEffectRegistry {
                 carrier: effect.carrier,
                 auth_epoch: effect.generation.auth_epoch,
                 membership_epoch: effect.generation.membership_epoch,
-                kind: effect.kind.as_str().to_string(),
+                kind: effect.kind.into(),
             })
             .collect::<Vec<_>>();
-        effects.sort_by(|left, right| {
-            left.stable_node_id
-                .cmp(&right.stable_node_id)
-                .then(left.carrier.cmp(&right.carrier))
-                .then(left.auth_epoch.cmp(&right.auth_epoch))
-                .then(left.membership_epoch.cmp(&right.membership_epoch))
-                .then(left.kind.cmp(&right.kind))
-        });
+        effects.sort_by(compare_live_membership_generations);
         effects
     }
 }
@@ -1802,14 +1826,7 @@ impl LiveSessionRegistry {
             generations.extend(carrier.live_membership_generations());
             true
         });
-        generations.sort_by(|left, right| {
-            left.stable_node_id
-                .cmp(&right.stable_node_id)
-                .then(left.carrier.cmp(&right.carrier))
-                .then(left.auth_epoch.cmp(&right.auth_epoch))
-                .then(left.membership_epoch.cmp(&right.membership_epoch))
-                .then(left.kind.cmp(&right.kind))
-        });
+        generations.sort_by(compare_live_membership_generations);
         generations
     }
 }
@@ -4642,6 +4659,74 @@ fn resolve_member(tx: &Transaction<'_>, identifier: &str) -> Result<Option<Stabl
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_runtime_generation_round_trips_and_validates() {
+        let health = MembershipRuntimeHealth {
+            wire_version: MEMBERSHIP_RUNTIME_HEALTH_WIRE_VERSION,
+            live_generations: vec![LiveMembershipGeneration {
+                stable_node_id: StableNodeId::parse("11".repeat(32)).unwrap(),
+                carrier: CarrierKind::Peeroxide,
+                auth_epoch: AuthEpoch::new(1).unwrap(),
+                membership_epoch: MembershipEpoch::new(1).unwrap(),
+                kind: LiveMembershipKind::Route,
+            }],
+            invalid_live_generations: Vec::new(),
+            unresolved_revocations: Vec::new(),
+        };
+
+        health.validate().unwrap();
+        let json = serde_json::to_string(&health).unwrap();
+        assert!(json.contains(r#""kind":"route""#));
+        assert_eq!(
+            serde_json::from_str::<MembershipRuntimeHealth>(&json).unwrap(),
+            health
+        );
+
+        let mut unknown_kind = serde_json::to_value(&health).unwrap();
+        unknown_kind["live_generations"][0]["kind"] = serde_json::json!("future_kind");
+        assert!(
+            serde_json::from_value::<MembershipRuntimeHealth>(unknown_kind).is_err(),
+            "unknown runtime generation kinds must fail closed"
+        );
+    }
+
+    #[test]
+    fn runtime_generation_order_stays_wire_lexicographic() {
+        let stable_node_id = StableNodeId::parse("22".repeat(32)).unwrap();
+        let generation = |kind| LiveMembershipGeneration {
+            stable_node_id: stable_node_id.clone(),
+            carrier: CarrierKind::Peeroxide,
+            auth_epoch: AuthEpoch::new(1).unwrap(),
+            membership_epoch: MembershipEpoch::new(1).unwrap(),
+            kind,
+        };
+        let mut generations = vec![
+            generation(LiveMembershipKind::Route),
+            generation(LiveMembershipKind::Network),
+            generation(LiveMembershipKind::QueuedProvider),
+            generation(LiveMembershipKind::ExternalPermit),
+            generation(LiveMembershipKind::InflightProvider),
+            generation(LiveMembershipKind::DurableCommit),
+        ];
+
+        generations.sort_by(compare_live_membership_generations);
+
+        assert_eq!(
+            generations
+                .iter()
+                .map(|entry| entry.kind.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "durable_commit",
+                "external_permit",
+                "inflight_provider",
+                "network",
+                "queued_provider",
+                "route",
+            ]
+        );
+    }
 
     fn identity_and_attestation(
         home: &Path,

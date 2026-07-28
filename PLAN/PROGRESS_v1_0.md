@@ -11,6 +11,14 @@
 > installer evidence are deliberately reserved for the final integration wave;
 > no broad R3/R4 box is closed by this construction slice.
 >
+> **Cluster live-generation wire correction 2026-07-28 (counts unchanged):**
+> Peeroxide and Iroh `route` proofs now use the same closed
+> `LiveMembershipKind` wire as registered Network/Provider effects. Runtime
+> health no longer rejects a real live route, serialized values remain
+> backward-compatible snake-case strings, and unknown kinds fail closed during
+> deserialization. The coherent CLI/GUI/Buddy/Doctor Topology envelope remains
+> an open follow-up; no broad cluster box is closed here.
+>
 > **Cognitive Transport / Cluster forensic adoption checkpoint 2026-07-27
 > (`GOLD-NCT-00` complete; 28 implementation/adoption boxes OPEN):** the
 > complete 2,481-line research plan is now tracked

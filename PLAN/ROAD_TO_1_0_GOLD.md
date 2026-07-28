@@ -28,6 +28,14 @@ public CLI. `packaging/tests/test_release_capability_contract.py` pins the
 manifest and all three build paths. Runtime compilation and clean-machine
 installer proof remain part of the final integration wave; WS-R4 stays OPEN.
 
+**Cluster live-generation wire correction (2026-07-28; no broad box closed):**
+runtime-health generation kinds are now a closed serde enum instead of
+validator-maintained strings. The contract includes the real `route` proof
+published by both Peeroxide and Iroh plus every registered effect kind, while
+unknown future values fail during deserialization. This removes the bug where
+a healthy live route made the daemon's own runtime-health response invalid and
+prepares one typed input for the still-open coherent Topology envelope.
+
 ---
 
 ## 1. Build & Test Recipe

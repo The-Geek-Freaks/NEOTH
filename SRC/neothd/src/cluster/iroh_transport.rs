@@ -1031,7 +1031,7 @@ impl crate::cluster::membership::LiveCarrierSessions for IrohTransport {
                     carrier: grant.carrier(),
                     auth_epoch: grant.auth_epoch(),
                     membership_epoch: grant.membership_epoch(),
-                    kind: "route".into(),
+                    kind: crate::cluster::membership::LiveMembershipKind::Route,
                 },
             )
             .collect::<Vec<_>>();
