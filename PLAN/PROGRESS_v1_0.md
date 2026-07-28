@@ -218,6 +218,19 @@
 > R3-10 still requires the pushed
 > exact-head CI/Security/CodeQL result and is not inherited from local gates.
 >
+> **Direct optional SSH dependency correction 2026-07-28 (R3-10 remains OPEN;
+> counts unchanged):** GitHub Dependabot #21-26 are three advisories duplicated
+> across `Cargo.toml` and `Cargo.lock` for direct optional `russh 0.61.2`:
+> GHSA-g9hv-x236-4qp3, GHSA-cqjc-rmpq-xprq and GHSA-5xvq-cp9x-6p6r.
+> `ssh-tunnel` is default-off and absent from the desktop/server release feature
+> sets, but the documented source-build client path is real and the all-features
+> supply-chain gate must remain clean. `GOLD-DEP-RUSSH-01` therefore requires
+> the explicit 0.62.4-line bump, lock refresh, feature-on client/TOFU/jump/
+> direct-tcpip proof, CI lane and locked audit/deny/notices evidence before
+> R3-10 can close. The dated 2026-07-22 zero-vulnerability evidence remains
+> historical, not a Current-Head clearance; no alert is ignored or dismissed.
+> WS-R3 remains **13 done / 6 open** because this is a required R3-10 child.
+>
 > **Installed-Skill authority correction 2026-07-26 (counts unchanged):**
 > external review 4/5 found that the routed Skill MCP gate still treated a
 > matched Skill with an empty/default `tool_allowlist` as unrestricted. That
