@@ -644,6 +644,7 @@ async fn sync_day_to_obsidian(
             &subdir,
             &day,
         )
+        .map_err(anyhow::Error::from)
     })
     .await??;
     if outcome.written {
@@ -1672,6 +1673,20 @@ mod tests {
     #[tokio::test]
     async fn task_aborts_cleanly() {
         let dir = tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let mut config = crate::config::FreedomConfig::default();
+        config.dreaming.enabled = true;
+        config.autonomy = crate::permissions::AutonomyLevel::Standard;
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config,
+            config_path,
+        ));
+        let effect_rail = Arc::new(DreamEffectRail::new(
+            Arc::clone(&controller),
+            controller.accepted_snapshot(),
+            DreamCancellation::new(),
+        ));
         let task = spawn(
             dir.path().to_path_buf(),
             None,
@@ -1682,6 +1697,7 @@ mod tests {
                 ..test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
             },
             None,
+            effect_rail,
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
         task.abort();
