@@ -2740,6 +2740,10 @@ struct DispatchOutput {
     final_output_tokens: Option<u32>,
     provider_used: String,
     model_used: String,
+    /// Serialized authenticated completion marker for a streaming turn.
+    /// Emission is deliberately deferred until every post-reply pipeline has
+    /// succeeded so this remains the final non-empty stdout line.
+    stream_done_line: Option<String>,
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     final_prompt: String,
@@ -2766,6 +2770,7 @@ struct ProviderDispatchResult {
     output_tokens: Option<u32>,
     provider: String,
     model: String,
+    stream_done_line: Option<String>,
 }
 
 impl ProviderDispatchResult {
@@ -2782,8 +2787,35 @@ impl ProviderDispatchResult {
             output_tokens,
             provider,
             model,
+            stream_done_line: None,
         }
     }
+
+    fn with_stream_done_line(mut self, stream_done_line: String) -> Self {
+        self.stream_done_line = Some(stream_done_line);
+        self
+    }
+}
+
+fn stream_provider_done_line(control_token: Option<&str>, chunk_count: u32) -> Option<String> {
+    let control_token = control_token?;
+    Some(
+        serde_json::json!({
+            "neoth_stream": "provider_done",
+            "control_token": control_token,
+            "count": chunk_count,
+        })
+        .to_string(),
+    )
+}
+
+fn write_stream_control_line(
+    mut output: impl std::io::Write,
+    stream_control_line: &str,
+) -> std::io::Result<()> {
+    writeln!(output)?;
+    writeln!(output, "{stream_control_line}")?;
+    output.flush()
 }
 
 /// Emit the caller-owned terminal goal lifecycle event. A confirmed `Met`
@@ -3379,39 +3411,52 @@ async fn dispatch_provider(
                     elapsed_ms,
                 );
             }
-            // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
-            // truncated streams. GOLD-ADAPT-ODY-02/05 — the sentinel also carries
-            // the turn's token usage + the model-agnostic context cap (same
-            // `effective_cap` the non-stream context bar uses) + wall time, so
-            // GUI consumers can render context/metrics chips without re-probing.
-            // Fields are additive: older consumers `rfind` the prefix and ignore
-            // unknown keys.
+            // Build the sentinel per OPEN_DECISIONS.md D-005, but do not emit it
+            // here. Post-reply pipelines may still write opt-in review output to
+            // stdout. The caller emits this marker only after those pipelines
+            // succeed, keeping it the final non-empty stdout line. On any
+            // post-reply failure no marker is emitted, so consumers fail closed.
+            // GOLD-ADAPT-ODY-02/05 — the sentinel also carries the turn's token
+            // usage + model-agnostic context cap + wall time. Fields are
+            // additive: older consumers ignore unknown keys.
             let sentinel_cap = crate::tokens::budget::effective_cap(
                 &provider_used,
                 &model_used,
                 config.tokens.max_per_request,
             );
-            println!();
-            println!(
-                "{}",
-                serde_json::json!({
-                    "neoth_stream": "done",
-                    "control_token": stream_control_token(),
-                    "count": chunk_count,
-                    "used_tokens": input_tokens
-                        .unwrap_or(0)
-                        .saturating_add(output_tokens.unwrap_or(0)),
-                    "limit_tokens": sentinel_cap,
-                    "input_tokens": input_tokens.unwrap_or(0),
+            // `provider_done` is a distinct authenticated phase boundary. It
+            // lets stream consumers enter Finalizing while the post-reply
+            // pipelines run; the terminal `done` marker is still deferred
+            // until those pipelines succeed and remains the final non-empty
+            // stdout line.
+            let control_token = stream_control_token();
+            if let Some(provider_done_line) =
+                stream_provider_done_line(control_token.as_deref(), chunk_count)
+            {
+                let stdout = std::io::stdout();
+                let stdout_lock = stdout.lock();
+                write_stream_control_line(stdout_lock, &provider_done_line)
+                    .context("write authenticated provider completion marker")?;
+            }
+
+            let stream_done_line = serde_json::json!({
+                "neoth_stream": "done",
+                "control_token": &control_token,
+                "count": chunk_count,
+                "used_tokens": input_tokens
+                    .unwrap_or(0)
+                    .saturating_add(output_tokens.unwrap_or(0)),
+                "limit_tokens": sentinel_cap,
+                "input_tokens": input_tokens.unwrap_or(0),
                 "output_tokens": output_tokens.unwrap_or(0),
                 "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
                 // Exact effective leaf identity (including fallback) for the
                 // GUI's optional per-response model badge.
                 "model": &model_used,
                 // ODY-12/14 — additive field; old consumers ignore it.
-                    "links": crate::cli::deep_links::extract_deep_links(&acc),
-                })
-            );
+                "links": crate::cli::deep_links::extract_deep_links(&acc),
+            })
+            .to_string();
             ProviderDispatchResult::new(
                 acc,
                 input_tokens,
@@ -3419,6 +3464,7 @@ async fn dispatch_provider(
                 provider_used,
                 model_used,
             )
+            .with_stream_done_line(stream_done_line)
         } else {
             // Non-streaming: existing behavior. START frame already emitted
             // above the branch; END frame fires after both arms converge.
@@ -3849,6 +3895,7 @@ async fn dispatch_provider(
         output_tokens: final_output_tokens,
         provider: provider_used,
         model: model_used,
+        stream_done_line,
     } = match dispatch_result {
         Ok(output) => output,
         Err(error) => {
@@ -3929,6 +3976,7 @@ async fn dispatch_provider(
         final_output_tokens,
         provider_used,
         model_used,
+        stream_done_line,
         writer,
         writer_join,
         final_prompt,
@@ -5637,6 +5685,7 @@ async fn run_chat_with_consent(
         final_output_tokens,
         provider_used,
         model_used,
+        stream_done_line,
         writer,
         writer_join,
         final_prompt,
@@ -5709,7 +5758,16 @@ async fn run_chat_with_consent(
         pending_block_restorations,
         &ephemeral_consent,
     )
-    .await
+    .await?;
+
+    if let Some(stream_done_line) = stream_done_line {
+        let stdout = std::io::stdout();
+        let stdout_lock = stdout.lock();
+        write_stream_control_line(stdout_lock, &stream_done_line)
+            .context("write authenticated stream completion marker")?;
+    }
+
+    Ok(())
 }
 
 /// GOLD-ADOPT-21 — best-effort LLM title for the just-completed session, stored
@@ -9822,6 +9880,95 @@ mod tests {
     // depending on a CI TTY; the real request-bound auth + WAL path still runs.
     const UNPRICED_TEST_PROVIDER_AUTONOMY: crate::permissions::AutonomyLevel =
         crate::permissions::AutonomyLevel::Full;
+
+    #[test]
+    fn authenticated_stream_frames_preserve_provider_review_done_order() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let provider_done_line = stream_provider_done_line(Some(control_token), 2).unwrap();
+        let stream_done_line = serde_json::json!({
+            "neoth_stream": "done",
+            "control_token": control_token,
+            "count": 2,
+        })
+        .to_string();
+        let mut stdout = b"primary reply".to_vec();
+
+        write_stream_control_line(&mut stdout, &provider_done_line).unwrap();
+        stdout.extend_from_slice(b"\n-- review gate --\n  spec: PASS\n\n[spec]\nlooks good\n");
+        write_stream_control_line(&mut stdout, &stream_done_line).unwrap();
+
+        let stdout = String::from_utf8(stdout).unwrap();
+        let provider_done_offset = stdout.find(&provider_done_line).unwrap();
+        let review_offset = stdout.find("-- review gate --").unwrap();
+        let stream_done_offset = stdout.rfind(&stream_done_line).unwrap();
+        assert!(provider_done_offset < review_offset);
+        assert!(review_offset < stream_done_offset);
+
+        let final_non_empty = stdout
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap();
+        assert_eq!(final_non_empty, stream_done_line);
+        let sentinel: serde_json::Value = serde_json::from_str(final_non_empty).unwrap();
+        assert_eq!(sentinel["neoth_stream"], "done");
+        assert_eq!(
+            sentinel["control_token"],
+            "0123456789abcdef0123456789abcdef"
+        );
+        assert!(stdout.contains("[spec]\nlooks good"));
+    }
+
+    #[test]
+    fn provider_done_frame_is_token_bound_and_carries_no_reply_text() {
+        let line = stream_provider_done_line(Some("0123456789abcdef0123456789abcdef"), 7).unwrap();
+        let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+
+        assert_eq!(frame["neoth_stream"], "provider_done");
+        assert_eq!(frame["control_token"], "0123456789abcdef0123456789abcdef");
+        assert_eq!(frame["count"], 7);
+        assert!(frame.get("text").is_none());
+        assert!(frame.get("reply").is_none());
+    }
+
+    #[test]
+    fn provider_done_frame_is_absent_without_an_authenticated_token() {
+        assert!(stream_provider_done_line(None, 7).is_none());
+    }
+
+    #[test]
+    fn stream_control_write_failure_is_propagated() {
+        struct RejectWrites;
+
+        impl std::io::Write for RejectWrites {
+            fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "closed stream consumer",
+                ))
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let error = write_stream_control_line(RejectWrites, "{}").unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn non_stream_dispatch_result_owns_no_terminal_marker() {
+        let output = ProviderDispatchResult::new(
+            "reply".to_string(),
+            Some(1),
+            Some(1),
+            "provider".to_string(),
+            "model".to_string(),
+        );
+
+        assert!(output.stream_done_line.is_none());
+    }
 
     #[test]
     fn exact_turn_route_couples_mcp_catalogue_and_dispatch() {
