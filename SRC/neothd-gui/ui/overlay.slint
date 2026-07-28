@@ -73,6 +73,9 @@ export component MiniOverlay inherits Window {
     in-out property <string> overlay-input: "";
     /// One-line status text below the composer (mood caption / daemon note).
     in property <string> status-text: "ready";
+    /// True while the overlay's chat request is in preflight or streaming.
+    /// Replaces Send with an operator-controlled Stop action on both surfaces.
+    in property <bool> send-in-flight: false;
 
     // ── Compact mode ─────────────────────────────────────────────────
     /// When true the overlay renders as a 64 px pill.
@@ -92,6 +95,8 @@ export component MiniOverlay inherits Window {
     callback hide-clicked();
     /// Operator sent a message from the overlay composer.
     callback send-clicked(string);
+    /// Operator stopped the active overlay chat request.
+    callback stop-stream-clicked();
     /// Pointer-down on the title strip — Rust starts an OS-native
     /// compositor drag via winit drag_window().
     callback drag-started();
@@ -119,7 +124,7 @@ export component MiniOverlay inherits Window {
 
     // ── Autofocus compact input when compact mode activates ───────────
     changed compact => {
-        if (root.compact) {
+        if (root.compact && !root.send-in-flight) {
             compact-input.focus();
         }
     }
@@ -201,7 +206,7 @@ export component MiniOverlay inherits Window {
 
             // ── Section 2: Compact pill (visible only when compact=true) ──
             //
-            // Layout: [orb+badge] [input-pill] [mic] [chevron-expand]
+            // Layout: [orb+badge] [input-pill] [mic/Stop] [chevron-expand]
             // Left 64 px is the drag handle zone (pointer-down → drag-started).
             compact-strip := Rectangle {
                 height: root.compact ? 64px : 0px;
@@ -323,14 +328,14 @@ export component MiniOverlay inherits Window {
                                     single-line: true;
                                     vertical-alignment: center;
                                     horizontal-alignment: left;
-                                    enabled: root.compact;
+                                    enabled: root.compact && !root.send-in-flight;
                                     accessible-role: AccessibleRole.text;
                                     accessible-label: "message NEOTH";
                                     accessible-placeholder-text: "message NEOTH…";
 
                                     // Enter → send
                                     accepted => {
-                                        if (self.text != "") {
+                                        if (self.text != "" && !root.send-in-flight) {
                                             root.send-clicked(self.text);
                                         }
                                     }
@@ -349,12 +354,16 @@ export component MiniOverlay inherits Window {
 
                         // Click anywhere on pill → focus input
                         compact-pill-ta := TouchArea {
-                            clicked => { compact-input.focus(); }
+                            clicked => {
+                                if (!root.send-in-flight) {
+                                    compact-input.focus();
+                                }
+                            }
                         }
                     }
 
                     // Mic glyph button — "◉" record indicator
-                    mic-btn := Rectangle {
+                    if root.compact && !root.send-in-flight: Rectangle {
                         width: 32px; height: 32px;
                         border-radius: Theme.radius-sm;
                         background: mic-ta.has-hover ? Theme.surface-2 : transparent;
@@ -375,6 +384,12 @@ export component MiniOverlay inherits Window {
                             accessible-label: "toggle dictation";
                             accessible-action-default => { root.mic-clicked(); }
                         }
+                    }
+                    if root.compact && root.send-in-flight: NeothButton {
+                        label: "Stop";
+                        danger: true;
+                        size: "sm";
+                        clicked => { root.stop-stream-clicked(); }
                     }
 
                     // Chevron toggle — compact → full (▾ = expand downward)
@@ -688,14 +703,14 @@ export component MiniOverlay inherits Window {
                         horizontal-stretch: 1;
                         text <=> root.overlay-input;
                         placeholder-text: "message NEOTH…";
-                        enabled: !root.compact;
+                        enabled: !root.compact && !root.send-in-flight;
                         accepted(t) => {
-                            if t != "" {
+                            if t != "" && !root.send-in-flight {
                                 root.send-clicked(t);
                             }
                         }
                     }
-                    NeothButton {
+                    if !root.compact && !root.send-in-flight: NeothButton {
                         label: "→";
                         primary: true;
                         size: "sm";
@@ -705,6 +720,12 @@ export component MiniOverlay inherits Window {
                                 root.send-clicked(root.overlay-input);
                             }
                         }
+                    }
+                    if !root.compact && root.send-in-flight: NeothButton {
+                        label: "Stop";
+                        danger: true;
+                        size: "sm";
+                        clicked => { root.stop-stream-clicked(); }
                     }
                 }
             }

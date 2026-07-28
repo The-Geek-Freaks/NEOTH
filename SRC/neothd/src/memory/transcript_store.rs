@@ -21,8 +21,9 @@
 
 use std::borrow::Cow;
 
-use rusqlite::{Connection, OpenFlags, params};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use tracing::warn;
 
 // ── Structs ────────────────────────────────────────────────────────────────
@@ -59,6 +60,41 @@ pub struct TranscriptSearchResult {
     pub bm25_rank: f64,
 }
 
+const BACKGROUND_NOTICE_SESSION_PREFIX: &str = "background:";
+
+/// One background-agent result durably represented as a synthetic transcript
+/// session. `job_id` is the stable cross-process id from `bgjobs`; `row_id`
+/// remains the authoritative SQLite ordering key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DurableBackgroundNotice {
+    pub row_id: i64,
+    pub job_id: String,
+    pub ts_unix: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackgroundNoticeWrite {
+    Inserted,
+    AlreadyPresent,
+}
+
+#[derive(Debug, Error)]
+pub enum BackgroundNoticeStoreError {
+    #[error("background notice job id must be exactly 16 lowercase hexadecimal characters")]
+    InvalidJobId,
+    #[error("background notice `{job_id}` collides with different durable content")]
+    Collision { job_id: String },
+    #[error("background notice `{job_id}` has no durable transcript row")]
+    Missing { job_id: String },
+    #[error("background notice `{job_id}` has more than one durable transcript row")]
+    DuplicateRows { job_id: String },
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Database(#[from] rusqlite::Error),
+}
+
 // ── Write path ─────────────────────────────────────────────────────────────
 
 /// Insert one turn into `raw_turns`. The FTS5 trigger fires automatically,
@@ -89,6 +125,182 @@ pub fn insert_turn(
         params![session_id, role, ts_unix, persisted_text.as_ref()],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+fn valid_background_notice_job_id(job_id: &str) -> bool {
+    job_id.len() == 16
+        && job_id
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn background_notice_session_id(job_id: &str) -> Result<String, BackgroundNoticeStoreError> {
+    if !valid_background_notice_job_id(job_id) {
+        return Err(BackgroundNoticeStoreError::InvalidJobId);
+    }
+    Ok(format!("{BACKGROUND_NOTICE_SESSION_PREFIX}{job_id}"))
+}
+
+fn load_background_notice_rows(
+    conn: &Connection,
+    session_id: &str,
+) -> Result<Vec<(i64, i64, String)>, rusqlite::Error> {
+    let mut statement = conn.prepare(
+        "SELECT id, ts_unix, text
+         FROM raw_turns
+         WHERE session_id = ?1 AND role = 'agent'
+         ORDER BY id ASC
+         LIMIT 2",
+    )?;
+    statement
+        .query_map([session_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?
+        .collect()
+}
+
+/// Persist one completed background result exactly once.
+///
+/// `synchronous=FULL` makes the WAL commit at least as durable as the later
+/// `.delivered` filesystem marker. `BEGIN IMMEDIATE` then serializes the
+/// lookup+insert boundary across independent GUI/CLI processes even though
+/// legacy `raw_turns` has no dedicated uniqueness column. A retry with the same
+/// stable job id and canonical sanitized text is idempotent; any different
+/// content or pre-existing duplicate fails closed.
+pub fn persist_background_notice(
+    conn: &mut Connection,
+    job_id: &str,
+    ts_unix: i64,
+    text: &str,
+) -> Result<BackgroundNoticeWrite, BackgroundNoticeStoreError> {
+    let session_id = background_notice_session_id(job_id)?;
+    let persisted_text = crate::security::redact::sanitize_tool_output(text);
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    let transaction = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let existing = load_background_notice_rows(&transaction, &session_id)?;
+    if existing.len() > 1 {
+        return Err(BackgroundNoticeStoreError::DuplicateRows {
+            job_id: job_id.to_owned(),
+        });
+    }
+
+    let outcome = match existing.first() {
+        None => {
+            insert_turn(&transaction, &session_id, "agent", ts_unix, &persisted_text)?;
+            BackgroundNoticeWrite::Inserted
+        }
+        Some((_, _, existing_text)) if existing_text == &persisted_text => {
+            BackgroundNoticeWrite::AlreadyPresent
+        }
+        Some(_) => {
+            return Err(BackgroundNoticeStoreError::Collision {
+                job_id: job_id.to_owned(),
+            });
+        }
+    };
+
+    transaction.commit()?;
+    Ok(outcome)
+}
+
+/// Prove that the exact background result is already durable before a delivery
+/// claim may be committed. The comparison uses the same agent-output
+/// sanitization as the write path.
+pub fn verify_background_notice_at(
+    db_path: &std::path::Path,
+    job_id: &str,
+    text: &str,
+) -> Result<(), BackgroundNoticeStoreError> {
+    let session_id = background_notice_session_id(job_id)?;
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let existing = load_background_notice_rows(&conn, &session_id)?;
+    if existing.len() > 1 {
+        return Err(BackgroundNoticeStoreError::DuplicateRows {
+            job_id: job_id.to_owned(),
+        });
+    }
+    let expected_text = crate::security::redact::sanitize_tool_output(text);
+    match existing.first() {
+        Some((_, _, persisted_text)) if persisted_text == &expected_text => Ok(()),
+        Some(_) => Err(BackgroundNoticeStoreError::Collision {
+            job_id: job_id.to_owned(),
+        }),
+        None => Err(BackgroundNoticeStoreError::Missing {
+            job_id: job_id.to_owned(),
+        }),
+    }
+}
+
+/// Read the newest durable background notices in oldest-to-newest display
+/// order. This is the restart/reconnect recovery surface for GUI and CLI
+/// consumers; all returned agent text is sanitized again so legacy rows cannot
+/// leak terminal controls. A fresh instance without `views.db` returns empty.
+pub fn read_latest_background_notices_at(
+    db_path: &std::path::Path,
+    limit: usize,
+) -> Result<Vec<DurableBackgroundNotice>, BackgroundNoticeStoreError> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    match std::fs::metadata(db_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(error.into()),
+    }
+    let conn = Connection::open_with_flags(
+        db_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let has_raw_turns = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'raw_turns')",
+        [],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if !has_raw_turns {
+        return Ok(Vec::new());
+    }
+
+    let mut statement = conn.prepare(
+        "SELECT id, session_id, ts_unix, text
+         FROM (
+             SELECT id, session_id, ts_unix, text
+             FROM raw_turns
+             WHERE role = 'agent' AND session_id LIKE ?1 ESCAPE '\\'
+             ORDER BY id DESC
+             LIMIT ?2
+         )
+         ORDER BY id ASC",
+    )?;
+    let prefix_pattern = format!("{BACKGROUND_NOTICE_SESSION_PREFIX}%");
+    let sql_limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let rows = statement
+        .query_map(params![prefix_pattern, sql_limit], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    rows.into_iter()
+        .map(|(row_id, session_id, ts_unix, text)| {
+            let job_id = session_id
+                .strip_prefix(BACKGROUND_NOTICE_SESSION_PREFIX)
+                .filter(|job_id| valid_background_notice_job_id(job_id))
+                .ok_or(BackgroundNoticeStoreError::InvalidJobId)?;
+            Ok(DurableBackgroundNotice {
+                row_id,
+                job_id: job_id.to_owned(),
+                ts_unix,
+                text: crate::security::redact::sanitize_tool_output(&text),
+            })
+        })
+        .collect()
 }
 
 // ── Read path ──────────────────────────────────────────────────────────────
@@ -700,5 +912,163 @@ mod tests {
             search_turns(&conn, "-", 0, 10).unwrap().is_empty(),
             "a punctuation-only query sanitises to an empty result"
         );
+    }
+
+    #[test]
+    fn background_notice_is_sanitized_insert_once_and_verifiable() {
+        let (dir, mut conn) = open_test_db();
+        let job_id = "0123456789abcdef";
+        let raw = "\x1b[31mbackground diagnosis\x1b[0m";
+
+        assert_eq!(
+            persist_background_notice(&mut conn, job_id, 700, raw).unwrap(),
+            BackgroundNoticeWrite::Inserted
+        );
+        assert_eq!(
+            persist_background_notice(&mut conn, job_id, 999, raw).unwrap(),
+            BackgroundNoticeWrite::AlreadyPresent
+        );
+
+        let rows = read_latest_background_notices_at(&dir.path().join("views.db"), 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].row_id > 0);
+        assert_eq!(rows[0].job_id, job_id);
+        assert_eq!(rows[0].ts_unix, 700);
+        assert_eq!(rows[0].text, "background diagnosis");
+        assert_eq!(
+            conn.query_row("PRAGMA synchronous", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            2,
+            "durable receipt connection must commit WAL records with FULL sync"
+        );
+        verify_background_notice_at(&dir.path().join("views.db"), job_id, raw).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM raw_turns WHERE session_id = ?1",
+                [format!("{BACKGROUND_NOTICE_SESSION_PREFIX}{job_id}")],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn background_notice_collision_fails_closed_without_mutating_first_row() {
+        let (_dir, mut conn) = open_test_db();
+        let job_id = "1111111111111111";
+        persist_background_notice(&mut conn, job_id, 701, "first").unwrap();
+
+        assert!(matches!(
+            persist_background_notice(&mut conn, job_id, 702, "different"),
+            Err(BackgroundNoticeStoreError::Collision { .. })
+        ));
+        let stored: (i64, String) = conn
+            .query_row(
+                "SELECT ts_unix, text FROM raw_turns WHERE session_id = ?1",
+                [format!("{BACKGROUND_NOTICE_SESSION_PREFIX}{job_id}")],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored, (701, "first".to_owned()));
+    }
+
+    #[test]
+    fn background_notice_concurrent_retries_insert_one_row() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("views.db");
+        drop(store::open(&db_path).unwrap());
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        let connections: Vec<_> = (0..6)
+            .map(|_| {
+                let conn = Connection::open(&db_path).unwrap();
+                conn.busy_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+                conn
+            })
+            .collect();
+        let handles: Vec<_> = connections
+            .into_iter()
+            .map(|mut conn| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    persist_background_notice(&mut conn, "2222222222222222", 703, "same result")
+                        .unwrap()
+                })
+            })
+            .collect();
+        let outcomes: Vec<_> = handles
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == BackgroundNoticeWrite::Inserted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|outcome| **outcome == BackgroundNoticeWrite::AlreadyPresent)
+                .count(),
+            5
+        );
+        let conn = Connection::open(db_path).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM raw_turns WHERE session_id = 'background:2222222222222222'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn latest_background_notice_reader_is_bounded_newest_first() {
+        let (dir, mut conn) = open_test_db();
+        persist_background_notice(&mut conn, "3333333333333333", 710, "older").unwrap();
+        insert_turn(&conn, "normal-session", "agent", 711, "not a notice").unwrap();
+        persist_background_notice(&mut conn, "4444444444444444", 712, "newer").unwrap();
+
+        let rows = read_latest_background_notices_at(&dir.path().join("views.db"), 2).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].job_id, "3333333333333333");
+        assert_eq!(rows[0].text, "older");
+        assert_eq!(rows[1].job_id, "4444444444444444");
+        assert_eq!(rows[1].text, "newer");
+        assert!(
+            read_latest_background_notices_at(&dir.path().join("views.db"), 0)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn latest_background_notice_reader_is_empty_before_database_creation() {
+        let dir = tempdir().unwrap();
+        let rows = read_latest_background_notices_at(&dir.path().join("views.db"), 20).unwrap();
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn background_notice_rejects_noncanonical_job_ids() {
+        let (_dir, mut conn) = open_test_db();
+        for invalid in [
+            "../escape",
+            "ABCDEF0123456789",
+            "0123456789abcdeg",
+            "0123456789abcde",
+        ] {
+            assert!(matches!(
+                persist_background_notice(&mut conn, invalid, 1, "text"),
+                Err(BackgroundNoticeStoreError::InvalidJobId)
+            ));
+        }
     }
 }

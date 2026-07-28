@@ -18,8 +18,11 @@
 //!   A sibling `<id>.exit` marker is written after the result lands.
 //! - [`maybe_deliver_bg_result`] scans `bgjobs/` at next-idle (called
 //!   from `run_chat_with` at the top of each interactive turn) and
-//!   delivers any pending results.  A `<id>.delivered` marker prevents
-//!   re-delivery.
+//!   claims pending results. Both surfaces first persist the exact job-bound,
+//!   sanitized result in `views.db:raw_turns`. CLI delivery then commits after
+//!   stdout; GUI delivery commits only after an authenticated `durable=true`
+//!   notice is materialised in canonical chat. A `<id>.delivered` marker
+//!   prevents re-delivery.
 //! - WAL bytes 0x87 `BG_SESSION_STARTED` and 0x88 `BG_SESSION_DONE`
 //!   audit both ends of the lifecycle.
 
@@ -141,43 +144,156 @@ struct BgDeliveryClaim {
     claimed_unix: i64,
 }
 
-/// One result exclusively claimed for display by this process. The caller
-/// acknowledges only after stdout/channel delivery succeeded; dropping the
-/// value leaves a recoverable `.delivering` claim rather than losing output.
+/// One result exclusively claimed for display by this process. The caller must
+/// first obtain an exact durable transcript receipt and then acknowledge only
+/// after stdout/channel delivery succeeded. Dropping the value leaves a
+/// recoverable `.delivering` claim rather than losing output.
 pub struct PendingBgDelivery {
+    job_id: String,
     text: String,
+    instance_home: PathBuf,
     delivering_path: PathBuf,
     delivered_path: PathBuf,
 }
 
 impl PendingBgDelivery {
+    pub fn job_id(&self) -> &str {
+        &self.job_id
+    }
+
     pub fn text(&self) -> &str {
         &self.text
     }
 
-    pub fn acknowledge(self) -> Result<()> {
-        match crate::util::atomic_write::write_private_create_new_durable(
+    pub(crate) fn acknowledge(self) -> Result<()> {
+        crate::memory::transcript_store::verify_background_notice_at(
+            &self.instance_home.join("views.db"),
+            &self.job_id,
+            &self.text,
+        )
+        .context("background result has no exact durable transcript receipt")?;
+        commit_background_delivery(
+            &self.instance_home,
+            &self.delivering_path,
             &self.delivered_path,
-            b"delivered\n",
-        ) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "commit background delivery {}",
-                        self.delivered_path.display()
-                    )
-                });
-            }
+        )
+    }
+}
+
+fn commit_background_delivery(
+    instance_home: &Path,
+    delivering_path: &Path,
+    delivered_path: &Path,
+) -> Result<()> {
+    match crate::util::atomic_write::write_private_create_new_durable(
+        delivered_path,
+        b"delivered\n",
+    ) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let marker = crate::updater::self_update::read_private_control_file_bounded(
+                instance_home,
+                delivered_path,
+                BG_CONTROL_MAX_BYTES,
+                "background delivered marker",
+            )
+            .context("validate existing background delivered marker")?;
+            anyhow::ensure!(
+                marker == b"delivered\n",
+                "existing background delivered marker has invalid content"
+            );
         }
-        crate::util::atomic_write::durable_remove_file(&self.delivering_path).with_context(|| {
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("commit background delivery {}", delivered_path.display())
+            });
+        }
+    }
+    match crate::util::atomic_write::durable_remove_file(delivering_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| {
             format!(
                 "remove background delivery claim {}",
-                self.delivering_path.display()
+                delivering_path.display()
             )
-        })
+        }),
     }
+}
+
+/// Commit a GUI-consumed result only after the authenticated `durable=true`
+/// stream notice has been materialised in the canonical conversation and the
+/// exact job-bound receipt is durable in `views.db:raw_turns`. The claim,
+/// result and exit marker must all be private files below the caller-selected
+/// instance home; arbitrary paths, unclaimed ids, and missing/colliding
+/// transcript rows fail closed.
+pub fn acknowledge_bg_result_delivery(bgjobs_home: &Path, job_id: &str) -> Result<()> {
+    anyhow::ensure!(
+        valid_background_id(job_id),
+        "invalid background delivery id"
+    );
+    let instance_home = bgjobs_home
+        .parent()
+        .context("background jobs directory has no instance home")?;
+    ensure_non_link_directory(bgjobs_home)?;
+
+    let delivering_path = bgjobs_home.join(format!("{job_id}.delivering"));
+    let delivered_path = bgjobs_home.join(format!("{job_id}.delivered"));
+    let result_bytes = crate::updater::self_update::read_private_control_file_bounded(
+        instance_home,
+        &bgjobs_home.join(format!("{job_id}.result")),
+        BG_RESULT_MAX_BYTES,
+        "background result",
+    )?;
+    let exit_marker = crate::updater::self_update::read_private_control_file_bounded(
+        instance_home,
+        &bgjobs_home.join(format!("{job_id}.exit")),
+        BG_CONTROL_MAX_BYTES,
+        "background exit marker",
+    )?;
+    anyhow::ensure!(
+        valid_background_exit_marker(&exit_marker),
+        "background exit marker has invalid content"
+    );
+    let result_text =
+        String::from_utf8(result_bytes).context("background result is not valid UTF-8")?;
+    crate::memory::transcript_store::verify_background_notice_at(
+        &instance_home.join("views.db"),
+        job_id,
+        result_text.trim_end(),
+    )
+    .context("background result has no exact durable transcript receipt")?;
+
+    let delivered_marker = read_optional_private_control_file(
+        instance_home,
+        &delivered_path,
+        BG_CONTROL_MAX_BYTES,
+        "background delivered marker",
+    )?;
+    let claim_bytes = read_optional_private_control_file(
+        instance_home,
+        &delivering_path,
+        BG_CONTROL_MAX_BYTES,
+        "background delivery claim",
+    )?;
+    if let Some(marker) = delivered_marker.as_deref() {
+        anyhow::ensure!(
+            marker == b"delivered\n",
+            "background delivered marker has invalid content"
+        );
+    }
+    if delivered_marker.is_some() && claim_bytes.is_none() {
+        return Ok(());
+    }
+
+    let claim_bytes = claim_bytes.context("background delivery claim is missing")?;
+    let claim: BgDeliveryClaim =
+        serde_json::from_slice(&claim_bytes).context("parse background delivery claim")?;
+    anyhow::ensure!(
+        claim.schema_version == BG_JOB_SCHEMA_VERSION && claim.job_id == job_id,
+        "background delivery claim identity mismatch"
+    );
+    commit_background_delivery(instance_home, &delivering_path, &delivered_path)
 }
 
 /// Opaque background-job identifier. A 16-char hex prefix of a random
@@ -245,6 +361,32 @@ fn ensure_non_link_directory(path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn error_chain_has_io_kind(error: &anyhow::Error, kind: std::io::ErrorKind) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == kind)
+    })
+}
+
+fn read_optional_private_control_file(
+    instance_home: &Path,
+    path: &Path,
+    max_bytes: usize,
+    label: &str,
+) -> Result<Option<Vec<u8>>> {
+    match crate::updater::self_update::read_private_control_file_bounded(
+        instance_home,
+        path,
+        max_bytes,
+        label,
+    ) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error_chain_has_io_kind(&error, std::io::ErrorKind::NotFound) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 fn ensure_background_job_directory(instance_home: &Path, bgjobs_dir: &Path) -> Result<()> {
@@ -1466,6 +1608,10 @@ fn valid_background_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn valid_background_exit_marker(marker: &[u8]) -> bool {
+    matches!(marker, b"done\n" | b"failed\n" | b"recovered\n")
+}
+
 fn claim_worker_is_live(claim: &BgClaimRecord, job_path: &Path) -> bool {
     if claim.schema_version != BG_JOB_SCHEMA_VERSION || !valid_background_id(&claim.job_id) {
         return false;
@@ -1482,50 +1628,76 @@ fn recover_one_background_job(
     bgjobs_dir: &Path,
     job_id: &BgJobId,
 ) -> Result<()> {
+    ensure_non_link_directory(bgjobs_dir)?;
     let job_path = bgjobs_dir.join(format!("{}.job", job_id.as_str()));
     let claim_path = bgjobs_dir.join(format!("{}.claimed", job_id.as_str()));
     let start_path = bgjobs_dir.join(format!("{}.start", job_id.as_str()));
     let result_path = bgjobs_dir.join(format!("{}.result", job_id.as_str()));
     let exit_path = bgjobs_dir.join(format!("{}.exit", job_id.as_str()));
 
-    if exit_path
-        .try_exists()
-        .with_context(|| format!("inspect background exit marker {}", exit_path.display()))?
-    {
+    if let Some(exit_marker) = read_optional_private_control_file(
+        instance_home,
+        &exit_path,
+        BG_CONTROL_MAX_BYTES,
+        "background recovery exit marker",
+    )? {
+        anyhow::ensure!(
+            valid_background_exit_marker(&exit_marker),
+            "background recovery exit marker has invalid content"
+        );
+        anyhow::ensure!(
+            read_optional_private_control_file(
+                instance_home,
+                &result_path,
+                BG_RESULT_MAX_BYTES,
+                "background recovery terminal result",
+            )?
+            .is_some(),
+            "background recovery exit marker has no matching terminal result"
+        );
         crate::util::atomic_write::durable_remove_file(&job_path)?;
         crate::util::atomic_write::durable_remove_file(&start_path)?;
         return Ok(());
     }
 
-    if claim_path
-        .try_exists()
-        .with_context(|| format!("inspect background claim {}", claim_path.display()))?
-    {
-        let claim = crate::updater::self_update::read_private_control_file_bounded(
-            instance_home,
-            &claim_path,
-            BG_CONTROL_MAX_BYTES,
-            "background recovery claim",
-        )
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<BgClaimRecord>(&bytes).ok());
-        if claim.as_ref().is_some_and(|claim| {
-            claim.job_id == job_id.as_str() && claim_worker_is_live(claim, &job_path)
-        }) {
+    if let Some(claim_bytes) = read_optional_private_control_file(
+        instance_home,
+        &claim_path,
+        BG_CONTROL_MAX_BYTES,
+        "background recovery claim",
+    )? {
+        let claim = serde_json::from_slice::<BgClaimRecord>(&claim_bytes)
+            .context("parse background recovery claim")?;
+        if claim.job_id == job_id.as_str() && claim_worker_is_live(&claim, &job_path) {
             return Ok(());
         }
-        if result_path.try_exists().with_context(|| {
-            format!(
-                "inspect recovered background result {}",
-                result_path.display()
-            )
-        })? {
-            crate::util::atomic_write::write_private_create_new_durable(&exit_path, b"recovered\n")
-                .or_else(|error| {
-                    (error.kind() == std::io::ErrorKind::AlreadyExists)
-                        .then_some(())
-                        .ok_or(error)
-                })?;
+        if read_optional_private_control_file(
+            instance_home,
+            &result_path,
+            BG_RESULT_MAX_BYTES,
+            "recovered background result",
+        )?
+        .is_some()
+        {
+            match crate::util::atomic_write::write_private_create_new_durable(
+                &exit_path,
+                b"recovered\n",
+            ) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let existing = crate::updater::self_update::read_private_control_file_bounded(
+                        instance_home,
+                        &exit_path,
+                        BG_CONTROL_MAX_BYTES,
+                        "existing recovered background exit marker",
+                    )?;
+                    anyhow::ensure!(
+                        valid_background_exit_marker(&existing),
+                        "existing recovered background exit marker has invalid content"
+                    );
+                }
+                Err(error) => return Err(error.into()),
+            }
             crate::util::atomic_write::durable_remove_file(&job_path)?;
             crate::util::atomic_write::durable_remove_file(&start_path)?;
             return Ok(());
@@ -1538,14 +1710,17 @@ fn recover_one_background_job(
         return Ok(());
     }
 
-    let queued_unix = crate::updater::self_update::read_private_control_file_bounded(
+    let queued_unix = read_optional_private_control_file(
         instance_home,
         &job_path,
         BG_JOB_MAX_BYTES,
         "unclaimed background recovery job",
-    )
-    .ok()
-    .and_then(|bytes| serde_json::from_slice::<BgWorkerSpec>(&bytes).ok())
+    )?
+    .map(|bytes| {
+        serde_json::from_slice::<BgWorkerSpec>(&bytes)
+            .context("parse unclaimed background recovery job")
+    })
+    .transpose()?
     .map(|spec| spec.queued_unix)
     .unwrap_or(i64::MIN);
     if crate::time::now_unix_i64().saturating_sub(queued_unix) >= BG_UNCLAIMED_RECOVERY_SECS {
@@ -1557,12 +1732,22 @@ fn recover_one_background_job(
 }
 
 fn recover_background_jobs(instance_home: &Path, bgjobs_dir: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(bgjobs_dir) {
+        Ok(_) => ensure_non_link_directory(bgjobs_dir)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!("inspect background job directory {}", bgjobs_dir.display())
+            });
+        }
+    }
     let entries = match std::fs::read_dir(bgjobs_dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(error) => return Err(error).context("scan background recovery directory"),
     };
-    for entry in entries.take(4_096) {
+    let mut matching_jobs = 0usize;
+    for entry in entries {
         let entry = entry.context("read background recovery entry")?;
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
@@ -1573,6 +1758,11 @@ fn recover_background_jobs(instance_home: &Path, bgjobs_dir: &Path) -> Result<()
         else {
             continue;
         };
+        if matching_jobs == 4_096 {
+            warn!("bg_session: recovery scan reached the 4096 pending-job safety bound");
+            break;
+        }
+        matching_jobs += 1;
         recover_one_background_job(instance_home, bgjobs_dir, &BgJobId(id.to_owned()))?;
     }
     Ok(())
@@ -1598,9 +1788,11 @@ fn spawn_background_worker_reaper(
 /// Scan `bgjobs/` for completed-but-undelivered results. Called at the
 /// top of each interactive `run_chat_with` turn ("next idle" delivery).
 ///
-/// Returns a `Vec<(label_inferred, result_text)>` — the caller prints
-/// each entry prefixed with `[btw] <text>`. A `<id>.delivered` marker
-/// prevents re-delivery (idempotent).
+/// Returns claimed, sanitized results. Callers first insert the exact stable
+/// job-bound result into `views.db:raw_turns`. CLI then acknowledges after
+/// stdout succeeds; GUI sends an authenticated notice and acknowledges only
+/// after a `durable=true` frame is materialised as a canonical row. A
+/// `<id>.delivered` marker prevents re-delivery (idempotent).
 ///
 /// `bgjobs_home` should be `~/.neoth/bgjobs` (or a tempdir in tests).
 pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDelivery> {
@@ -1608,8 +1800,22 @@ pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDeliver
     let Some(instance_home) = bgjobs_home.parent() else {
         return delivered;
     };
+    match std::fs::symlink_metadata(bgjobs_home) {
+        Ok(_) => {
+            if let Err(error) = ensure_non_link_directory(bgjobs_home) {
+                warn!(%error, "bg_session: refusing linked background job directory");
+                return delivered;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return delivered,
+        Err(error) => {
+            warn!(%error, "bg_session: cannot inspect background job directory");
+            return delivered;
+        }
+    }
     if let Err(error) = recover_background_jobs(instance_home, bgjobs_home) {
         warn!(%error, "bg_session: recovery scan failed before delivery");
+        return delivered;
     }
     let process = match live_process_snapshot(std::process::id()) {
         Ok(process) => process,
@@ -1622,7 +1828,15 @@ pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDeliver
         Ok(d) => d,
         Err(_) => return delivered, // dir not yet created = no pending results
     };
-    for entry in read_dir.take(4_096).flatten() {
+    let mut pending_results = 0usize;
+    for entry in read_dir {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                warn!(%error, "bg_session: failed to read background delivery entry");
+                continue;
+            }
+        };
         let path = entry.path();
         let fname = match path.file_name().and_then(|f| f.to_str()) {
             Some(f) => f.to_string(),
@@ -1641,37 +1855,90 @@ pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDeliver
         let delivered_path = bgjobs_home.join(format!("{id}.delivered"));
         let delivering_path = bgjobs_home.join(format!("{id}.delivering"));
 
-        // Not done yet.
-        if !exit_path.exists() {
-            continue;
-        }
-        // Already delivered.
-        if delivered_path.exists() {
-            continue;
-        }
-
-        if delivering_path.exists() {
-            let live_claim = crate::updater::self_update::read_private_control_file_bounded(
-                instance_home,
-                &delivering_path,
-                BG_CONTROL_MAX_BYTES,
-                "background delivery claim",
-            )
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<BgDeliveryClaim>(&bytes).ok())
-            .is_some_and(|claim| {
-                claim.schema_version == BG_JOB_SCHEMA_VERSION
-                    && claim.job_id == id
-                    && crate::time::now_unix_i64().saturating_sub(claim.claimed_unix)
-                        < BG_DELIVERY_CLAIM_RECOVERY_SECS
-                    && live_process_snapshot(claim.process_pid)
-                        .is_ok_and(|live| live.process_start_unix == claim.process_start_unix)
-            });
-            if live_claim {
+        // Only bounded, no-follow private markers are authoritative. A link,
+        // special file, malformed claim, or path collision fails this job
+        // closed instead of suppressing or redirecting delivery.
+        match read_optional_private_control_file(
+            instance_home,
+            &exit_path,
+            BG_CONTROL_MAX_BYTES,
+            "background exit marker",
+        ) {
+            Ok(Some(marker)) if valid_background_exit_marker(&marker) => {}
+            Ok(Some(_)) => {
+                warn!(id, "bg_session: invalid background exit marker content");
                 continue;
             }
-            if let Err(error) = crate::util::atomic_write::durable_remove_file(&delivering_path) {
-                warn!(id, %error, "bg_session: failed to recover stale delivery claim");
+            Ok(None) => continue,
+            Err(error) => {
+                warn!(id, %error, "bg_session: invalid background exit marker");
+                continue;
+            }
+        }
+        match read_optional_private_control_file(
+            instance_home,
+            &delivered_path,
+            BG_CONTROL_MAX_BYTES,
+            "background delivered marker",
+        ) {
+            Ok(Some(marker)) if marker == b"delivered\n" => continue,
+            Ok(Some(_)) => {
+                warn!(
+                    id,
+                    "bg_session: invalid background delivered marker content"
+                );
+                continue;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(id, %error, "bg_session: invalid background delivered marker");
+                continue;
+            }
+        }
+        if pending_results == 4_096 {
+            warn!("bg_session: delivery scan reached the 4096 pending-result safety bound");
+            break;
+        }
+        pending_results += 1;
+
+        match read_optional_private_control_file(
+            instance_home,
+            &delivering_path,
+            BG_CONTROL_MAX_BYTES,
+            "background delivery claim",
+        ) {
+            Ok(Some(claim_bytes)) => {
+                let claim = match serde_json::from_slice::<BgDeliveryClaim>(&claim_bytes) {
+                    Ok(claim)
+                        if claim.schema_version == BG_JOB_SCHEMA_VERSION && claim.job_id == id =>
+                    {
+                        claim
+                    }
+                    Ok(_) => {
+                        warn!(id, "bg_session: delivery claim identity mismatch");
+                        continue;
+                    }
+                    Err(error) => {
+                        warn!(id, %error, "bg_session: malformed delivery claim");
+                        continue;
+                    }
+                };
+                let live_claim = crate::time::now_unix_i64().saturating_sub(claim.claimed_unix)
+                    < BG_DELIVERY_CLAIM_RECOVERY_SECS
+                    && live_process_snapshot(claim.process_pid)
+                        .is_ok_and(|live| live.process_start_unix == claim.process_start_unix);
+                if live_claim {
+                    continue;
+                }
+                if let Err(error) = crate::util::atomic_write::durable_remove_file(&delivering_path)
+                {
+                    warn!(id, %error, "bg_session: failed to recover stale delivery claim");
+                    continue;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                warn!(id, %error, "bg_session: invalid background delivery claim");
                 continue;
             }
         }
@@ -1709,7 +1976,9 @@ pub async fn maybe_deliver_bg_result(bgjobs_home: &Path) -> Vec<PendingBgDeliver
         .and_then(|bytes| String::from_utf8(bytes).context("background result is not UTF-8"));
         match text {
             Ok(text) => delivered.push(PendingBgDelivery {
-                text: text.trim_end().to_owned(),
+                job_id: id.to_owned(),
+                text: crate::security::redact::sanitize_tool_output(text.trim_end()),
+                instance_home: instance_home.to_path_buf(),
                 delivering_path,
                 delivered_path,
             }),
@@ -2400,6 +2669,19 @@ mod tests {
         .unwrap();
     }
 
+    fn test_bgjobs_home(instance: &tempfile::TempDir) -> PathBuf {
+        let bgjobs = instance.path().join("bgjobs");
+        std::fs::create_dir(&bgjobs).unwrap();
+        bgjobs
+    }
+
+    fn persist_test_background_receipt(bgjobs_home: &Path, id: &BgJobId, text: &str) {
+        let instance_home = bgjobs_home.parent().unwrap();
+        let mut conn = crate::memory::store::open(&instance_home.join("views.db")).unwrap();
+        crate::memory::transcript_store::persist_background_notice(&mut conn, id.as_str(), 1, text)
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn deliver_returns_empty_when_dir_missing() {
         let dir = std::path::Path::new("/nonexistent_bgjobs_dir_test");
@@ -2421,43 +2703,166 @@ mod tests {
         assert!(results.is_empty(), "no exit marker = not ready");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn delivery_rejects_linked_root_and_control_markers_without_mutation() {
+        use std::os::unix::fs::symlink;
+
+        let instance = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let linked_bgjobs = instance.path().join("linked-bgjobs");
+        symlink(outside.path(), &linked_bgjobs).unwrap();
+        let outside_id = BgJobId::new().unwrap();
+        write_ready_result(outside.path(), &outside_id, b"must stay outside");
+        assert!(maybe_deliver_bg_result(&linked_bgjobs).await.is_empty());
+        assert!(
+            !outside
+                .path()
+                .join(format!("{}.delivering", outside_id.as_str()))
+                .exists()
+        );
+
+        let bgjobs = instance.path().join("bgjobs");
+        std::fs::create_dir(&bgjobs).unwrap();
+        let id = BgJobId::new().unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &bgjobs.join(format!("{}.result", id.as_str())),
+            b"result",
+        )
+        .unwrap();
+        let outside_exit = outside.path().join("outside.exit");
+        crate::util::atomic_write::atomic_write_private(&outside_exit, b"done\n").unwrap();
+        symlink(&outside_exit, bgjobs.join(format!("{}.exit", id.as_str()))).unwrap();
+        assert!(maybe_deliver_bg_result(&bgjobs).await.is_empty());
+        assert!(outside_exit.exists());
+        assert!(!bgjobs.join(format!("{}.delivering", id.as_str())).exists());
+
+        std::fs::remove_file(bgjobs.join(format!("{}.exit", id.as_str()))).unwrap();
+        crate::util::atomic_write::atomic_write_private(
+            &bgjobs.join(format!("{}.exit", id.as_str())),
+            b"done\n",
+        )
+        .unwrap();
+        let broken_target = outside.path().join("missing-delivered-target");
+        symlink(
+            &broken_target,
+            bgjobs.join(format!("{}.delivered", id.as_str())),
+        )
+        .unwrap();
+        assert!(maybe_deliver_bg_result(&bgjobs).await.is_empty());
+        assert!(!broken_target.exists());
+        assert!(!bgjobs.join(format!("{}.delivering", id.as_str())).exists());
+    }
+
+    #[tokio::test]
+    async fn malformed_delivery_claim_fails_closed_without_being_reclaimed() {
+        let instance = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&instance);
+        let id = BgJobId::new().unwrap();
+        write_ready_result(&bgjobs, &id, b"result");
+        let delivering = bgjobs.join(format!("{}.delivering", id.as_str()));
+        crate::util::atomic_write::atomic_write_private(&delivering, b"not-json").unwrap();
+
+        assert!(maybe_deliver_bg_result(&bgjobs).await.is_empty());
+        assert_eq!(std::fs::read(&delivering).unwrap(), b"not-json");
+    }
+
     #[tokio::test]
     async fn deliver_returns_result_when_exit_present() {
         let tmp = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&tmp);
         let id = BgJobId::new().unwrap();
-        write_ready_result(tmp.path(), &id, b"background-answer");
+        write_ready_result(&bgjobs, &id, b"background-answer");
 
-        let mut results = maybe_deliver_bg_result(tmp.path()).await;
+        let mut results = maybe_deliver_bg_result(&bgjobs).await;
         assert_eq!(results.len(), 1);
         let result = results.pop().unwrap();
         assert_eq!(result.text(), "background-answer");
+        persist_test_background_receipt(&bgjobs, &id, "background-answer");
         result.acknowledge().unwrap();
     }
 
     #[tokio::test]
     async fn deliver_is_idempotent_via_delivered_marker() {
         let tmp = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&tmp);
         let id = BgJobId::new().unwrap();
-        write_ready_result(tmp.path(), &id, b"once");
+        write_ready_result(&bgjobs, &id, b"once");
 
-        let mut r1 = maybe_deliver_bg_result(tmp.path()).await;
+        let mut r1 = maybe_deliver_bg_result(&bgjobs).await;
         assert_eq!(r1.len(), 1);
+        persist_test_background_receipt(&bgjobs, &id, "once");
         r1.pop().unwrap().acknowledge().unwrap();
 
         // Second call sees the .delivered marker and returns nothing.
-        let r2 = maybe_deliver_bg_result(tmp.path()).await;
+        let r2 = maybe_deliver_bg_result(&bgjobs).await;
         assert!(r2.is_empty(), "second delivery must be idempotent");
+    }
+
+    #[tokio::test]
+    async fn gui_acknowledges_only_a_ready_claimed_background_result() {
+        let instance = tempfile::tempdir().unwrap();
+        let bgjobs_home = instance.path().join("bgjobs");
+        std::fs::create_dir(&bgjobs_home).unwrap();
+        let id = BgJobId::new().unwrap();
+        write_ready_result(&bgjobs_home, &id, b"visible in canonical chat");
+
+        let pending = maybe_deliver_bg_result(&bgjobs_home).await;
+        assert_eq!(pending.len(), 1);
+        drop(pending);
+
+        let error = acknowledge_bg_result_delivery(&bgjobs_home, id.as_str()).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no exact durable transcript receipt"),
+            "{error:#}"
+        );
+        assert!(
+            bgjobs_home
+                .join(format!("{}.delivering", id.as_str()))
+                .exists(),
+            "failed durable verification must leave the delivery recoverable"
+        );
+
+        let mut conn = crate::memory::store::open(&instance.path().join("views.db")).unwrap();
+        crate::memory::transcript_store::persist_background_notice(
+            &mut conn,
+            id.as_str(),
+            1,
+            "visible in canonical chat",
+        )
+        .unwrap();
+        acknowledge_bg_result_delivery(&bgjobs_home, id.as_str()).unwrap();
+        assert!(
+            bgjobs_home
+                .join(format!("{}.delivered", id.as_str()))
+                .exists()
+        );
+        assert!(
+            !bgjobs_home
+                .join(format!("{}.delivering", id.as_str()))
+                .exists()
+        );
+        acknowledge_bg_result_delivery(&bgjobs_home, id.as_str()).unwrap();
+
+        assert!(
+            acknowledge_bg_result_delivery(&bgjobs_home, "../escape").is_err(),
+            "arbitrary paths must fail before filesystem access"
+        );
     }
 
     #[tokio::test]
     async fn deliver_trims_trailing_whitespace() {
         let tmp = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&tmp);
         let id = BgJobId::new().unwrap();
-        write_ready_result(tmp.path(), &id, b"answer\n\n");
+        write_ready_result(&bgjobs, &id, b"answer\n\n");
 
-        let mut results = maybe_deliver_bg_result(tmp.path()).await;
+        let mut results = maybe_deliver_bg_result(&bgjobs).await;
         let result = results.pop().unwrap();
         assert_eq!(result.text(), "answer");
+        persist_test_background_receipt(&bgjobs, &id, "answer");
         result.acknowledge().unwrap();
     }
 
@@ -2501,36 +2906,35 @@ mod tests {
     async fn spawn_and_deliver_end_to_end() {
         // Full integration: spawn → wait for exit marker → deliver.
         let dir = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&dir);
 
         // Write the result + exit markers manually to simulate the spawn
         // task completing (we can't redirect FreedomConfig::default_neoth_home
         // to dir without a process-wide env change).
         let id = BgJobId("deadbeef1234abcd".to_string());
-        write_ready_result(dir.path(), &id, b"end-to-end-result");
+        write_ready_result(&bgjobs, &id, b"end-to-end-result");
 
-        let mut results = maybe_deliver_bg_result(dir.path()).await;
+        let mut results = maybe_deliver_bg_result(&bgjobs).await;
         assert_eq!(results.len(), 1, "result should be delivered");
         let result = results.pop().unwrap();
         assert!(result.text().contains("end-to-end-result"));
+        persist_test_background_receipt(&bgjobs, &id, "end-to-end-result");
         result.acknowledge().unwrap();
 
         // Idempotent.
-        let r2 = maybe_deliver_bg_result(dir.path()).await;
+        let r2 = maybe_deliver_bg_result(&bgjobs).await;
         assert!(r2.is_empty());
     }
 
     #[tokio::test]
     async fn multiple_pending_results_all_delivered() {
         let tmp = tempfile::tempdir().unwrap();
+        let bgjobs = test_bgjobs_home(&tmp);
         for suffix in ["aaa", "bbb", "ccc"] {
             let id = format!("{suffix:0<16}");
-            write_ready_result(
-                tmp.path(),
-                &BgJobId(id),
-                format!("result-{suffix}").as_bytes(),
-            );
+            write_ready_result(&bgjobs, &BgJobId(id), format!("result-{suffix}").as_bytes());
         }
-        let results = maybe_deliver_bg_result(tmp.path()).await;
+        let results = maybe_deliver_bg_result(&bgjobs).await;
         let mut texts = results
             .iter()
             .map(|result| result.text().to_owned())
@@ -2541,6 +2945,11 @@ mod tests {
         assert!(texts.iter().any(|result| result == "result-bbb"));
         assert!(texts.iter().any(|result| result == "result-ccc"));
         for result in results {
+            persist_test_background_receipt(
+                &bgjobs,
+                &BgJobId(result.job_id().to_owned()),
+                result.text(),
+            );
             result.acknowledge().unwrap();
         }
     }

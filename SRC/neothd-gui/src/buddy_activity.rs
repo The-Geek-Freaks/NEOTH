@@ -11,6 +11,8 @@
 //! in-progress=amber stay meaning-bearing — the same semantics the surfaces use
 //! quietly, the Buddy uses brightly.
 
+use crate::chat_stream_phase::ChatStreamPhase;
+
 // Variants are fired from two sources: GUI clicks (chat, channel-test, kanban,
 // autonomy, memory-forget, settings writes) and the WAL follower in
 // `gui_stream.rs` (dreaming, council, self-improve, cron, loops, agents,
@@ -25,10 +27,12 @@ pub enum GuiActivity {
     Idle,
 
     // ── Chat ─────────────────────────────────────────────────────────
-    ChatThinking,
-    ChatStreaming,
-    ChatDone,
-    ChatError,
+    ChatWaiting,
+    ChatReceiving,
+    ChatFinalizing,
+    ChatComplete,
+    ChatCancelled,
+    ChatFailed,
 
     // ── Memory ───────────────────────────────────────────────────────
     MemoryRecall,
@@ -82,10 +86,12 @@ impl GuiActivity {
         match self {
             GuiActivity::Idle => ("idle", "ready"),
 
-            GuiActivity::ChatThinking => ("thinking", "thinking…"),
-            GuiActivity::ChatStreaming => ("working", "on it"),
-            GuiActivity::ChatDone => ("success", "done ✓"),
-            GuiActivity::ChatError => ("error", "error"),
+            GuiActivity::ChatWaiting => ("thinking", "waiting…"),
+            GuiActivity::ChatReceiving => ("working", "receiving…"),
+            GuiActivity::ChatFinalizing => ("loading", "finalizing…"),
+            GuiActivity::ChatComplete => ("success", "done ✓"),
+            GuiActivity::ChatCancelled => ("idle", "cancelled"),
+            GuiActivity::ChatFailed => ("error", "error"),
 
             GuiActivity::MemoryRecall => ("memory", "remembering"),
             GuiActivity::MemoryForget => ("consent", "scrubbing"),
@@ -114,6 +120,19 @@ impl GuiActivity {
             GuiActivity::SettingsError => ("alert", "action failed"),
 
             GuiActivity::QuotaBreached => ("problem", "disk quota hit"),
+        }
+    }
+}
+
+impl From<ChatStreamPhase> for GuiActivity {
+    fn from(phase: ChatStreamPhase) -> Self {
+        match phase {
+            ChatStreamPhase::Waiting => Self::ChatWaiting,
+            ChatStreamPhase::Receiving => Self::ChatReceiving,
+            ChatStreamPhase::Finalizing => Self::ChatFinalizing,
+            ChatStreamPhase::Complete => Self::ChatComplete,
+            ChatStreamPhase::Cancelled => Self::ChatCancelled,
+            ChatStreamPhase::Failed => Self::ChatFailed,
         }
     }
 }
@@ -157,10 +176,12 @@ mod tests {
 
     const ALL: &[GuiActivity] = &[
         GuiActivity::Idle,
-        GuiActivity::ChatThinking,
-        GuiActivity::ChatStreaming,
-        GuiActivity::ChatDone,
-        GuiActivity::ChatError,
+        GuiActivity::ChatWaiting,
+        GuiActivity::ChatReceiving,
+        GuiActivity::ChatFinalizing,
+        GuiActivity::ChatComplete,
+        GuiActivity::ChatCancelled,
+        GuiActivity::ChatFailed,
         GuiActivity::MemoryRecall,
         GuiActivity::MemoryForget,
         GuiActivity::ConsentGate,
@@ -196,14 +217,54 @@ mod tests {
     }
 
     #[test]
-    fn chat_lifecycle_moods_are_distinct() {
-        assert_ne!(
-            GuiActivity::ChatThinking.mood().0,
-            GuiActivity::ChatStreaming.mood().0
+    fn chat_lifecycle_maps_all_six_phases() {
+        assert_eq!(GuiActivity::ChatWaiting.mood(), ("thinking", "waiting…"));
+        assert_eq!(GuiActivity::ChatReceiving.mood(), ("working", "receiving…"));
+        assert_eq!(
+            GuiActivity::ChatFinalizing.mood(),
+            ("loading", "finalizing…")
         );
-        assert_ne!(
-            GuiActivity::ChatDone.mood().0,
-            GuiActivity::ChatError.mood().0
+        assert_eq!(GuiActivity::ChatComplete.mood(), ("success", "done ✓"));
+        assert_eq!(GuiActivity::ChatCancelled.mood(), ("idle", "cancelled"));
+        assert_eq!(GuiActivity::ChatFailed.mood(), ("error", "error"));
+    }
+
+    #[test]
+    fn canonical_chat_phases_map_exhaustively_to_buddy_activities() {
+        let expected = [
+            GuiActivity::ChatWaiting,
+            GuiActivity::ChatReceiving,
+            GuiActivity::ChatFinalizing,
+            GuiActivity::ChatComplete,
+            GuiActivity::ChatCancelled,
+            GuiActivity::ChatFailed,
+        ];
+
+        assert_eq!(
+            ChatStreamPhase::ALL.map(GuiActivity::from),
+            expected,
+            "every canonical stream phase must retain its Buddy activity"
         );
+    }
+
+    #[test]
+    fn chat_lifecycle_moods_and_captions_are_distinct() {
+        let phases = [
+            GuiActivity::ChatWaiting,
+            GuiActivity::ChatReceiving,
+            GuiActivity::ChatFinalizing,
+            GuiActivity::ChatComplete,
+            GuiActivity::ChatCancelled,
+            GuiActivity::ChatFailed,
+        ];
+
+        for (index, activity) in phases.iter().enumerate() {
+            let (mood, caption) = activity.mood();
+            for other in &phases[index + 1..] {
+                let (other_mood, other_caption) = other.mood();
+                assert_ne!(mood, other_mood, "{activity:?} and {other:?}");
+                assert_ne!(caption, other_caption, "{activity:?} and {other:?}");
+            }
+        }
     }
 }

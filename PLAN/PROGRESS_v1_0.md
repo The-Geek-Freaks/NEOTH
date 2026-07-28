@@ -19,6 +19,66 @@
 > deserialization. The coherent CLI/GUI/Buddy/Doctor Topology envelope remains
 > an open follow-up; no broad cluster box is closed here.
 >
+> **Dream reload/commit checkpoint 2026-07-28 (`3365f2f0`; counts unchanged,
+> `GOLD-LF-P2-23` remains open):** `dream.cron_enabled` now drives the real
+> scheduler and operator readback. Each accepted config is published together
+> with its epoch and generation-bound commit gate as one atomic snapshot.
+> Reload/shutdown retire and drain the old generation before replacement or
+> cancellation; every irreversible provider, persistence, Obsidian,
+> self-improve, queue and WAL leaf holds the corresponding lease through the
+> actual effect. `Strict`, `Custom` and explicit disable fail closed at both
+> fleet admission and effect commit. The fleet owns and joins the real task,
+> shutdown retirement is permanent, and even unrelated accepted reloads replace
+> a still-desired or just-finished Dream with the exact new snapshot.
+> Deterministic race/effect tests, file-scoped rustfmt/diff checks and an
+> independent final review passed with no HIGH/MEDIUM finding. P2-23 remains
+> open for the non-coercive GUI onboarding/readback control plus consolidated
+> runtime/release gates.
+>
+> **Request-bound GUI/Buddy stream lifecycle checkpoint 2026-07-28 (counts
+> unchanged; `GOLD-LF-P2-26` remains open):** the provider subprocess now emits
+> an authenticated provider-complete frame before post-reply pipelines and an
+> authenticated final frame only after they succeed. A pure request reducer
+> owns Waiting/Receiving/Finalizing and terminal state, cancellation, exact
+> surface identity and a one-shot provider-dispatch claim. Main Chat and Buddy
+> consume the same canonical conversation rows, child supervisor and phase
+> projection; queued callbacks revalidate identity/cancellation/phase at UI
+> delivery, model overrides and private consent tokens are request-bound, and
+> minimizing/restoring or opening retained history mid-stream retains Stop and
+> visible progress. Provider launch is now a private, bounded stdin envelope:
+> the child blocks on it before config/provider/hooks/tools, the subprocess is
+> supervised before an atomic request gate can commit, and Stop winning that
+> gate prevents the envelope and therefore provider egress. The authenticated
+> stream nonce is no longer inherited through the environment. A failed process
+> kill remains supervised, watchdog-active and explicitly retryable instead of
+> being reported as stopped. Provider routes can enter turn orchestration only
+> through one typed framing seam. Windows parks the child in a kill-on-close Job
+> before launch commit. Linux starts a manager-owned transient systemd service
+> (`Delegate=no`, `KillMode=control-group`) whose private guardian validates the
+> GUI identity, hides the user D-Bus/runtime directory, cgroup ancestors and
+> host process namespace, and treats missing trusted manager or namespace
+> capabilities as a machine-readable fail-closed launch error; no process-group
+> fallback remains. Provisioned Linux qualification makes missing containment
+> capabilities fatal instead of silently skipping the adversarial
+> crash/double-fork/escape suite. Other unsupported Unix targets remain
+> explicitly fail closed. Executable tests cover stream/non-stream,
+> composed/direct routing and write failure. Completed background jobs receive
+> an atomic, exact stable-id transcript receipt before an authenticated typed
+> notice may claim `durable=true`, materialise idempotently in the canonical
+> conversation, restore from that receipt after restart, and only then commit
+> the filesystem delivery marker. Incognito neither creates nor claims durable
+> background work; DB/frame/UI/ACK crash boundaries remain recoverable. Split
+> control lines never render as assistant text, a 16 MiB notice is decoded once
+> instead of quadratically rescanned, and aggregate GUI stdout is bounded.
+> Reduced Motion
+> is static and the three phases expose
+> progress semantics to assistive technology. Real transport reconnect/resume is
+> not implemented: retry and auto-continue intentionally create a new request,
+> so P2-26 cannot close. File-scoped rustfmt/static wiring/diff checks and
+> independent code/security/Slint reviews are the construction gate; the
+> consolidated Cargo/Slint/release matrix remains deferred until construction
+> is complete.
+>
 > **Cognitive Transport / Cluster forensic adoption checkpoint 2026-07-27
 > (`GOLD-NCT-00` complete; 28 implementation/adoption boxes OPEN):** the
 > complete 2,481-line research plan is now tracked

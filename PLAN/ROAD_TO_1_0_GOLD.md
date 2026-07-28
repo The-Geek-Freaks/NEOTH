@@ -3130,9 +3130,73 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-P2-21 — neoth-archive-bridge Obsidian plugin:** ship the pinned external TypeScript plugin and NEOTH pairing/sync contract together, including install/update/repair/uninstall, vault preservation, offline behavior and clean-machine artifact tests. Source: archive-bridge recovery row.
 - [ ] **GOLD-LF-P2-22 — Per-counterparty ingress-clustering consent:** attach verified counterparty consent to every channel episode used by dreaming/clustering, default deny on unknown/revoked consent, and prove isolation, revocation and audit behavior. Source: ADR-005.
 - [ ] **GOLD-LF-P2-23 — dream.cron_enabled plus wizard nudge:** add the authoritative setting, hot-reload scheduler consumption and non-coercive CLI/GUI onboarding control; Strict and Custom fail closed and config/readback tests prove the actual runtime state. Source: ADR-003.
+  - **RUNTIME/OPERATOR CORE COMPLETE, ITEM REMAINS OPEN FOR GUI ONBOARDING
+    (2026-07-28, `3365f2f0`):** `dream.cron_enabled` is authoritative in
+    config, readback and doctor/operator surfaces. Accepted reloads publish the
+    config, epoch and a generation-bound commit gate as one atomic snapshot.
+    Reload and shutdown retire and drain the previous gate before replacement
+    or cancellation, so an old Dream generation cannot commit provider work,
+    JSONL/Obsidian output, self-improve proposals, queue mutations or its WAL
+    acknowledgement after policy closure. `Strict`, `Custom` and an explicit
+    disable are constructively excluded from fleet spawn and fail closed at
+    every irreversible leaf. The fleet owns and joins the real task, and every
+    accepted reload restarts a still-desired Dream from the exact new snapshot,
+    including finished-task races. Deterministic adversarial tests cover atomic
+    snapshot pairing, lease-vs-retirement, permanent shutdown retirement,
+    unrelated reload restart, every typed effect and `Strict`/`Custom`.
+    Independent final review found no HIGH/MEDIUM issue; file-scoped rustfmt and
+    diff checks passed. The checkbox deliberately stays open until the
+    non-coercive GUI onboarding/readback control and consolidated runtime gates
+    are implemented and verified.
 - [ ] **GOLD-LF-P2-24 — BGE-M3 fallback embedding model:** implement explicit opt-in acquisition, exact artifact verification, routing/readiness/fallback semantics and full GUI/CLI/Buddy lifecycle parity. Source: ADR-004.
 - [ ] **GOLD-LF-P2-25 — First-class Voice Call surface:** implement the fully gated call adapter, account/config/credential/media/session lifecycle, typed health and receipts, all-surface onboarding and clean-machine qualification. Source: Plan 001 channel ledger.
 - [ ] **GOLD-LF-P2-26 — Three-phase streaming indicator:** drive waiting/receiving/finalizing UI state from the canonical stream controller, including cancellation/error/reconnect and reduced-motion behavior; no timer-only fake progress. Source: GUI-Polish recovery row.
+  - **IMPLEMENTED CORE/SURFACE LIFECYCLE, REMAINS OPEN FOR REAL RECONNECT
+    (2026-07-28):** one request-bound reducer now owns
+    `waiting -> receiving -> finalizing -> complete|cancelled|failed`; timer
+    activity is presentation-only. Authenticated provider/final completion
+    frames, exact child ownership, cancellation, a one-shot dispatch claim and
+    UI-delivery-time request/surface/phase validation prevent stale callbacks,
+    duplicate paid launches and post-cancel regressions. The provider child
+    blocks before config/provider/hooks/tools on a bounded private stdin launch
+    envelope; it is parked under exact request ownership before an atomic
+    launch gate commits. Stop winning the gate sends no envelope and therefore
+    permits no provider egress. The authenticated stream nonce is request-local
+    and no longer inherited through the environment. Private consent authority
+    is request-bound; a stale surface callback cannot consume another request's
+    token. Windows commits launch only after kill-on-close Job ownership.
+    Linux commits only after a manager-owned transient systemd service enters a
+    private namespace guardian with `Delegate=no`, `KillMode=control-group`,
+    hidden user D-Bus/runtime directory, hidden cgroup ancestors and a verified
+    GUI pidfd; untrusted/missing manager, namespace or tool capabilities fail
+    closed with machine-readable errors and never fall back to process groups.
+    Provisioned Linux qualification makes a missing containment capability
+    fatal and exercises crash, double-fork, cgroup and D-Bus escape attempts.
+    Unsupported Unix targets remain explicitly fail closed. All provider routes
+    converge through one typed stream-framing seam.
+    Background-job results are transactionally inserted once into `views.db`
+    under their stable job id before a notice may advertise `durable=true`.
+    The authenticated notice is then inserted idempotently into canonical rows
+    before the triggering request; only an exact DB receipt plus successful
+    materialisation can commit the filesystem delivery marker. Startup restores
+    persisted notices, Incognito neither creates nor claims durable background
+    work, and every crash boundary remains recoverable. Split control frames
+    stay hidden until complete; a 16 MiB result is decoded once instead of
+    quadratically rescanned, and aggregate GUI stdout is bounded. Kill failures
+    retain child ownership, watchdog and a
+    visible retry error instead of lying about cancellation. Main Chat and Buddy
+    now project the same canonical operator/assistant rows and the same phase
+    into the full conversation and companion overlay across
+    minimize/restore/Stop/history;
+    Buddy completion refreshes canonical history. Reduced Motion renders static
+    phase affordances and screen readers receive a stable progress indicator.
+    The item deliberately stays open: current retry/auto-continue paths start a
+    new request and are not a transport reconnect. A real reconnect producer
+    plus its resume/duplicate/cancel/error contract is still required.
+    File-scoped rustfmt, static callback/wiring review, independent
+    code/security/Slint review and diff checks are the construction evidence;
+    Cargo/Slint runtime gates remain deferred to the consolidated integration
+    wave.
 - [ ] **GOLD-LF-P2-27 — Recall citation chips:** render bound source/provenance and WarmHit score from typed recall results, with keyboard/screen-reader behavior and stale/missing-source handling. Source: GUI-Polish recovery row.
 - [ ] **GOLD-LF-P2-28 — Non-star response quality signal:** add a privacy-preserving per-response feedback contract that feeds the intended evaluation/self-improve path, supports correction/removal and has CLI/GUI/Buddy parity. Source: FEATURE_EVAL.md C-18.
 - [ ] **GOLD-LF-P2-29 — Live TPS meter:** compute a stable one-second rolling throughput from real streamed tokens/events, reset correctly across messages/providers and expose unavailable/paused/error states without invented values. Source: GUI-Polish R-03.

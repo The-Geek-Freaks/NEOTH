@@ -4,9 +4,10 @@
 //! preflight creates a short-lived challenge and returns its random secret on
 //! stdout to the directly spawned GUI process. `decide-chat` accepts that
 //! secret only on stdin. `allow-once` produces a second short-lived token,
-//! again transferred on stdin to `neoth chat`. Both records are mode-private,
-//! SHA-bound to the exact public config bytes and canonical required-route
-//! set, TTL-limited, and consumed before granting any authority.
+//! transferred inside a bounded, request-bound launch envelope on stdin to
+//! `neoth chat`. Both records are mode-private, SHA-bound to the exact public
+//! config bytes and canonical required-route set, TTL-limited, and consumed
+//! before granting any authority.
 
 use std::io::{Read as _, Seek as _, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -16,7 +17,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq as _;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::cli::OutputFormat;
 use crate::cli::init::ProviderKind;
@@ -195,6 +196,20 @@ struct ExpiryRecord {
 pub(crate) struct ConsumedChatConsent {
     pub(crate) config: FreedomConfig,
     pub(crate) ephemeral: EphemeralConsent,
+}
+
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(deny_unknown_fields)]
+struct GuiChatLaunchEnvelope {
+    version: u8,
+    launch: String,
+    stream_control_token: String,
+    consent_token: Option<String>,
+}
+
+pub(crate) struct GuiChatLaunch {
+    pub(crate) stream_control_token: Zeroizing<String>,
+    pub(crate) consent_token: Option<Zeroizing<String>>,
 }
 
 struct PreflightResult {
@@ -1172,6 +1187,49 @@ fn split_one_time_token(token: &str) -> Result<(&str, &str)> {
     Ok((id, secret))
 }
 
+fn parse_gui_chat_launch_envelope(input: &str) -> Result<GuiChatLaunch> {
+    let envelope: GuiChatLaunchEnvelope =
+        serde_json::from_str(input).context("parse private GUI chat launch envelope")?;
+    anyhow::ensure!(
+        envelope.version == 1,
+        "unsupported private GUI chat launch envelope version"
+    );
+    anyhow::ensure!(
+        envelope.launch == "commit",
+        "private GUI chat launch envelope is not a commit"
+    );
+
+    // The deserialized wire values are independently zeroized by
+    // `GuiChatLaunchEnvelope::drop`; clone them into the longer-lived
+    // request-scoped containers before validating or returning them.
+    let stream_control_token = Zeroizing::new(envelope.stream_control_token.clone());
+    anyhow::ensure!(
+        stream_control_token.len() == 32
+            && stream_control_token
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()),
+        "private GUI chat stream control token must be exactly 32 ASCII hex characters"
+    );
+
+    let consent_token = envelope
+        .consent_token
+        .as_ref()
+        .map(|token| Zeroizing::new(token.clone()));
+    if let Some(token) = consent_token.as_deref() {
+        split_one_time_token(token).context("invalid consent token in GUI chat launch envelope")?;
+    }
+
+    Ok(GuiChatLaunch {
+        stream_control_token,
+        consent_token,
+    })
+}
+
+pub(crate) fn read_gui_chat_launch_from_stdin() -> Result<GuiChatLaunch> {
+    let envelope = read_secret_from_stdin("private GUI chat launch envelope")?;
+    parse_gui_chat_launch_envelope(&envelope)
+}
+
 fn consume_token_at(
     home: &Path,
     config_path: &Path,
@@ -1225,12 +1283,12 @@ fn consume_token_at(
     })
 }
 
-pub(crate) fn consume_chat_token_from_stdin(
+pub(crate) fn consume_chat_token_value(
     home: &Path,
     config_path: &Path,
+    token: &str,
 ) -> Result<ConsumedChatConsent> {
-    let token = read_secret_from_stdin("GUI one-time consent token")?;
-    consume_token_at(home, config_path, &token, crate::time::now_unix_secs())
+    consume_token_at(home, config_path, token, crate::time::now_unix_secs())
 }
 
 pub(crate) fn verify_gui_mutation_binding(
@@ -1275,6 +1333,115 @@ mod tests {
         config.inference.right.provider = Some(InferenceProvider::OpenAi);
         config.inference.cerebellum.provider = Some(InferenceProvider::AnthropicApi);
         config
+    }
+
+    const TEST_STREAM_CONTROL_TOKEN: &str = "0123456789abcdef0123456789ABCDEF";
+    const TEST_CONSENT_TOKEN: &str = concat!(
+        "550e8400-e29b-41d4-a716-446655440000.",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+
+    #[test]
+    fn gui_chat_launch_envelope_accepts_exact_commit_contract() {
+        let encoded = serde_json::json!({
+            "version": 1,
+            "launch": "commit",
+            "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+            "consent_token": TEST_CONSENT_TOKEN,
+        })
+        .to_string();
+        assert!(
+            encoded.len() <= MAX_STDIN_SECRET_BYTES as usize,
+            "the complete launch contract must fit the bounded stdin reader"
+        );
+        let launch = parse_gui_chat_launch_envelope(&encoded).unwrap();
+
+        assert_eq!(
+            launch.stream_control_token.as_str(),
+            TEST_STREAM_CONTROL_TOKEN
+        );
+        assert_eq!(
+            launch.consent_token.as_ref().map(|token| token.as_str()),
+            Some(TEST_CONSENT_TOKEN)
+        );
+
+        let launch_without_consent = parse_gui_chat_launch_envelope(
+            &serde_json::json!({
+                "version": 1,
+                "launch": "commit",
+                "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                "consent_token": null,
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert!(launch_without_consent.consent_token.is_none());
+    }
+
+    #[test]
+    fn gui_chat_launch_envelope_rejects_unbound_or_malformed_values() {
+        for (name, envelope) in [
+            (
+                "wrong version",
+                serde_json::json!({
+                    "version": 2,
+                    "launch": "commit",
+                    "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                    "consent_token": null,
+                }),
+            ),
+            (
+                "wrong launch decision",
+                serde_json::json!({
+                    "version": 1,
+                    "launch": "cancel",
+                    "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                    "consent_token": null,
+                }),
+            ),
+            (
+                "short stream token",
+                serde_json::json!({
+                    "version": 1,
+                    "launch": "commit",
+                    "stream_control_token": "abcd",
+                    "consent_token": null,
+                }),
+            ),
+            (
+                "non-hex stream token",
+                serde_json::json!({
+                    "version": 1,
+                    "launch": "commit",
+                    "stream_control_token": "gggggggggggggggggggggggggggggggg",
+                    "consent_token": null,
+                }),
+            ),
+            (
+                "malformed consent token",
+                serde_json::json!({
+                    "version": 1,
+                    "launch": "commit",
+                    "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                    "consent_token": "not-a-token",
+                }),
+            ),
+            (
+                "unknown field",
+                serde_json::json!({
+                    "version": 1,
+                    "launch": "commit",
+                    "stream_control_token": TEST_STREAM_CONTROL_TOKEN,
+                    "consent_token": null,
+                    "extra": true,
+                }),
+            ),
+        ] {
+            assert!(
+                parse_gui_chat_launch_envelope(&envelope.to_string()).is_err(),
+                "{name} unexpectedly passed validation"
+            );
+        }
     }
 
     #[tokio::test]

@@ -125,7 +125,7 @@ pub async fn run_deep_research(
 
     for (round_idx, query) in queries.iter().enumerate().take(budget.max_rounds as usize) {
         rounds_done += 1;
-        println!(
+        eprintln!(
             "\n[deep-research] round {}/{} — searching: {}",
             rounds_done, budget.max_rounds, query
         );
@@ -172,7 +172,7 @@ pub async fn run_deep_research(
         }
     }
 
-    println!(
+    eprintln!(
         "\n[deep-research] synthesising {} evidence blocks…",
         all_evidence.len()
     );

@@ -60,9 +60,12 @@ export struct ChatMessage {
     /// Display timestamp, pre-formatted by the Rust side. Keeps
     /// Slint's expression layer free of date logic.
     timestamp: string,
-    /// `true` while the daemon is still streaming this bubble. Used
-    /// to render a pulsing cursor at the tail.
-    streaming: bool,
+    /// Canonical Rust-owned request identity. Empty for persisted/history
+    /// rows; live callbacks may mutate only the row with their exact id.
+    request-id: string,
+    /// `waiting | receiving | finalizing | complete | cancelled | failed`.
+    /// Timers may animate an active phase but never advance it.
+    stream-phase: string,
     /// GOLD-ADAPT-ODY-02/05 — per-message metrics chip ("ctx 6% · 38 tok/s")
     /// + the click-popup detail block. Pre-formatted Rust-side
     /// (`panel_logic::format_stream_metrics`); empty = no chip.
@@ -151,6 +154,15 @@ component ChatBubble inherits Rectangle {
 
     /// Per-bubble collapse state for the code panel body. Starts expanded.
     private property <bool> code-collapsed: false;
+    private property <bool> stream-active:
+        root.message.stream-phase == "waiting"
+        || root.message.stream-phase == "receiving"
+        || root.message.stream-phase == "finalizing";
+    private property <string> stream-label:
+        root.message.stream-phase == "waiting" ? "Waiting for provider"
+        : root.message.stream-phase == "receiving" ? "Receiving response"
+        : root.message.stream-phase == "finalizing" ? "Finalizing response"
+        : "";
 
     // Height now tracks the named inner VerticalLayout so the code panel
     // (when present) contributes to the bubble's natural height.
@@ -195,11 +207,12 @@ component ChatBubble inherits Rectangle {
                 spacing: Theme.space-tight;
 
                 body := Text {
-                    // Streaming caret blinks ▋↔▏ (block-element glyphs share
+                    // Receiving caret blinks ▋↔▏ (block-element glyphs share
                     // one advance width — no reflow jitter). Static ▋ when
-                    // motion is off (Theme.animation-mode == 0).
-                    text: root.message.text + (root.message.streaming
-                        ? (Theme.animation-mode == 0 || mod(animation-tick(), 1060ms) < 530ms
+                    // motion is off or reduced (Theme.animation-mode 0/1).
+                    // Waiting and Finalizing have their own truthful status row.
+                    text: root.message.text + (root.message.stream-phase == "receiving"
+                        ? (Theme.animation-mode != 2 || mod(animation-tick(), 1060ms) < 530ms
                             ? " ▋" : " ▏")
                         : "");
                     font-family: Theme.font-display;
@@ -210,6 +223,23 @@ component ChatBubble inherits Rectangle {
                         ? Theme.accent-pink
                         : (root.message.role == "system" ? Theme.text-muted : Theme.text-primary);
                     wrap: word-wrap;
+                }
+
+                if root.stream-active: Text {
+                    text: root.stream-label
+                        + (root.message.stream-phase == "waiting"
+                            && Theme.animation-mode == 2
+                            ? (mod(animation-tick(), 1200ms) < 400ms ? " ."
+                                : (mod(animation-tick(), 1200ms) < 800ms ? " .." : " ..."))
+                            : "");
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-caption;
+                    color: root.message.stream-phase == "finalizing"
+                        ? Theme.accent-cyan
+                        : Theme.text-muted;
+                    accessible-role: progress-indicator;
+                    accessible-label: "Response status";
+                    accessible-value: root.stream-label;
                 }
 
                 if root.message.timestamp != "": HorizontalLayout {
@@ -761,6 +791,7 @@ component Composer inherits Rectangle {
                         color: x-touch.has-hover ? Theme.consent : Theme.text-tertiary;
                         vertical-alignment: center;
                         x-touch := TouchArea {
+                            enabled: !root.send-in-flight;
                             clicked => { root.remove-attachment(i); }
                         }
                     }
@@ -793,6 +824,7 @@ component Composer inherits Rectangle {
                     }
                 }
                 qa-touch := TouchArea {
+                    enabled: !root.send-in-flight;
                     mouse-cursor: pointer;
                     clicked => { root.draft = cmd + " "; }
                 }
@@ -870,6 +902,7 @@ component Composer inherits Rectangle {
                 width: parent.width - Theme.space-tight * 2;
                 height: parent.height - Theme.space-tight * 2;
                 text <=> root.draft;
+                enabled: !root.send-in-flight;
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
                 color: Theme.text-primary;
@@ -879,6 +912,9 @@ component Composer inherits Rectangle {
                 vertical-alignment: top;
 
                 key-pressed(event) => {
+                    if (root.send-in-flight) {
+                        return accept;
+                    }
                     if (event.text == "\n") {
                         // Shift+Enter → let TextInput insert the newline.
                         if (event.modifiers.shift) {
@@ -907,6 +943,7 @@ component Composer inherits Rectangle {
             }
 
             TouchArea {
+                enabled: !root.send-in-flight;
                 clicked => { composer-input.focus(); }
             }
         }
@@ -1541,6 +1578,7 @@ export component ChatView inherits Rectangle {
                                             x: Theme.space-base;
                                         }
                                         starter-ta := TouchArea {
+                                            enabled: !root.send-in-flight;
                                             mouse-cursor: pointer;
                                             clicked => { root.starter-clicked(prompt); }
                                         }
@@ -1551,7 +1589,7 @@ export component ChatView inherits Rectangle {
 
                         for msg[idx] in root.messages: ChatBubble {
                             message: msg;
-                            mutation-actions-enabled: !root.history-active;
+                            mutation-actions-enabled: !root.history-active && !root.send-in-flight;
                             bubble-index: idx;
                             bubble-max-width: 560px;
                             copy-clicked => { root.message-copy(idx); }
@@ -1710,23 +1748,43 @@ export component ChatView inherits Rectangle {
                 stop-stream-clicked => { root.stop-stream-clicked(); }
             }
             if root.history-active: Rectangle {
-                height: max(52px, history-readonly-label.preferred-height + Theme.space-base * 2);
+                height: max(52px, history-readonly-body.preferred-height + Theme.space-base * 2);
                 background: Theme.bg-base;
                 border-width: 1px;
                 border-color: Theme.border-subtle;
-                accessible-role: text;
-                accessible-label: history-readonly-label.text;
-                history-readonly-label := Text {
+
+                history-readonly-body := VerticalLayout {
                     x: Theme.space-screen;
                     y: Theme.space-base;
                     width: parent.width - Theme.space-screen * 2;
-                    text: "This retained session is read-only. Return to Local CLI to compose, attach, retry or edit.";
-                    wrap: word-wrap;
-                    font-family: Theme.font-display;
-                    font-size: Theme.font-size-caption;
-                    color: Theme.text-secondary;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
+                    spacing: Theme.space-tight;
+
+                    history-readonly-label := Text {
+                        text: "This retained session is read-only. Return to Local CLI to compose, attach, retry or edit.";
+                        wrap: word-wrap;
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        accessible-role: text;
+                        accessible-label: self.text;
+                    }
+
+                    // History can be selected while a live response is active.
+                    // Keep cancellation immediately operable without requiring
+                    // the operator to navigate back to the live transcript.
+                    if root.send-in-flight: HorizontalLayout {
+                        alignment: center;
+
+                        NeothButton {
+                            label: "Stop";
+                            danger: true;
+                            width: 120px;
+                            height: 44px;
+                            clicked => { root.stop-stream-clicked(); }
+                        }
+                    }
                 }
             }
         }

@@ -1001,10 +1001,9 @@ export component MainWindow inherits Window {
 
     // ── Chat surface state (Pick #33) ─────────────────────────────────
     /// Scrollback feed. Rust pushes ChatMessage rows as the daemon
-    /// emits PROVIDER_RESPONSE / CHANNEL_INGRESS frames. The
-    /// streaming-bubble pattern flips `streaming: true` on the
-    /// last entry while chunks arrive, then `false` when the
-    /// completion settles.
+    /// emits PROVIDER_RESPONSE / CHANNEL_INGRESS frames. Live bubbles are
+    /// bound to a Rust-owned request id and advance through
+    /// waiting → receiving → finalizing → complete/cancelled/failed.
     in property <[ChatMessage]> chat-messages: [];
     /// Preserved live feed while a read-only historical session is selected.
     in property <[ChatMessage]> chat-live-messages: [];
@@ -1056,9 +1055,9 @@ export component MainWindow inherits Window {
     /// `cli::chat::run_chat_with`.
     callback chat-send-clicked(string);
     /// Internal continuation invoked by Rust only after typed consent preflight.
-    callback chat-send-approved(string);
+    callback chat-send-approved(string, string);
     /// Internal Buddy continuation after the same typed consent preflight.
-    callback buddy-chat-send-approved(string);
+    callback buddy-chat-send-approved(string, string);
     /// Internal Buddy window hand-off while the main window owns the consent modal.
     callback buddy-chat-consent-prompt-required();
     /// Internal Buddy restoration when consent is denied or preflight fails.
@@ -1079,9 +1078,10 @@ export component MainWindow inherits Window {
     /// Native first-send egress decision. Rust retains the private challenge;
     /// Slint receives only the operator-visible exact route labels.
     in-out property <bool> chat-consent-prompt-open: false;
+    in property <string> chat-consent-prompt-request-id: "";
     in property <string> chat-consent-prompt-routes: "";
     in property <bool> chat-consent-prompt-busy: false;
-    callback chat-consent-prompt-decision(string);
+    callback chat-consent-prompt-decision(string, string);
     /// Operator switched mode from the chat strip: "gated" | "full".
     callback chat-consent-set-mode(string);
     /// Operator granted consent for the provider's currently configured route.
@@ -4597,7 +4597,10 @@ export component MainWindow inherits Window {
         consent-focus := FocusScope {
             key-pressed(event) => {
                 if event.text == "\u{1b}" && !root.chat-consent-prompt-busy {
-                    root.chat-consent-prompt-decision("deny");
+                    root.chat-consent-prompt-decision(
+                        root.chat-consent-prompt-request-id,
+                        "deny",
+                    );
                     return accept;
                 }
                 return reject;
@@ -4674,19 +4677,34 @@ export component MainWindow inherits Window {
                         primary: false;
                         danger: true;
                         enabled: !root.chat-consent-prompt-busy;
-                        clicked => { root.chat-consent-prompt-decision("deny"); }
+                        clicked => {
+                            root.chat-consent-prompt-decision(
+                                root.chat-consent-prompt-request-id,
+                                "deny",
+                            );
+                        }
                     }
                     NeothButton {
                         label: "Allow once";
                         primary: false;
                         enabled: !root.chat-consent-prompt-busy;
-                        clicked => { root.chat-consent-prompt-decision("allow-once"); }
+                        clicked => {
+                            root.chat-consent-prompt-decision(
+                                root.chat-consent-prompt-request-id,
+                                "allow-once",
+                            );
+                        }
                     }
                     NeothButton {
                         label: "Always allow";
                         primary: true;
                         enabled: !root.chat-consent-prompt-busy;
-                        clicked => { root.chat-consent-prompt-decision("allow-always"); }
+                        clicked => {
+                            root.chat-consent-prompt-decision(
+                                root.chat-consent-prompt-request-id,
+                                "allow-always",
+                            );
+                        }
                     }
                 }
             }

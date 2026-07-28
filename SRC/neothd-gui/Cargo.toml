@@ -64,8 +64,11 @@ tray-icon = { version = "0.24.1", default-features = false }
 # Pure-Rust D-Bus StatusNotifierItem with a synchronous facade. No GTK.
 ksni = { version = "0.3.6", default-features = false, features = ["blocking", "tokio"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [build-dependencies]
 slint-build = "1.8"

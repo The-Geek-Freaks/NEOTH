@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::Args;
 use tracing::{info, warn};
+use zeroize::Zeroizing;
 
 use crate::config::{FreedomConfig, InstancePaths};
 use crate::providers::{self, CompletionChunk, Provider, Request};
@@ -18,14 +19,6 @@ use crate::wal::events::{
     EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
 use crate::wal::spawn as wal_spawn;
-
-const STREAM_CONTROL_TOKEN_ENV: &str = "NEOTH_STREAM_CONTROL_TOKEN";
-
-fn stream_control_token() -> Option<String> {
-    std::env::var(STREAM_CONTROL_TOKEN_ENV)
-        .ok()
-        .filter(|value| value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-}
 
 /// GOLD-WIRE-10b: fire a `ProviderResponded` domain event so the daemon's
 /// `UsageMeter` counts every provider call, not only council-hemisphere ones.
@@ -85,10 +78,14 @@ pub struct ChatArgs {
     #[arg(skip)]
     pub stream: bool,
 
-    /// Private GUI bridge: read a short-lived one-time consent token from
-    /// stdin before any provider is constructed. The token is never accepted
-    /// in argv and is atomically consumed.
-    #[arg(long, hide = true)]
+    /// Private GUI bridge: block on a committed, request-bound launch envelope
+    /// from stdin before reading config or constructing a provider. Authority
+    /// and stream-control values are never accepted in argv or ambient env.
+    #[arg(
+        long = "gui-launch-envelope-stdin",
+        alias = "gui-consent-token-stdin",
+        hide = true
+    )]
     pub gui_consent_token_stdin: bool,
 
     /// Sampling temperature for providers that support it. Range [0.0, 2.0];
@@ -199,7 +196,31 @@ fn persist_chat_onboarding_complete(config_path: &std::path::Path) -> Result<()>
     })
 }
 
+fn ensure_background_session_mode(name: &str, incognito: bool) -> Result<()> {
+    anyhow::ensure!(
+        !incognito,
+        "/{name} is unavailable in Incognito because a background session must persist its \
+         request and result; run the command outside Incognito"
+    );
+    Ok(())
+}
+
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
+    // The private GUI launch commit is the first operation in this entry point.
+    // Until the bounded envelope arrives, no config, provider, hook, tool, or
+    // other request-adjacent state is touched.
+    let mut gui_launch = if args.gui_consent_token_stdin {
+        Some(crate::cli::consent_challenge::read_gui_chat_launch_from_stdin()?)
+    } else {
+        None
+    };
+    if gui_launch.is_some() {
+        anyhow::ensure!(
+            args.message.is_some(),
+            "`--gui-launch-envelope-stdin` requires the chat message in argv; stdin is reserved for the private launch envelope"
+        );
+    }
+
     let neoth_home = chat_neoth_home(args.config.as_deref());
     let config_path = args
         .config
@@ -213,14 +234,14 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // primary claude_cli). Runs before any provider is built so a declined
     // operator never sees a half-spun adapter. Bypass via
     // `NEOTH_CONSENT_BYPASS=1` for CI / scripted reruns.
-    let (config, ephemeral_consent) = if args.gui_consent_token_stdin {
-        anyhow::ensure!(
-            args.message.is_some(),
-            "`--gui-consent-token-stdin` requires the chat message in argv; stdin is reserved for the private token"
-        );
-        let consumed = crate::cli::consent_challenge::consume_chat_token_from_stdin(
+    let (config, ephemeral_consent) = if let Some(token) = gui_launch
+        .as_mut()
+        .and_then(|launch| launch.consent_token.take())
+    {
+        let consumed = crate::cli::consent_challenge::consume_chat_token_value(
             &neoth_home,
             &config_path,
+            &token,
         )?;
         (consumed.config, consumed.ephemeral)
     } else {
@@ -273,7 +294,15 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     } else {
         provider
     };
-    run_chat_with_consent(args, config, provider.as_ref(), ephemeral_consent).await
+    let stream_control_token = gui_launch.map(|launch| launch.stream_control_token);
+    run_chat_with_consent(
+        args,
+        config,
+        provider.as_ref(),
+        ephemeral_consent,
+        stream_control_token,
+    )
+    .await
 }
 
 /// Inner entry point that takes a pre-built `Provider`. Used by `run_chat`
@@ -1938,6 +1967,24 @@ enum PreflightOutcome {
     },
 }
 
+async fn drain_preflight_action_writer(
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
+) -> Result<()> {
+    drop(writer);
+    writer_join
+        .await
+        .context("WAL writer task failed after a local preflight action")
+}
+
+async fn finish_preflight_action(
+    writer: crate::wal::writer::WalWriterHandle,
+    writer_join: tokio::task::JoinHandle<()>,
+) -> Result<PreflightOutcome> {
+    drain_preflight_action_writer(writer, writer_join).await?;
+    Ok(PreflightOutcome::Done)
+}
+
 fn resolve_provider_call_model(
     dispatch: Option<&str>,
     skill: Option<&str>,
@@ -2273,14 +2320,15 @@ async fn enforce_preflight(
                         let topic = cmd_args.trim();
                         if topic.is_empty() {
                             println!("Usage: /research <topic>");
-                            return Ok(PreflightOutcome::Done);
+                            return finish_preflight_action(writer, writer_join).await;
                         }
                         let search_provider =
                             crate::tools::deep_research::resolve_search_provider();
                         match crate::tools::deep_research::resolve_search_key(search_provider) {
                             Err(e) => {
-                                eprintln!("deep-research: {e}");
-                                return Ok(PreflightOutcome::Done);
+                                drain_preflight_action_writer(writer, writer_join).await?;
+                                return Err(e)
+                                    .context("deep-research search credential unavailable");
                             }
                             Ok(search_key) => {
                                 info!(
@@ -2325,7 +2373,7 @@ async fn enforce_preflight(
                                     crate::permissions::Gate::auto_confirm(),
                                     writer.clone(),
                                 );
-                                match crate::tools::deep_research::run_deep_research(
+                                let report = match crate::tools::deep_research::run_deep_research(
                                     topic,
                                     &research_provider,
                                     &search_key,
@@ -2336,22 +2384,24 @@ async fn enforce_preflight(
                                 )
                                 .await
                                 {
-                                    Ok(report) => {
-                                        println!("{}\n", report.article);
-                                        if !report.citations.is_empty() {
-                                            println!("---\nSources:");
-                                            for (i, c) in report.citations.iter().enumerate() {
-                                                println!("[{}] {} — {}", i + 1, c.title, c.url);
-                                            }
-                                        }
+                                    Ok(report) => report,
+                                    Err(error) => {
+                                        drop(research_provider);
+                                        drop(http);
+                                        drain_preflight_action_writer(writer, writer_join).await?;
+                                        return Err(error).context("deep-research action failed");
                                     }
-                                    Err(e) => {
-                                        eprintln!("deep-research error: {e:#}");
+                                };
+                                println!("{}\n", report.article);
+                                if !report.citations.is_empty() {
+                                    println!("---\nSources:");
+                                    for (i, c) in report.citations.iter().enumerate() {
+                                        println!("[{}] {} — {}", i + 1, c.title, c.url);
                                     }
                                 }
                             }
                         }
-                        return Ok(PreflightOutcome::Done);
+                        return finish_preflight_action(writer, writer_join).await;
                     }
 
                     // ── HERMES-02: `/background <prompt>` / `/btw <prompt>` ───
@@ -2359,6 +2409,10 @@ async fn enforce_preflight(
                     // one-shot runtimes, so a private detached worker process owns
                     // the durable job and survives after this command exits.
                     if name == "background" || name == "btw" {
+                        if let Err(error) = ensure_background_session_mode(&name, args.incognito) {
+                            drain_preflight_action_writer(writer, writer_join).await?;
+                            return Err(error);
+                        }
                         let prompt_body = cmd_args.trim().to_string();
                         if prompt_body.is_empty() {
                             println!("Usage: /{name} <prompt>");
@@ -2424,17 +2478,17 @@ async fn enforce_preflight(
                                 .await
                             }
                             .await;
-                            match queue_result {
-                                Ok(_) => println!(
-                                    "[neoth] /{name}: background session queued — \
-                                 result at next idle"
-                                ),
-                                Err(e) => eprintln!("/{name}: queue failed: {e:#}"),
+                            if let Err(error) = queue_result {
+                                drain_preflight_action_writer(writer, writer_join).await?;
+                                return Err(error)
+                                    .with_context(|| format!("/{name}: queue failed"));
                             }
+                            println!(
+                                "[neoth] /{name}: background session queued — \
+                                 result at next idle"
+                            );
                         }
-                        drop(writer);
-                        let _ = writer_join.await;
-                        return Ok(PreflightOutcome::Done);
+                        return finish_preflight_action(writer, writer_join).await;
                     }
 
                     let slash_dir = home.join("commands");
@@ -2484,12 +2538,22 @@ async fn enforce_preflight(
                                 crate::slash::CommandSource::Cli,
                             )
                             .await;
+                            if outcome.is_failure() {
+                                let failure = outcome.text().to_string();
+                                if args.stream {
+                                    eprintln!("{failure}");
+                                } else {
+                                    println!("{failure}");
+                                }
+                                drain_preflight_action_writer(writer, writer_join).await?;
+                                anyhow::bail!("local slash action `/{name}` failed: {failure}");
+                            }
                             println!("{}", outcome.text());
                             if outcome.should_exit() {
-                                return Ok(PreflightOutcome::Done);
+                                return finish_preflight_action(writer, writer_join).await;
                             }
                             // Action handled — no LLM call needed for this turn.
-                            return Ok(PreflightOutcome::Done);
+                            return finish_preflight_action(writer, writer_join).await;
                         }
                         let rendered = cmd.render(&cmd_args, config.operator_id.as_deref());
                         info!(slash_command = %name, "slash dispatch");
@@ -2735,15 +2799,9 @@ async fn enforce_preflight(
 /// byte-for-byte; returns the reply + token/model + the (prompt, system)
 /// pair the post-reply refusal-recovery path reissues.
 struct DispatchOutput {
-    response_text: String,
-    final_input_tokens: Option<u32>,
-    final_output_tokens: Option<u32>,
-    provider_used: String,
-    model_used: String,
-    /// Serialized authenticated completion marker for a streaming turn.
-    /// Emission is deliberately deferred until every post-reply pipeline has
-    /// succeeded so this remains the final non-empty stdout line.
-    stream_done_line: Option<String>,
+    /// Route output may enter turn orchestration only after passing the shared
+    /// stream-framing seam.
+    framed: FramedProviderDispatch,
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     final_prompt: String,
@@ -2770,6 +2828,17 @@ struct ProviderDispatchResult {
     output_tokens: Option<u32>,
     provider: String,
     model: String,
+    /// Number of reply chunks visible to a stream consumer. True provider
+    /// streaming overwrites this with the measured delta count; composed and
+    /// direct routes expose their complete reply as one logical chunk.
+    stream_chunk_count: u32,
+}
+
+struct FramedProviderDispatch {
+    dispatch: ProviderDispatchResult,
+    /// Serialized authenticated completion marker for a streaming turn.
+    /// Emission is deliberately deferred until every post-reply pipeline has
+    /// succeeded so this remains the final non-empty stdout line.
     stream_done_line: Option<String>,
 }
 
@@ -2781,32 +2850,38 @@ impl ProviderDispatchResult {
         provider: String,
         model: String,
     ) -> Self {
+        let stream_chunk_count = if response_text.is_empty() { 0 } else { 1 };
         Self {
             response_text,
             input_tokens,
             output_tokens,
             provider,
             model,
-            stream_done_line: None,
+            stream_chunk_count,
         }
     }
 
-    fn with_stream_done_line(mut self, stream_done_line: String) -> Self {
-        self.stream_done_line = Some(stream_done_line);
+    fn with_stream_chunk_count(mut self, stream_chunk_count: u32) -> Self {
+        self.stream_chunk_count = stream_chunk_count;
         self
     }
 }
 
 fn stream_provider_done_line(control_token: Option<&str>, chunk_count: u32) -> Option<String> {
+    #[derive(serde::Serialize)]
+    struct ProviderDoneFrame<'a> {
+        neoth_stream: &'static str,
+        control_token: &'a str,
+        count: u32,
+    }
+
     let control_token = control_token?;
-    Some(
-        serde_json::json!({
-            "neoth_stream": "provider_done",
-            "control_token": control_token,
-            "count": chunk_count,
-        })
-        .to_string(),
-    )
+    serde_json::to_string(&ProviderDoneFrame {
+        neoth_stream: "provider_done",
+        control_token,
+        count: chunk_count,
+    })
+    .ok()
 }
 
 fn write_stream_control_line(
@@ -2816,6 +2891,182 @@ fn write_stream_control_line(
     writeln!(output)?;
     writeln!(output, "{stream_control_line}")?;
     output.flush()
+}
+
+fn write_authenticated_stream_notice(
+    mut output: impl std::io::Write,
+    control_token: &str,
+    kind: &str,
+    id: &str,
+    text: &str,
+    durable: bool,
+) -> std::io::Result<()> {
+    #[derive(serde::Serialize)]
+    struct NoticeFrame<'a> {
+        neoth_stream: &'static str,
+        control_token: &'a str,
+        kind: &'a str,
+        id: &'a str,
+        text: &'a str,
+        durable: bool,
+    }
+
+    let notice = serde_json::to_string(&NoticeFrame {
+        neoth_stream: "notice",
+        control_token,
+        kind,
+        id,
+        text,
+        durable,
+    })
+    .map_err(std::io::Error::other)?;
+    write_stream_control_line(&mut output, &notice)
+}
+
+struct StreamDoneMetadata<'a> {
+    control_token: Option<&'a str>,
+    chunk_count: u32,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    limit_tokens: u32,
+    elapsed_ms: u64,
+    model: &'a str,
+    response_text: &'a str,
+}
+
+fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
+    #[derive(serde::Serialize)]
+    struct DoneFrame<'a, T> {
+        neoth_stream: &'static str,
+        control_token: Option<&'a str>,
+        count: u32,
+        used_tokens: u32,
+        limit_tokens: u32,
+        input_tokens: u32,
+        output_tokens: u32,
+        elapsed_ms: u64,
+        model: &'a str,
+        links: T,
+    }
+
+    serde_json::to_string(&DoneFrame {
+        neoth_stream: "done",
+        control_token: metadata.control_token,
+        count: metadata.chunk_count,
+        used_tokens: metadata
+            .input_tokens
+            .unwrap_or(0)
+            .saturating_add(metadata.output_tokens.unwrap_or(0)),
+        limit_tokens: metadata.limit_tokens,
+        input_tokens: metadata.input_tokens.unwrap_or(0),
+        output_tokens: metadata.output_tokens.unwrap_or(0),
+        elapsed_ms: metadata.elapsed_ms,
+        model: metadata.model,
+        links: crate::cli::deep_links::extract_deep_links(metadata.response_text),
+    })
+    .expect("stream completion frame contains only serializable fields")
+}
+
+fn write_provider_done_and_build_stream_done_line(
+    mut output: impl std::io::Write,
+    metadata: StreamDoneMetadata<'_>,
+) -> std::io::Result<String> {
+    if let Some(provider_done_line) =
+        stream_provider_done_line(metadata.control_token, metadata.chunk_count)
+    {
+        write_stream_control_line(&mut output, &provider_done_line)?;
+    }
+    Ok(build_stream_done_line(metadata))
+}
+
+/// Convert a route result into the only form accepted by `DispatchOutput`.
+/// Every provider route converges into this seam, which emits at most one
+/// provider boundary and returns the terminal marker for deferred emission.
+fn finalize_dispatch_stream_to(
+    mut output: impl std::io::Write,
+    stream: bool,
+    control_token: Option<&str>,
+    limit_tokens: u32,
+    elapsed_ms: u64,
+    dispatch: ProviderDispatchResult,
+) -> std::io::Result<FramedProviderDispatch> {
+    let stream_done_line = if stream {
+        Some(write_provider_done_and_build_stream_done_line(
+            &mut output,
+            StreamDoneMetadata {
+                control_token,
+                chunk_count: dispatch.stream_chunk_count,
+                input_tokens: dispatch.input_tokens,
+                output_tokens: dispatch.output_tokens,
+                limit_tokens,
+                elapsed_ms,
+                model: &dispatch.model,
+                response_text: &dispatch.response_text,
+            },
+        )?)
+    } else {
+        None
+    };
+    Ok(FramedProviderDispatch {
+        dispatch,
+        stream_done_line,
+    })
+}
+
+/// Local/preflight actions do not enter the provider or post-reply pipelines.
+/// Once their output is complete, close the same two-phase stream protocol the
+/// provider path uses. The provider boundary remains token-authenticated for
+/// GUI callers; ordinary `--stream` CLI callers retain the documented terminal
+/// `done` sentinel with a null control token.
+fn write_local_stream_completion(
+    control_token: Option<&str>,
+    chunk_count: u32,
+) -> std::io::Result<()> {
+    let stdout = std::io::stdout();
+    let stdout_lock = stdout.lock();
+    write_local_stream_completion_to(stdout_lock, control_token, chunk_count)
+}
+
+fn write_local_stream_completion_to(
+    mut output: impl std::io::Write,
+    control_token: Option<&str>,
+    chunk_count: u32,
+) -> std::io::Result<()> {
+    let stream_done_line = write_provider_done_and_build_stream_done_line(
+        &mut output,
+        StreamDoneMetadata {
+            control_token,
+            chunk_count,
+            input_tokens: None,
+            output_tokens: None,
+            limit_tokens: 0,
+            elapsed_ms: 0,
+            model: "local",
+            response_text: "",
+        },
+    )?;
+    write_stream_control_line(&mut output, &stream_done_line)
+}
+
+/// Human-facing turn notices belong to stderr while stdout is carrying the
+/// GUI stream protocol. Interactive CLI turns retain their historical stdout
+/// presentation. This keeps onboarding, resume, memory and checkpoint banners
+/// out of the assistant-response byte stream without hiding them from either
+/// surface.
+fn write_chat_notice(stream: bool, message: impl std::fmt::Display) -> std::io::Result<()> {
+    use std::io::Write as _;
+
+    if stream {
+        let stderr = std::io::stderr();
+        let mut stderr = stderr.lock();
+        writeln!(stderr, "{message}")?;
+        stderr.flush()
+    } else {
+        let stdout = std::io::stdout();
+        let mut stdout = stdout.lock();
+        writeln!(stdout, "{message}")?;
+        stdout.flush()
+    }
 }
 
 /// Emit the caller-owned terminal goal lifecycle event. A confirmed `Met`
@@ -3053,6 +3304,7 @@ async fn dispatch_provider(
     provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
     ephemeral_consent: &crate::consent::EphemeralConsent,
     route: TurnDispatchRoute,
+    stream_control_token: Option<&str>,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
     // every concrete provider leaf. That gate checks the current durable
@@ -3411,52 +3663,6 @@ async fn dispatch_provider(
                     elapsed_ms,
                 );
             }
-            // Build the sentinel per OPEN_DECISIONS.md D-005, but do not emit it
-            // here. Post-reply pipelines may still write opt-in review output to
-            // stdout. The caller emits this marker only after those pipelines
-            // succeed, keeping it the final non-empty stdout line. On any
-            // post-reply failure no marker is emitted, so consumers fail closed.
-            // GOLD-ADAPT-ODY-02/05 — the sentinel also carries the turn's token
-            // usage + model-agnostic context cap + wall time. Fields are
-            // additive: older consumers ignore unknown keys.
-            let sentinel_cap = crate::tokens::budget::effective_cap(
-                &provider_used,
-                &model_used,
-                config.tokens.max_per_request,
-            );
-            // `provider_done` is a distinct authenticated phase boundary. It
-            // lets stream consumers enter Finalizing while the post-reply
-            // pipelines run; the terminal `done` marker is still deferred
-            // until those pipelines succeed and remains the final non-empty
-            // stdout line.
-            let control_token = stream_control_token();
-            if let Some(provider_done_line) =
-                stream_provider_done_line(control_token.as_deref(), chunk_count)
-            {
-                let stdout = std::io::stdout();
-                let stdout_lock = stdout.lock();
-                write_stream_control_line(stdout_lock, &provider_done_line)
-                    .context("write authenticated provider completion marker")?;
-            }
-
-            let stream_done_line = serde_json::json!({
-                "neoth_stream": "done",
-                "control_token": &control_token,
-                "count": chunk_count,
-                "used_tokens": input_tokens
-                    .unwrap_or(0)
-                    .saturating_add(output_tokens.unwrap_or(0)),
-                "limit_tokens": sentinel_cap,
-                "input_tokens": input_tokens.unwrap_or(0),
-                "output_tokens": output_tokens.unwrap_or(0),
-                "elapsed_ms": stream_call_started.elapsed().as_millis() as u64,
-                // Exact effective leaf identity (including fallback) for the
-                // GUI's optional per-response model badge.
-                "model": &model_used,
-                // ODY-12/14 — additive field; old consumers ignore it.
-                "links": crate::cli::deep_links::extract_deep_links(&acc),
-            })
-            .to_string();
             ProviderDispatchResult::new(
                 acc,
                 input_tokens,
@@ -3464,7 +3670,7 @@ async fn dispatch_provider(
                 provider_used,
                 model_used,
             )
-            .with_stream_done_line(stream_done_line)
+            .with_stream_chunk_count(chunk_count)
         } else {
             // Non-streaming: existing behavior. START frame already emitted
             // above the branch; END frame fires after both arms converge.
@@ -3889,14 +4095,7 @@ async fn dispatch_provider(
         })
     }
     .await;
-    let ProviderDispatchResult {
-        response_text,
-        input_tokens: final_input_tokens,
-        output_tokens: final_output_tokens,
-        provider: provider_used,
-        model: model_used,
-        stream_done_line,
-    } = match dispatch_result {
+    let dispatch_result = match dispatch_result {
         Ok(output) => output,
         Err(error) => {
             drop(authorized_provider);
@@ -3906,6 +4105,43 @@ async fn dispatch_provider(
             return Err(error);
         }
     };
+
+    // Stream framing is route-independent. `args.stream` may still resolve to
+    // Council, MCP, refinement-loop, or Direct; every successful route has
+    // already printed its reply by this point. Emit exactly one authenticated
+    // provider boundary now, then defer the terminal marker to the caller until
+    // every post-reply pipeline has succeeded. If any later durability/pipeline
+    // step fails, consumers see provider_done without done and fail closed.
+    let sentinel_cap = crate::tokens::budget::effective_cap(
+        &dispatch_result.provider,
+        &dispatch_result.model,
+        config.tokens.max_per_request,
+    );
+    let stdout = std::io::stdout();
+    let stdout_lock = stdout.lock();
+    let framed = match finalize_dispatch_stream_to(
+        stdout_lock,
+        args.stream,
+        stream_control_token,
+        sentinel_cap,
+        inference_started.elapsed().as_millis() as u64,
+        dispatch_result,
+    )
+    .context("write authenticated provider completion marker")
+    {
+        Ok(framed) => framed,
+        Err(error) => {
+            drop(authorized_provider);
+            drop(call_authorizer);
+            drop(writer);
+            let _ = writer_join.await;
+            return Err(error);
+        }
+    };
+    let response_text = &framed.dispatch.response_text;
+    let final_input_tokens = framed.dispatch.input_tokens;
+    let final_output_tokens = framed.dispatch.output_tokens;
+    let provider_used = &framed.dispatch.provider;
 
     // SL-00(1c): the provider work is done — release the in-flight slot and
     // feed the cluster local-load gauge the REAL measured throughput so our
@@ -3946,7 +4182,7 @@ async fn dispatch_provider(
     // Successful remote call → bump the per-provider daily counter for the
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
-    if !crate::providers::is_local_provider(&provider_used) {
+    if !crate::providers::is_local_provider(provider_used) {
         if quota_tracker.is_none() {
             let error = anyhow::anyhow!(
                 "remote provider `{provider_used}` completed without initialized quota state"
@@ -3958,7 +4194,7 @@ async fn dispatch_provider(
             return Err(error);
         }
         if let Err(e) = crate::providers::quota::QuotaTracker::update_at(&quota_path, |tracker| {
-            tracker.record_success(&provider_used, crate::providers::quota::now_unix());
+            tracker.record_success(provider_used, crate::providers::quota::now_unix());
             Ok(())
         }) {
             tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
@@ -3971,12 +4207,7 @@ async fn dispatch_provider(
     // response. A crash anywhere before that leaves the sidecar on disk for
     // `neoth recover`.
     Ok(DispatchOutput {
-        response_text,
-        final_input_tokens,
-        final_output_tokens,
-        provider_used,
-        model_used,
-        stream_done_line,
+        framed,
         writer,
         writer_join,
         final_prompt,
@@ -5016,7 +5247,9 @@ async fn run_post_reply_pipelines(
     drop(authorized_post_provider);
     drop(call_authorizer);
     drop(writer);
-    let _ = writer_join.await;
+    writer_join
+        .await
+        .context("WAL writer task failed after post-reply pipelines")?;
     Ok(())
 }
 
@@ -5030,6 +5263,7 @@ pub async fn run_chat_with(
         config,
         provider,
         crate::consent::EphemeralConsent::default(),
+        None,
     )
     .await
 }
@@ -5039,6 +5273,7 @@ async fn run_chat_with_consent(
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     ephemeral_consent: crate::consent::EphemeralConsent,
+    stream_control_token: Option<Zeroizing<String>>,
 ) -> Result<()> {
     info!(provider = provider.name(), "neoth chat");
     let selected_config_path = args
@@ -5057,7 +5292,8 @@ async fn run_chat_with_consent(
     // effort: a missing or unreadable marker means "operator past the
     // onboarding moment", which is the safe default.
     if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
-        println!("[neoth] {greeting}");
+        write_chat_notice(args.stream, format_args!("[neoth] {greeting}"))
+            .context("write first-tour chat notice")?;
     }
 
     // GOLD-ADAPT-OH-11: one-time first-chat hint. Fires on the first `neoth chat`
@@ -5065,32 +5301,91 @@ async fn run_chat_with_consent(
     // for existing operators (default_true serde default) and after the first
     // successful turn (run_post_reply_pipelines flips it true).
     if !config.chat_onboarding_completed {
-        println!(
+        write_chat_notice(
+            args.stream,
             "[neoth] First chat! Run `neoth doctor` to check system status, \
-             or `neoth recall --help` to explore your memory."
-        );
+             or `neoth recall --help` to explore your memory.",
+        )
+        .context("write first-chat notice")?;
     }
 
     // HERMES-02 — deliver any completed background sessions at next idle.
-    // Scans `~/.neoth/bgjobs/*.result` whose `.exit` marker is present
-    // and whose `.delivered` marker is absent; prints each prefixed with
-    // `[btw]`. Idempotent via the `.delivered` sibling marker.
+    // Before an authenticated GUI frame may advertise `durable=true`, the
+    // exact stable job id + sanitized result is inserted once into raw_turns.
+    // Incognito does not inspect or claim durable background state at all.
+    // Database failures remain visible but recoverable and emit
+    // `durable=false`; that path does not commit the filesystem claim.
     {
-        use std::io::Write as _;
-
         let bgjobs_home = first_tour_home.join("bgjobs");
-        let pending = crate::cli::bg_session::maybe_deliver_bg_result(&bgjobs_home).await;
-        let stdout = std::io::stdout();
-        let mut stdout = stdout.lock();
+        let pending = if args.incognito {
+            Vec::new()
+        } else {
+            crate::cli::bg_session::maybe_deliver_bg_result(&bgjobs_home).await
+        };
+        let db_path = first_tour_home.join("views.db");
+        let mut transcript_conn = if pending.is_empty() {
+            None
+        } else {
+            match crate::memory::store::open(&db_path) {
+                Ok(conn) => Some(conn),
+                Err(error) => {
+                    tracing::warn!(
+                        path = %db_path.display(),
+                        %error,
+                        "background results remain recoverable because views.db is unavailable"
+                    );
+                    None
+                }
+            }
+        };
         for result in pending {
-            writeln!(stdout, "[btw] {}", result.text())
-                .context("write completed background result to stdout")?;
-            stdout
-                .flush()
-                .context("flush completed background result to stdout")?;
-            result
-                .acknowledge()
-                .context("acknowledge completed background result delivery")?;
+            let durable = match transcript_conn.as_mut() {
+                Some(conn) => match crate::memory::transcript_store::persist_background_notice(
+                    conn,
+                    result.job_id(),
+                    i64::try_from(now_unix()).unwrap_or(i64::MAX),
+                    result.text(),
+                ) {
+                    Ok(_) => true,
+                    Err(error) => {
+                        tracing::warn!(
+                            job_id = result.job_id(),
+                            path = %db_path.display(),
+                            %error,
+                            "background result remains recoverable because its durable transcript receipt failed"
+                        );
+                        false
+                    }
+                },
+                None => false,
+            };
+            if let Some(control_token) = stream_control_token.as_ref().map(|token| token.as_str()) {
+                let stdout = std::io::stdout();
+                let stdout_lock = stdout.lock();
+                write_authenticated_stream_notice(
+                    stdout_lock,
+                    control_token,
+                    "background_result",
+                    result.job_id(),
+                    result.text(),
+                    durable,
+                )
+                .context("write authenticated background-result stream notice")?;
+                // The GUI first materialises the authenticated notice in its
+                // canonical conversation, then commits this private claim via
+                // `acknowledge_bg_result_delivery`. The producer deliberately
+                // does not acknowledge here: a crash between stdout and UI
+                // materialisation must leave the result recoverable. The stable
+                // job id makes retries idempotent.
+            } else {
+                write_chat_notice(args.stream, format_args!("[btw] {}", result.text()))
+                    .context("write completed background result")?;
+                if durable {
+                    result
+                        .acknowledge()
+                        .context("acknowledge completed background result delivery")?;
+                }
+            }
         }
     }
 
@@ -5105,15 +5400,20 @@ async fn run_chat_with_consent(
         let hydration =
             hydrate_resume_context(&first_tour_home, &hash_prefix, args.system.as_deref())
                 .map_err(|why| anyhow::anyhow!("resume-from `{hash_prefix}` failed: {why}"))?;
-        println!("{}", hydration.banner);
+        write_chat_notice(args.stream, &hydration.banner)
+            .context("write resume hydration notice")?;
         // PWF-02: print catchup line when something happened since the checkpoint.
         if !hydration.catchup.is_empty() {
-            println!(
-                "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
-                hydration.catchup.provider_turns,
-                hydration.catchup.tool_calls,
-                hydration.catchup.compactions,
-            );
+            write_chat_notice(
+                args.stream,
+                format_args!(
+                    "[neoth] catchup: {} provider turns, {} tool calls, {} compactions since checkpoint",
+                    hydration.catchup.provider_turns,
+                    hydration.catchup.tool_calls,
+                    hydration.catchup.compactions,
+                ),
+            )
+            .context("write resume catchup notice")?;
         }
         args.system = Some(hydration.combined_system);
         resumed_mcp_scope = Some(hydration.scoped_mcp_servers);
@@ -5156,7 +5456,11 @@ async fn run_chat_with_consent(
     if !has_attachments && crate::coding::intent::should_auto_dispatch(&prompt) {
         let intent = crate::coding::intent::detect_coding_intent(&prompt)
             .expect("should_auto_dispatch returned true so detect must return Some");
-        println!("{}", crate::coding::intent::format_dispatch_banner(&intent));
+        write_chat_notice(
+            args.stream,
+            crate::coding::intent::format_dispatch_banner(&intent),
+        )
+        .context("write coding auto-dispatch notice")?;
         let code_args = crate::cli::code::CodeArgs {
             prompt: prompt.clone(),
             db: None,
@@ -5167,24 +5471,36 @@ async fn run_chat_with_consent(
             run_pending: false,
             output: crate::cli::OutputFormat::default(),
         };
-        return crate::cli::code::run_code(code_args).await;
+        let result = crate::cli::code::run_code(code_args).await;
+        if result.is_ok() && args.stream {
+            write_local_stream_completion(
+                stream_control_token.as_ref().map(|token| token.as_str()),
+                1,
+            )
+            .context("write coding auto-dispatch stream completion markers")?;
+        }
+        return result;
     } else if !has_attachments
         && let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt)
     {
         // Low-confidence: print an offer banner + continue with chat.
-        println!(
-            "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
-             Try `neoth code \"{}\"` for the dedicated coding workflow.",
-            intent.matched_verb.as_deref().unwrap_or("?"),
-            intent.matched_noun.as_deref().unwrap_or("?"),
-            prompt
-                .lines()
-                .next()
-                .unwrap_or(&prompt)
-                .chars()
-                .take(60)
-                .collect::<String>(),
-        );
+        write_chat_notice(
+            args.stream,
+            format_args!(
+                "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
+                 Try `neoth code \"{}\"` for the dedicated coding workflow.",
+                intent.matched_verb.as_deref().unwrap_or("?"),
+                intent.matched_noun.as_deref().unwrap_or("?"),
+                prompt
+                    .lines()
+                    .next()
+                    .unwrap_or(&prompt)
+                    .chars()
+                    .take(60)
+                    .collect::<String>(),
+            ),
+        )
+        .context("write coding intent notice")?;
     }
 
     // OP-02 (Session 25) — next-session seed banner. Read the
@@ -5199,7 +5515,7 @@ async fn run_chat_with_consent(
     let seed_banner =
         crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id);
     if !seed_banner.is_empty() {
-        println!("{seed_banner}");
+        write_chat_notice(args.stream, &seed_banner).context("write session seed notice")?;
     }
 
     // UX-02 — "memory is working" session-start signal. One line telling
@@ -5207,7 +5523,7 @@ async fn run_chat_with_consent(
     // naturally silent on a fresh install (zero memories → None), which
     // also keeps the post-wizard first-tour banner clean.
     if let Some(line) = session_memory_signal(&first_tour_home) {
-        println!("{line}");
+        write_chat_notice(args.stream, &line).context("write session memory notice")?;
     }
 
     // UX-05 — Day-30 "unlock moment": once, after 30+ days, nudge the
@@ -5216,7 +5532,7 @@ async fn run_chat_with_consent(
     // when all features are active, or on a fresh install.
     if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
     {
-        println!("{banner}");
+        write_chat_notice(args.stream, &banner).context("write unlock notice")?;
     }
 
     // GOLD-ADAPT-SKILL-10 — session-start skill-catalog banner (stdout only,
@@ -5241,7 +5557,7 @@ async fn run_chat_with_consent(
             maybe_skill_catalog_block(&loaded)
         };
         if let Some(block) = catalog_block {
-            println!("{block}");
+            write_chat_notice(args.stream, &block).context("write skill catalog notice")?;
         }
     }
 
@@ -5295,7 +5611,11 @@ async fn run_chat_with_consent(
             .append(hdr, payload)
             .await
             .context("persist session-start checkpoint")?;
-        println!("[neoth] checkpoint: {}", cp.checkpoint_hash);
+        write_chat_notice(
+            args.stream,
+            format_args!("[neoth] checkpoint: {}", cp.checkpoint_hash),
+        )
+        .context("write session checkpoint notice")?;
     }
 
     // Attachment decoding may download a local model and audio/video may enter
@@ -5390,22 +5710,23 @@ async fn run_chat_with_consent(
         .await
     {
         println!("{reply}");
-        // GR-090: machine consumers in --stream mode block on the
-        // done-sentinel — the recall early-return must emit it too.
-        if args.stream {
-            println!();
-            println!(
-                "{}",
-                serde_json::json!({
-                    "neoth_stream": "done",
-                    "control_token": stream_control_token(),
-                    "count": 1,
-                })
-            );
-        }
-        // Same WAL-writer teardown every other early return in this fn uses.
+        // Local recall has no provider/post-reply pipeline, but stream consumers
+        // still need the same authenticated provider_done -> done terminal
+        // lifecycle as every other successful GUI turn.
+        // The terminal pair is emitted only after the local turn's WAL writer
+        // has drained successfully. A failed writer task leaves stream
+        // consumers without a false `done` proof.
         drop(writer);
-        let _ = writer_join.await;
+        writer_join
+            .await
+            .context("WAL writer task failed after conversational recall")?;
+        if args.stream {
+            write_local_stream_completion(
+                stream_control_token.as_ref().map(|token| token.as_str()),
+                1,
+            )
+            .context("write local-recall stream completion markers")?;
+        }
         return Ok(());
     }
 
@@ -5531,7 +5852,20 @@ async fn run_chat_with_consent(
     )
     .await?
     {
-        PreflightOutcome::Done => return Ok(()),
+        PreflightOutcome::Done => {
+            // Typed slash actions and local commands complete before provider
+            // dispatch. Their output is already on stdout, so close the same
+            // request-bound stream protocol here instead of leaving the GUI
+            // waiting for a provider marker that can never arrive.
+            if args.stream {
+                write_local_stream_completion(
+                    stream_control_token.as_ref().map(|token| token.as_str()),
+                    1,
+                )
+                .context("write local-action stream completion markers")?;
+            }
+            return Ok(());
+        }
         PreflightOutcome::Continue {
             writer,
             writer_join,
@@ -5680,12 +6014,19 @@ async fn run_chat_with_consent(
     };
 
     let DispatchOutput {
-        response_text,
-        final_input_tokens,
-        final_output_tokens,
-        provider_used,
-        model_used,
-        stream_done_line,
+        framed:
+            FramedProviderDispatch {
+                dispatch:
+                    ProviderDispatchResult {
+                        response_text,
+                        input_tokens: final_input_tokens,
+                        output_tokens: final_output_tokens,
+                        provider: provider_used,
+                        model: model_used,
+                        ..
+                    },
+                stream_done_line,
+            },
         writer,
         writer_join,
         final_prompt,
@@ -5716,6 +6057,7 @@ async fn run_chat_with_consent(
         provider_audit_context,
         &ephemeral_consent,
         chat_route,
+        stream_control_token.as_ref().map(|token| token.as_str()),
     )
     .await?;
 
@@ -9840,6 +10182,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    #[test]
+    fn incognito_refuses_durable_background_sessions() {
+        for name in ["background", "btw"] {
+            let error = ensure_background_session_mode(name, true).unwrap_err();
+            assert!(error.to_string().contains("unavailable in Incognito"));
+            assert!(ensure_background_session_mode(name, false).is_ok());
+        }
+    }
+
     struct DefaultAliasProvider;
 
     #[async_trait]
@@ -9885,12 +10236,16 @@ mod tests {
     fn authenticated_stream_frames_preserve_provider_review_done_order() {
         let control_token = "0123456789abcdef0123456789abcdef";
         let provider_done_line = stream_provider_done_line(Some(control_token), 2).unwrap();
-        let stream_done_line = serde_json::json!({
-            "neoth_stream": "done",
-            "control_token": control_token,
-            "count": 2,
-        })
-        .to_string();
+        let stream_done_line = build_stream_done_line(StreamDoneMetadata {
+            control_token: Some(control_token),
+            chunk_count: 2,
+            input_tokens: Some(3),
+            output_tokens: Some(5),
+            limit_tokens: 128,
+            elapsed_ms: 7,
+            model: "test-model",
+            response_text: "primary reply",
+        });
         let mut stdout = b"primary reply".to_vec();
 
         write_stream_control_line(&mut stdout, &provider_done_line).unwrap();
@@ -9916,6 +10271,8 @@ mod tests {
             sentinel["control_token"],
             "0123456789abcdef0123456789abcdef"
         );
+        assert_eq!(sentinel["used_tokens"], 8);
+        assert_eq!(sentinel["model"], "test-model");
         assert!(stdout.contains("[spec]\nlooks good"));
     }
 
@@ -9929,6 +10286,31 @@ mod tests {
         assert_eq!(frame["count"], 7);
         assert!(frame.get("text").is_none());
         assert!(frame.get("reply").is_none());
+    }
+
+    #[test]
+    fn authenticated_background_notice_carries_explicit_durability() {
+        for durable in [false, true] {
+            let mut output = Vec::new();
+            write_authenticated_stream_notice(
+                &mut output,
+                "0123456789abcdef0123456789abcdef",
+                "background_result",
+                "0123456789abcdef",
+                "result",
+                durable,
+            )
+            .unwrap();
+            let line = String::from_utf8(output)
+                .unwrap()
+                .lines()
+                .find(|line| !line.is_empty())
+                .unwrap()
+                .to_owned();
+            let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(frame["neoth_stream"], "notice");
+            assert_eq!(frame["durable"], durable);
+        }
     }
 
     #[test]
@@ -9958,16 +10340,124 @@ mod tests {
     }
 
     #[test]
-    fn non_stream_dispatch_result_owns_no_terminal_marker() {
-        let output = ProviderDispatchResult::new(
-            "reply".to_string(),
-            Some(1),
-            Some(1),
-            "provider".to_string(),
-            "model".to_string(),
-        );
+    fn local_stream_completion_emits_exactly_one_authenticated_phase_pair() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        let mut stdout = Vec::new();
 
-        assert!(output.stream_done_line.is_none());
+        write_local_stream_completion_to(&mut stdout, Some(control_token), 1).unwrap();
+
+        let frames = String::from_utf8(stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0]["neoth_stream"], "provider_done");
+        assert_eq!(frames[1]["neoth_stream"], "done");
+        assert!(
+            frames
+                .iter()
+                .all(|frame| frame["control_token"] == control_token)
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame["neoth_stream"] == "provider_done")
+                .count(),
+            1
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame["neoth_stream"] == "done")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn dispatch_stream_finalization_is_route_independent_and_single_boundary() {
+        let control_token = "0123456789abcdef0123456789abcdef";
+        for (provider, model, chunks) in [
+            ("direct", "single-hop", 1),
+            ("loop_engine", "multi-hop", 1),
+            ("streaming", "delta-model", 7),
+        ] {
+            let output = ProviderDispatchResult::new(
+                "reply".to_string(),
+                Some(1),
+                Some(2),
+                provider.to_string(),
+                model.to_string(),
+            )
+            .with_stream_chunk_count(chunks);
+            let mut stdout = b"reply".to_vec();
+            let framed =
+                finalize_dispatch_stream_to(&mut stdout, true, Some(control_token), 64, 3, output)
+                    .unwrap();
+
+            let provider_done_line =
+                stream_provider_done_line(Some(control_token), chunks).unwrap();
+            let stdout = String::from_utf8(stdout).unwrap();
+            assert_eq!(stdout.matches(&provider_done_line).count(), 1);
+            let done_line = framed
+                .stream_done_line
+                .expect("streaming routes defer one terminal marker");
+            assert!(!stdout.contains(&done_line));
+            let done: serde_json::Value = serde_json::from_str(&done_line).unwrap();
+            assert_eq!(done["neoth_stream"], "done");
+            assert_eq!(done["model"], model);
+            assert_eq!(done["count"], chunks);
+        }
+    }
+
+    struct RejectWrites;
+
+    impl std::io::Write for RejectWrites {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "fixture rejects writes",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "fixture rejects flush",
+            ))
+        }
+    }
+
+    #[test]
+    fn dispatch_stream_finalization_skips_nonstream_and_propagates_stream_write_failure() {
+        let make_output = || {
+            ProviderDispatchResult::new(
+                "reply".to_string(),
+                Some(1),
+                Some(2),
+                "direct".to_string(),
+                "model".to_string(),
+            )
+        };
+
+        let nonstream =
+            finalize_dispatch_stream_to(RejectWrites, false, None, 64, 3, make_output()).unwrap();
+        assert!(nonstream.stream_done_line.is_none());
+
+        let error = match finalize_dispatch_stream_to(
+            RejectWrites,
+            true,
+            Some("0123456789abcdef0123456789abcdef"),
+            64,
+            3,
+            make_output(),
+        ) {
+            Ok(_) => panic!("stream finalization must surface write failure"),
+            Err(error) => error,
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::BrokenPipe);
     }
 
     #[test]
@@ -14228,6 +14718,7 @@ modes:
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
+            None,
         )
         .await;
 
@@ -14360,6 +14851,7 @@ modes:
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
+            None,
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
@@ -14478,6 +14970,7 @@ modes:
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
+            None,
         )
         .await;
 
