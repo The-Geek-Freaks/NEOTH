@@ -776,8 +776,6 @@ struct DoclingContainmentSetup;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl DoclingContainmentSetup {
     fn configure(command: &mut Command) -> Result<Self, ExtractionError> {
-        use std::os::unix::process::CommandExt as _;
-
         // The child becomes the leader of a fresh process group. Every
         // descendant inherits that group unless it explicitly escapes it;
         // cleanup targets the negative PGID rather than only the Python parent.

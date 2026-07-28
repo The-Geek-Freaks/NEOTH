@@ -1226,8 +1226,6 @@ struct PdfWorkerContainmentSetup;
 #[cfg(all(not(test), target_os = "linux"))]
 impl PdfWorkerContainmentSetup {
     fn configure(command: &mut tokio::process::Command) -> Result<Self, ExtractionError> {
-        use std::os::unix::process::CommandExt as _;
-
         // Capture the actual spawning process in the parent. This value is
         // moved directly into the post-fork/pre-exec closure; it is never
         // transported through an operator-controlled argument or environment

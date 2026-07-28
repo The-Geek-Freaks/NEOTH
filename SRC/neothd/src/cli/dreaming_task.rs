@@ -340,7 +340,7 @@ fn resolve_local_boundary(
 /// → the daemon owns the WAL writer and each non-empty pass emits a
 /// `0xF4 DREAM_COMPOSED` audit frame (`None` for one-shot callers that
 /// audit separately, e.g. `neoth dream now`).
-pub fn spawn(
+pub(crate) fn spawn(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
     chat_provider: Option<std::sync::Arc<AuthorizedProvider>>,

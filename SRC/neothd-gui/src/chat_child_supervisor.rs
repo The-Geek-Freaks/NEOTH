@@ -889,7 +889,7 @@ impl LinuxLaunchEnvelope {
     }
 
     fn decode(payload: &[u8]) -> Result<Self, String> {
-        use std::os::unix::ffi::OsStringExt as _;
+        use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 
         let mut decoder = LinuxFrameDecoder::new(payload);
         if decoder.take(LINUX_LAUNCH_FRAME_MAGIC.len())? != LINUX_LAUNCH_FRAME_MAGIC {

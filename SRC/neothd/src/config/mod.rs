@@ -298,7 +298,7 @@ fn load_runtime_config_diagnostic_snapshot_using_store(
             } else {
                 None
             };
-            let store = injected_store.or_else(|| opened_store.as_deref());
+            let store = injected_store.or(opened_store.as_deref());
             let mut effective_credentials = raw_credentials;
             match credentials::Credentials::preview_runtime_config_with_legacy_ssh_unlocked(
                 path,

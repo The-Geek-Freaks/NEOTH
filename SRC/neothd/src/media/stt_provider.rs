@@ -1872,8 +1872,6 @@ impl FasterWhisperContainmentSetup {
     fn configure(
         command: &mut tokio::process::Command,
     ) -> Result<Self, FasterWhisperBridgeFailure> {
-        use std::os::unix::process::CommandExt as _;
-
         // SAFETY: getpid(2) takes no pointers and cannot fail.
         let expected_parent = unsafe { libc::getpid() };
         command.process_group(0);
