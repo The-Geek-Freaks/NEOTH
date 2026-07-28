@@ -306,7 +306,13 @@ impl ReloadController {
             .context("serialize active config for reload comparison")?;
         let new_yaml = serde_yaml::to_string(&candidate)
             .context("serialize candidate config for reload comparison")?;
-        if old_yaml == new_yaml {
+        // `ssh_tunnels` is intentionally runtime-only and serde-skipped so no
+        // password/passphrase can enter a public config rendering. Compare the
+        // effective private authority explicitly before the public-YAML
+        // no-change fast path; a credentials-only edit must be rejected as a
+        // restart-bound runtime change rather than mislabeled `Unchanged`.
+        let ssh_tunnels_changed = old.ssh_tunnels != candidate.ssh_tunnels;
+        if old_yaml == new_yaml && !ssh_tunnels_changed {
             return Ok(ReloadResult::Unchanged);
         }
 
@@ -451,7 +457,7 @@ fn changed_provider_runtime_fields(old: &FreedomConfig, new: &FreedomConfig) -> 
     if serialized_fragment_changed(&old.hysteria, &new.hysteria) {
         changed.push("hysteria");
     }
-    if serialized_fragment_changed(&old.ssh_tunnels, &new.ssh_tunnels) {
+    if old.ssh_tunnels != new.ssh_tunnels {
         changed.push("ssh_tunnels");
     }
     if serialized_fragment_changed(&old.recursive_mas, &new.recursive_mas) {
@@ -530,8 +536,13 @@ pub fn compute_snapshot_hash(path: &Path) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::cli::init::ProviderKind;
+    use crate::config::credentials::Credentials;
+    use crate::secret::SecretString;
+    use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 
     fn fresh_config() -> FreedomConfig {
         FreedomConfig {
@@ -539,6 +550,23 @@ mod tests {
             provider_kind: Some(ProviderKind::ClaudeCli),
             telegram_user_id: Some(42),
             ..Default::default()
+        }
+    }
+
+    fn ssh_tunnel(password: &str) -> SshTunnelConfig {
+        SshTunnelConfig {
+            endpoint: SshEndpoint {
+                host: "bastion.example".into(),
+                port: 22,
+                username: "sam".into(),
+                auth: SshAuth::Password(SecretString::from(password)),
+            },
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            local_port: 0,
+            jump_hosts: Vec::new(),
+            max_retries: 5,
+            retry_delay: Duration::from_secs(2),
         }
     }
 
@@ -790,6 +818,43 @@ mod tests {
         match ctrl.try_reload().expect("reload must succeed") {
             ReloadResult::Unchanged => {}
             other => panic!("expected Unchanged, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn credentials_only_ssh_change_is_restart_bound_not_unchanged() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        write_yaml(&yaml_path, &serde_yaml::to_string(&fresh_config()).unwrap());
+        Credentials {
+            ssh_tunnels: Some(vec![ssh_tunnel("old-password")]),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let initial = FreedomConfig::load_from_path(&yaml_path).unwrap();
+        let ctrl = ReloadController::new(initial, yaml_path);
+
+        Credentials::update_at(&credentials_path, |credentials| {
+            credentials.ssh_tunnels = Some(vec![ssh_tunnel("new-password")]);
+            Ok(())
+        })
+        .unwrap();
+
+        match ctrl.try_reload().expect("reload call succeeds") {
+            ReloadResult::Rejected { rejection } => {
+                assert_eq!(rejection.reason_codes(), ["provider_runtime_changed"]);
+                assert!(rejection.restart_required());
+                assert!(rejection.to_string().contains("ssh_tunnels"));
+            }
+            other => panic!("expected restart-bound rejection, got {other:?}"),
+        }
+        match &ctrl.latest().ssh_tunnels[0].endpoint.auth {
+            SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "old-password");
+            }
+            other => panic!("unexpected active SSH auth: {other:?}"),
         }
     }
 

@@ -9,6 +9,7 @@ import unittest
 ROOT = Path(__file__).parents[2]
 CORE_MANIFEST = ROOT / "SRC" / "neothd" / "Cargo.toml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 
 DESKTOP_TARGETS = {
     "x86_64-unknown-linux-gnu",
@@ -63,6 +64,7 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.manifest = tomllib.loads(CORE_MANIFEST.read_text(encoding="utf-8"))
         cls.workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+        cls.ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
     def test_desktop_bundle_selects_the_exact_iroh_feature_leaf(self) -> None:
         features = self.manifest["features"]
@@ -76,6 +78,38 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
         iroh = self.manifest["dependencies"]["iroh"]
         self.assertEqual(iroh["version"], "1")
         self.assertIs(iroh["optional"], True)
+
+    def test_ssh_tunnel_is_a_patched_opt_in_with_a_locked_ci_contract(self) -> None:
+        features = self.manifest["features"]
+        russh = self.manifest["dependencies"]["russh"]
+
+        self.assertListEqual(features["ssh-tunnel"], ["dep:russh"])
+        for bundle in ("default", "release-server", "release-desktop"):
+            with self.subTest(bundle=bundle):
+                self.assertNotIn("ssh-tunnel", features[bundle])
+
+        self.assertEqual(russh["version"], "0.62.4")
+        self.assertIs(russh["optional"], True)
+        self.assertIs(russh["default-features"], False)
+        self.assertSetEqual(set(russh["features"]), {"ring"})
+
+        self.assertIn(
+            "- { os: ubuntu-24.04, feature: ssh-tunnel }",
+            self.ci_workflow,
+        )
+        self.assertIn(
+            "cargo check -p neoth --locked --features ${{ matrix.feature }}",
+            self.ci_workflow,
+        )
+        self.assertIn(
+            "if: matrix.feature == 'ssh-tunnel'",
+            self.ci_workflow,
+        )
+        self.assertIn(
+            "cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ "
+            "-- --test-threads=1",
+            self.ci_workflow,
+        )
 
     def test_every_native_desktop_target_uses_the_desktop_release_path(self) -> None:
         matrix = release_matrix(self.workflow)

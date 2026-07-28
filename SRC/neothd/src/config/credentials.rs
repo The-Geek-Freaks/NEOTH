@@ -777,6 +777,13 @@ pub struct Credentials {
     /// resolves at MCP spawn time. Secret (mlock+zeroize).
     #[serde(default)]
     pub tududi_api_token: Option<SecretString>,
+    /// TERMIX-SSH-SECRETS-01 — complete SSH tunnel authority. The bundle lives
+    /// in the private credential store because every endpoint may carry a
+    /// password or private-key passphrase. `None` means no dedicated authority
+    /// has been established yet (so a legacy inline freedom.yaml block may be
+    /// migrated); `Some([])` explicitly disables every tunnel.
+    #[serde(default)]
+    pub ssh_tunnels: Option<Vec<crate::transport::ssh_config::SshTunnelConfig>>,
 }
 
 impl Credentials {
@@ -818,8 +825,9 @@ impl Credentials {
 
     /// Load the effective credential set for the configured secrets backend.
     /// File values win; a keychain backend only fills fields that remain empty.
-    /// Store failures preserve the documented emergency-file fallback and are
-    /// surfaced by downstream feature-specific credential validation.
+    /// Failure to open the store preserves the documented emergency-file
+    /// fallback. A malformed compound SSH authority fails closed when no file
+    /// override exists; scalar lookup failures keep their per-field fallback.
     pub fn load_effective(path: &Path, backend: crate::config::SecretsBackend) -> Result<Self> {
         with_dual_file_transaction_lock(path, || Self::load_effective_unlocked(path, backend))
     }
@@ -829,25 +837,21 @@ impl Credentials {
         backend: crate::config::SecretsBackend,
     ) -> Result<Self> {
         let credentials = Self::load_or_default_unlocked(path)?;
-        Ok(Self::supplement_effective_unlocked(credentials, backend))
+        Self::supplement_effective_unlocked(credentials, backend)
     }
 
     pub(super) fn supplement_effective_unlocked(
         mut credentials: Self,
         backend: crate::config::SecretsBackend,
-    ) -> Self {
+    ) -> Result<Self> {
         if backend == crate::config::SecretsBackend::Keychain {
             match crate::config::keychain::open_store() {
                 Ok(store) => {
-                    if let Err(error) = crate::config::keychain::supplement_from_store(
+                    crate::config::keychain::supplement_from_store(
                         &mut credentials,
                         store.as_ref(),
-                    ) {
-                        tracing::warn!(
-                            %error,
-                            "OS keychain unavailable; using credentials.yaml emergency values"
-                        );
-                    }
+                    )
+                    .context("supplement credentials from OS keychain")?;
                 }
                 Err(error) => tracing::warn!(
                     %error,
@@ -855,7 +859,7 @@ impl Credentials {
                 ),
             }
         }
-        credentials
+        Ok(credentials)
     }
 
     /// Convenience: read from the default `~/.neoth/credentials.yaml`.
@@ -961,6 +965,227 @@ impl Credentials {
         encode_credentials_yaml(path, &body)
     }
 
+    /// Sorted names of every explicitly configured credential field. The
+    /// temporary serde tree is recursively zeroized on every return path so
+    /// compound SSH passwords/passphrases never linger in ordinary heap
+    /// strings after a names-only inspection.
+    pub(crate) fn configured_field_names(&self) -> Result<Vec<String>> {
+        let value = SensitiveYamlValue(
+            serde_yaml::to_value(self).context("inspect configured credential field names")?,
+        );
+        let mut names = Vec::new();
+        if let Some(mapping) = value.0.as_mapping() {
+            for (key, value) in mapping {
+                if !value.is_null()
+                    && let Some(name) = key.as_str()
+                {
+                    names.push(name.to_string());
+                }
+            }
+        }
+        names.sort();
+        Ok(names)
+    }
+
+    /// Return requested migration fields that are not durably represented in
+    /// this typed image. Scalar secrets must be non-empty strings; the
+    /// compound `ssh_tunnels` field is present whenever it is non-null,
+    /// including the authoritative `Some([])` disabled state.
+    pub(crate) fn missing_migration_fields(&self, fields: &[String]) -> Result<Vec<String>> {
+        let value = SensitiveYamlValue(
+            serde_yaml::to_value(self).context("verify persisted credential migration fields")?,
+        );
+        let mapping = value
+            .0
+            .as_mapping()
+            .context("credentials serialized to a non-mapping during migration verification")?;
+        Ok(fields
+            .iter()
+            .filter(|field| {
+                let key = serde_yaml::Value::String((*field).clone());
+                match mapping.get(&key) {
+                    Some(value) if field.as_str() == "ssh_tunnels" => value.is_null(),
+                    Some(value) => value.as_str().is_none_or(str::is_empty),
+                    None => true,
+                }
+            })
+            .cloned()
+            .collect())
+    }
+
+    /// Overlay every non-null field from `incoming` onto this credential set.
+    /// Both serde trees and the intermediate YAML are zeroizing; replaced
+    /// values are wiped immediately. The returned names contain field names
+    /// only, never values.
+    pub(crate) fn merge_present_fields(&self, incoming: &Self) -> Result<(Self, Vec<String>)> {
+        let mut base = SensitiveYamlValue(
+            serde_yaml::to_value(self).context("serialize existing credentials for merge")?,
+        );
+        let mut overlay = SensitiveYamlValue(
+            serde_yaml::to_value(incoming).context("serialize incoming credentials for merge")?,
+        );
+        let base_mapping = base
+            .0
+            .as_mapping_mut()
+            .context("existing credentials serialized to a non-mapping")?;
+        let overlay_mapping = overlay
+            .0
+            .as_mapping_mut()
+            .context("incoming credentials serialized to a non-mapping")?;
+        let mut imported = Vec::new();
+        for (key, value) in std::mem::take(overlay_mapping) {
+            if value.is_null() {
+                let _discarded = SensitiveYamlValue(value);
+                continue;
+            }
+            if let Some(name) = key.as_str() {
+                imported.push(name.to_string());
+            }
+            if let Some(previous) = base_mapping.insert(key, value) {
+                let _replaced = SensitiveYamlValue(previous);
+            }
+        }
+        let merged_yaml = zeroize::Zeroizing::new(
+            serde_yaml::to_string(&base.0)
+                .context("serialize merged credentials from zeroizing tree")?,
+        );
+        let merged = serde_yaml::from_str(&merged_yaml).context("rebuild merged credentials")?;
+        imported.sort();
+        Ok((merged, imported))
+    }
+
+    /// Read-only view used by `credential migrate --dry-run`. It overlays a
+    /// historical public SSH bundle into the returned typed credentials but
+    /// never publishes either file.
+    pub(crate) fn load_with_legacy_ssh_preview_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        store: &dyn super::keychain::SecretStore,
+    ) -> Result<(Self, bool, super::SecretsBackend)> {
+        anyhow::ensure!(
+            transaction_directory(freedom_path) == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a coherent migration preview"
+        );
+        with_coherent_pair_transaction_lock(freedom_path, || {
+            let mut credentials = Self::load_or_default_unlocked(credentials_path)?;
+            let Some((candidate, legacy_present)) =
+                Self::preview_runtime_config_with_legacy_ssh_unlocked(
+                    freedom_path,
+                    &mut credentials,
+                    Some(store),
+                )?
+            else {
+                return Ok((credentials, false, super::SecretsBackend::File));
+            };
+            Ok((credentials, legacy_present, candidate.secrets_backend))
+        })
+    }
+
+    /// Parse a runtime config and overlay the historical public SSH authority
+    /// without mutating either file. Dedicated file/keychain authorities win,
+    /// including `Some([])`; malformed legacy content is parsed only when it
+    /// would be the effective authority.
+    pub(super) fn preview_runtime_config_with_legacy_ssh_unlocked(
+        freedom_path: &Path,
+        credentials: &mut Self,
+        store: Option<&dyn super::keychain::SecretStore>,
+    ) -> Result<Option<(super::FreedomConfig, bool)>> {
+        let freedom_source = zeroize::Zeroizing::new(match std::fs::read(freedom_path) {
+            Ok(source) => source,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| format!("read {}", freedom_path.display()));
+            }
+        });
+        let mut public =
+            SensitiveYamlValue(serde_yaml::from_slice(&freedom_source).with_context(|| {
+                format!(
+                    "parse {} for legacy SSH migration preview",
+                    freedom_path.display()
+                )
+            })?);
+        let root = public.0.as_mapping_mut().with_context(|| {
+            format!(
+                "{} must contain a YAML mapping for legacy SSH migration preview",
+                freedom_path.display()
+            )
+        })?;
+        let key = serde_yaml::Value::String("ssh_tunnels".to_string());
+        let legacy_value = root.remove(&key).map(SensitiveYamlValue);
+        let legacy_present = legacy_value.is_some();
+
+        // Match the real migration's validation without writing anything.
+        let public_body = zeroize::Zeroizing::new(
+            serde_yaml::to_string(&public.0)
+                .context("serialize freedom.yaml legacy SSH preview target")?,
+        );
+        let candidate: super::FreedomConfig = serde_yaml::from_str(&public_body)
+            .context("validate freedom.yaml legacy SSH preview target")?;
+        let _ = candidate.public_yaml()?;
+
+        if legacy_present
+            && credentials.ssh_tunnels.is_none()
+            && candidate.secrets_backend == super::SecretsBackend::Keychain
+            && let Some(store) = store
+        {
+            let mut effective = credentials.clone();
+            super::keychain::supplement_from_store(&mut effective, store)
+                .context("resolve dedicated keychain SSH authority for migration preview")?;
+            if effective.ssh_tunnels.is_some() {
+                credentials.ssh_tunnels = effective.ssh_tunnels;
+            }
+        }
+        if credentials.ssh_tunnels.is_none()
+            && let Some(legacy_value) = legacy_value.as_ref()
+        {
+            let legacy_yaml = zeroize::Zeroizing::new(
+                serde_yaml::to_string(&legacy_value.0)
+                    .context("serialize legacy freedom.yaml::ssh_tunnels preview")?,
+            );
+            credentials.ssh_tunnels = Some(
+                serde_yaml::from_str(&legacy_yaml)
+                    .context("parse legacy freedom.yaml::ssh_tunnels preview")?,
+            );
+        }
+        Ok(Some((candidate, legacy_present)))
+    }
+
+    /// Remove the historical root `ssh_tunnels` key from a public config image
+    /// while preserving every other YAML value. The removed subtree and parse
+    /// tree are recursively zeroized.
+    pub(crate) fn public_freedom_without_legacy_ssh(source: &str) -> Result<String> {
+        let mut public = SensitiveYamlValue(
+            serde_yaml::from_str(source)
+                .context("parse freedom.yaml before removing legacy SSH")?,
+        );
+        let root = public
+            .0
+            .as_mapping_mut()
+            .context("freedom.yaml must contain a YAML mapping before removing legacy SSH")?;
+        let key = serde_yaml::Value::String("ssh_tunnels".to_string());
+        let Some(legacy) = root.remove(&key) else {
+            return Ok(source.to_string());
+        };
+        let _legacy = SensitiveYamlValue(legacy);
+        let body = zeroize::Zeroizing::new(
+            serde_yaml::to_string(&public.0)
+                .context("serialize freedom.yaml without legacy SSH authority")?,
+        );
+        let candidate: super::FreedomConfig = serde_yaml::from_str(&body)
+            .context("validate freedom.yaml without legacy SSH authority")?;
+        let rendered = zeroize::Zeroizing::new(candidate.public_yaml()?);
+        let rendered_value: serde_yaml::Value = serde_yaml::from_str(&rendered)
+            .context("parse public FreedomConfig SSH-boundary validation image")?;
+        let rendered_root = rendered_value
+            .as_mapping()
+            .context("public FreedomConfig SSH-boundary validation image must be a mapping")?;
+        anyhow::ensure!(
+            !rendered_root.contains_key(&key),
+            "public FreedomConfig rendering retained private SSH tunnel authority"
+        );
+        Ok(body.as_str().to_string())
+    }
+
     /// True when there are no secrets to persist.
     ///
     /// Destructured intentionally so adding a new field to `Credentials`
@@ -1049,6 +1274,7 @@ impl Credentials {
             ms_todo_refresh_token,
             cluster_passphrase,
             tududi_api_token,
+            ssh_tunnels,
             paperless_url,
             paperless_token,
         } = self;
@@ -1133,6 +1359,7 @@ impl Credentials {
             && ms_todo_refresh_token.is_none()
             && cluster_passphrase.is_none()
             && tududi_api_token.is_none()
+            && ssh_tunnels.is_none()
             && paperless_url.is_none()
             && paperless_token.is_none()
     }
@@ -1324,6 +1551,208 @@ impl Credentials {
             mutation,
             |_| Ok(()),
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_update_raw_freedom_with_credentials_at_using_fault<F, R>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        mutation: F,
+        injected: DualFileTestFaultPoint,
+    ) -> Result<R>
+    where
+        F: FnOnce(Option<&str>, &mut Self) -> Result<(Option<String>, R)>,
+    {
+        Self::update_raw_freedom_with_credentials_at_using_fault(
+            freedom_path,
+            credentials_path,
+            mutation,
+            |actual| {
+                let matches = matches!(
+                    (injected, actual),
+                    (
+                        DualFileTestFaultPoint::JournalPrepared,
+                        DualFileFaultPoint::JournalPrepared
+                    ) | (
+                        DualFileTestFaultPoint::FreedomPublished,
+                        DualFileFaultPoint::FreedomPublished
+                    ) | (
+                        DualFileTestFaultPoint::DirectorySynced,
+                        DualFileFaultPoint::DirectorySynced
+                    )
+                );
+                anyhow::ensure!(!matches, "injected dual-file fault at {actual:?}");
+                Ok(())
+            },
+        )
+    }
+
+    /// One-time, zero-interaction migration for the historical
+    /// `freedom.yaml::ssh_tunnels` shape.
+    ///
+    /// The complete tunnel bundle is security-bearing because endpoint and
+    /// jump-host auth may contain passwords/private-key passphrases. It is
+    /// therefore moved into the private credential store and removed from the
+    /// public file as one PREPARED-journal transaction. A dedicated
+    /// `credentials.yaml::ssh_tunnels` value always wins, including `Some([])`;
+    /// the legacy block is still removed so it cannot later resurrect.
+    ///
+    /// Returns `true` when a legacy root key was removed, `false` when there was
+    /// nothing to migrate. Any parse/render/publication failure leaves the
+    /// original coherent pair (or its recoverable journal) intact.
+    pub(super) fn migrate_legacy_ssh_tunnels_at(
+        freedom_path: &Path,
+        credentials_path: &Path,
+    ) -> Result<bool> {
+        Self::migrate_legacy_ssh_tunnels_at_using_fault(freedom_path, credentials_path, |_| Ok(()))
+    }
+
+    fn migrate_legacy_ssh_tunnels_at_using_fault<H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        fault: H,
+    ) -> Result<bool>
+    where
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        Self::migrate_legacy_ssh_tunnels_at_using_fault_and_store(
+            freedom_path,
+            credentials_path,
+            None,
+            fault,
+        )
+    }
+
+    fn migrate_legacy_ssh_tunnels_at_using_fault_and_store<H>(
+        freedom_path: &Path,
+        credentials_path: &Path,
+        injected_store: Option<&dyn super::keychain::SecretStore>,
+        fault: H,
+    ) -> Result<bool>
+    where
+        H: FnMut(DualFileFaultPoint) -> Result<()>,
+    {
+        let freedom_dir = transaction_directory(freedom_path);
+        anyhow::ensure!(
+            freedom_dir == transaction_directory(credentials_path),
+            "freedom.yaml and credentials.yaml must be sibling files for a durable transaction"
+        );
+
+        with_dual_file_transaction_lock(freedom_path, || {
+            with_config_writer_guard(freedom_path, || {
+                with_legacy_pair_locks(freedom_path, credentials_path, || {
+                    let freedom_before = FileSnapshot::capture(freedom_path)?;
+                    let FileSnapshot::Present(freedom_source) = &freedom_before else {
+                        return Ok(false);
+                    };
+                    let credentials_before = FileSnapshot::capture(credentials_path)?;
+                    let mut public = SensitiveYamlValue(
+                        serde_yaml::from_slice(freedom_source).with_context(|| {
+                            format!(
+                                "parse {} before legacy SSH credential migration",
+                                freedom_path.display()
+                            )
+                        })?,
+                    );
+                    let root = public.0.as_mapping_mut().with_context(|| {
+                        format!(
+                            "{} must contain a YAML mapping before legacy SSH credential migration",
+                            freedom_path.display()
+                        )
+                    })?;
+                    let key = serde_yaml::Value::String("ssh_tunnels".to_string());
+                    let Some(legacy_value) = root.remove(&key) else {
+                        return Ok(false);
+                    };
+                    // Keep stale plaintext auth zeroizing even when a
+                    // dedicated authority means it must not be parsed or used.
+                    let legacy_value = SensitiveYamlValue(legacy_value);
+
+                    let mut credentials = Self::load_or_default_unlocked(credentials_path)
+                        .with_context(|| {
+                            format!(
+                                "load {} for legacy SSH credential migration",
+                                credentials_path.display()
+                            )
+                        })?;
+                    let freedom_body = zeroize::Zeroizing::new(
+                        serde_yaml::to_string(&public.0)
+                            .context("serialize freedom.yaml without legacy SSH credentials")?,
+                    );
+                    let candidate: super::FreedomConfig = serde_yaml::from_str(&freedom_body)
+                        .with_context(|| {
+                            format!(
+                                "validate {} after legacy SSH credential migration",
+                                freedom_path.display()
+                            )
+                        })?;
+                    let public_yaml = zeroize::Zeroizing::new(candidate.public_yaml()?);
+                    let rendered_public: serde_yaml::Value = serde_yaml::from_str(&public_yaml)
+                        .context("parse public FreedomConfig migration validation image")?;
+                    let rendered_root = rendered_public.as_mapping().context(
+                        "public FreedomConfig migration validation image must be a YAML mapping",
+                    )?;
+                    anyhow::ensure!(
+                        !rendered_root.contains_key(&key),
+                        "public FreedomConfig rendering retained private SSH tunnel authority"
+                    );
+
+                    let mut dedicated_keychain_ssh_present = false;
+                    if credentials.ssh_tunnels.is_none()
+                        && candidate.secrets_backend == super::SecretsBackend::Keychain
+                    {
+                        if let Some(store) = injected_store {
+                            let mut effective = credentials.clone();
+                            super::keychain::supplement_from_store(&mut effective, store)
+                                .context("resolve dedicated keychain SSH migration authority")?;
+                            dedicated_keychain_ssh_present = effective.ssh_tunnels.is_some();
+                        } else {
+                            let store = super::keychain::open_store().context(
+                                "open OS keychain while resolving dedicated SSH migration authority",
+                            )?;
+                            let mut effective = credentials.clone();
+                            super::keychain::supplement_from_store(&mut effective, store.as_ref())
+                                .context("resolve dedicated keychain SSH migration authority")?;
+                            dedicated_keychain_ssh_present = effective.ssh_tunnels.is_some();
+                        }
+                    }
+                    if credentials.ssh_tunnels.is_none() && !dedicated_keychain_ssh_present {
+                        let legacy_yaml = zeroize::Zeroizing::new(
+                            serde_yaml::to_string(&legacy_value.0)
+                                .context("serialize legacy freedom.yaml::ssh_tunnels")?,
+                        );
+                        let legacy_tunnels: Vec<crate::transport::ssh_config::SshTunnelConfig> =
+                            serde_yaml::from_str(&legacy_yaml)
+                                .context("parse legacy freedom.yaml::ssh_tunnels")?;
+                        credentials.ssh_tunnels = Some(legacy_tunnels);
+                    }
+
+                    let freedom_after = FileSnapshot::Present(zeroize::Zeroizing::new(
+                        freedom_body.as_bytes().to_vec(),
+                    ));
+                    let credentials_after = credentials.rendered_file_snapshot_preserving_unknown(
+                        credentials_path,
+                        &credentials_before,
+                    )?;
+
+                    publish_prepared_file_pair(
+                        freedom_path,
+                        credentials_path,
+                        &freedom_dir,
+                        &freedom_before,
+                        &freedom_after,
+                        &credentials_before,
+                        &credentials_after,
+                        true,
+                        Some(|path: &Path, body: &[u8]| {
+                            crate::util::atomic_write::atomic_write_private(path, body)
+                                .with_context(|| format!("atomically write {}", path.display()))
+                        }),
+                        fault,
+                    )
+                })
+            })
+        })
     }
 
     /// Publish exact already-staged backup bytes as one crash-recoverable pair.
@@ -1628,6 +2057,15 @@ enum DualFileFaultPoint {
     JournalPrepared,
     CredentialsPublished,
     FreedomPublished,
+    DirectorySynced,
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DualFileTestFaultPoint {
+    JournalPrepared,
+    FreedomPublished,
+    DirectorySynced,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1777,6 +2215,7 @@ where
     }
 
     sync_transaction_directory(freedom_dir).map_err(target_publication_crossed_error)?;
+    fault(DualFileFaultPoint::DirectorySynced).map_err(target_publication_crossed_error)?;
     crate::util::atomic_write::durable_remove_file(&journal_path)
         .with_context(|| {
             format!(
@@ -4181,6 +4620,448 @@ mod tests {
             "sk-roundtrip"
         );
         assert!(loaded.telegram_token.is_none());
+    }
+
+    fn legacy_ssh_freedom_yaml(password: &str) -> String {
+        format!(
+            "operator_id: alex\n\
+             future_extension:\n\
+             \u{20}\u{20}keep: true\n\
+             ssh_tunnels:\n\
+             \u{20}\u{20}- endpoint:\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}host: bastion.example\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}username: alex\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}auth:\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}password: {password}\n\
+             \u{20}\u{20}\u{20}\u{20}remote_host: 127.0.0.1\n\
+             \u{20}\u{20}\u{20}\u{20}remote_port: 5432\n"
+        )
+    }
+
+    fn test_ssh_tunnel(password: &str) -> crate::transport::ssh_config::SshTunnelConfig {
+        crate::transport::ssh_config::SshTunnelConfig {
+            endpoint: crate::transport::ssh_config::SshEndpoint {
+                host: "keychain.example".into(),
+                port: 22,
+                username: "alex".into(),
+                auth: crate::transport::ssh_config::SshAuth::Password(SecretString::from(password)),
+            },
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            local_port: 0,
+            jump_hosts: Vec::new(),
+            max_retries: 5,
+            retry_delay: std::time::Duration::from_secs(2),
+        }
+    }
+
+    fn assert_keychain_ssh_authority_is_not_persisted(
+        authority: Vec<crate::transport::ssh_config::SshTunnelConfig>,
+    ) {
+        use crate::config::keychain::SecretStore as _;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            format!(
+                "secrets_backend: keychain\n{}",
+                legacy_ssh_freedom_yaml("legacy-public")
+            ),
+        )
+        .unwrap();
+        let store = crate::config::keychain::InMemorySecretStore::default();
+        let keychain_credentials = Credentials {
+            ssh_tunnels: Some(authority.clone()),
+            ..Default::default()
+        };
+        let secret = crate::config::keychain::ssh_tunnels_secret(&keychain_credentials)
+            .unwrap()
+            .unwrap();
+        store.set("ssh_tunnels", &secret).unwrap();
+
+        assert!(
+            Credentials::migrate_legacy_ssh_tunnels_at_using_fault_and_store(
+                &freedom_path,
+                &credentials_path,
+                Some(&store),
+                |_| Ok(()),
+            )
+            .unwrap()
+        );
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("legacy-public"));
+        let raw = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(
+            raw.ssh_tunnels.is_none(),
+            "keychain authority must not be copied into credentials.yaml"
+        );
+        if credentials_path.exists() {
+            let private = std::fs::read_to_string(&credentials_path).unwrap();
+            assert!(!private.contains("ssh_tunnels"));
+            assert!(!private.contains("keychain-private"));
+        }
+        let mut effective = raw;
+        crate::config::keychain::supplement_from_store(&mut effective, &store).unwrap();
+        assert_eq!(effective.ssh_tunnels, Some(authority));
+    }
+
+    #[test]
+    fn keychain_ssh_authority_wins_without_leaking_into_credentials_file() {
+        assert_keychain_ssh_authority_is_not_persisted(vec![test_ssh_tunnel("keychain-private")]);
+    }
+
+    #[test]
+    fn keychain_empty_ssh_authority_disables_legacy_without_file_copy() {
+        assert_keychain_ssh_authority_is_not_persisted(Vec::new());
+    }
+
+    #[test]
+    fn unavailable_keychain_aborts_legacy_ssh_migration_without_writing() {
+        struct UnavailableKeychain;
+
+        impl crate::config::keychain::SecretStore for UnavailableKeychain {
+            fn get(&self, key: &str) -> Result<Option<SecretString>> {
+                if key == "ssh_tunnels" {
+                    anyhow::bail!("injected keychain read failure for {key}");
+                }
+                Ok(None)
+            }
+
+            fn set(&self, _key: &str, _value: &SecretString) -> Result<()> {
+                anyhow::bail!("unexpected keychain write")
+            }
+
+            fn delete(&self, _key: &str) -> Result<()> {
+                anyhow::bail!("unexpected keychain delete")
+            }
+
+            fn backend_name(&self) -> &'static str {
+                "unavailable-keychain (test)"
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before = format!(
+            "secrets_backend: keychain\n{}",
+            legacy_ssh_freedom_yaml("legacy-must-not-shadow-keychain")
+        )
+        .into_bytes();
+        let credentials_before = b"future_secret: preserve-exactly\n".to_vec();
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+
+        let error = Credentials::migrate_legacy_ssh_tunnels_at_using_fault_and_store(
+            &freedom_path,
+            &credentials_path,
+            Some(&UnavailableKeychain),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(format!("{error:#}").contains("read SSH tunnel credential bundle from keychain"));
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(
+            !dir.path().join(DUAL_FILE_JOURNAL_NAME).exists(),
+            "authority resolution must fail before preparing publication"
+        );
+    }
+
+    #[test]
+    fn legacy_ssh_tunnels_migrate_atomically_and_remain_effective() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("legacy-password")).unwrap();
+
+        let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert_eq!(effective.ssh_tunnels.len(), 1);
+        match &effective.ssh_tunnels[0].endpoint.auth {
+            crate::transport::ssh_config::SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "legacy-password");
+            }
+            other => panic!("unexpected migrated auth: {other:?}"),
+        }
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("legacy-password"));
+        assert!(public.contains("future_extension"));
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert_eq!(
+            credentials
+                .ssh_tunnels
+                .as_ref()
+                .expect("dedicated SSH authority")
+                .len(),
+            1
+        );
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[test]
+    fn dedicated_empty_ssh_authority_wins_and_removes_legacy_block() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("must-not-resurrect")).unwrap();
+        Credentials {
+            ssh_tunnels: Some(Vec::new()),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert!(effective.ssh_tunnels.is_empty());
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("must-not-resurrect"));
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        assert_eq!(credentials.ssh_tunnels, Some(Vec::new()));
+    }
+
+    #[test]
+    fn dedicated_ssh_authority_removes_malformed_legacy_block_without_parsing_it() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            "operator_id: alex\nssh_tunnels:\n  - endpoint: definitely-not-a-map\n",
+        )
+        .unwrap();
+        Credentials {
+            ssh_tunnels: Some(Vec::new()),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+
+        let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert!(effective.ssh_tunnels.is_empty());
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("definitely-not-a-map"));
+        assert_eq!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .ssh_tunnels,
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn malformed_legacy_ssh_tunnels_write_nothing() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before =
+            b"operator_id: alex\nssh_tunnels:\n  - endpoint: definitely-not-a-map\n".to_vec();
+        let credentials_before = b"future_secret: preserve-exactly\n".to_vec();
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+
+        let error = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("legacy freedom.yaml::ssh_tunnels")
+        );
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+    }
+
+    #[test]
+    fn legacy_ssh_migration_recovers_every_prepared_crash_image() {
+        for crash_point in [
+            DualFileFaultPoint::JournalPrepared,
+            DualFileFaultPoint::CredentialsPublished,
+            DualFileFaultPoint::FreedomPublished,
+            DualFileFaultPoint::DirectorySynced,
+        ] {
+            let dir = tempdir().unwrap();
+            let freedom_path = dir.path().join("freedom.yaml");
+            let credentials_path = dir.path().join("credentials.yaml");
+            std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("crash-safe")).unwrap();
+            std::fs::write(
+                &credentials_path,
+                "future_secret: preserve-through-recovery\n",
+            )
+            .unwrap();
+
+            let error = Credentials::migrate_legacy_ssh_tunnels_at_using_fault(
+                &freedom_path,
+                &credentials_path,
+                |point| {
+                    if point == crash_point {
+                        anyhow::bail!("injected migration crash");
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap_err();
+            assert_eq!(
+                dual_file_target_publication_crossed(&error),
+                matches!(
+                    crash_point,
+                    DualFileFaultPoint::FreedomPublished | DualFileFaultPoint::DirectorySynced
+                )
+            );
+            assert!(format!("{error:#}").contains("injected migration crash"));
+
+            let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+            assert_eq!(effective.ssh_tunnels.len(), 1);
+            let public = std::fs::read_to_string(&freedom_path).unwrap();
+            assert!(!public.contains("ssh_tunnels"));
+            assert!(!public.contains("crash-safe"));
+            let private = std::fs::read_to_string(&credentials_path).unwrap();
+            assert!(private.contains("future_secret"));
+            assert!(private.contains("crash-safe"));
+            assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
+        }
+    }
+
+    #[test]
+    fn legacy_ssh_migration_preserves_unknown_credential_fields() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("pw")).unwrap();
+        std::fs::write(&credentials_path, "future_secret:\n  nested: keep-me\n").unwrap();
+
+        crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        let raw = std::fs::read_to_string(&credentials_path).unwrap();
+        assert!(raw.contains("future_secret"));
+        assert!(raw.contains("keep-me"));
+        assert!(raw.contains("ssh_tunnels"));
+        assert!(raw.contains("password: pw"));
+    }
+
+    #[test]
+    fn public_config_update_preserves_dedicated_ssh_authority_on_slim_builds() {
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(
+            &freedom_path,
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        Credentials {
+            ssh_tunnels: Some(vec![crate::transport::ssh_config::SshTunnelConfig {
+                endpoint: crate::transport::ssh_config::SshEndpoint {
+                    host: "bastion.example".into(),
+                    port: 22,
+                    username: "alex".into(),
+                    auth: crate::transport::ssh_config::SshAuth::Password(SecretString::from(
+                        "credential-only-password",
+                    )),
+                },
+                remote_host: "127.0.0.1".into(),
+                remote_port: 5432,
+                local_port: 0,
+                jump_hosts: Vec::new(),
+                max_retries: 5,
+                retry_delay: Duration::from_secs(2),
+            }]),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let credential_before = std::fs::read(&credentials_path).unwrap();
+
+        crate::config::FreedomConfig::update_at(&freedom_path, |config| {
+            config.operator_id = Some("updated".into());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credential_before,
+            "public-only RMW must not touch the private SSH authority"
+        );
+        let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
+        assert_eq!(effective.operator_id.as_deref(), Some("updated"));
+        assert_eq!(effective.ssh_tunnels.len(), 1);
+        match &effective.ssh_tunnels[0].endpoint.auth {
+            crate::transport::ssh_config::SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "credential-only-password");
+            }
+            other => panic!("unexpected effective SSH auth: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn public_config_update_migrates_legacy_ssh_before_read_modify_write() {
+        let dir = tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("rmw-password")).unwrap();
+
+        crate::config::FreedomConfig::update_at(&freedom_path, |config| {
+            config.operator_id = Some("updated".into());
+            Ok(())
+        })
+        .unwrap();
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("rmw-password"));
+        assert!(public.contains("future_extension"));
+        let credentials = Credentials::load_or_default(&credentials_path).unwrap();
+        let tunnels = credentials.ssh_tunnels.expect("migrated SSH authority");
+        assert_eq!(tunnels.len(), 1);
+        match &tunnels[0].endpoint.auth {
+            crate::transport::ssh_config::SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "rmw-password");
+            }
+            other => panic!("unexpected migrated auth: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn migration_verification_accepts_present_ssh_and_rejects_absent_or_null() {
+        let field = vec!["ssh_tunnels".to_string()];
+        let present: Credentials = serde_yaml::from_str(
+            "ssh_tunnels:\n  - endpoint:\n      host: bastion.example\n      username: alex\n      auth:\n        password: secret\n    remote_host: 127.0.0.1\n    remote_port: 5432\n",
+        )
+        .unwrap();
+        assert!(present.missing_migration_fields(&field).unwrap().is_empty());
+
+        let disabled = Credentials {
+            ssh_tunnels: Some(Vec::new()),
+            ..Default::default()
+        };
+        assert!(
+            disabled
+                .missing_migration_fields(&field)
+                .unwrap()
+                .is_empty(),
+            "Some([]) is a present authoritative disabled state"
+        );
+        assert_eq!(
+            Credentials::default()
+                .missing_migration_fields(&field)
+                .unwrap(),
+            field
+        );
     }
 
     #[test]

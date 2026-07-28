@@ -746,19 +746,6 @@ fn print_skip_with_fix(reason: crate::cluster::policy::NoReason, ssid: Option<&s
     }
 }
 
-pub(crate) async fn load_membership_snapshot(
-    home: &Path,
-) -> Result<crate::cluster::membership::MembershipSnapshot> {
-    if live_daemon_owner_pid(home)?.is_some() {
-        return crate::daemon::audit_rpc::membership_snapshot(home)
-            .await
-            .map(|envelope| envelope.snapshot)
-            .map_err(anyhow::Error::from)
-            .context("read membership from daemon authority RPC");
-    }
-    crate::cluster::membership::MembershipStore::open(home)?.full_snapshot()
-}
-
 pub(crate) async fn load_membership_snapshot_envelope(
     home: &Path,
 ) -> Result<crate::cluster::membership::MembershipSnapshotEnvelope> {
@@ -881,15 +868,6 @@ pub(crate) async fn record_legacy_pending_membership(
         &request.label,
         crate::time::now_unix_i64(),
     )
-}
-
-pub(crate) async fn revoke_membership(
-    home: &Path,
-    identifier: &str,
-    reason: &str,
-) -> Result<Option<crate::cluster::membership::RevokeReceipt>> {
-    revoke_membership_with_request_id(home, identifier, reason, &uuid::Uuid::now_v7().to_string())
-        .await
 }
 
 fn canonical_revocation_request_id(request_id: &str) -> Result<String> {
@@ -1195,11 +1173,6 @@ pub fn render_topology_table(rows: &[TopologyRow]) -> String {
         ));
     }
     out
-}
-
-#[cfg(test)]
-fn topology_now_unix() -> i64 {
-    crate::time::now_unix_i64()
 }
 
 async fn run_topology(output: &OutputFormat) -> Result<()> {

@@ -88,9 +88,13 @@ imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mai
 # `ring` crypto backend → builds on Windows MSVC with NO cmake/nasm; ring ships
 # pre-assembled objects from crates.io). Default OFF (same precedent as
 # `imap_fetch`); source-build opt-in only — NOT flipped on in release.yml
-# (cargo-dist rejected, D-001). Config: `freedom.yaml::ssh_tunnels`
-# (Vec<SshTunnelConfig>, parses on EVERY build via `transport::ssh_config`);
-# `serve.rs` spawns the tunnels at step 5a-ssh when this feature is on.
+# (cargo-dist rejected, D-001). Authority: private
+# `credentials.yaml::ssh_tunnels`; a legacy `freedom.yaml` block is migrated
+# atomically on first read. `serve.rs` spawns the tunnels at step 5a-ssh when
+# this feature is on. Encrypted OpenSSH private keys are the supported
+# authentication path. Password configurations fail closed before listener
+# bind while upstream russh retains/logs their plaintext authentication
+# request; do not re-enable that path without a reviewed dependency fix.
 # The TERMIX-03/04 primitives (`transport::ssh_socks5` / `ssh_tofu`)
 # compile WITHOUT this feature.
 ssh-tunnel = ["dep:russh"]
@@ -633,7 +637,7 @@ rand                = { version = "0.9", default-features = false, features = ["
 # TERMIX-01/02 (feature `ssh-tunnel`, default OFF). `ring` backend (NOT aws-lc-rs)
 # so it builds on Windows MSVC with no cmake/nasm. `russh::keys` (merged-in, no
 # separate russh-keys crate) supplies the ssh-key PublicKey/PrivateKey types.
-russh               = { version = "0.61", default-features = false, features = ["ring", "flate2", "rsa"], optional = true }
+russh               = { version = "0.62.4", default-features = false, features = ["ring"], optional = true }
 # D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
 tokio-stream        = { version = "0.1", default-features = false }
 # Phase 5C streaming -- async-stream macro builds Stream impls from async {}

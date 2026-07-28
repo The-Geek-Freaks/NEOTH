@@ -664,43 +664,42 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Hysteria: a provider endpoint pointed at `127.0.0.1:<local_port>`
     // must find the listener bound. `spawn_tunnel` returns once the
     // local port is bound; the SSH connect itself retries in the
-    // background with exponential backoff. Failure is fail-open with a
-    // warn (tunnels are egress helpers, not a hard requirement — the
-    // strict-egress hard-fail contract stays Hysteria-only).
+    // background with exponential backoff. A configured tunnel set is an
+    // explicit runtime contract: TOFU-store or listener setup failure aborts
+    // startup, and dropping `handles` rolls back listeners already bound in
+    // this block.
     #[cfg(feature = "ssh-tunnel")]
     let ssh_tunnel_handles: Vec<crate::transport::ssh_tunnel::SshTunnel> = {
         let mut handles = Vec::new();
         if !config.ssh_tunnels.is_empty() {
             let tofu_path = neoth_home.join("ssh_known_hosts.db");
-            match crate::transport::ssh_tofu::TofuStore::open(&tofu_path) {
-                Ok(store) => {
-                    let tofu = Arc::new(tokio::sync::Mutex::new(store));
-                    for tcfg in &config.ssh_tunnels {
-                        match crate::transport::ssh_tunnel::spawn_tunnel(tcfg.clone(), tofu.clone())
-                            .await
-                        {
-                            Ok(t) => {
-                                info!(
-                                    local_port = t.local_port(),
-                                    host = %tcfg.endpoint.host_key(),
-                                    remote = %format!("{}:{}", tcfg.remote_host, tcfg.remote_port),
-                                    "ssh tunnel listener bound; connecting in background"
-                                );
-                                handles.push(t);
-                            }
-                            Err(e) => {
-                                warn!(
-                                    error = %e,
-                                    host = %tcfg.endpoint.host_key(),
-                                    "ssh tunnel spawn failed — continuing without it"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "SSH TOFU store open failed — skipping ALL ssh_tunnels (host keys unverifiable)");
-                }
+            let tofu_path_for_error = tofu_path.clone();
+            let store = tokio::task::spawn_blocking(move || {
+                crate::transport::ssh_tofu::TofuStore::open(&tofu_path)
+            })
+            .await
+            .context("SSH TOFU store initialization worker failed")?
+            .with_context(|| format!("open SSH TOFU store at {}", tofu_path_for_error.display()))?;
+            let tofu = Arc::new(tokio::sync::Mutex::new(store));
+            for tcfg in &config.ssh_tunnels {
+                let tunnel =
+                    crate::transport::ssh_tunnel::spawn_tunnel(tcfg.clone(), Arc::clone(&tofu))
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "bind SSH tunnel listener for {} -> {}:{}",
+                                tcfg.endpoint.host_key(),
+                                tcfg.remote_host,
+                                tcfg.remote_port
+                            )
+                        })?;
+                info!(
+                    local_port = tunnel.local_port(),
+                    host = %tcfg.endpoint.host_key(),
+                    remote = %format!("{}:{}", tcfg.remote_host, tcfg.remote_port),
+                    "ssh tunnel listener bound; connecting in background"
+                );
+                handles.push(tunnel);
             }
         }
         handles
@@ -709,7 +708,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     if !config.ssh_tunnels.is_empty() {
         warn!(
             configured = config.ssh_tunnels.len(),
-            "freedom.yaml::ssh_tunnels is set but this binary was built without \
+            "credentials.yaml::ssh_tunnels is configured but this binary was built without \
              the `ssh-tunnel` feature — tunnels NOT started"
         );
     }

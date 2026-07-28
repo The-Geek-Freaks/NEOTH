@@ -80,6 +80,8 @@ fn with_coherent_freedom_update_lock<T>(
     action: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
     credentials::with_coherent_pair_transaction_lock(path, || {
+        let credentials_path = credentials::sibling_credentials_path(path);
+        credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
         credentials::with_config_writer_guard(path, action)
     })
 }
@@ -123,6 +125,9 @@ fn merge_effective_credentials(config: &mut FreedomConfig, credentials: &credent
     if let Some(value) = credentials.inference_default_slot_key.as_ref() {
         config.inference.default_slot.key = Some(value.clone());
     }
+    if let Some(value) = credentials.ssh_tunnels.as_ref() {
+        config.ssh_tunnels.clone_from(value);
+    }
 }
 
 /// Serialize a complete file/keychain backend migration with journal-aware
@@ -153,6 +158,8 @@ pub(crate) fn load_runtime_config_pair_from_path_or_default(
             .try_exists()
             .with_context(|| format!("check freedom.yaml path {}", path.display()))?
         {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
             let (config, raw_credentials, credentials) =
                 FreedomConfig::load_runtime_pair_unlocked(path, || {})?;
             Ok(RuntimeConfigPair {
@@ -170,7 +177,7 @@ pub(crate) fn load_runtime_config_pair_from_path_or_default(
             let credentials = credentials::Credentials::supplement_effective_unlocked(
                 raw_credentials.clone(),
                 SecretsBackend::File,
-            );
+            )?;
             let mut config = FreedomConfig::default();
             merge_effective_credentials(&mut config, &credentials);
             Ok(RuntimeConfigPair {
@@ -187,6 +194,8 @@ fn load_runtime_config_pair_from_path_with_hook(
     after_freedom_load: impl FnOnce(),
 ) -> Result<RuntimeConfigPair> {
     credentials::with_coherent_pair_transaction_lock(path, || {
+        let credentials_path = credentials::sibling_credentials_path(path);
+        credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
         let (config, raw_credentials, credentials) =
             FreedomConfig::load_runtime_pair_unlocked(path, after_freedom_load)?;
         Ok(RuntimeConfigPair {
@@ -208,13 +217,15 @@ pub(crate) fn load_optional_runtime_config_pair_from_path(
             .try_exists()
             .with_context(|| format!("check freedom.yaml path {}", path.display()))?
         {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
             let (config, _, credentials) = FreedomConfig::load_runtime_pair_unlocked(path, || {})?;
             Ok((Some(config), credentials))
         } else {
             let credentials_path = credentials::sibling_credentials_path(path);
             let raw = credentials::Credentials::load_or_default_unlocked(&credentials_path)?;
             let effective =
-                credentials::Credentials::supplement_effective_unlocked(raw, SecretsBackend::File);
+                credentials::Credentials::supplement_effective_unlocked(raw, SecretsBackend::File)?;
             Ok((None, effective))
         }
     })
@@ -234,8 +245,15 @@ pub(crate) struct RuntimeConfigDiagnosticSnapshot {
 pub(crate) fn load_runtime_config_diagnostic_snapshot(
     path: &Path,
 ) -> Result<RuntimeConfigDiagnosticSnapshot> {
+    load_runtime_config_diagnostic_snapshot_using_store(path, None)
+}
+
+fn load_runtime_config_diagnostic_snapshot_using_store(
+    path: &Path,
+    injected_store: Option<&dyn keychain::SecretStore>,
+) -> Result<RuntimeConfigDiagnosticSnapshot> {
     credentials::with_coherent_pair_transaction_lock(path, || {
-        let (mut config, config_error) = if path
+        let (mut config, mut config_error) = if path
             .try_exists()
             .with_context(|| format!("check freedom.yaml path {}", path.display()))?
         {
@@ -253,15 +271,61 @@ pub(crate) fn load_runtime_config_diagnostic_snapshot(
         let credentials_path = credentials::sibling_credentials_path(path);
         let credential_status =
             credentials::Credentials::credential_store_status_unlocked(&credentials_path);
-        let credentials = match credential_status {
+        let mut credentials = match credential_status {
             credentials::CredentialStoreStatus::Missing
             | credentials::CredentialStoreStatus::Ok => Some(
-                credentials::Credentials::load_effective_unlocked(&credentials_path, backend)?,
+                credentials::Credentials::load_or_default_unlocked(&credentials_path)?,
             ),
             credentials::CredentialStoreStatus::Invalid
             | credentials::CredentialStoreStatus::Unreadable
             | credentials::CredentialStoreStatus::KeyUnavailable => None,
         };
+
+        if config_error.is_none()
+            && let (Some(_), Some(raw_credentials)) = (&config, credentials.take())
+        {
+            let opened_store = if backend == SecretsBackend::Keychain && injected_store.is_none() {
+                match keychain::open_store() {
+                    Ok(store) => Some(store),
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "could not open OS keychain for runtime diagnostic snapshot; using credentials.yaml emergency values"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let store = injected_store.or_else(|| opened_store.as_deref());
+            let mut effective_credentials = raw_credentials;
+            match credentials::Credentials::preview_runtime_config_with_legacy_ssh_unlocked(
+                path,
+                &mut effective_credentials,
+                store,
+            ) {
+                Ok(Some((previewed_config, _))) => {
+                    if previewed_config.secrets_backend == SecretsBackend::Keychain
+                        && let Some(store) = store
+                    {
+                        keychain::supplement_from_store(&mut effective_credentials, store)
+                            .context("supplement diagnostic credentials from the OS keychain")?;
+                    }
+                    config = Some(previewed_config);
+                    credentials = Some(effective_credentials);
+                }
+                Ok(None) => {
+                    config = None;
+                    credentials = Some(credentials::Credentials::default());
+                }
+                Err(error) => {
+                    config = None;
+                    config_error = Some(format!("{error:#}"));
+                    credentials = None;
+                }
+            }
+        }
         if let (Some(config), Some(credentials)) = (&mut config, &credentials) {
             merge_effective_credentials(config, credentials);
         }
@@ -380,6 +444,8 @@ pub(crate) fn prepare_raw_freedom_update<T>(
     planner: impl FnOnce(&str) -> Result<(String, T)>,
 ) -> Result<(PreparedFreedomUpdate, T)> {
     credentials::with_coherent_pair_transaction_lock(path, || {
+        let credentials_path = credentials::sibling_credentials_path(path);
+        credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
         let expected_source = read_optional_config_bytes(path)?.map(zeroize::Zeroizing::new);
         let source = std::str::from_utf8(
             expected_source
@@ -820,13 +886,12 @@ pub struct FreedomConfig {
     /// `~/.neoth/bin/hysteria` per the transport module's search order.
     #[serde(default)]
     pub hysteria: Option<crate::transport::hysteria::HysteriaConfig>,
-    /// TERMIX-01 — SSH local-forward tunnels the daemon establishes at
-    /// startup (e.g. to reach a provider / DB behind a bastion). Each
-    /// entry binds `127.0.0.1:<local_port>` and forwards through the SSH
-    /// endpoint (jump-chain aware, host-key TOFU). Empty = off. Runtime
-    /// requires the `ssh-tunnel` build feature; a slim build parses +
-    /// preserves this block and warns that tunnels are not compiled in.
-    #[serde(default)]
+    /// TERMIX-01 — effective SSH local-forward tunnels established at startup.
+    /// The authoritative bundle is loaded from private `credentials.yaml`;
+    /// this runtime-only field is deliberately absent from every public
+    /// FreedomConfig serialization so passwords/passphrases cannot escape via
+    /// `public_yaml`, diagnostics, reload diffs, or GUI/RPC config views.
+    #[serde(skip)]
     pub ssh_tunnels: Vec<crate::transport::ssh_config::SshTunnelConfig>,
     /// R-8 Cloud archive destination — local folder that the operator's
     /// cloud client (Dropbox / GDrive / OneDrive / iCloud / SMB / NAS
@@ -2023,7 +2088,14 @@ impl FreedomConfig {
                 .try_exists()
                 .with_context(|| format!("check freedom.yaml path {}", path.display()))?
             {
-                true => Self::load_from_path_unlocked(path),
+                true => {
+                    let credentials_path = credentials::sibling_credentials_path(path);
+                    credentials::Credentials::migrate_legacy_ssh_tunnels_at(
+                        path,
+                        &credentials_path,
+                    )?;
+                    Self::load_from_path_unlocked(path)
+                }
                 false => Ok(Self::default()),
             }
         })
@@ -2063,8 +2135,10 @@ impl FreedomConfig {
     /// complete config/credential pair lock set are held. A malformed existing
     /// file therefore returns an error before `mutation` runs and before any
     /// bytes are replaced. The lossless structural overlay preserves unknown
-    /// root/nested fields and legacy inline secrets while publishing only the
-    /// freshly loaded generation's requested typed mutation.
+    /// root/nested fields and supported legacy inline provider secrets while
+    /// publishing only the freshly loaded generation's requested typed
+    /// mutation. Historical inline SSH authority is migrated into private
+    /// credentials before the source generation is read.
     pub fn update_at<T>(path: &Path, mutation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
         with_coherent_freedom_update_lock(path, || {
             let source = zeroize::Zeroizing::new(std::fs::read(path).with_context(|| {
@@ -2091,6 +2165,8 @@ impl FreedomConfig {
         mutation: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<(PreparedFreedomUpdate, T)> {
         credentials::with_coherent_pair_transaction_lock(path, || {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
             let source = zeroize::Zeroizing::new(std::fs::read(path).with_context(|| {
                 format!(
                     "read freedom.yaml at {} for reviewed update",
@@ -2123,6 +2199,10 @@ impl FreedomConfig {
         public.inference.right.key = None;
         public.inference.cerebellum.key = None;
         public.inference.default_slot.key = None;
+        // `serde(skip)` is the serialization boundary; clear the cloned
+        // runtime authority as well so its duplicate SecretStrings are dropped
+        // before public validation/rendering continues.
+        public.ssh_tunnels.clear();
 
         public.validate_public_sections()?;
         serde_yaml::to_string(&public).context("serialize FreedomConfig as YAML for freedom.yaml")
@@ -2150,6 +2230,8 @@ impl FreedomConfig {
 
     pub fn load_from_path(path: &Path) -> Result<Self> {
         credentials::with_coherent_pair_transaction_lock(path, || {
+            let credentials_path = credentials::sibling_credentials_path(path);
+            credentials::Credentials::migrate_legacy_ssh_tunnels_at(path, &credentials_path)?;
             Self::load_from_path_unlocked(path)
         })
     }
@@ -2179,7 +2261,7 @@ impl FreedomConfig {
         let creds = credentials::Credentials::supplement_effective_unlocked(
             raw_credentials.clone(),
             config.secrets_backend,
-        );
+        )?;
 
         // GR-041: dedicated credentials win over legacy inline values, and the
         // same effective generation is returned alongside the merged config.

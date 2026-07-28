@@ -43,13 +43,9 @@
 //! All tests use [`InMemorySecretStore`] — the real OS credential manager is
 //! never touched by `cargo test`.
 
-#[cfg(all(
-    feature = "keychain",
-    any(windows, target_os = "macos", target_os = "linux")
-))]
-use anyhow::Context as _;
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 use crate::secret::SecretString;
 
@@ -104,16 +100,53 @@ pub const SECRET_FIELD_KEYS: &[&str] = &[
     "cluster_passphrase",
     "tududi_api_token",
     "paperless_token",
+    "ssh_tunnels",
 ];
 
-/// Typed view of every currently-set keychain-managed secret. Unlike a serde
+const SSH_TUNNELS_SECRET_FIELD: &str = "ssh_tunnels";
+
+fn scalar_secret_field_keys() -> impl Iterator<Item = &'static str> {
+    SECRET_FIELD_KEYS
+        .iter()
+        .copied()
+        .filter(|field| *field != SSH_TUNNELS_SECRET_FIELD)
+}
+
+/// Borrowed view of every currently-set scalar keychain secret. Unlike a serde
 /// mapping round-trip, this never copies plaintext into ordinary heap strings.
+/// The compound SSH authority is encoded separately by
+/// [`ssh_tunnels_secret`].
 pub(crate) fn secret_fields(
     credentials: &crate::config::credentials::Credentials,
 ) -> impl Iterator<Item = (&'static str, &SecretString)> {
-    SECRET_FIELD_KEYS
-        .iter()
-        .filter_map(|&field| secret_field(credentials, field).map(|value| (field, value)))
+    scalar_secret_field_keys()
+        .filter_map(|field| secret_field(credentials, field).map(|value| (field, value)))
+}
+
+/// Encode the complete SSH authority as one keychain value. Keeping topology
+/// and auth together avoids unstable per-hop identifiers when operators reorder
+/// tunnels or jump hosts.
+pub(crate) fn ssh_tunnels_secret(
+    credentials: &crate::config::credentials::Credentials,
+) -> Result<Option<SecretString>> {
+    credentials
+        .ssh_tunnels
+        .as_ref()
+        .map(|tunnels| {
+            let yaml = Zeroizing::new(
+                serde_yaml::to_string(tunnels)
+                    .context("serialize SSH tunnel credential bundle for keychain")?,
+            );
+            Ok(SecretString::from(yaml.as_str()))
+        })
+        .transpose()
+}
+
+fn decode_ssh_tunnels_secret(
+    secret: &SecretString,
+) -> Result<Vec<crate::transport::ssh_config::SshTunnelConfig>> {
+    serde_yaml::from_str(secret.expose_secret())
+        .context("parse SSH tunnel credential bundle from keychain")
 }
 
 fn secret_field<'a>(
@@ -159,6 +192,7 @@ fn secret_field<'a>(
         "cluster_passphrase" => credentials.cluster_passphrase.as_ref(),
         "tududi_api_token" => credentials.tududi_api_token.as_ref(),
         "paperless_token" => credentials.paperless_token.as_ref(),
+        "ssh_tunnels" => None,
         _ => panic!("SECRET_FIELD_KEYS contains unhandled field `{field}`"),
     }
 }
@@ -701,7 +735,8 @@ impl MigrationReport {
     }
 }
 
-/// Move all `SecretString` fields from `creds` into `store`.
+/// Move all scalar `SecretString` fields plus the compound SSH authority from
+/// `creds` into `store`.
 ///
 /// On success the returned `Credentials` has those fields blanked (`None`).
 /// The caller is responsible for:
@@ -723,8 +758,11 @@ pub fn migrate_to_keychain(
     let mut failed = Vec::new();
     let mut previous_values = Vec::new();
     let mut blanked = creds.clone();
+    // Encode before the first OS-store write. A serialization failure must not
+    // leave earlier scalar keys migrated with no rollback record.
+    let ssh_tunnels_secret = ssh_tunnels_secret(creds)?;
 
-    for &field in SECRET_FIELD_KEYS {
+    for field in scalar_secret_field_keys() {
         match secret_field(creds, field) {
             None => {
                 skipped.push(field.to_string());
@@ -753,6 +791,38 @@ pub fn migrate_to_keychain(
                     }
                 } else {
                     moved.push(field.to_string());
+                }
+            }
+        }
+    }
+
+    match ssh_tunnels_secret.as_ref() {
+        None => skipped.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
+        Some(_) if dry_run => moved.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
+        Some(secret) => {
+            let previous = match store.get(SSH_TUNNELS_SECRET_FIELD) {
+                Ok(previous) => previous,
+                Err(error) => {
+                    failed.push((
+                        SSH_TUNNELS_SECRET_FIELD.to_string(),
+                        format!("snapshot existing keychain value: {error}"),
+                    ));
+                    None
+                }
+            };
+            if !failed
+                .iter()
+                .any(|(field, _)| field == SSH_TUNNELS_SECRET_FIELD)
+            {
+                match store.set(SSH_TUNNELS_SECRET_FIELD, secret) {
+                    Ok(()) => {
+                        blanked.ssh_tunnels = None;
+                        moved.push(SSH_TUNNELS_SECRET_FIELD.to_string());
+                        previous_values.push((SSH_TUNNELS_SECRET_FIELD.to_string(), previous));
+                    }
+                    Err(error) => {
+                        failed.push((SSH_TUNNELS_SECRET_FIELD.to_string(), error.to_string()));
+                    }
                 }
             }
         }
@@ -803,9 +873,10 @@ pub fn migrate_to_keychain(
     Ok((blanked, report))
 }
 
-/// Phase 1 of a `--to file` migration: READ every `SecretString` field from
-/// `store` into a `Credentials` struct. **This function performs NO keychain
-/// deletes** — deleting a secret before `credentials.yaml` is durably written
+/// Phase 1 of a `--to file` migration: read every scalar secret plus the
+/// compound SSH authority from `store` into a `Credentials` struct. **This
+/// function performs no keychain deletes** — deleting a secret before
+/// `credentials.yaml` is durably written
 /// (or a later read failing after an earlier delete, or a crash in between)
 /// would erase the secret from BOTH backends. The keychain is only purged by a
 /// SEPARATE [`purge_from_keychain`] call the caller makes AFTER the file is
@@ -830,7 +901,7 @@ pub fn migrate_to_file(
 
     let mut populated = creds.clone();
 
-    for &field in SECRET_FIELD_KEYS {
+    for field in scalar_secret_field_keys() {
         match get_with_legacy_fallback(store, field) {
             Err(e) => {
                 failed.push((field.to_string(), e.to_string()));
@@ -849,6 +920,20 @@ pub fn migrate_to_file(
                 moved.push(source_key);
             }
         }
+    }
+
+    match store.get(SSH_TUNNELS_SECRET_FIELD) {
+        Err(error) => failed.push((SSH_TUNNELS_SECRET_FIELD.to_string(), error.to_string())),
+        Ok(None) => skipped.push(SSH_TUNNELS_SECRET_FIELD.to_string()),
+        Ok(Some(secret)) => match decode_ssh_tunnels_secret(&secret) {
+            Ok(tunnels) => {
+                if !dry_run {
+                    populated.ssh_tunnels = Some(tunnels);
+                }
+                moved.push(SSH_TUNNELS_SECRET_FIELD.to_string());
+            }
+            Err(error) => failed.push((SSH_TUNNELS_SECRET_FIELD.to_string(), error.to_string())),
+        },
     }
 
     let populated = if dry_run { creds.clone() } else { populated };
@@ -890,16 +975,16 @@ pub fn purge_from_keychain(store: &dyn SecretStore, keys: &[String]) -> Vec<(Str
 /// Fields that are already `Some` in `creds` (set in the YAML) are **not**
 /// overwritten — the YAML value takes precedence (allows emergency override).
 ///
-/// Individual key lookup errors are logged at `warn!` level but do NOT abort
-/// the supplement: successful lookups must not be discarded because one
-/// field fails (e.g. a single corrupted credential entry). The caller
-/// (`load_from_path`) already logs at `warn!` on any `Err` returned here; for
-/// a partial OS-error during supplement, logging per-field is more actionable.
+/// Individual scalar-key lookup errors are logged at `warn!` level but do not
+/// abort the supplement: successful lookups must not be discarded because one
+/// scalar entry failed. The compound SSH authority is different: when no file
+/// override exists, an unreadable or malformed bundle fails closed so a
+/// configured tunnel cannot silently disappear or activate with partial auth.
 pub fn supplement_from_store(
     creds: &mut crate::config::credentials::Credentials,
     store: &dyn SecretStore,
 ) -> Result<()> {
-    for &field in SECRET_FIELD_KEYS {
+    for field in scalar_secret_field_keys() {
         if secret_field(creds, field).is_some() {
             continue;
         }
@@ -920,6 +1005,13 @@ pub fn supplement_from_store(
             }
         }
     }
+    if creds.ssh_tunnels.is_none()
+        && let Some(secret) = store
+            .get(SSH_TUNNELS_SECRET_FIELD)
+            .context("read SSH tunnel credential bundle from keychain")?
+    {
+        creds.ssh_tunnels = Some(decode_ssh_tunnels_secret(&secret)?);
+    }
     Ok(())
 }
 
@@ -927,15 +1019,35 @@ pub fn supplement_from_store(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
+    use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 
     fn make_creds(provider_key: Option<&str>, telegram_token: Option<&str>) -> Credentials {
         Credentials {
             provider_key: provider_key.map(|s| SecretString::from(s.to_string())),
             telegram_token: telegram_token.map(|s| SecretString::from(s.to_string())),
             ..Default::default()
+        }
+    }
+
+    fn ssh_tunnel(secret: &str) -> SshTunnelConfig {
+        SshTunnelConfig {
+            endpoint: SshEndpoint {
+                host: "bastion.example".into(),
+                port: 22,
+                username: "alex".into(),
+                auth: SshAuth::Password(SecretString::from(secret)),
+            },
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            local_port: 0,
+            jump_hosts: Vec::new(),
+            max_retries: 5,
+            retry_delay: Duration::from_secs(2),
         }
     }
 
@@ -1410,5 +1522,116 @@ mod tests {
         );
         assert!(purge_from_keychain(&store, &report.moved).is_empty());
         assert!(store.get("pears_bearer_token").unwrap().is_none());
+    }
+
+    #[test]
+    fn ssh_tunnel_bundle_round_trips_through_every_keychain_path() {
+        assert!(SECRET_FIELD_KEYS.contains(&SSH_TUNNELS_SECRET_FIELD));
+        let store = InMemorySecretStore::default();
+        let original = Credentials {
+            ssh_tunnels: Some(vec![ssh_tunnel("ssh-secret")]),
+            ..Default::default()
+        };
+
+        let (blanked, to_keychain) = migrate_to_keychain(&original, &store, false).unwrap();
+        assert!(to_keychain.is_clean());
+        assert!(
+            to_keychain
+                .moved
+                .contains(&SSH_TUNNELS_SECRET_FIELD.to_string())
+        );
+        assert!(blanked.ssh_tunnels.is_none());
+        assert!(store.get(SSH_TUNNELS_SECRET_FIELD).unwrap().is_some());
+
+        let mut supplemented = Credentials::default();
+        supplement_from_store(&mut supplemented, &store).unwrap();
+        assert_eq!(supplemented.ssh_tunnels, original.ssh_tunnels);
+
+        let (restored, to_file) = migrate_to_file(&blanked, &store, false).unwrap();
+        assert!(to_file.is_clean());
+        assert_eq!(restored.ssh_tunnels, original.ssh_tunnels);
+        assert!(purge_from_keychain(&store, &to_file.moved).is_empty());
+        assert!(store.get(SSH_TUNNELS_SECRET_FIELD).unwrap().is_none());
+    }
+
+    #[test]
+    fn file_empty_ssh_authority_wins_over_keychain_bundle() {
+        let store = InMemorySecretStore::default();
+        let source = Credentials {
+            ssh_tunnels: Some(vec![ssh_tunnel("keychain-secret")]),
+            ..Default::default()
+        };
+        let secret = ssh_tunnels_secret(&source).unwrap().unwrap();
+        store.set(SSH_TUNNELS_SECRET_FIELD, &secret).unwrap();
+
+        let mut file_override = Credentials {
+            ssh_tunnels: Some(Vec::new()),
+            ..Default::default()
+        };
+        supplement_from_store(&mut file_override, &store).unwrap();
+        assert_eq!(file_override.ssh_tunnels, Some(Vec::new()));
+    }
+
+    #[test]
+    fn corrupt_keychain_ssh_bundle_fails_closed() {
+        let store = InMemorySecretStore::default();
+        store
+            .set(SSH_TUNNELS_SECRET_FIELD, &SecretString::from("not: [valid"))
+            .unwrap();
+
+        let error = supplement_from_store(&mut Credentials::default(), &store).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("parse SSH tunnel credential bundle")
+        );
+    }
+
+    #[test]
+    fn ssh_bundle_set_failure_rolls_back_prior_scalar_overwrite() {
+        let inner = InMemorySecretStore::default();
+        inner
+            .set("provider_key", &SecretString::from("old-provider"))
+            .unwrap();
+        let previous_ssh = Credentials {
+            ssh_tunnels: Some(vec![ssh_tunnel("old-ssh")]),
+            ..Default::default()
+        };
+        inner
+            .set(
+                SSH_TUNNELS_SECRET_FIELD,
+                &ssh_tunnels_secret(&previous_ssh).unwrap().unwrap(),
+            )
+            .unwrap();
+        let store = FailOnSetStore {
+            inner,
+            fail_key: SSH_TUNNELS_SECRET_FIELD,
+        };
+        let intended = Credentials {
+            provider_key: Some(SecretString::from("new-provider")),
+            ssh_tunnels: Some(vec![ssh_tunnel("new-ssh")]),
+            ..Default::default()
+        };
+
+        let (unchanged, report) = migrate_to_keychain(&intended, &store, false).unwrap();
+        assert!(!report.is_clean());
+        assert_eq!(
+            unchanged.provider_key.as_ref().unwrap().expose_secret(),
+            "new-provider"
+        );
+        assert_eq!(unchanged.ssh_tunnels, intended.ssh_tunnels);
+        assert_eq!(
+            store
+                .inner
+                .get("provider_key")
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "old-provider"
+        );
+        let restored =
+            decode_ssh_tunnels_secret(&store.inner.get(SSH_TUNNELS_SECRET_FIELD).unwrap().unwrap())
+                .unwrap();
+        assert_eq!(restored, previous_ssh.ssh_tunnels.unwrap());
     }
 }

@@ -481,6 +481,12 @@ jobs:
           # release target selects that bundle while musl stays release-server.
           # The live relay/discovery round-trip remains #[ignore].
           - { os: ubuntu-24.04, feature: cluster-iroh }
+          # TERMIX / GOLD-DEP-RUSSH-01 — SSH forwarding is deliberately a
+          # source-build opt-in, never a stock release capability.  Compile
+          # and run its hermetic contract tests on the patched lockfile so the
+          # optional client dependency cannot silently rot behind the default
+          # feature set.
+          - { os: ubuntu-24.04, feature: ssh-tunnel }
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -513,7 +519,12 @@ jobs:
       - name: cargo check --features ${{ matrix.feature }}
         if: matrix.feature != 'qwen-cuda' || steps.cuda-preflight.outputs.available == 'true'
         working-directory: SRC
-        run: cargo check -p neoth --features ${{ matrix.feature }}
+        run: cargo check -p neoth --locked --features ${{ matrix.feature }}
+
+      - name: cargo test ssh-tunnel contract
+        if: matrix.feature == 'ssh-tunnel'
+        working-directory: SRC
+        run: cargo test -p neoth --locked --features ssh-tunnel transport::ssh_ -- --test-threads=1
 
   # ──────────────────────────────────────────────────────────────────
   # HARNESS-05 — committed gold-smoke eval suite. Builds both public binaries and runs

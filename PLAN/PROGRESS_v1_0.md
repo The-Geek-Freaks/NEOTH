@@ -255,14 +255,61 @@
 > counts unchanged):** GitHub Dependabot #21-26 are three advisories duplicated
 > across `Cargo.toml` and `Cargo.lock` for direct optional `russh 0.61.2`:
 > GHSA-g9hv-x236-4qp3, GHSA-cqjc-rmpq-xprq and GHSA-5xvq-cp9x-6p6r.
-> `ssh-tunnel` is default-off and absent from the desktop/server release feature
-> sets, but the documented source-build client path is real and the all-features
-> supply-chain gate must remain clean. `GOLD-DEP-RUSSH-01` therefore requires
-> the explicit 0.62.4-line bump, lock refresh, feature-on client/TOFU/jump/
-> direct-tcpip proof, CI lane and locked audit/deny/notices evidence before
-> R3-10 can close. The dated 2026-07-22 zero-vulnerability evidence remains
-> historical, not a Current-Head clearance; no alert is ignored or dismissed.
-> WS-R3 remains **13 done / 6 open** because this is a required R3-10 child.
+> The current worktree now declares the patched `russh 0.62.4` manifest and
+> lock line, while `ssh-tunnel` remains default-off and absent from all stock
+> desktop/server release feature sets. A locked Ubuntu feature-matrix compile
+> and focused hermetic `ssh-tunnel` transport-test command are part of the
+> implementation contract, not evidence of a completed run. The review also
+> found an upstream password-secret defect: `russh 0.62.4` debug-logs the
+> encoded user-auth packet and retains its plain password method after success.
+> NEOTH therefore accepts existing password configuration only for
+> migration/diagnostics and fails it closed before listener bind; encrypted
+> OpenSSH private-key auth remains the supported runtime path. A future
+> re-enable requires a reviewed upstream or separately published fork that
+> removes the packet dump and clears secret state on every terminal path.
+> The feature-on Windows test build succeeds. Its first 77-test SSH-filtered
+> run produced 75 passes and exposed two test-contract defects; both were
+> corrected (error-chain assertion plus a loopback server that detached the
+> inner russh session). Post-fix exact runtime evidence is **11/11** with a
+> 30-second per-test ceiling: three keychain publication windows, legacy
+> PREPARED recovery, ordinary-password no-auth/pre-bind rejection, encrypted
+> OpenSSH Ed25519/passphrase authentication, a real two-hop final-handle byte
+> roundtrip, replacement-server reconnect and per-channel isolation.
+> `cargo audit --no-fetch` reports no vulnerability (two explicitly allowed
+> unmaintained warnings), all-feature locked `cargo deny` is green, and exact
+> Rust notices are current. Per the build-cadence rule no further broad
+> Cargo/Clippy pass is repeated while later SSH/Cluster/Release work will still
+> change the graph. `GOLD-DEP-RUSSH-01` remains OPEN pending exact-head CI and
+> the next stable-workstream/full-release gate. The dated
+> 2026-07-22 zero-vulnerability evidence remains historical, not a Current-Head
+> clearance; no alert is ignored or dismissed. WS-R3 remains **13 done / 6
+> open** because this is a required R3-10 child.
+>
+> **Credential publication boundary correction 2026-07-28 (counts
+> unchanged):** final security review found that `credential migrate --to
+> keychain` restored the prior keychain generation on every file-commit error,
+> including errors after the complete target pair was already published. That
+> could leave `freedom.yaml` selecting keychain and `credentials.yaml` cleared
+> while the new keychain value had been deleted. The CLI now shares the
+> `DualFileTargetPublicationCrossed` boundary already used by OMI: only
+> pre-boundary failures roll back; post-publication errors retain the new
+> generation and recover the PREPARED journal. Exact fault-injection evidence
+> covers `JournalPrepared`, `FreedomPublished` and the post-directory-sync
+> window, including effective secret recovery and no-loss assertions.
+>
+> **Legacy SSH authority correction 2026-07-28 (counts unchanged):** final
+> Rust review found that a temporary `open_store()` failure could demote an
+> existing keychain SSH authority: the old public block was copied into
+> `credentials.yaml`, which would then permanently shadow the keychain. The
+> migration now requires a successful keychain open plus a successful compound
+> `ssh_tunnels` read before absence may authorize the legacy fallback. Open,
+> read and decode errors return before PREPARED or either file publication;
+> explicit file `Some(...)`/`Some([])` remains the emergency override. A
+> byte-exact regression covers the injected unavailable-store boundary and no
+> journal creation. It compiled into the Windows unit-test binary; an
+> accidentally exact-filtered invocation selected 0 tests, so runtime PASS is
+> deliberately not claimed and is deferred to the final integration gate under
+> the current build cadence.
 >
 > **Installed-Skill authority correction 2026-07-26 (counts unchanged):**
 > external review 4/5 found that the routed Skill MCP gate still treated a

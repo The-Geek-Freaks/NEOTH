@@ -7,13 +7,18 @@
 //! SshHandler`].
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use russh::client;
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 
 use super::ssh_tofu::TofuStore;
-use super::ssh_tunnel::{SshEndpoint, SshHandler, authenticate, connect_endpoint};
+use super::ssh_tunnel::{
+    SSH_AUTH_TIMEOUT, SSH_CHANNEL_OPEN_TIMEOUT, SSH_CONNECT_TIMEOUT, SshEndpoint, SshHandler,
+    authenticate_with_timeout, connect_endpoint_with_timeouts,
+};
 
 /// Connect to `target` through `jump_hosts` in order. Empty `jump_hosts` ==
 /// a plain direct connect to `target`. Returns the live handle to the final
@@ -24,21 +29,68 @@ pub async fn connect_via_jumps(
     tofu: Arc<Mutex<TofuStore>>,
     config: Arc<client::Config>,
 ) -> Result<client::Handle<SshHandler>> {
+    connect_via_jumps_with_timeouts(
+        jump_hosts,
+        target,
+        tofu,
+        config,
+        SSH_CHANNEL_OPEN_TIMEOUT,
+        SSH_CONNECT_TIMEOUT,
+        SSH_AUTH_TIMEOUT,
+    )
+    .await
+}
+
+pub(super) async fn connect_via_jumps_with_timeouts(
+    jump_hosts: &[SshEndpoint],
+    target: &SshEndpoint,
+    tofu: Arc<Mutex<TofuStore>>,
+    config: Arc<client::Config>,
+    channel_open_timeout: Duration,
+    connect_timeout: Duration,
+    auth_timeout: Duration,
+) -> Result<client::Handle<SshHandler>> {
     if jump_hosts.is_empty() {
-        return connect_endpoint(target, tofu, config).await;
+        return connect_endpoint_with_timeouts(target, tofu, config, connect_timeout, auth_timeout)
+            .await;
     }
     // hop-0: a normal direct TCP connect + auth.
-    let mut handle = connect_endpoint(&jump_hosts[0], tofu.clone(), config.clone()).await?;
+    let mut handle = connect_endpoint_with_timeouts(
+        &jump_hosts[0],
+        tofu.clone(),
+        config.clone(),
+        connect_timeout,
+        auth_timeout,
+    )
+    .await?;
     // Remaining hops, then the final target, each dialed through the previous
     // hop's direct-tcpip channel.
     for hop in jump_hosts[1..].iter().chain(std::iter::once(target)) {
-        let channel = handle
-            .channel_open_direct_tcpip(hop.host.clone(), hop.port as u32, "127.0.0.1", 0)
-            .await?;
+        let channel = timeout(
+            channel_open_timeout,
+            handle.channel_open_direct_tcpip(hop.host.clone(), hop.port as u32, "127.0.0.1", 0),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "SSH jump direct-tcpip channel open timed out after {channel_open_timeout:?} for {}",
+                hop.host_key()
+            )
+        })??;
         let stream = channel.into_stream();
         let handler = SshHandler::new(tofu.clone(), hop.host_key());
-        let mut next = client::connect_stream(config.clone(), stream, handler).await?;
-        authenticate(&mut next, hop).await?;
+        let mut next = timeout(
+            connect_timeout,
+            client::connect_stream(config.clone(), stream, handler),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "SSH jump handshake timed out after {connect_timeout:?} for {}",
+                hop.host_key()
+            )
+        })??;
+        authenticate_with_timeout(&mut next, hop, auth_timeout).await?;
         // The previous `handle` is dropped only after the next session is fully
         // established over its channel, keeping the whole chain alive.
         handle = next;

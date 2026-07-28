@@ -1,15 +1,18 @@
 //! TERMIX-01 — SSH tunnel CONFIG types (unconditional).
 //!
-//! Split out of `ssh_tunnel.rs` so `freedom.yaml::ssh_tunnels` parses +
-//! round-trips on EVERY build: a slim binary (no `ssh-tunnel` feature) must
-//! not silently DROP the operator's tunnel block when the wizard rewrites
-//! the config. The russh-dependent runtime stays behind the feature in
-//! `ssh_tunnel.rs`, which re-exports these types.
+//! Split out of `ssh_tunnel.rs` so the private
+//! `credentials.yaml::ssh_tunnels` authority parses and round-trips on every
+//! build. Historical `freedom.yaml::ssh_tunnels` blocks are atomically
+//! migrated into that private authority before runtime activation. The
+//! russh-dependent runtime stays behind the feature in `ssh_tunnel.rs`, which
+//! re-exports these types.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::secret::SecretString;
 
 /// Auth method for one SSH hop.
 ///
@@ -23,18 +26,45 @@ use serde::{Deserialize, Serialize};
 ///     path: "C:/Users/op/.ssh/id_ed25519"
 ///     passphrase: null
 /// ```
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SshAuth {
     /// Password auth.
-    Password(String),
+    Password(SecretString),
     /// Public-key auth from an on-disk OpenSSH private key.
     PrivateKey {
         path: PathBuf,
         #[serde(default)]
-        passphrase: Option<String>,
+        passphrase: Option<SecretString>,
     },
 }
+
+impl PartialEq for SshAuth {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Password(left), Self::Password(right)) => {
+                left.expose_secret() == right.expose_secret()
+            }
+            (
+                Self::PrivateKey {
+                    path: left_path,
+                    passphrase: left_passphrase,
+                },
+                Self::PrivateKey {
+                    path: right_path,
+                    passphrase: right_passphrase,
+                },
+            ) => {
+                left_path == right_path
+                    && left_passphrase.as_ref().map(SecretString::expose_secret)
+                        == right_passphrase.as_ref().map(SecretString::expose_secret)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for SshAuth {}
 
 // Manual Debug: the password / passphrase are secrets — a `{:?}` of a
 // tunnel config in a log line or error context must never print them.
@@ -60,7 +90,7 @@ pub struct SshEndpoint {
     pub username: String,
     /// `singleton_map`: serde_yaml 0.9 renders externally-tagged enums as
     /// `!tag` — the map form (`auth: {password: …}`) is what operators
-    /// expect in freedom.yaml.
+    /// expect in credentials.yaml.
     #[serde(with = "serde_yaml::with::singleton_map")]
     pub auth: SshAuth,
 }

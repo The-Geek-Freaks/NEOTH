@@ -161,13 +161,6 @@ ignore = [
     # No vulnerability or compatible upgrade exists; upstream's successor is
     # harfrust, so the dependency disappears when Slint/usvg migrates.
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz 0.20.1 unmaintained — transitive via current Slint/usvg; no vulnerability or safe compatible upgrade. Re-evaluate every release and migrate when upstream adopts harfrust." },
-    # rsa — Marvin timing side-channel (RUSTSEC-2023-0071). No patched release
-    # exists (RustCrypto migration to constant-time is in progress). Transitive
-    # via russh/ssh-key (the TERMIX SSH client). The attack needs an adversary
-    # who can observe RSA-op timing over the network; NEOTH uses rsa only as a
-    # LOCAL outbound SSH client on the operator's own machine — the advisory's
-    # own workaround ("local use on a non-compromised computer is fine") applies.
-    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing side-channel — NO upstream patch yet; transitive via russh/ssh-key (TERMIX local SSH client). Local-only operator use = advisory's documented safe case. Re-evaluate when rsa ships a constant-time release." },
     # quick-xml <0.41 — two DoS advisories (2026-06-29): quadratic duplicate-
     # attribute check (0194) + unbounded NsReader namespace allocation (0195).
     # neothd's DIRECT quick-xml (CalDAV parser) is bumped to 0.41 (fixed).

@@ -4,9 +4,10 @@
 //! native socks/http/quic clients, tor adapter, custom transports.
 
 pub mod hysteria;
-/// TERMIX-01 — SSH tunnel config types. Unconditional so
-/// `freedom.yaml::ssh_tunnels` parses + round-trips on every build; the
-/// russh runtime lives in `ssh_tunnel` behind the feature.
+/// TERMIX-01 — SSH tunnel config types. Unconditional so the private
+/// `credentials.yaml::ssh_tunnels` authority parses on every build; legacy
+/// `freedom.yaml` blocks migrate there automatically and atomically.
+/// The russh runtime lives in `ssh_tunnel` behind the feature.
 pub mod ssh_config;
 /// TERMIX-02 — N-hop SSH jump-host chain (ProxyJump). `ssh-tunnel` feature.
 #[cfg(feature = "ssh-tunnel")]
@@ -21,3 +22,9 @@ pub mod ssh_tofu;
 /// Behind the `ssh-tunnel` feature (pulls `russh` with the `ring` backend).
 #[cfg(feature = "ssh-tunnel")]
 pub mod ssh_tunnel;
+
+// TERMIX SSH runtime contract: fully hermetic client/server integration tests.
+#[cfg(all(test, feature = "ssh-tunnel"))]
+mod ssh_resilience_tests;
+#[cfg(all(test, feature = "ssh-tunnel"))]
+mod ssh_runtime_tests;

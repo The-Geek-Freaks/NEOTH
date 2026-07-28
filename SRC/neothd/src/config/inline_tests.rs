@@ -297,6 +297,59 @@ mod config_defaults_tests {
 }
 
 #[cfg(test)]
+mod ssh_secret_boundary_tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::super::FreedomConfig;
+    use crate::secret::SecretString;
+    use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
+
+    fn secret_tunnel() -> SshTunnelConfig {
+        SshTunnelConfig {
+            endpoint: SshEndpoint {
+                host: "bastion.example".into(),
+                port: 22,
+                username: "alex".into(),
+                auth: SshAuth::PrivateKey {
+                    path: PathBuf::from("/home/alex/.ssh/id_ed25519"),
+                    passphrase: Some(SecretString::from("private-passphrase")),
+                },
+            },
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            local_port: 0,
+            jump_hosts: vec![SshEndpoint {
+                host: "jump.example".into(),
+                port: 22,
+                username: "alex".into(),
+                auth: SshAuth::Password(SecretString::from("jump-password")),
+            }],
+            max_retries: 5,
+            retry_delay: Duration::from_secs(2),
+        }
+    }
+
+    #[test]
+    fn freedom_serialization_never_contains_ssh_authority_or_secrets() {
+        let mut config = FreedomConfig::default();
+        config.ssh_tunnels = vec![secret_tunnel()];
+
+        for yaml in [
+            serde_yaml::to_string(&config).expect("generic FreedomConfig serialization"),
+            config
+                .public_yaml()
+                .expect("public FreedomConfig rendering"),
+        ] {
+            assert!(!yaml.contains("ssh_tunnels"));
+            assert!(!yaml.contains("private-passphrase"));
+            assert!(!yaml.contains("jump-password"));
+            assert!(!yaml.contains("bastion.example"));
+        }
+    }
+}
+
+#[cfg(test)]
 mod custom_autonomy_config_tests {
     use super::super::FreedomConfig;
     use crate::permissions::{ActionKind, AutonomyLevel, CustomDecision};
@@ -470,6 +523,153 @@ mod tests {
         let mut f = std::fs::File::create(&path).unwrap();
         f.write_all(contents.as_bytes()).unwrap();
         path
+    }
+
+    fn diagnostic_legacy_ssh_yaml(legacy_endpoint: &str) -> String {
+        format!(
+            "operator_id: alex\n\
+             ssh_tunnels:\n\
+             \u{20}\u{20}- endpoint:\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}host: {legacy_endpoint}\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}username: alex\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}auth:\n\
+             \u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}\u{20}password: legacy-private\n\
+             \u{20}\u{20}\u{20}\u{20}remote_host: 127.0.0.1\n\
+             \u{20}\u{20}\u{20}\u{20}remote_port: 5432\n"
+        )
+    }
+
+    fn diagnostic_keychain_tunnel() -> crate::transport::ssh_config::SshTunnelConfig {
+        crate::transport::ssh_config::SshTunnelConfig {
+            endpoint: crate::transport::ssh_config::SshEndpoint {
+                host: "keychain.example".into(),
+                port: 22,
+                username: "alex".into(),
+                auth: crate::transport::ssh_config::SshAuth::Password(
+                    crate::secret::SecretString::from("keychain-private"),
+                ),
+            },
+            remote_host: "127.0.0.1".into(),
+            remote_port: 5432,
+            local_port: 0,
+            jump_hosts: Vec::new(),
+            max_retries: 5,
+            retry_delay: std::time::Duration::from_secs(2),
+        }
+    }
+
+    #[test]
+    fn diagnostic_snapshot_previews_valid_legacy_ssh_without_mutating_files() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), &diagnostic_legacy_ssh_yaml("legacy.example"));
+        let before = std::fs::read(&path).unwrap();
+
+        let snapshot = load_runtime_config_diagnostic_snapshot(&path).unwrap();
+
+        assert!(snapshot.config_error.is_none());
+        let config = snapshot.config.expect("valid diagnostic config");
+        assert_eq!(config.ssh_tunnels.len(), 1);
+        assert_eq!(config.ssh_tunnels[0].endpoint.host, "legacy.example");
+        assert_eq!(
+            snapshot
+                .credentials
+                .expect("previewed credentials")
+                .ssh_tunnels
+                .expect("legacy SSH preview")
+                .len(),
+            1
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!dir.path().join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn diagnostic_snapshot_classifies_effective_malformed_legacy_ssh() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alex\nssh_tunnels:\n  - endpoint: definitely-not-a-map\n",
+        );
+        let before = std::fs::read(&path).unwrap();
+
+        let snapshot = load_runtime_config_diagnostic_snapshot(&path).unwrap();
+
+        assert!(snapshot.config.is_none());
+        assert!(
+            snapshot
+                .config_error
+                .as_deref()
+                .is_some_and(|error| error.contains("legacy freedom.yaml::ssh_tunnels preview"))
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(!dir.path().join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn diagnostic_snapshot_dedicated_file_ssh_wins_over_malformed_legacy() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alex\nssh_tunnels:\n  - endpoint: definitely-not-a-map\n",
+        );
+        let credentials_path = dir.path().join("credentials.yaml");
+        credentials::Credentials {
+            ssh_tunnels: Some(Vec::new()),
+            ..Default::default()
+        }
+        .write(&credentials_path)
+        .unwrap();
+        let public_before = std::fs::read(&path).unwrap();
+        let private_before = std::fs::read(&credentials_path).unwrap();
+
+        let snapshot = load_runtime_config_diagnostic_snapshot(&path).unwrap();
+
+        assert!(snapshot.config_error.is_none());
+        assert!(
+            snapshot
+                .config
+                .expect("dedicated authority keeps config valid")
+                .ssh_tunnels
+                .is_empty()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), public_before);
+        assert_eq!(std::fs::read(&credentials_path).unwrap(), private_before);
+    }
+
+    #[test]
+    fn diagnostic_snapshot_keychain_ssh_wins_over_legacy_read_only() {
+        use crate::config::keychain::SecretStore as _;
+
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            &format!(
+                "secrets_backend: keychain\n{}",
+                diagnostic_legacy_ssh_yaml("legacy.example")
+            ),
+        );
+        let public_before = std::fs::read(&path).unwrap();
+        let store = keychain::InMemorySecretStore::default();
+        let authority = credentials::Credentials {
+            ssh_tunnels: Some(vec![diagnostic_keychain_tunnel()]),
+            ..Default::default()
+        };
+        store
+            .set(
+                "ssh_tunnels",
+                &keychain::ssh_tunnels_secret(&authority).unwrap().unwrap(),
+            )
+            .unwrap();
+
+        let snapshot =
+            load_runtime_config_diagnostic_snapshot_using_store(&path, Some(&store)).unwrap();
+
+        assert!(snapshot.config_error.is_none());
+        let config = snapshot.config.expect("keychain-backed config");
+        assert_eq!(config.ssh_tunnels.len(), 1);
+        assert_eq!(config.ssh_tunnels[0].endpoint.host, "keychain.example");
+        assert_eq!(std::fs::read(&path).unwrap(), public_before);
+        assert!(!dir.path().join("credentials.yaml").exists());
     }
 
     #[test]

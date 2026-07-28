@@ -663,7 +663,7 @@
       "repository": "https://github.com/aatxe/irc",
       "revision": "b04602dc27f8c969b16d3059286cdb013d0342ca"
     },
-    "iroh-base\u00001.0.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "iroh-base\u00001.0.3\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE-APACHE",
@@ -678,9 +678,9 @@
       ],
       "path_in_vcs": "iroh-base",
       "repository": "https://github.com/n0-computer/iroh",
-      "revision": "6520cd6c9bacea15823c53a38267c40d754980fe"
+      "revision": "e5c710a29fbd06bdce35fd23ad94d04a62acf15a"
     },
-    "iroh-dns\u00001.0.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "iroh-dns\u00001.0.3\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE-APACHE",
@@ -695,7 +695,7 @@
       ],
       "path_in_vcs": "iroh-dns",
       "repository": "https://github.com/n0-computer/iroh",
-      "revision": "6520cd6c9bacea15823c53a38267c40d754980fe"
+      "revision": "e5c710a29fbd06bdce35fd23ad94d04a62acf15a"
     },
     "iroh-metrics-derive\u00001.0.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1003,7 +1003,7 @@
       "repository": "https://github.com/rust-nostr/negentropy",
       "revision": "94742ad2221e8350336fa0a40cf0fdb4a5228520"
     },
-    "netwatch\u00000.19.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "netwatch\u00000.19.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE-APACHE",
@@ -1018,9 +1018,9 @@
       ],
       "path_in_vcs": "netwatch",
       "repository": "https://github.com/n0-computer/net-tools",
-      "revision": "59a1a38ea39053c4712f4133967e432b3c33f3c4"
+      "revision": "051ab8761006d7f2155e34a49f6bb881b582d5ab"
     },
-    "nostr\u00000.44.3\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "nostr\u00000.44.5\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE",
@@ -1030,7 +1030,7 @@
       ],
       "path_in_vcs": "crates/nostr",
       "repository": "https://github.com/rust-nostr/nostr",
-      "revision": "94398c944cf58f7c4e8dd622cedd103e997e5b98"
+      "revision": "0e3a2ba2b49f906010fd826e7184886ac4d13ad9"
     },
     "nostr-database\u00000.44.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
@@ -1442,7 +1442,7 @@
       "spdx_license": "MIT",
       "spdx_revision": "d46e94e2c78ceede1cfc63cfa0396472d2798d4c"
     },
-    "portmapper\u00000.19.0\u0000registry+https://github.com/rust-lang/crates.io-index": {
+    "portmapper\u00000.19.1\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [
         {
           "path": "LICENSE-APACHE",
@@ -1457,7 +1457,7 @@
       ],
       "path_in_vcs": "portmapper",
       "repository": "https://github.com/n0-computer/net-tools",
-      "revision": "59a1a38ea39053c4712f4133967e432b3c33f3c4"
+      "revision": "051ab8761006d7f2155e34a49f6bb881b582d5ab"
     },
     "profiling\u00001.0.18\u0000registry+https://github.com/rust-lang/crates.io-index": {
       "files": [

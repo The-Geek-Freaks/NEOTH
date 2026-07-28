@@ -89,19 +89,7 @@ pub enum CredentialAction {
 /// serialized mapping for KEY NAMES ONLY — the values (plaintext secrets) are
 /// never returned, logged, or printed.
 fn set_key_names(creds: &Credentials) -> Result<Vec<String>> {
-    let value = serde_yaml::to_value(creds).context("inspect credentials")?;
-    let mut names = Vec::new();
-    if let Some(map) = value.as_mapping() {
-        for (k, v) in map {
-            if !v.is_null()
-                && let Some(name) = k.as_str()
-            {
-                names.push(name.to_string());
-            }
-        }
-    }
-    names.sort();
-    Ok(names)
+    creds.configured_field_names()
 }
 
 /// Overlay every SET (non-null) field of `incoming` onto `existing`,
@@ -112,22 +100,7 @@ fn merge_credentials(
     existing: &Credentials,
     incoming: &Credentials,
 ) -> Result<(Credentials, Vec<String>)> {
-    let mut base = serde_yaml::to_value(existing).context("serialize existing credentials")?;
-    let inc = serde_yaml::to_value(incoming).context("serialize incoming credentials")?;
-    let mut imported = Vec::new();
-    if let (Some(base_map), Some(inc_map)) = (base.as_mapping_mut(), inc.as_mapping()) {
-        for (k, v) in inc_map {
-            if !v.is_null() {
-                base_map.insert(k.clone(), v.clone());
-                if let Some(name) = k.as_str() {
-                    imported.push(name.to_string());
-                }
-            }
-        }
-    }
-    let merged: Credentials = serde_yaml::from_value(base).context("rebuild merged credentials")?;
-    imported.sort();
-    Ok((merged, imported))
+    existing.merge_present_fields(incoming)
 }
 
 /// Split `imported` keys into (added, overwritten) relative to the keys
@@ -278,6 +251,17 @@ fn snapshot_keychain_migration(
             intended: intended.clone(),
         });
     }
+    if let Some(intended) = keychain::ssh_tunnels_secret(credentials)? {
+        let field = "ssh_tunnels";
+        let previous = store
+            .get(field)
+            .with_context(|| format!("snapshot existing keychain value for {field}"))?;
+        entries.push(KeychainMigrationEntry {
+            key: field.to_string(),
+            previous,
+            intended,
+        });
+    }
     Ok(entries)
 }
 
@@ -318,6 +302,26 @@ fn verify_and_commit_keychain_migration_at(
     entries: &[KeychainMigrationEntry],
     moved: &[String],
 ) -> Result<()> {
+    verify_and_commit_keychain_migration_using(store, entries, moved, || {
+        commit_migrated_credentials_at(
+            freedom_path,
+            credentials_path,
+            expected_fingerprint,
+            updated,
+            keychain::MigrationDirection::ToKeychain,
+        )
+    })
+}
+
+fn verify_and_commit_keychain_migration_using<C>(
+    store: &dyn SecretStore,
+    entries: &[KeychainMigrationEntry],
+    moved: &[String],
+    commit: C,
+) -> Result<()>
+where
+    C: FnOnce() -> Result<()>,
+{
     let mut invalid = Vec::new();
     for entry in entries.iter().filter(|entry| moved.contains(&entry.key)) {
         match store.get(&entry.key) {
@@ -342,13 +346,12 @@ fn verify_and_commit_keychain_migration_at(
         );
     }
 
-    if let Err(commit_error) = commit_migrated_credentials_at(
-        freedom_path,
-        credentials_path,
-        expected_fingerprint,
-        updated,
-        keychain::MigrationDirection::ToKeychain,
-    ) {
+    if let Err(commit_error) = commit() {
+        if crate::config::credentials::dual_file_target_publication_crossed(&commit_error) {
+            return Err(commit_error).context(
+                "file target publication crossed its recovery boundary; the new keychain generation was retained because credentials.yaml may already be cleared and freedom.yaml may already select the keychain; recover the PREPARED journal before retrying",
+            );
+        }
         if let Err(rollback) = restore_keychain_migration(store, entries, moved) {
             anyhow::bail!(
                 "keychain values were written, but file/backend commit was refused ({commit_error:#}); {rollback:#}"
@@ -372,15 +375,18 @@ fn known_credentials_fingerprint(credentials: &Credentials) -> Result<[u8; 32]> 
 fn migrated_freedom_target(
     source: Option<&str>,
     direction: keychain::MigrationDirection,
-) -> Option<String> {
+) -> Result<Option<String>> {
     let backend = match direction {
         keychain::MigrationDirection::ToKeychain => "keychain",
         keychain::MigrationDirection::ToFile => "file",
     };
-    match source {
-        Some(source) => Some(update_or_append_secrets_backend(source, backend)),
+    Ok(match source {
+        Some(source) => {
+            let public = Credentials::public_freedom_without_legacy_ssh(source)?;
+            Some(update_or_append_secrets_backend(&public, backend))
+        }
         None => missing_freedom_backend_content(direction),
-    }
+    })
 }
 
 fn commit_migrated_credentials_at(
@@ -399,8 +405,32 @@ fn commit_migrated_credentials_at(
                 "credentials changed while the OS keychain migration was running; file/backend publication was not attempted — retry"
             );
             *current = updated.clone();
-            Ok((migrated_freedom_target(source, direction), ()))
+            Ok((migrated_freedom_target(source, direction)?, ()))
         },
+    )
+}
+
+#[cfg(test)]
+fn commit_migrated_credentials_at_with_fault(
+    freedom_path: &Path,
+    credentials_path: &Path,
+    expected_fingerprint: [u8; 32],
+    updated: &Credentials,
+    direction: keychain::MigrationDirection,
+    fault: crate::config::credentials::DualFileTestFaultPoint,
+) -> Result<()> {
+    crate::config::credentials::Credentials::test_update_raw_freedom_with_credentials_at_using_fault(
+        freedom_path,
+        credentials_path,
+        |source, current| {
+            anyhow::ensure!(
+                known_credentials_fingerprint(current)? == expected_fingerprint,
+                "credentials changed while the OS keychain migration was running; file/backend publication was not attempted — retry"
+            );
+            *current = updated.clone();
+            Ok((migrated_freedom_target(source, direction)?, ()))
+        },
+        fault,
     )
 }
 
@@ -705,31 +735,65 @@ fn run_migrate_locked(
     freedom_path: &Path,
 ) -> Result<()> {
     let cred_path = default_path();
-    let creds = Credentials::load_or_default(&cred_path).context("load credentials.yaml")?;
-    let expected_fingerprint = known_credentials_fingerprint(&creds)?;
-
     let store = keychain::open_store()
         .context("open OS credential store — is the `keychain` feature compiled in?")?;
+    run_migrate_locked_with_store(
+        to,
+        direction,
+        dry_run,
+        output,
+        freedom_path,
+        &cred_path,
+        store.as_ref(),
+    )
+    .map(|_| ())
+}
+
+fn run_migrate_locked_with_store(
+    to: &str,
+    direction: keychain::MigrationDirection,
+    dry_run: bool,
+    output: OutputFormat,
+    freedom_path: &Path,
+    cred_path: &Path,
+    store: &dyn SecretStore,
+) -> Result<keychain::MigrationReport> {
+    // Preview the historical public SSH bundle in memory so it participates in
+    // keychain SET/read-back without touching either file first. The final
+    // PREPARED pair commit removes the public block and publishes the target
+    // credential/backend image atomically; any pre-commit failure therefore
+    // leaves the exact source files unchanged.
+    let raw_creds = Credentials::load_or_default(cred_path).context("load credentials.yaml")?;
+    let expected_fingerprint = known_credentials_fingerprint(&raw_creds)?;
+    let (creds, legacy_ssh_present, _) =
+        Credentials::load_with_legacy_ssh_preview_at(freedom_path, cred_path, store)
+            .context("preview legacy SSH credential migration")?;
 
     // `migrate_to_keychain` rolls back failures during its own SET loop. Keep
     // this independent exact snapshot for failures after that loop (read-back
     // verification or the config/credential pair CAS).
     let keychain_before = if direction == keychain::MigrationDirection::ToKeychain && !dry_run {
-        snapshot_keychain_migration(&creds, store.as_ref())?
+        snapshot_keychain_migration(&creds, store)?
     } else {
         Vec::new()
     };
 
-    let (updated_creds, report) = match direction {
+    let (updated_creds, mut report) = match direction {
         keychain::MigrationDirection::ToKeychain => {
-            keychain::migrate_to_keychain(&creds, store.as_ref(), dry_run)
+            keychain::migrate_to_keychain(&creds, store, dry_run)
                 .context("migrate secrets to keychain")?
         }
         keychain::MigrationDirection::ToFile => {
-            keychain::migrate_to_file(&creds, store.as_ref(), dry_run)
-                .context("migrate secrets to file")?
+            keychain::migrate_to_file(&creds, store, dry_run).context("migrate secrets to file")?
         }
     };
+    if legacy_ssh_present
+        && direction == keychain::MigrationDirection::ToFile
+        && !report.moved.iter().any(|field| field == "ssh_tunnels")
+    {
+        report.skipped.retain(|field| field != "ssh_tunnels");
+        report.moved.push("ssh_tunnels".to_string());
+    }
 
     let backend_label = match direction {
         keychain::MigrationDirection::ToKeychain => store.backend_name(),
@@ -756,7 +820,8 @@ fn run_migrate_locked(
     // The orderings are mirror images because the backend pointer must only be
     // flipped once the *new* source of truth is durable, and the *old* source is
     // only cleared once the pointer no longer references it.
-    if !dry_run && !report.moved.is_empty() {
+    let commit_required = !report.moved.is_empty() || legacy_ssh_present;
+    if !dry_run && commit_required {
         match direction {
             keychain::MigrationDirection::ToFile => {
                 // Publish the populated file and backend pointer through one
@@ -765,7 +830,7 @@ fn run_migrate_locked(
                 // survive through the credential renderer's raw overlay.
                 commit_migrated_credentials_at(
                     freedom_path,
-                    &cred_path,
+                    cred_path,
                     expected_fingerprint,
                     &updated_creds,
                     direction,
@@ -774,24 +839,10 @@ fn run_migrate_locked(
 
                 // VERIFY the committed file before deleting anything from the
                 // keychain. A failure keeps the old keychain copy intact.
-                let reloaded = Credentials::load_or_default(&cred_path).context(
+                let reloaded = Credentials::load_or_default(cred_path).context(
                     "re-load credentials.yaml to verify the migration before purging keychain",
                 )?;
-                let reloaded_yaml = serde_yaml::to_value(&reloaded)
-                    .context("serialize reloaded credentials for verification")?;
-                let map = reloaded_yaml
-                    .as_mapping()
-                    .context("reloaded credentials serialised to a non-mapping")?;
-                let missing: Vec<&String> = report
-                    .moved
-                    .iter()
-                    .filter(|key| {
-                        let k = serde_yaml::Value::String((*key).clone());
-                        map.get(&k)
-                            .and_then(|v| v.as_str())
-                            .is_none_or(|s| s.is_empty())
-                    })
-                    .collect();
+                let missing = reloaded.missing_migration_fields(&report.moved)?;
                 if !missing.is_empty() {
                     anyhow::bail!(
                         "credentials.yaml was written but verification found {} secret(s) missing \
@@ -809,7 +860,7 @@ fn run_migrate_locked(
                 // freedom.yaml now reads from the verified file, so purge the
                 // keychain. A delete failure here is a CLEANUP problem (the
                 // secret is safe in the file, merely duplicated) — never loss.
-                let cleanup_failed = keychain::purge_from_keychain(store.as_ref(), &report.moved);
+                let cleanup_failed = keychain::purge_from_keychain(store, &report.moved);
                 if !cleanup_failed.is_empty() {
                     eprintln!(
                         "WARNING: {} secret(s) are now in credentials.yaml but could NOT be removed \
@@ -834,10 +885,10 @@ fn run_migrate_locked(
                 // previously-absent keychain entries exactly.
                 verify_and_commit_keychain_migration_at(
                     freedom_path,
-                    &cred_path,
+                    cred_path,
                     expected_fingerprint,
                     &updated_creds,
-                    store.as_ref(),
+                    store,
                     &keychain_before,
                     &report.moved,
                 )
@@ -851,9 +902,9 @@ fn run_migrate_locked(
         to,
         output,
         backend_label,
-        !dry_run && !report.moved.is_empty(),
+        !dry_run && commit_required,
     );
-    Ok(())
+    Ok(report)
 }
 
 /// Content to CREATE for an absent `freedom.yaml`, or `None` when a missing file
@@ -969,6 +1020,208 @@ mod tests {
     /// by hand + exercises the same Deserialize path import uses).
     fn creds(yaml: &str) -> Credentials {
         serde_yaml::from_str(yaml).expect("valid credentials yaml")
+    }
+
+    fn legacy_ssh_freedom_yaml() -> &'static str {
+        r#"secrets_backend: file
+future_extension:
+  keep: true
+ssh_tunnels:
+  - endpoint:
+      host: bastion.example
+      username: alex
+      auth:
+        password: legacy-ssh-password
+    remote_host: 127.0.0.1
+    remote_port: 5432
+"#
+    }
+
+    struct FailSshSetStore {
+        inner: keychain::InMemorySecretStore,
+    }
+
+    impl SecretStore for FailSshSetStore {
+        fn get(&self, key: &str) -> Result<Option<SecretString>> {
+            self.inner.get(key)
+        }
+
+        fn set(&self, key: &str, value: &SecretString) -> Result<()> {
+            if key == "ssh_tunnels" {
+                anyhow::bail!("injected SSH keychain SET failure");
+            }
+            self.inner.set(key, value)
+        }
+
+        fn delete(&self, key: &str) -> Result<()> {
+            self.inner.delete(key)
+        }
+
+        fn backend_name(&self) -> &'static str {
+            "failing-memory"
+        }
+    }
+
+    #[test]
+    fn legacy_ssh_to_keychain_is_one_private_pair_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml()).unwrap();
+        let store = keychain::InMemorySecretStore::default();
+
+        crate::config::with_config_credential_migration_lock(&freedom_path, || {
+            run_migrate_locked_with_store(
+                "keychain",
+                keychain::MigrationDirection::ToKeychain,
+                false,
+                OutputFormat::Json,
+                &freedom_path,
+                &credentials_path,
+                &store,
+            )
+        })
+        .unwrap();
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(public.contains("secrets_backend: keychain"));
+        assert!(public.contains("future_extension"));
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("legacy-ssh-password"));
+        assert!(
+            Credentials::load_or_default(&credentials_path)
+                .unwrap()
+                .ssh_tunnels
+                .is_none()
+        );
+        let mut effective = Credentials::default();
+        keychain::supplement_from_store(&mut effective, &store).unwrap();
+        let tunnels = effective.ssh_tunnels.expect("keychain SSH authority");
+        match &tunnels[0].endpoint.auth {
+            crate::transport::ssh_config::SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "legacy-ssh-password");
+            }
+            other => panic!("unexpected migrated SSH auth: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn legacy_ssh_to_file_commits_even_when_keychain_is_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml()).unwrap();
+        let store = keychain::InMemorySecretStore::default();
+
+        let report = crate::config::with_config_credential_migration_lock(&freedom_path, || {
+            run_migrate_locked_with_store(
+                "file",
+                keychain::MigrationDirection::ToFile,
+                false,
+                OutputFormat::Json,
+                &freedom_path,
+                &credentials_path,
+                &store,
+            )
+        })
+        .unwrap();
+
+        assert!(report.moved.iter().any(|field| field == "ssh_tunnels"));
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        assert!(public.contains("secrets_backend: file"));
+        assert!(public.contains("future_extension"));
+        assert!(!public.contains("ssh_tunnels"));
+        assert!(!public.contains("legacy-ssh-password"));
+        let private = Credentials::load_or_default(&credentials_path).unwrap();
+        let tunnels = private.ssh_tunnels.expect("file SSH authority");
+        match &tunnels[0].endpoint.auth {
+            crate::transport::ssh_config::SshAuth::Password(secret) => {
+                assert_eq!(secret.expose_secret(), "legacy-ssh-password");
+            }
+            other => panic!("unexpected migrated SSH auth: {other:?}"),
+        }
+        assert!(store.get("ssh_tunnels").unwrap().is_none());
+    }
+
+    #[test]
+    fn legacy_ssh_to_file_dry_run_plans_move_without_writing() {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before = legacy_ssh_freedom_yaml().as_bytes().to_vec();
+        let credentials_before = b"provider_key: file-provider-secret\n".to_vec();
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+        let store = keychain::InMemorySecretStore::default();
+
+        let report = crate::config::with_config_credential_migration_lock(&freedom_path, || {
+            run_migrate_locked_with_store(
+                "file",
+                keychain::MigrationDirection::ToFile,
+                true,
+                OutputFormat::Json,
+                &freedom_path,
+                &credentials_path,
+                &store,
+            )
+        })
+        .unwrap();
+
+        assert!(report.dry_run);
+        assert!(report.moved.iter().any(|field| field == "ssh_tunnels"));
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(store.get("provider_key").unwrap().is_none());
+        assert!(store.get("ssh_tunnels").unwrap().is_none());
+        assert!(
+            !dir.path()
+                .join(".freedom-credentials.prepared.yaml")
+                .exists()
+        );
+    }
+
+    #[test]
+    fn legacy_ssh_keychain_set_failure_restores_store_and_never_writes_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        let freedom_before = legacy_ssh_freedom_yaml().as_bytes().to_vec();
+        let credentials_before = b"provider_key: file-provider-secret\n".to_vec();
+        std::fs::write(&freedom_path, &freedom_before).unwrap();
+        std::fs::write(&credentials_path, &credentials_before).unwrap();
+        let store = FailSshSetStore {
+            inner: keychain::InMemorySecretStore::default(),
+        };
+
+        let error = crate::config::with_config_credential_migration_lock(&freedom_path, || {
+            run_migrate_locked_with_store(
+                "keychain",
+                keychain::MigrationDirection::ToKeychain,
+                false,
+                OutputFormat::Json,
+                &freedom_path,
+                &credentials_path,
+                &store,
+            )
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("migration failure"));
+        assert_eq!(std::fs::read(&freedom_path).unwrap(), freedom_before);
+        assert_eq!(
+            std::fs::read(&credentials_path).unwrap(),
+            credentials_before
+        );
+        assert!(store.get("provider_key").unwrap().is_none());
+        assert!(store.get("ssh_tunnels").unwrap().is_none());
+        assert!(
+            !dir.path()
+                .join(".freedom-credentials.prepared.yaml")
+                .exists()
+        );
     }
 
     #[test]
@@ -1199,6 +1452,111 @@ mod tests {
         assert_eq!(
             current.slack_bot_token.as_ref().unwrap().expose(),
             "concurrent-file-edit"
+        );
+    }
+
+    fn assert_keychain_migration_fault_boundary(
+        fault: crate::config::credentials::DualFileTestFaultPoint,
+        target_publication_crossed: bool,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let freedom_path = dir.path().join("freedom.yaml");
+        let credentials_path = dir.path().join("credentials.yaml");
+        std::fs::write(&freedom_path, "secrets_backend: file\n").unwrap();
+        std::fs::write(&credentials_path, "provider_key: authoritative-file\n").unwrap();
+
+        let initial = Credentials::load_or_default(&credentials_path).unwrap();
+        let expected = known_credentials_fingerprint(&initial).unwrap();
+        let store = keychain::InMemorySecretStore::default();
+        store
+            .set("provider_key", &SecretString::from("preexisting-keychain"))
+            .unwrap();
+        let before = snapshot_keychain_migration(&initial, &store).unwrap();
+        let (blanked, report) = keychain::migrate_to_keychain(&initial, &store, false).unwrap();
+        assert!(report.is_clean());
+
+        let error =
+            verify_and_commit_keychain_migration_using(&store, &before, &report.moved, || {
+                commit_migrated_credentials_at_with_fault(
+                    &freedom_path,
+                    &credentials_path,
+                    expected,
+                    &blanked,
+                    keychain::MigrationDirection::ToKeychain,
+                    fault,
+                )
+            })
+            .unwrap_err();
+        assert_eq!(
+            crate::config::credentials::dual_file_target_publication_crossed(&error),
+            target_publication_crossed
+        );
+        let message = format!("{error:#}");
+        if target_publication_crossed {
+            assert!(message.contains("new keychain generation was retained"));
+            assert_eq!(
+                store.get("provider_key").unwrap().unwrap().expose(),
+                "authoritative-file"
+            );
+        } else {
+            assert!(message.contains("exact previous keychain values were restored"));
+            assert_eq!(
+                store.get("provider_key").unwrap().unwrap().expose(),
+                "preexisting-keychain"
+            );
+        }
+
+        let journal_path = dir.path().join(".freedom-credentials.prepared.yaml");
+        assert!(
+            journal_path.exists(),
+            "the injected crash window must leave PREPARED for deterministic recovery"
+        );
+        let recovered = Credentials::load_or_default(&credentials_path).unwrap();
+        assert!(
+            !journal_path.exists(),
+            "the next credential load must finish commit-or-rollback recovery"
+        );
+
+        let public = std::fs::read_to_string(&freedom_path).unwrap();
+        if target_publication_crossed {
+            assert!(public.contains("secrets_backend: keychain"));
+            assert!(recovered.provider_key.is_none());
+            let mut effective = recovered;
+            keychain::supplement_from_store(&mut effective, &store).unwrap();
+            assert_eq!(
+                effective.provider_key.as_ref().unwrap().expose(),
+                "authoritative-file"
+            );
+        } else {
+            assert!(public.contains("secrets_backend: file"));
+            assert_eq!(
+                recovered.provider_key.as_ref().unwrap().expose(),
+                "authoritative-file"
+            );
+        }
+    }
+
+    #[test]
+    fn keychain_migration_rolls_back_before_file_target_publication() {
+        assert_keychain_migration_fault_boundary(
+            crate::config::credentials::DualFileTestFaultPoint::JournalPrepared,
+            false,
+        );
+    }
+
+    #[test]
+    fn keychain_migration_retains_new_generation_after_freedom_publication() {
+        assert_keychain_migration_fault_boundary(
+            crate::config::credentials::DualFileTestFaultPoint::FreedomPublished,
+            true,
+        );
+    }
+
+    #[test]
+    fn keychain_migration_retains_new_generation_after_final_directory_sync() {
+        assert_keychain_migration_fault_boundary(
+            crate::config::credentials::DualFileTestFaultPoint::DirectorySynced,
+            true,
         );
     }
 

@@ -45,21 +45,35 @@ worktree surfaced the map below (20 private dead items). Recommendation:
 remove the crate-wide allow before 1.0 and either wire or `#[cfg]`/annotate the
 survivors, so "clippy clean" actually implies "no dark code".
 
-### 2. SSH tunnel (`transport/ssh_tunnel::spawn_tunnel`) — DONE-marked, wiring claim inaccurate
+### 2. SSH tunnel (`transport/ssh_tunnel::spawn_tunnel`) — HISTORICAL false-positive, superseded 2026-07-10
 
-`GOLD-ADAPT-TERMIX-01` is `[x]` with "auto-use wiring: fires when
-`freedom.yaml::ssh_transport.enabled=true`". Reality:
-- No `ssh_transport` config field exists. The Cargo.toml comment names a
-  different key (`transport.ssh_tunnels`) which also does not exist in
-  `FreedomConfig`.
-- `spawn_tunnel` has **zero callers** anywhere in the workspace (only tests).
-- It is behind the off-by-default `ssh-tunnel` feature.
-- Building blocks (`ssh_tofu`, `ssh_socks5`, `SshHandler`, `ssh_jump`) ARE
-  used; only the top-level local-forward entry point is unwired.
+This section accurately described the `bbb1ac8a` audit snapshot, but is not a
+current unwired finding. The old prose named the wrong `ssh_transport.enabled`
+key. Current source loads the private
+`credentials.yaml::ssh_tunnels: Vec<SshTunnelConfig>` authority into a
+runtime-only `FreedomConfig` field:
 
-Consistent with README marking mesh **Partial**, but the plan's specific
-auto-wire claim is false. To wire: add a `transport.ssh_tunnels` config
-consumer in `serve.rs` that calls `spawn_tunnel` when enabled (feature-gated).
+- `config/mod.rs` excludes the runtime field from every public serialization;
+  the coherent two-file loader atomically migrates a historical
+  `freedom.yaml::ssh_tunnels` block into the private authority without losing
+  unrelated YAML. When `secrets_backend: keychain` is selected and no explicit
+  file override exists, migration must first open and read the compound
+  keychain authority successfully; only a proven-absent bundle permits the
+  legacy fallback, while availability/corruption errors leave both files
+  byte-identical and create no PREPARED journal.
+- Feature-on `cli/serve.rs` step `5a-ssh` opens the durable TOFU store and
+  calls `spawn_tunnel` for every configured entry before provider construction;
+  the returned tunnel handles own and drain their task trees during shutdown.
+- Feature-off builds still load the private authority and emit a concrete
+  warning rather than pretending the requested tunnels started.
+- The deterministic in-process loopback proof for the SSH transport boundary
+  is the SOCKS5 dialer round-trip; TOFU, jump-order and local-forward client
+  behavior remain separately feature-on contract evidence under
+  `GOLD-DEP-RUSSH-01`, not an asserted live-network test result in this audit.
+
+The implementation is wired; the current dependency/remediation evidence is
+tracked separately and remains open until its locked feature-on and
+supply-chain gates are recorded.
 
 ### 3. mDNS announce (`cluster/mdns::spawn_announcer`) — announce side unwired
 
@@ -104,10 +118,11 @@ Only 3 `todo!()`/`unimplemented!()` in source, all benign:
 
 ## Verdict
 
-Committed HEAD compiles clean; no bricked or broken core feature. The genuine
-"unfinished/unwired" items are: (a) the crate-wide dead_code allow that hides
-them, (b) 2 mesh entry points (`spawn_tunnel`, `spawn_announcer`) marked DONE
-with wiring that isn't there — both in the honestly-"Partial" mesh area, (c) a
-handful of superseded dead helpers. Recommended follow-ups: scope the
-dead_code allow, correct the TERMIX-01 wiring claim, and wire (not delete) the
-two mesh entry points if LAN/mDNS + SSH-tunnel are 1.0 scope.
+Committed `bbb1ac8a` compiled clean; this file is a historical audit snapshot,
+not a current-head clearance. Its original genuine unwired map was the
+crate-wide dead-code allow, two mesh entry points and a handful of superseded
+helpers. Subsequent verify-first work removed the crate-wide allow and wired
+both `spawn_tunnel` and `spawn_announcer`; their current contracts are recorded
+in the Road and Progress files. The remaining `russh` remediation is a
+separate current-head R3-10 child and must not be inferred green from this
+historical compilation result.

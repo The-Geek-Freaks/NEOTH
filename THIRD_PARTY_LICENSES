@@ -92,7 +92,7 @@ This product includes software developed by the Headroom Contributors.
 
 ## Rust distribution dependencies
 
-Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1163 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
+Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-server` target profiles used by the release workflow. The inventory covers 1158 external crates reachable through runtime or build dependencies; dev-only edges are excluded. Regenerate with `python packaging/generate_rust_notices.py --write`.
 
 ### Exact package inventory
 
@@ -151,7 +151,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `async-stream-impl 0.3.6` - `MIT` - https://github.com/tokio-rs/async-stream - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `async-task 4.7.1` - `Apache-2.0 OR MIT` - https://github.com/smol-rs/async-task - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `async-trait 0.1.89` - `MIT OR Apache-2.0` - https://github.com/dtolnay/async-trait - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `async-utility 0.3.1` - `MIT` - https://github.com/yukibtc/async-utility.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `async-utility 0.3.2` - `MIT` - https://github.com/yukibtc/async-utility.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `async-wsocket 0.13.2` - `MIT` - https://github.com/yukibtc/async-wsocket.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `atomic-destructor 0.3.0` - `MIT` - https://github.com/yukibtc/atomic-destructor.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `atomic-waker 1.1.2` - `Apache-2.0 OR MIT` - https://github.com/smol-rs/atomic-waker - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -219,7 +219,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `cexpr 0.6.0` - `Apache-2.0/MIT` - https://github.com/jethrogb/rust-cexpr - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `cff-parser 0.2.0` - `MIT OR Apache-2.0` - https://github.com/jrmuizel/cff-parser - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cfg-if 1.0.4` - `MIT OR Apache-2.0` - https://github.com/rust-lang/cfg-if - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `cfg_aliases 0.2.1` - `MIT` - https://github.com/katharostech/cfg_aliases - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
+- `cfg_aliases 0.2.2` - `MIT` - https://github.com/katharostech/cfg_aliases - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `cgl 0.3.2` - `MIT / Apache-2.0` - https://github.com/servo/cgl-rs - targets: aarch64-apple-darwin, x86_64-apple-darwin
 - `chacha20 0.10.0` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/stream-ciphers - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `chacha20 0.9.1` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/stream-ciphers - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -301,7 +301,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `ctutils 0.4.2` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/utils - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `cursor-icon 1.2.0` - `MIT OR Apache-2.0 OR Zlib` - https://github.com/rust-windowing/cursor-icon - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `curve25519-dalek 4.1.3` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `curve25519-dalek 5.0.0-rc.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `curve25519-dalek 5.0.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/curve25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `curve25519-dalek-derive 0.1.1` - `MIT/Apache-2.0` - https://github.com/dalek-cryptography/curve25519-dalek - targets: x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `darling 0.20.11` - `MIT` - https://github.com/TedDriggs/darling - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `darling 0.23.0` - `MIT` - https://github.com/TedDriggs/darling - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -361,7 +361,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `ed25519 2.2.3` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/signatures/tree/master/ed25519 - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `ed25519 3.0.0` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/signatures - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `ed25519-dalek 2.2.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `ed25519-dalek 3.0.0-rc.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `ed25519-dalek 3.0.0` - `BSD-3-Clause` - https://github.com/dalek-cryptography/curve25519-dalek/tree/main/ed25519-dalek - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `ego-tree 0.11.0` - `ISC` - https://github.com/rust-scraper/ego-tree - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `either 1.15.0` - `MIT OR Apache-2.0` - https://github.com/rayon-rs/either - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `embedded-io 0.4.0` - `MIT OR Apache-2.0` - https://github.com/embassy-rs/embedded-io - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -494,7 +494,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `http-body-util 0.1.3` - `MIT` - https://github.com/hyperium/http-body - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `httparse 1.10.1` - `MIT OR Apache-2.0` - https://github.com/seanmonstar/httparse - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `httpdate 1.0.3` - `MIT OR Apache-2.0` - https://github.com/pyfisch/httpdate - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `hybrid-array 0.4.12` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/hybrid-array - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `hybrid-array 0.4.13` - `MIT OR Apache-2.0` - https://github.com/RustCrypto/hybrid-array - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `hyper 1.9.0` - `MIT` - https://github.com/hyperium/hyper - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hyper-rustls 0.27.9` - `Apache-2.0 OR ISC OR MIT` - https://github.com/rustls/hyper-rustls - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `hyper-util 0.1.20` - `MIT` - https://github.com/hyperium/hyper-util - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -554,12 +554,12 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `ipnet 2.12.0` - `MIT OR Apache-2.0` - https://github.com/krisprice/ipnet - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `irc 1.1.0` - `MPL-2.0` - https://github.com/aatxe/irc - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `irc-proto 1.1.0` - `MPL-2.0` - https://github.com/aatxe/irc - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `iroh 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `iroh-base 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `iroh-dns 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `iroh 1.0.3` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `iroh-base 1.0.3` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `iroh-dns 1.0.3` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `iroh-metrics 1.0.1` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh-metrics - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `iroh-metrics-derive 1.0.1` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh-metrics - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `iroh-relay 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `iroh-relay 1.0.3` - `MIT OR Apache-2.0` - https://github.com/n0-computer/iroh - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `is_terminal_polyfill 1.70.2` - `MIT OR Apache-2.0` - https://github.com/polyfill-rs/is_terminal_polyfill - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `itertools 0.10.5` - `MIT/Apache-2.0` - https://github.com/rust-itertools/itertools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `itertools 0.11.0` - `MIT OR Apache-2.0` - https://github.com/rust-itertools/itertools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -659,13 +659,12 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `natord 1.0.9` - `MIT` - https://github.com/lifthrasiir/rust-natord - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `natural 0.5.0` - `MIT` - https://github.com/cjqed/rs-natural - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `negentropy 0.5.0` - `MIT` - https://github.com/rust-nostr/negentropy.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `netdev 0.44.0` - `MIT` - https://github.com/shellrow/netdev - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `netdev 0.45.0` - `MIT` - https://github.com/shellrow/netdev - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `netlink-packet-core 0.8.1` - `MIT` - https://github.com/rust-netlink/netlink-packet-core - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
-- `netlink-packet-route 0.29.0` - `MIT` - https://github.com/rust-netlink/netlink-packet-route - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `netlink-packet-route 0.31.0` - `MIT` - https://github.com/rust-netlink/netlink-packet-route - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `netlink-proto 0.12.0` - `MIT` - https://github.com/rust-netlink/netlink-proto - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
 - `netlink-sys 0.8.8` - `MIT` - https://github.com/rust-netlink/netlink-sys - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu
-- `netwatch 0.19.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/net-tools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `netwatch 0.19.1` - `MIT OR Apache-2.0` - https://github.com/n0-computer/net-tools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `new_debug_unreachable 1.0.6` - `MIT` - https://github.com/mbrubeck/rust-debug-unreachable - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nix 0.29.0` - `MIT` - https://github.com/nix-rust/nix - targets: aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nix 0.30.1` - `MIT` - https://github.com/nix-rust/nix - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -673,9 +672,9 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `nom 7.1.3` - `MIT` - https://github.com/Geal/nom - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nom 8.0.0` - `MIT` - https://github.com/rust-bakery/nom - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `noop_proc_macro 0.3.0` - `MIT` - https://github.com/lu-zero/noop_proc_macro - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `noq 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `noq-proto 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `noq-udp 1.0.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `noq 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `noq-proto 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `noq-udp 1.1.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/noq - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `nostr 0.44.5` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-database 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `nostr-gossip 0.44.0` - `MIT` - https://github.com/rust-nostr/nostr.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -697,7 +696,6 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `num_cpus 1.17.0` - `MIT OR Apache-2.0` - https://github.com/seanmonstar/num_cpus - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `num_enum 0.7.6` - `BSD-3-Clause OR MIT OR Apache-2.0` - https://github.com/illicitonion/num_enum - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `num_enum_derive 0.7.6` - `BSD-3-Clause OR MIT OR Apache-2.0` - https://github.com/illicitonion/num_enum - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `num_threads 0.1.7` - `MIT OR Apache-2.0` - https://github.com/jhpratt/num_threads - targets: aarch64-apple-darwin, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-unknown-linux-gnu
 - `number_prefix 0.4.0` - `MIT` - https://github.com/ogham/rust-number-prefix - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `oauth2 5.0.0` - `MIT OR Apache-2.0` - https://github.com/ramosbugs/oauth2-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `oauth2-reqwest 0.1.0-alpha.3` - `MIT` - https://github.com/ramosbugs/oauth2-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -785,7 +783,7 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `polyval 0.6.2` - `Apache-2.0 OR MIT` - https://github.com/RustCrypto/universal-hashes - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `pom 1.1.0` - `MIT` - https://github.com/J-F-Liu/pom.git - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `portable-atomic 1.13.1` - `Apache-2.0 OR MIT` - https://github.com/taiki-e/portable-atomic - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `portmapper 0.19.0` - `MIT OR Apache-2.0` - https://github.com/n0-computer/net-tools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
+- `portmapper 0.19.1` - `MIT OR Apache-2.0` - https://github.com/n0-computer/net-tools - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `postcard 1.1.3` - `MIT OR Apache-2.0` - https://github.com/jamesmunns/postcard - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `postcard-derive 0.2.2` - `MIT OR Apache-2.0` - https://github.com/jamesmunns/postcard - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `postscript 0.14.1` - `Apache-2.0/MIT` - https://github.com/bodoni/postscript - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
@@ -1114,9 +1112,6 @@ Generated from `SRC/Cargo.lock` and the exact `release-desktop` / `release-serve
 - `uuid 1.23.5` - `Apache-2.0 OR MIT` - https://github.com/uuid-rs/uuid - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `v_frame 0.3.9` - `BSD-2-Clause` - https://github.com/rust-av/v_frame - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `vcpkg 0.2.15` - `MIT/Apache-2.0` - https://github.com/mcgoo/vcpkg-rs - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
-- `vergen 9.1.0` - `MIT OR Apache-2.0` - https://github.com/rustyhorde/vergen - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `vergen-gitcl 9.1.0` - `MIT OR Apache-2.0` - https://github.com/rustyhorde/vergen - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
-- `vergen-lib 9.1.0` - `MIT OR Apache-2.0` - https://github.com/rustyhorde/vergen - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
 - `version_check 0.9.5` - `MIT/Apache-2.0` - https://github.com/SergioBenitez/version_check - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `vodozemac 0.10.0` - `Apache-2.0` - https://github.com/matrix-org/vodozemac - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu, x86_64-unknown-linux-musl
 - `vtable 0.4.0` - `MIT OR Apache-2.0` - https://github.com/slint-ui/slint - targets: aarch64-apple-darwin, aarch64-pc-windows-msvc, aarch64-unknown-linux-gnu, x86_64-apple-darwin, x86_64-pc-windows-msvc, x86_64-unknown-linux-gnu
@@ -1293,8 +1288,8 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `include_dir_macros 0.7.4` - `MIT` - revision `d742c6fffce99ee89da91b934e7ce6fb2a82680c` - https://github.com/michael-f-bryan/include_dir
 - `integer-sqrt 0.1.5` - `Apache-2.0/MIT` - revision `282d0d4e26fd41d888894f5578b9d7553f7be0c8` - https://github.com/derekdreery/integer-sqrt-rs
 - `irc-proto 1.1.0` - `MPL-2.0` - revision `b04602dc27f8c969b16d3059286cdb013d0342ca` - https://github.com/aatxe/irc
-- `iroh-base 1.0.0` - `MIT OR Apache-2.0` - revision `6520cd6c9bacea15823c53a38267c40d754980fe` - https://github.com/n0-computer/iroh
-- `iroh-dns 1.0.0` - `MIT OR Apache-2.0` - revision `6520cd6c9bacea15823c53a38267c40d754980fe` - https://github.com/n0-computer/iroh
+- `iroh-base 1.0.3` - `MIT OR Apache-2.0` - revision `e5c710a29fbd06bdce35fd23ad94d04a62acf15a` - https://github.com/n0-computer/iroh
+- `iroh-dns 1.0.3` - `MIT OR Apache-2.0` - revision `e5c710a29fbd06bdce35fd23ad94d04a62acf15a` - https://github.com/n0-computer/iroh
 - `iroh-metrics-derive 1.0.1` - `MIT OR Apache-2.0` - revision `a9afb7cd49bb3804fffefec61647993851f9b8c8` - https://github.com/n0-computer/iroh-metrics
 - `khronos_api 3.1.0` - `Apache-2.0` - revision `f150967b1c44ae888e6676f93f639ebc82771bdc` - https://github.com/brendanzab/gl-rs
 - `lyon_algorithms 1.0.20` - `MIT OR Apache-2.0` - revision `66b9ea7f4ab935763970e828781d8fd5e9305542` - https://github.com/nical/lyon
@@ -1318,7 +1313,8 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `matrix_indexed_db_futures_macros_internal 1.0.0` - `MIT` - revision `67cf3d50d0e826ba3aa297f45f22a74fcd46bb39` - https://github.com/matrix-org/rust-indexed-db
 - `n0-error-macros 1.0.0` - `MIT OR Apache-2.0` - revision `56019f01cd4c838edccd9f9b074953a45d87b6ef` - https://github.com/n0-computer/n0-error
 - `negentropy 0.5.0` - `MIT` - revision `94742ad2221e8350336fa0a40cf0fdb4a5228520` - https://github.com/rust-nostr/negentropy
-- `netwatch 0.19.0` - `MIT OR Apache-2.0` - revision `59a1a38ea39053c4712f4133967e432b3c33f3c4` - https://github.com/n0-computer/net-tools
+- `netwatch 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
+- `nostr 0.44.5` - `MIT` - revision `0e3a2ba2b49f906010fd826e7184886ac4d13ad9` - https://github.com/rust-nostr/nostr
 - `nostr-database 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
 - `nostr-gossip 0.44.0` - `MIT` - revision `c1a24383cd361a408fc53eeac7c1708a3b589194` - https://github.com/rust-nostr/nostr
 - `nostr-relay-pool 0.44.1` - `MIT` - revision `94398c944cf58f7c4e8dd622cedd103e997e5b98` - https://github.com/rust-nostr/nostr
@@ -1351,7 +1347,7 @@ These crate archives omit a standalone notice file. Their published `.cargo_vcs_
 - `objc2-security 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
 - `objc2-security-foundation 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
 - `objc2-system-configuration 0.3.2` - `Zlib OR Apache-2.0 OR MIT` - revision `7b1abfd750a2cacaea71d6a56ecfb83cb7de560b` - https://github.com/madsmtm/objc2
-- `portmapper 0.19.0` - `MIT OR Apache-2.0` - revision `59a1a38ea39053c4712f4133967e432b3c33f3c4` - https://github.com/n0-computer/net-tools
+- `portmapper 0.19.1` - `MIT OR Apache-2.0` - revision `051ab8761006d7f2155e34a49f6bb881b582d5ab` - https://github.com/n0-computer/net-tools
 - `profiling 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
 - `profiling-procmacros 1.0.18` - `MIT OR Apache-2.0` - revision `8271551172eb6fa4cba47369aedd93790c623df9` - https://github.com/aclysma/profiling
 - `pulley-interpreter 36.0.9` - `Apache-2.0 WITH LLVM-exception` - revision `c59270b180b43fb5fb523b0c25ff8a95cd5740b1` - https://github.com/bytecodealliance/wasmtime
@@ -1416,7 +1412,6 @@ These upstreams publish a license expression but no standalone notice in the loc
 
 These crate archives contain no standalone notice file, but another locked crate from the same canonical upstream repository publishes the repository-level text reproduced below. The crate's exact SPDX expression in the inventory remains authoritative; carrying a repository's additional text does not change that expression.
 
-- `nostr 0.44.5` - `MIT` - https://github.com/rust-nostr/nostr.git
 - `selectors 0.38.0` - `MPL-2.0` - https://github.com/servo/stylo
 
 ### Published license and notice texts
@@ -7457,7 +7452,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `228e99750197fe32f2fe3075e772116b46edbc308b7473f8c30e8b26a4c0a1a4`
 
-Applies to: `getrandom 0.2.17`, `getrandom 0.3.4`, `getrandom 0.4.2`, `rand_chacha 0.3.1`, `vergen 9.1.0`, `vergen-gitcl 9.1.0`, `vergen-lib 9.1.0`
+Applies to: `getrandom 0.2.17`, `getrandom 0.3.4`, `getrandom 0.4.2`, `rand_chacha 0.3.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -8899,7 +8894,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `2e7fd5df0555fe80e278fb318e3f89dd48207db1879804482fe3b36ea78a9187`
 
-Applies to: `async-utility 0.3.1`
+Applies to: `async-utility 0.3.2`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 MIT License
@@ -9421,7 +9416,7 @@ Permission is granted to anyone to use this software for any purpose, including 
 
 #### SHA-256 `31b94860253d8ec7b4529f51901044d3b459d6292d996504a36b1bae3a36a812`
 
-Applies to: `cfg_aliases 0.2.1`
+Applies to: `cfg_aliases 0.2.2`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 MIT License
@@ -9559,7 +9554,7 @@ SOFTWARE.
 
 #### SHA-256 `33616ec4c88b6e00de66e6c06f1a55d80bb32a9d7939f3aa83d28e673a1adcae`
 
-Applies to: `n0-future 0.3.2`, `netwatch 0.19.0`, `portmapper 0.19.0`
+Applies to: `n0-future 0.3.2`, `netwatch 0.19.1`, `portmapper 0.19.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright 2023 N0, INC.
@@ -11257,7 +11252,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `403c53069750101aeb9df7e15f127056ceaf7e4e92d0b919a1f4c084afd5f1d4`
 
-Applies to: `curve25519-dalek 5.0.0-rc.0`
+Applies to: `curve25519-dalek 5.0.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2016-2021 isis agora lovecruft. All rights reserved.
@@ -13913,7 +13908,7 @@ SOFTWARE.
 
 #### SHA-256 `560c32be70d4ccc756e6abed836643e33b476767c17cf02fcd0ae6bd36cf305a`
 
-Applies to: `noq 1.0.0`, `noq-proto 1.0.0`, `noq-udp 1.0.0`
+Applies to: `noq 1.1.0`, `noq-proto 1.1.0`, `noq-udp 1.1.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -17320,7 +17315,7 @@ The following can be purchased as an Add-On
 
 #### SHA-256 `6aed14a79871456730ce9c74d0e927e9097e63b4085c4395af363d431ede5c8f`
 
-Applies to: `aead 0.5.2`, `aes 0.8.4`, `aes-gcm 0.10.3`, `aes-gcm-siv 0.11.1`, `base16ct 1.0.0`, `base64ct 1.8.3`, `blake2 0.10.6`, `block-buffer 0.10.4`, `block-buffer 0.12.1`, `block-padding 0.3.3`, `cbc 0.1.2`, `chacha20 0.10.0`, `chacha20 0.9.1`, `chacha20poly1305 0.10.1`, `cipher 0.4.4`, `const-oid 0.10.2`, `const-oid 0.9.6`, `cpufeatures 0.2.17`, `cpufeatures 0.3.0`, `crypto-common 0.1.7`, `crypto-common 0.2.2`, `ctr 0.9.2`, `der 0.7.10`, `der 0.8.0`, `digest 0.10.7`, `digest 0.11.3`, `ghash 0.5.1`, `hkdf 0.12.4`, `hmac 0.12.1`, `hybrid-array 0.4.12`, `inout 0.1.4`, `md-5 0.10.6`, `opaque-debug 0.3.1`, `password-hash 0.5.0`, `pbkdf2 0.12.2`, `pem-rfc7468 1.0.0`, `pkcs8 0.10.2`, `pkcs8 0.11.0`, `poly1305 0.8.0`, `polyval 0.6.2`, `salsa20 0.10.2`, `scrypt 0.11.0`, `sha1 0.10.6`, `sha2 0.10.9`, `sha2 0.11.0`, `signature 2.2.0`, `signature 3.0.0`, `spki 0.7.3`, `spki 0.8.0`, `universal-hash 0.5.1`, `xsalsa20poly1305 0.9.1`
+Applies to: `aead 0.5.2`, `aes 0.8.4`, `aes-gcm 0.10.3`, `aes-gcm-siv 0.11.1`, `base16ct 1.0.0`, `base64ct 1.8.3`, `blake2 0.10.6`, `block-buffer 0.10.4`, `block-buffer 0.12.1`, `block-padding 0.3.3`, `cbc 0.1.2`, `chacha20 0.10.0`, `chacha20 0.9.1`, `chacha20poly1305 0.10.1`, `cipher 0.4.4`, `const-oid 0.10.2`, `const-oid 0.9.6`, `cpufeatures 0.2.17`, `cpufeatures 0.3.0`, `crypto-common 0.1.7`, `crypto-common 0.2.2`, `ctr 0.9.2`, `der 0.7.10`, `der 0.8.0`, `digest 0.10.7`, `digest 0.11.3`, `ghash 0.5.1`, `hkdf 0.12.4`, `hmac 0.12.1`, `hybrid-array 0.4.13`, `inout 0.1.4`, `md-5 0.10.6`, `opaque-debug 0.3.1`, `password-hash 0.5.0`, `pbkdf2 0.12.2`, `pem-rfc7468 1.0.0`, `pkcs8 0.10.2`, `pkcs8 0.11.0`, `poly1305 0.8.0`, `polyval 0.6.2`, `salsa20 0.10.2`, `scrypt 0.11.0`, `sha1 0.10.6`, `sha2 0.10.9`, `sha2 0.11.0`, `signature 2.2.0`, `signature 3.0.0`, `spki 0.7.3`, `spki 0.8.0`, `universal-hash 0.5.1`, `xsalsa20poly1305 0.9.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -18229,7 +18224,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `70c9d40f1f9545c3f133b8a67206e89da850f6468eed072281bb3701514114a9`
 
-Applies to: `cmov 0.5.4`, `hybrid-array 0.4.12`
+Applies to: `cmov 0.5.4`, `hybrid-array 0.4.13`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2022-2026 The RustCrypto Project Developers
@@ -19154,7 +19149,7 @@ SOFTWARE.
 
 #### SHA-256 `766312a83b497b8b83b68df0dc3a99e87480ad9019f54d5a53a5deeb9150d635`
 
-Applies to: `netdev 0.44.0`
+Applies to: `netdev 0.45.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 MIT License
@@ -20092,7 +20087,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `7b6a19666b1304f2dec9202b0dd2d92ca220558aa23f07d4c5e86dbd271050b9`
 
-Applies to: `ed25519-dalek 2.2.0`, `ed25519-dalek 3.0.0-rc.0`
+Applies to: `ed25519-dalek 2.2.0`, `ed25519-dalek 3.0.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2017-2019 isis agora lovecruft. All rights reserved.
@@ -20153,7 +20148,7 @@ THE SOFTWARE.
 
 #### SHA-256 `7c6c032bf8c84fb4cd99784965a39be9e836fb7f244b3cf40c42faf4b211c10a`
 
-Applies to: `iroh 1.0.0`
+Applies to: `iroh 1.0.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Parts of the code has been derived from tailscale, which is under the following license.
@@ -20296,7 +20291,7 @@ they are not recharacterized as an upstream copyright assertion.
 
 #### SHA-256 `7d32c01e2f07bb71e7c355efe71bc6b30b1fee98f7b7ab85f2be762af4d1c1be`
 
-Applies to: `n0-future 0.3.2`, `netwatch 0.19.0`, `portmapper 0.19.0`
+Applies to: `n0-future 0.3.2`, `netwatch 0.19.1`, `portmapper 0.19.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -24424,7 +24419,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `9e654cd17a17880f43a84c9c024f9ca7a320ed906d521072c15aa2e8daff8df0`
 
-Applies to: `noq 1.0.0`, `noq-proto 1.0.0`, `noq-udp 1.0.0`
+Applies to: `noq 1.1.0`, `noq-proto 1.1.0`, `noq-udp 1.1.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2018-2025 The quinn Developers
@@ -26789,7 +26784,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #### SHA-256 `ad0ae7131aa9c9cae0a7280e6ce6be4c1956b6a7370df0d67a15538337f8ecb5`
 
-Applies to: `iroh-base 1.0.0`, `iroh-dns 1.0.0`, `sorted-index-buffer 0.2.1`
+Applies to: `iroh-base 1.0.3`, `iroh-dns 1.0.3`, `sorted-index-buffer 0.2.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Apache License
@@ -28840,32 +28835,6 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
-#### SHA-256 `b4bf94a9fceb8846320fda938ee53fc16b506572609da5cf1d2d289a5597a8f8`
-
-Applies to: `num_threads 0.1.7`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-Copyright (c) 2021 Jacob Pratt
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
------ END UPSTREAM LICENSE OR NOTICE -----
-
 #### SHA-256 `b4eb00df6e2a4d22518fcaa6a2b4646f249b3a3c9814509b22bd2091f1392ff1`
 
 Applies to: `md-5 0.10.6`, `sha1 0.10.6`, `sha2 0.10.9`
@@ -30002,7 +29971,7 @@ SOFTWARE.
 
 #### SHA-256 `bcaa9acadee6c20991d4b5eb56e226191411a3f6ceb92587b272f2ef0221ed71`
 
-Applies to: `iroh-relay 1.0.0`
+Applies to: `iroh-relay 1.0.3`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Parts of the code has been derived from tailscale, which is under the following license.
@@ -30992,7 +30961,7 @@ DEALINGS IN THE SOFTWARE.
 
 #### SHA-256 `c9a75f18b9ab2927829a208fc6aa2cf4e63b8420887ba29cdb265d6619ae82d5`
 
-Applies to: `bit-set 0.5.3`, `lock_api 0.4.14`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `rustc_version 0.4.1`, `thread_local 1.1.9`, `vergen 9.1.0`, `vergen-gitcl 9.1.0`, `vergen-lib 9.1.0`
+Applies to: `bit-set 0.5.3`, `lock_api 0.4.14`, `parking_lot 0.12.5`, `parking_lot_core 0.9.12`, `rustc_version 0.4.1`, `thread_local 1.1.9`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright (c) 2016 The Rust Project Developers
@@ -32213,7 +32182,7 @@ SOFTWARE.
 
 #### SHA-256 `d1a664187bf61b2e9711448db9656f7be12a5b6944e36ffaa94a3f215dbcabb3`
 
-Applies to: `netlink-packet-route 0.29.0`, `netlink-packet-route 0.31.0`
+Applies to: `netlink-packet-route 0.31.0`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -35492,7 +35461,7 @@ THE SOFTWARE.
 
 #### SHA-256 `f169adb8124d3b005416d8485d00777c9a7bdd9099982c52a4493f9732e6d050`
 
-Applies to: `iroh-base 1.0.0`, `iroh-dns 1.0.0`, `sorted-index-buffer 0.2.1`
+Applies to: `iroh-base 1.0.3`, `iroh-dns 1.0.3`, `sorted-index-buffer 0.2.1`
 
 ----- BEGIN UPSTREAM LICENSE OR NOTICE -----
 Copyright 2025 N0, INC.
@@ -36912,214 +36881,6 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
------ END UPSTREAM LICENSE OR NOTICE -----
-
-#### SHA-256 `fd51a3a535a298eb6b5b92011cca2bb0e3501d70855cd8c20c2ff7c18320bae0`
-
-Applies to: `num_threads 0.1.7`
-
------ BEGIN UPSTREAM LICENSE OR NOTICE -----
-Apache License
-                           Version 2.0, January 2004
-                        http://www.apache.org/licenses/
-
-   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-
-   1. Definitions.
-
-      "License" shall mean the terms and conditions for use, reproduction,
-      and distribution as defined by Sections 1 through 9 of this document.
-
-      "Licensor" shall mean the copyright owner or entity authorized by
-      the copyright owner that is granting the License.
-
-      "Legal Entity" shall mean the union of the acting entity and all
-      other entities that control, are controlled by, or are under common
-      control with that entity. For the purposes of this definition,
-      "control" means (i) the power, direct or indirect, to cause the
-      direction or management of such entity, whether by contract or
-      otherwise, or (ii) ownership of fifty percent (50%) or more of the
-      outstanding shares, or (iii) beneficial ownership of such entity.
-
-      "You" (or "Your") shall mean an individual or Legal Entity
-      exercising permissions granted by this License.
-
-      "Source" form shall mean the preferred form for making modifications,
-      including but not limited to software source code, documentation
-      source, and configuration files.
-
-      "Object" form shall mean any form resulting from mechanical
-      transformation or translation of a Source form, including but
-      not limited to compiled object code, generated documentation,
-      and conversions to other media types.
-
-      "Work" shall mean the work of authorship, whether in Source or
-      Object form, made available under the License, as indicated by a
-      copyright notice that is included in or attached to the work
-      (an example is provided in the Appendix below).
-
-      "Derivative Works" shall mean any work, whether in Source or Object
-      form, that is based on (or derived from) the Work and for which the
-      editorial revisions, annotations, elaborations, or other modifications
-      represent, as a whole, an original work of authorship. For the purposes
-      of this License, Derivative Works shall not include works that remain
-      separable from, or merely link (or bind by name) to the interfaces of,
-      the Work and Derivative Works thereof.
-
-      "Contribution" shall mean any work of authorship, including
-      the original version of the Work and any modifications or additions
-      to that Work or Derivative Works thereof, that is intentionally
-      submitted to Licensor for inclusion in the Work by the copyright owner
-      or by an individual or Legal Entity authorized to submit on behalf of
-      the copyright owner. For the purposes of this definition, "submitted"
-      means any form of electronic, verbal, or written communication sent
-      to the Licensor or its representatives, including but not limited to
-      communication on electronic mailing lists, source code control systems,
-      and issue tracking systems that are managed by, or on behalf of, the
-      Licensor for the purpose of discussing and improving the Work, but
-      excluding communication that is conspicuously marked or otherwise
-      designated in writing by the copyright owner as "Not a Contribution."
-
-      "Contributor" shall mean Licensor and any individual or Legal Entity
-      on behalf of whom a Contribution has been received by Licensor and
-      subsequently incorporated within the Work.
-
-   2. Grant of Copyright License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      copyright license to reproduce, prepare Derivative Works of,
-      publicly display, publicly perform, sublicense, and distribute the
-      Work and such Derivative Works in Source or Object form.
-
-   3. Grant of Patent License. Subject to the terms and conditions of
-      this License, each Contributor hereby grants to You a perpetual,
-      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
-      (except as stated in this section) patent license to make, have made,
-      use, offer to sell, sell, import, and otherwise transfer the Work,
-      where such license applies only to those patent claims licensable
-      by such Contributor that are necessarily infringed by their
-      Contribution(s) alone or by combination of their Contribution(s)
-      with the Work to which such Contribution(s) was submitted. If You
-      institute patent litigation against any entity (including a
-      cross-claim or counterclaim in a lawsuit) alleging that the Work
-      or a Contribution incorporated within the Work constitutes direct
-      or contributory patent infringement, then any patent licenses
-      granted to You under this License for that Work shall terminate
-      as of the date such litigation is filed.
-
-   4. Redistribution. You may reproduce and distribute copies of the
-      Work or Derivative Works thereof in any medium, with or without
-      modifications, and in Source or Object form, provided that You
-      meet the following conditions:
-
-      (a) You must give any other recipients of the Work or
-          Derivative Works a copy of this License; and
-
-      (b) You must cause any modified files to carry prominent notices
-          stating that You changed the files; and
-
-      (c) You must retain, in the Source form of any Derivative Works
-          that You distribute, all copyright, patent, trademark, and
-          attribution notices from the Source form of the Work,
-          excluding those notices that do not pertain to any part of
-          the Derivative Works; and
-
-      (d) If the Work includes a "NOTICE" text file as part of its
-          distribution, then any Derivative Works that You distribute must
-          include a readable copy of the attribution notices contained
-          within such NOTICE file, excluding those notices that do not
-          pertain to any part of the Derivative Works, in at least one
-          of the following places: within a NOTICE text file distributed
-          as part of the Derivative Works; within the Source form or
-          documentation, if provided along with the Derivative Works; or,
-          within a display generated by the Derivative Works, if and
-          wherever such third-party notices normally appear. The contents
-          of the NOTICE file are for informational purposes only and
-          do not modify the License. You may add Your own attribution
-          notices within Derivative Works that You distribute, alongside
-          or as an addendum to the NOTICE text from the Work, provided
-          that such additional attribution notices cannot be construed
-          as modifying the License.
-
-      You may add Your own copyright statement to Your modifications and
-      may provide additional or different license terms and conditions
-      for use, reproduction, or distribution of Your modifications, or
-      for any such Derivative Works as a whole, provided Your use,
-      reproduction, and distribution of the Work otherwise complies with
-      the conditions stated in this License.
-
-   5. Submission of Contributions. Unless You explicitly state otherwise,
-      any Contribution intentionally submitted for inclusion in the Work
-      by You to the Licensor shall be under the terms and conditions of
-      this License, without any additional terms or conditions.
-      Notwithstanding the above, nothing herein shall supersede or modify
-      the terms of any separate license agreement you may have executed
-      with Licensor regarding such Contributions.
-
-   6. Trademarks. This License does not grant permission to use the trade
-      names, trademarks, service marks, or product names of the Licensor,
-      except as required for reasonable and customary use in describing the
-      origin of the Work and reproducing the content of the NOTICE file.
-
-   7. Disclaimer of Warranty. Unless required by applicable law or
-      agreed to in writing, Licensor provides the Work (and each
-      Contributor provides its Contributions) on an "AS IS" BASIS,
-      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
-      implied, including, without limitation, any warranties or conditions
-      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
-      PARTICULAR PURPOSE. You are solely responsible for determining the
-      appropriateness of using or redistributing the Work and assume any
-      risks associated with Your exercise of permissions under this License.
-
-   8. Limitation of Liability. In no event and under no legal theory,
-      whether in tort (including negligence), contract, or otherwise,
-      unless required by applicable law (such as deliberate and grossly
-      negligent acts) or agreed to in writing, shall any Contributor be
-      liable to You for damages, including any direct, indirect, special,
-      incidental, or consequential damages of any character arising as a
-      result of this License or out of the use or inability to use the
-      Work (including but not limited to damages for loss of goodwill,
-      work stoppage, computer failure or malfunction, or any and all
-      other commercial damages or losses), even if such Contributor
-      has been advised of the possibility of such damages.
-
-   9. Accepting Warranty or Additional Liability. While redistributing
-      the Work or Derivative Works thereof, You may choose to offer,
-      and charge a fee for, acceptance of support, warranty, indemnity,
-      or other liability obligations and/or rights consistent with this
-      License. However, in accepting such obligations, You may act only
-      on Your own behalf and on Your sole responsibility, not on behalf
-      of any other Contributor, and only if You agree to indemnify,
-      defend, and hold each Contributor harmless for any liability
-      incurred by, or claims asserted against, such Contributor by reason
-      of your accepting any such warranty or additional liability.
-
-   END OF TERMS AND CONDITIONS
-
-   APPENDIX: How to apply the Apache License to your work.
-
-      To apply the Apache License to your work, attach the following
-      boilerplate notice, with the fields enclosed by brackets "[]"
-      replaced with your own identifying information. (Don't include
-      the brackets!)  The text should be enclosed in the appropriate
-      comment syntax for the file format. We also recommend that a
-      file or class name and description of purpose be included on the
-      same "printed page" as the copyright notice for easier
-      identification within third-party archives.
-
-   Copyright 2021 Jacob Pratt
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-       http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
 ----- END UPSTREAM LICENSE OR NOTICE -----
 
 #### SHA-256 `fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc`
