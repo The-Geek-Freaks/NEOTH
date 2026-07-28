@@ -257,6 +257,316 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   classify genuine supersession explicitly and leave every unimplemented or
   only-researched leaf open for v1.0 rather than hiding it in a side document.
 
+  **Authoritative CRG-01..05 disposition and v1.0 wiring ledger
+  (2026-07-28, current-Head static re-audit; umbrella remains OPEN):**
+
+  This ledger supersedes the **release-scope** part of the historical
+  2026-07-25 `DEFERRED-v1.1` labels in
+  `PLAN/CRG_ADOPTION_2026_07_20.md`; those labels remain useful audit history,
+  but they do not discharge a v1.0 contract whose explicit rule is to leave
+  incomplete leaves open for v1.0. The installed CRG Python package was used as
+  an algorithm reference (`graph.py::get_impact_radius`,
+  `changes.py::parse_git_diff_ranges`, `graph.py::get_transitive_tests`,
+  `enrich.py`), not as a release dependency. `graphify-out/graph.json` and
+  `graphify-out/inventory.json` were used to locate candidate relationships;
+  because Graphify `INFERRED` edges are hypotheses, every status below is pinned
+  to a concrete Rust definition plus a static production caller. “Built in”
+  means only that native Rust bytes ship in `neoth`; it does **not** imply that
+  the leaf is wired through every required consumer.
+
+  | Leaf | Current disposition | Evidence owner | v1.0 closure state |
+  |---|---|---|---|
+  | CRG-01 prompt-targeted coding context | **ADOPTED / WIRED-PARTIAL** | `SRC/neothd/src/cli/code.rs`, `SRC/neothd/src/coding/decomposer.rs`, `SRC/neothd/src/code_map/recall.rs` | **OPEN:** CLI coding, Chat and Channel have consumers; lifecycle, explicit failure/staleness, configuration, GUI and Buddy parity are incomplete. |
+  | CRG-02 structural blast radius | **PRIMITIVES ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** per-symbol callers/callees exist; changed-set aggregation, impact scores/evidence and a production consumer do not. |
+  | CRG-03 diff hunks to symbols | **RESEARCHED / FILE-LEVEL SUBSTRATE ONLY** | `SRC/neothd/src/code_map/risk.rs`, `SRC/neothd/src/code_map/symbols.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** changed filenames exist; exact hunk ranges and durable symbol extents/intersection do not. |
+  | CRG-04 `TestedBy` and test gaps | **RESEARCHED / UNIMPLEMENTED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** neither edge type, test-node evidence, transitive query nor risk/prompt consumer exists. |
+  | CRG-05 tool-use enrichment | **GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** `PreProviderCall` is not a per-tool `PreToolUse` boundary and no CRG enrichment result is consumed. |
+
+  **Shared native substrate and package boundary (real, but insufficient for
+  leaf closure):**
+
+  - **Ingestion:** `SRC/neothd/src/cli/code_map.rs:308-361` drives
+    `RepoMapBuilder`, symbol extraction and edge persistence;
+    `SRC/neothd/src/code_map/walker.rs:228-360` performs the bounded repository
+    scan and invokes `symbols::extract_symbols`.
+  - **Index:** `SRC/neothd/src/code_map/persist.rs:367-525` transactionally
+    persists map rows and call/reference edges in local `code_map.db`;
+    `root_index_generation` (`:786`) and `is_index_stale` (`:808`) exist as
+    primitives. They are not yet a daemon/Doctor/UI lifecycle.
+  - **Retrieval:** `SRC/neothd/src/code_map/recall.rs:177` ranks root-contained
+    prompt matches; `SRC/neothd/src/code_map/graph.rs:275,401` performs bounded
+    inverse/forward call BFS; `SRC/neothd/src/mcp/codegraph_server.rs:62-218`
+    exports the current six read-only tools.
+  - **Prompt/citation boundary:** `recall.rs:364-427` renders path/root/symbol
+    evidence and caller evidence; `coding/decomposer.rs:243-300` frames the
+    result as untrusted file data. These are provenance-like context markers,
+    not yet a complete generation-bound citation/receipt proving which index
+    generation and graph facts influenced every output.
+  - **Packaging:** `SRC/neothd/src/lib.rs:116` includes `code_map` in the core
+    library, so the native substrate ships with `neoth` without Python,
+    Node.js, a sidecar, or an optional Cargo feature. The release must keep that
+    zero-friction boundary; wholesale packaging of the CRG Python service is
+    **SUPERSEDED** by the native implementation direction.
+
+  - [ ] **CRG-01 — prompt-targeted `code_map` context in the coding
+    hemisphere: ADOPTED / WIRED-PARTIAL / OPEN for v1.0.**
+
+    - **Ingestion -> index:** the shared `RepoMapBuilder -> extract_symbols ->
+      persist_map/persist_edges -> code_map.db` path is real, root-scoped and
+      generation-aware. Today it is seeded by the explicit
+      `neoth code-map persist` operator command; `neoth code` does not create or
+      refresh it.
+    - **Index -> retrieval:** `SRC/neothd/src/cli/code.rs:128-171` opens the
+      default DB, resolves the active containing root, calls
+      `relevant_files_for_prompt`, loads only that root's edges, constructs
+      `CallGraph`, and renders depth-1 callers. The hard caps are eight files and
+      three callers per matched symbol (`:120-122`).
+    - **Retrieval -> real prompt consumer:** production `run_code`
+      (`cli/code.rs:277-303`) puts targeted recall ahead of the generic repo map
+      and passes the merged `project_ctx` to `decompose`; the decomposer's
+      `build_prompt` (`coding/decomposer.rs:243-300`) consumes it inside an
+      injection-resistant `<project_context>` data fence. This directly
+      corrects the side document's now-stale statement that no decomposer caller
+      exists.
+    - **Other production consumers:** CLI Chat calls
+      `maybe_repo_context_block` at `SRC/neothd/src/cli/chat.rs:1714`;
+      Channel serving calls that same canonical helper at
+      `SRC/neothd/src/cli/serve_pipeline.rs:2002`. The explicit CLI inspection
+      path calls retrieval/render at `SRC/neothd/src/cli/code_map.rs:563-615`,
+      and MCP calls it at `SRC/neothd/src/mcp/codegraph_server.rs:315-367`.
+      These callers prove CLI coding + Chat + Channel + MCP wiring; they do not
+      prove GUI/Buddy parity.
+    - **Configuration:** only
+      `FreedomConfig::code_map.auto_context_max_files`
+      (`SRC/neothd/src/config/ops.rs:612-624`) exists. It defaults to zero and
+      controls Chat/Channel auto-context; `neoth code` instead uses hard-coded
+      caps. Reload knows the field, but `SRC/freedom.yaml.example` has no
+      discoverable `code_map` example or explanation.
+    - **Lifecycle/failure truth:** `persist::is_index_stale` exists but none of
+      the `neoth code`, Chat or Channel consumers gates or annotates output with
+      it. Missing DB, unmapped root, read failure and empty retrieval normally
+      degrade to no context; no daemon/cron watcher, automatic first index,
+      refresh progress, recovery receipt or Doctor contract owns that state.
+    - **GUI/CLI/Buddy:** CLI can persist/load/query the map and execute the
+      context-aware coding path. `SRC/neothd-gui` has a coding Kanban monitor and
+      `.project-context`, but no native code-map setup/status/rebuild/config
+      panel and no native `neoth code` start/progress/cancel flow; the parity map
+      entry `("code-map", Gui("coding"))` is therefore broader than the
+      actually wired UI. No Buddy code-map/coding consumer or status action was
+      found.
+    - **Packaging:** core Rust inclusion is complete; a clean install still has
+      to prove first-run index creation/refresh and all surfaces without an
+      external CRG runtime.
+    - [ ] Add one explicit, bounded first-index + incremental refresh lifecycle
+      with root selection, watcher/debounce or equivalent invalidation,
+      cancellation, restart recovery, index-generation receipt and a manual
+      rebuild escape hatch.
+    - [ ] Make enabled-but-missing, stale, corrupt and unmapped-root states
+      visible and actionable in CLI, Channel logs/receipts, GUI, Buddy and
+      Doctor; do not silently claim context-aware coding when the consumer
+      actually ran context-free.
+    - [ ] Unify and validate file/caller/depth/token caps in `FreedomConfig`,
+      apply them consistently to `neoth code`, Chat, Channel and MCP, document
+      reload semantics, and add the complete zero-friction example to
+      `freedom.yaml.example`.
+    - [ ] Wire GUI parity for code-map setup/status/inspect/rebuild/config and
+      native coding start/progress/cancel/result; wire equivalent Buddy
+      discover/status/rebuild/start/cancel actions through the same backend
+      services rather than terminal-text wrappers.
+    - [ ] Bind prompt/citation metadata to canonical root + index generation +
+      selected paths/symbols/caller edges, preserve it through retry/fallback,
+      and test that the generated coding plan and audit receipt identify the
+      exact context generation used.
+    - [ ] Add clean-install and packaged-binary tests covering absent index,
+      first index, fresh reuse, stale refresh, corrupt DB recovery, multi-root
+      containment, cancellation and GUI/CLI/Buddy parity before closing CRG-01.
+
+  - [ ] **CRG-02 — structural blast radius:
+    PRIMITIVES ADOPTED / LEAF UNWIRED / OPEN for v1.0.**
+
+    - **Ingestion -> index:** CRG-02 can reuse persisted Calls/References edges,
+      but no changed-file/node seed set or impact-result record is ingested or
+      persisted.
+    - **Index -> retrieval:** `CallGraph::callers_of`
+      (`code_map/graph.rs:270-305`) and `callees_of` (`:398-430`) are bounded BFS
+      primitives. MCP exposes them as `codegraph_callers` and
+      `codegraph_callees` (`mcp/codegraph_server.rs:125-189,413-485`), and
+      CRG-01 injects only depth-1 callers for prompt-matched symbols. This is
+      useful substrate, but it is not CRG `get_impact_radius`: there is no
+      multi-file/multi-symbol change seed, affected-node/file union, distance
+      score, traversed-edge evidence, max-node cap/truncation marker or stable
+      impact result.
+    - **Prompt/citation consumer:** no diff/apply/review/decomposer path invokes
+      an impact-radius operation. `neoth code-intel --coupling` reports
+      history-derived co-change pairs, not change-set blast radius. There is no
+      `codegraph_impact_radius` tool, direct CLI surface or generation-bound
+      citation block.
+    - **Config/lifecycle/surfaces/package:** no CRG-02 depth/node/file caps,
+      refresh rule, Doctor probe, GUI visualization, CLI command, Buddy action
+      or release smoke test exists. The underlying graph ships in core; the
+      leaf does not.
+    - [ ] Implement native root-scoped `impact_radius(seeds, max_depth,
+      max_nodes)` over concrete `(root,file,symbol)` identities, with
+      deterministic ordering, affected files/nodes, distances/scores, traversed
+      evidence and an explicit truncation flag; never conflate same-name symbols
+      across files or roots.
+    - [ ] Accept changed files and CRG-03 symbol seeds, reject unindexed/outside
+      roots visibly, and define direction semantics (callers, callees or both)
+      plus treatment of unresolved/Reference edges.
+    - [ ] Expose one canonical typed service through CLI and a
+      `codegraph_impact_radius` MCP tool, then wire it into code review/apply,
+      coding decomposition and risk summaries with root/index-generation
+      citations.
+    - [ ] Add validated caps/config/reload, lifecycle/staleness handling,
+      Doctor, GUI graph/list + progress/error state and Buddy
+      explain/recompute actions; prove all surfaces return the same ordered
+      result.
+    - [ ] Add adversarial tests for cycles, diamonds, duplicate names,
+      multi-root indexes, huge fan-out, depth zero/caps, deleted nodes,
+      unresolved calls, stale generations and packaged clean-machine use.
+
+  - [ ] **CRG-03 — git diff hunks to function-level nodes:
+    RESEARCHED / FILE-LEVEL SUBSTRATE ONLY / OPEN for v1.0.**
+
+    - **Ingestion:** `SRC/neothd/src/code_map/risk.rs:240-263`
+      `patch_changed_files` reads an already-created patch and extracts only
+      deduplicated `+++ b/<path>` filenames. It does not parse `@@` hunk ranges,
+      invoke a bounded/safe `git diff --unified=0`, model old/new ranges, or
+      represent deletes/renames/binary patches. Its read/parse errors silently
+      become an empty set.
+    - **Index/intersection:** `Symbol` stores only the declaration start
+      (`code_map/symbols.rs:83-88`) and `code_map_symbols` persists only
+      `line` (`code_map/persist.rs:46-52`). `code_map/outline.rs` estimates
+      `line_end` from the next symbol while reading source; that query-time
+      estimate is neither a durable exact extent nor a
+      `nodes_in_line_range` index contract. The side document's claim that line
+      ranges were already persisted is therefore corrected by this ledger.
+    - **Retrieval -> prompt/citation:** no `code_map/diff.rs`,
+      `nodes_in_line_range`, diff-derived CRG-02 seed, `code-intel --diff`,
+      MCP tool, prompt block or citation/receipt consumer exists.
+    - **Config/lifecycle/surfaces/package:** no ref/base/worktree mode, byte/hunk
+      cap, timeout, rename policy, refresh rule, GUI diff inspector, Buddy
+      action, Doctor probe or packaged workflow exists.
+    - [ ] Port the useful behavior of CRG
+      `changes.py::parse_git_diff_ranges` into a native typed parser/runner:
+      safe bounded argv (no shell), explicit repo/root/ref authority,
+      `--unified=0`, timeout/output/hunk caps, deterministic path normalization,
+      and correct additions, modifications, deletions, renames, zero-length
+      ranges, quoted paths and binary handling.
+    - [ ] Persist or deterministically derive trustworthy symbol start/end
+      extents with schema version/migration and language limitations made
+      explicit; implement root/file/range intersection without treating an
+      estimated next declaration as exact proof.
+    - [ ] Feed resulting concrete nodes into CRG-02 and expose one canonical
+      CLI/MCP service; wire review/apply/decomposer/risk prompt consumers with
+      diff/ref/index-generation citations and visible partial/unmapped results.
+    - [ ] Add config/reload, stale-index lifecycle, Doctor, GUI diff-to-symbol
+      inspection/progress/error state, Buddy explain/recompute and release
+      packaging smoke tests.
+    - [ ] Test malicious refs/paths, rename/copy/delete, CRLF, Unicode, combined
+      and multi-hunk diffs, worktree/staged/base modes, subdirectories,
+      multi-root isolation, oversized output, process failure, stale ranges and
+      unchanged-index races.
+
+  - [ ] **CRG-04 — `TestedBy` edge and transitive test-gap detection:
+    RESEARCHED / UNIMPLEMENTED / OPEN for v1.0.**
+
+    - **Ingestion/index:** `EdgeKind` currently has only `Calls` and
+      `References` (`SRC/neothd/src/code_map/graph.rs:39-56`); neither walker nor
+      persistence identifies test nodes or emits a `TestedBy` edge. There is no
+      provenance/confidence rule distinguishing a real test from a filename,
+      macro, annotation or helper that merely looks like one.
+    - **Retrieval:** there is no native equivalent of CRG
+      `graph.py::get_transitive_tests` (direct production-node tests plus tests
+      of callers/callees according to a documented traversal contract), no
+      test-gap query and no generation-aware result.
+    - **Prompt/citation consumer:** risk ranking currently uses ownership/churn
+      and patch filenames; it does not raise risk because a changed impacted
+      node lacks tests. Review/apply/decomposer, CLI, MCP, Channel and Buddy
+      consume no direct/transitive test evidence.
+    - **Config/lifecycle/surfaces/package:** no detection policy, confidence
+      threshold, traversal/cap knob, migration, rebuild state, Doctor check,
+      CLI/MCP command, GUI test-gap display, Buddy explanation or packaged
+      clean-install proof exists.
+    - [ ] Define stable test-node identity and evidence for supported languages
+      (path/module conventions plus framework syntax where available), emit
+      root-scoped deterministic `TestedBy` edges with source/provenance and
+      migrate old DBs without misreading unknown edge kinds.
+    - [ ] Implement direct + transitive test discovery and a bounded test-gap
+      query over CRG-02 impacted nodes, with explicit confidence, unresolved
+      cases, depth/node caps and generation/truncation metadata.
+    - [ ] Wire the same service into risk/review/apply/decomposer prompt and
+      citation receipts, expose CLI/MCP, and make “no test found” a calibrated
+      evidence state rather than proof that no test exists.
+    - [ ] Add config/reload, incremental invalidation/rebuild/recovery, Doctor,
+      GUI affected-tests/test-gap/progress/error views, Buddy
+      explain/run-suggested-tests actions and release packaging checks.
+    - [ ] Test unit/integration/e2e naming, parameterized/generated tests,
+      helpers/fixtures, duplicate symbol names, tests calling wrappers,
+      renamed/deleted tests, cycles, monorepos, unsupported languages,
+      stale/partial indexes and deterministic tie/order behavior.
+
+  - [ ] **CRG-05 — per-tool codegraph enrichment:
+    GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED / OPEN for v1.0.**
+
+    - **Trigger ingestion:** NEOTH loads general TOML hooks, but
+      `HookStage::PreProviderCall` is defined as immediately before
+      `provider.complete()` (`SRC/neothd/src/hooks/stages.rs:47-54`) and the
+      production Chat caller invokes that stage at
+      `SRC/neothd/src/cli/chat.rs:2718-2750`. Its nominal
+      `omc_event() -> "PreToolUse"` mapping (`hooks/stages.rs:92-100`) is
+      documentation/import vocabulary, not a typed boundary around each
+      Read/Grep/Glob/Bash/native/MCP invocation.
+    - **Index -> enrichment retrieval:** codegraph read tools exist, but no
+      dispatcher captures a tool name + typed `tool_input.pattern/path/command`
+      + bound cwd/root, calls callers/callees/relevance/tests, and returns a
+      bounded enrichment object.
+    - **Prompt/citation consumer:** no parser or call site consumes CRG
+      `enrich.py`'s
+      `hookSpecificOutput.hookEventName/additionalContext` contract. Therefore
+      no tool loop injects codegraph context before execution, no trust fence
+      distinguishes enrichment from instructions, and no receipt binds it to
+      the tool call or index generation.
+    - **Config/lifecycle/surfaces/package:** the GUI has general hook inventory,
+      but no codegraph-enrichment enablement/status/error view; CLI, Buddy and
+      Doctor lack a leaf-specific contract. No default hook/script is staged.
+      A Python script would also break the zero-friction native package
+      boundary, so the CRG algorithm should be implemented in Rust unless a
+      fully staged, signed, dependency-free asset is demonstrably superior.
+    - [ ] Introduce one real typed `PreToolUse` boundary that every relevant
+      native, MCP and provider-emitted tool execution crosses exactly once,
+      carrying call id, tool kind, schema-validated input, canonical cwd/root,
+      cancellation/deadline and replay state; do not alias a provider-call hook
+      and call it tool coverage.
+    - [ ] Implement bounded native enrichment for Read/Grep/Glob/Bash
+      equivalents and codegraph tools, with per-tool extraction rules, query
+      caps/timeouts, duplicate suppression and a typed result that can carry
+      additional context, denial or no-op explicitly.
+    - [ ] Parse/serialize one canonical result contract, sanitize and frame
+      enrichment as untrusted data, enforce token/byte budgets, bind provenance
+      to tool-call id/root/index generation, and preserve correct behavior
+      across retry, fallback, cancellation and replay without double injection.
+    - [ ] Add default-off/on policy as deliberately chosen and documented,
+      config/reload, setup/uninstall/recovery, Doctor and audit receipts; expose
+      identical CLI status/test, GUI configure/status/error and Buddy
+      explain/enable/disable/test controls.
+    - [ ] Add end-to-end tests proving actual Read/Grep/Glob/Bash-like and MCP
+      calls cross the boundary, unrelated tools no-op, malformed/oversized hook
+      output fails visibly according to policy, prompt injection stays inert,
+      index changes invalidate cached enrichment, and packaged clean machines
+      require no external Python environment.
+
+  **Explicit supersession boundary:** only the wholesale CRG Python
+  service/runtime and its standalone `context_savings.py` wrapper are
+  superseded: NEOTH already ships native code-map infrastructure and native
+  chars-to-token accounting, so packaging another interpreter/service or a
+  second savings calculator adds no product capability. The substantive
+  algorithms in CRG-01..05 are **not** declared superseded by those primitives;
+  every missing consumer/lifecycle/surface box above remains v1.0 work. The
+  umbrella may close only after all five child leaves and their
+  ingestion-to-package chains are implemented, statically caller-proven and
+  tested at the same exact Head.
+
   **R3-11..R3-16 forensic re-audit 2026-07-22 (all six remain OPEN):**
 
   - **R3-11:** the capability-bound installer/loader/inventory/uninstall core,
@@ -668,6 +978,10 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
     CRG-02..05 DEFERRED-v1.1) now exists in `PLAN/CRG_ADOPTION_2026_07_20.md`
     under "Authoritative disposition (2026-07-25)"; the umbrella checkbox is
     ready for re-audit once the four deferred leaves are acknowledged as v1.1 scope.
+    **2026-07-28 scope correction:** the detailed ledger directly under
+    GOLD-R3-16 is now authoritative. It preserves this forensic history but
+    rejects the v1.1 deferral as a v1.0 closure mechanism: CRG-01 remains
+    wired-partial and CRG-02..05 remain open v1.0 implementation leaves.
 
 - [ ] **GOLD-R3-17 Explicit installed-Skill authority:** an imported or
   generated Skill must never gain ambiguous authority merely because its
