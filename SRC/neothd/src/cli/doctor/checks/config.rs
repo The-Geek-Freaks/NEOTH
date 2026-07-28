@@ -549,31 +549,51 @@ pub(crate) fn check_advisable_proactive(home: &Path) -> CheckOutcome {
     }
 }
 
-/// Advisory hint: `dreaming.enabled` is off.
+/// Dream cron posture.
 ///
-/// When enabled, the daemon runs a background dream-synthesis pass that clusters
-/// recent memories into themes, surfaces patterns, and writes synthesis notes
-/// to `~/.neoth/dreams/`. Improves long-horizon recall without requiring
-/// operator action. Default `false` (opt-in).
+/// Disabled is the healthy, non-coercive default: `neoth dream now` remains
+/// available and Doctor must not turn an explicit opt-in into a warning.
+/// Enabled under Strict or Custom is a real mismatch because unattended work
+/// remains fail-closed; Doctor reports that mismatch without changing autonomy.
 ///
-/// Severity: Warn (advisory only — daemon starts and runs correctly either way).
+/// Severity: Pass when disabled or runnable; Warn only for an enabled-but-blocked
+/// scheduler contract.
 pub(crate) fn check_advisable_dreaming(home: &Path) -> CheckOutcome {
-    const NAME: &str = "advisable: dreaming";
+    const NAME: &str = "dream cron posture";
     let cfg = match load_cfg_for_advisable(home, NAME) {
         Ok(cfg) => cfg,
         Err(outcome) => return outcome,
     };
-    if cfg.dreaming.enabled {
-        return advisable_pass(NAME, "dreaming");
+    if !cfg.dreaming.enabled {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "dream.cron_enabled = false (healthy explicit-opt-in default); \
+                     manual `neoth dream now` remains available"
+                .into(),
+        };
+    }
+    if !crate::cron::scheduler::autonomy_allows_scheduler(cfg.autonomy) {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "dream.cron_enabled = true, but autonomy `{}` blocks unattended schedulers; \
+                 NEOTH will not change autonomy automatically. Inspect `neoth dream status` \
+                 and either keep the cron blocked or explicitly disable it with \
+                 `neoth dream cron disable`",
+                cfg.autonomy.as_str()
+            ),
+        };
     }
     CheckOutcome {
         name: NAME,
-        status: CheckStatus::Warn,
-        detail: "dreaming.enabled is false — background dream-synthesis is off; \
-                 long-horizon pattern recognition and theme clustering are inactive. \
-                 Set `dreaming.enabled: true` in freedom.yaml, \
-                 or apply a built-in preset: `neoth preset apply balanced`."
-            .into(),
+        status: CheckStatus::Pass,
+        detail: format!(
+            "dream.cron_enabled = true; autonomy `{}` allows the scheduler \
+             (status: `neoth dream status`)",
+            cfg.autonomy.as_str()
+        ),
     }
 }
 
@@ -897,16 +917,16 @@ pub(crate) const DOCS: &[CheckDoc] = &[
               or run `neoth preset apply balanced`.",
     },
     CheckDoc {
-        name: "advisable: dreaming",
-        purpose: "Advisory hint that fires when `dreaming.enabled` is `false` \
-                  (the default). When enabled, the daemon runs background \
-                  dream-synthesis passes that cluster recent memories into \
-                  themes and write synthesis notes to `~/.neoth/dreams/`. \
-                  Improves long-horizon recall. The check is informational \
-                  only — daemon starts either way.",
-        common_failures: "Default-off; operator missed the toggle at setup.",
-        fix: "Set `dreaming.enabled: true` in `~/.neoth/freedom.yaml`, \
-              or run `neoth preset apply balanced`.",
+        name: "dream cron posture",
+        purpose: "Reports the explicit `dream.cron_enabled` operator contract. \
+                  Disabled is healthy and leaves `neoth dream now` available. \
+                  Enabled is healthy only when the current autonomy rail permits \
+                  unattended scheduling; Strict and Custom remain fail-closed.",
+        common_failures: "Cron was explicitly enabled while autonomy is Strict \
+                         or Custom, so the accepted runtime correctly keeps it stopped.",
+        fix: "Inspect `neoth dream status`. Keep the blocked state if intentional, \
+              or run `neoth dream cron disable`. Doctor never enables Dream cron \
+              and never changes autonomy.",
     },
     CheckDoc {
         name: "advisable: ecology",

@@ -1,9 +1,10 @@
 //! UX-05 — Day-30 "unlock moment" check-in banner.
 //!
 //! Shown ONCE, at chat session start, after the operator has been
-//! running NEOTH for 30+ days, IFF they still haven't switched on one of
-//! the opt-in power features (profile learning / dreaming / proactive
-//! messaging). A consume-once marker file suppresses it after the first
+//! running NEOTH for 30+ days, IFF one of the optional interactive features
+//! covered by this check-in is still inactive. Unattended Dream cron is
+//! deliberately excluded: only `neoth dream cron enable` may invite that
+//! operator decision. A consume-once marker file suppresses it after the first
 //! display — the same pattern as the first-tour banner. Pure stdout +
 //! one marker file: no WAL frame, no wire format, no persisted protocol.
 
@@ -67,12 +68,6 @@ fn inactive_features(config: &FreedomConfig) -> Vec<(&'static str, &'static str)
             "profile.learn_enabled: true in freedom.yaml",
         ));
     }
-    if !config.dreaming.enabled {
-        out.push((
-            "dreaming pipeline",
-            "dreaming.enabled: true in freedom.yaml",
-        ));
-    }
     if !config.proactive.enabled {
         out.push((
             "proactive messaging",
@@ -85,7 +80,7 @@ fn inactive_features(config: &FreedomConfig) -> Vec<(&'static str, &'static str)
 fn render_banner(inactive: &[(&str, &str)]) -> String {
     let mut s = String::from(
         "[neoth] Day-30 check-in: you've been running NEOTH for 30+ days.\n\
-         Power features you haven't switched on yet:",
+         Optional features currently off (leave them off if that suits you):",
     );
     for (label, hint) in inactive {
         s.push_str(&format!("\n  • {label}  →  {hint}"));
@@ -128,7 +123,7 @@ mod tests {
         let banner = maybe_unlock_banner(dir.path(), &cfg_all_inactive()).expect("banner");
         assert!(banner.contains("Day-30"));
         assert!(banner.contains("profile learning"));
-        assert!(banner.contains("dreaming"));
+        assert!(!banner.contains("dream"));
         assert!(banner.contains("proactive"));
         // Marker written → suppressed on the next call.
         assert!(dir.path().join(UNLOCK_MARKER).exists());
@@ -144,6 +139,20 @@ mod tests {
         c.dreaming.enabled = true;
         c.proactive.enabled = true;
         assert!(maybe_unlock_banner(dir.path(), &c).is_none());
+    }
+
+    #[test]
+    fn ux05_never_nudges_the_unattended_dream_cron() {
+        let dir = tempdir().unwrap();
+        write_initialized(dir.path(), now_unix_secs().saturating_sub(60 * 86_400));
+        let mut config = FreedomConfig::default();
+        config.profile.learn_enabled = true;
+        config.proactive.enabled = true;
+        config.dreaming.enabled = false;
+        assert!(
+            maybe_unlock_banner(dir.path(), &config).is_none(),
+            "Dream cron alone must never trigger an activation nudge"
+        );
     }
 
     #[test]

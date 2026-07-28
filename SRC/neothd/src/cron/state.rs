@@ -26,6 +26,16 @@ pub struct RuntimeState {
     pub jobs: BTreeMap<String, JobRuntimeState>,
     #[serde(default)]
     pub deliveries: BTreeMap<String, DeliveryRecord>,
+    /// ADR-003 calendar boundary consumed before Dream effects start.
+    #[serde(default)]
+    pub dream: DreamRuntimeState,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct DreamRuntimeState {
+    /// ISO local date (`YYYY-MM-DD`) of the newest claimed boundary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_claimed_local_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +101,7 @@ impl Default for RuntimeState {
             version: state_version(),
             jobs: BTreeMap::new(),
             deliveries: BTreeMap::new(),
+            dream: DreamRuntimeState::default(),
         }
     }
 }
@@ -274,6 +285,34 @@ impl RuntimeState {
         record.error = error;
         Ok(())
     }
+
+    /// Mark an already-passed boundary during task startup without executing
+    /// it. This is the explicit no-boot-catch-up contract.
+    pub fn skip_dream_boundary_on_start(&mut self, local_date: &str) {
+        let should_advance = match self.dream.last_claimed_local_date.as_deref() {
+            Some(last) => last < local_date,
+            None => true,
+        };
+        if should_advance {
+            self.dream.last_claimed_local_date = Some(local_date.to_string());
+        }
+    }
+
+    /// Claim one local calendar date before any Dream effect runs. The claim is
+    /// persisted by `RuntimeState::modify`; equal or older dates are rejected,
+    /// making restarts and backward clock movement at-most-once.
+    pub fn claim_dream_boundary(&mut self, local_date: &str) -> bool {
+        if self
+            .dream
+            .last_claimed_local_date
+            .as_deref()
+            .is_some_and(|last| last >= local_date)
+        {
+            return false;
+        }
+        self.dream.last_claimed_local_date = Some(local_date.to_string());
+        true
+    }
 }
 
 /// Correlate the proactive dispatcher's final channel result back to the exact
@@ -329,6 +368,45 @@ mod tests {
         state.reconcile(std::slice::from_ref(&edited)).unwrap();
         assert_eq!(state.jobs["j"].last_fired, Some(fired_at));
         assert!(state.jobs["j"].completed_at.is_none());
+    }
+
+    #[test]
+    fn dream_boundary_claim_is_restart_safe_and_monotonic() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(
+            RuntimeState::modify(home.path(), |state| {
+                Ok(state.claim_dream_boundary("2026-10-25"))
+            })
+            .unwrap()
+        );
+        assert!(
+            !RuntimeState::modify(home.path(), |state| {
+                Ok(state.claim_dream_boundary("2026-10-25"))
+            })
+            .unwrap(),
+            "same local date must not be claimed after a restart"
+        );
+        assert!(
+            !RuntimeState::modify(home.path(), |state| {
+                Ok(state.claim_dream_boundary("2026-10-24"))
+            })
+            .unwrap(),
+            "clock rollback must not reopen an older boundary"
+        );
+        assert!(
+            RuntimeState::modify(home.path(), |state| {
+                Ok(state.claim_dream_boundary("2026-10-26"))
+            })
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn dream_boot_skip_consumes_passed_boundary_without_effect_claim() {
+        let mut state = RuntimeState::default();
+        state.skip_dream_boundary_on_start("2026-03-29");
+        assert!(!state.claim_dream_boundary("2026-03-29"));
+        assert!(state.claim_dream_boundary("2026-03-30"));
     }
 
     #[test]

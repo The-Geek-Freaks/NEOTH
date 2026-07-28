@@ -65,17 +65,34 @@ impl Default for TransferConfig {
     }
 }
 
-/// R-02 Phase 4c — nightly dreaming task gates.
+const DEFAULT_DREAM_CRON_AT: &str = "03:00";
+const MAX_DREAM_WINDOW_SECS: u64 = 31 * 24 * 60 * 60;
+const MAX_DREAM_EVENTS: usize = 10_000;
+
+fn default_dream_cron_at() -> String {
+    DEFAULT_DREAM_CRON_AT.to_string()
+}
+
+/// R-02 Phase 4c / ADR-003 — operator-triggered dreaming and its optional
+/// calendar cron. The public YAML spelling is `dream`; the Rust field remains
+/// `dreaming` so existing internal consumers do not need a flag-day rename.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct DreamingConfig {
-    /// Master switch. `false` = task never spawns (zero CPU /
-    /// memory / log noise). `true` = spawn the interval task at
-    /// daemon boot.
+    /// Master cron switch. `false` keeps `neoth dream now` available but never
+    /// starts unattended work. `enabled` is the legacy read alias.
+    #[serde(rename = "cron_enabled", alias = "enabled")]
     pub enabled: bool,
-    /// Interval between dreaming passes in seconds. `None` =
-    /// 86_400 (24h, matches the SPEC nightly 03:00 cron pattern).
-    /// Operators wanting hourly batches set 3600.
+    /// Local wall-clock time for the daily pass, strictly `HH:MM`.
+    #[serde(default = "default_dream_cron_at")]
+    pub cron_at: String,
+    /// Optional IANA timezone. When absent, `FreedomConfig::user_tz` is used,
+    /// then UTC. This is resolved into the accepted runtime generation.
+    pub timezone: Option<String>,
+    /// Compatibility-only input for the old daemon-start-relative scheduler.
+    /// Only its historical daily value is accepted; non-daily intervals fail
+    /// visibly and must migrate to `cron_at`.
+    #[serde(default, skip_serializing)]
     pub interval_secs: Option<u64>,
     /// Time window read from `idx_episode` per pass in seconds.
     /// `None` = 86_400 (one day's events per tick).
@@ -118,6 +135,8 @@ impl Default for DreamingConfig {
         // Off by default — opt-in gate per the noob-wizard rule.
         Self {
             enabled: false,
+            cron_at: default_dream_cron_at(),
+            timezone: None,
             interval_secs: None,
             window_secs: None,
             max_events: None,
@@ -125,6 +144,59 @@ impl Default for DreamingConfig {
             summarize_themes: false,
             merge_cross_themes: false,
         }
+    }
+}
+
+impl DreamingConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        self.cron_time()?;
+        if let Some(timezone) = self.timezone.as_deref() {
+            timezone
+                .parse::<chrono_tz::Tz>()
+                .map_err(|error| format!("timezone must be a valid IANA name: {error}"))?;
+        }
+        if let Some(interval_secs) = self.interval_secs
+            && interval_secs != 24 * 60 * 60
+        {
+            return Err(
+                "legacy interval_secs only supports 86400; migrate to cron_at: \"HH:MM\""
+                    .to_string(),
+            );
+        }
+        if let Some(window_secs) = self.window_secs
+            && !(60..=MAX_DREAM_WINDOW_SECS).contains(&window_secs)
+        {
+            return Err(format!(
+                "window_secs must be between 60 and {MAX_DREAM_WINDOW_SECS}"
+            ));
+        }
+        if let Some(max_events) = self.max_events
+            && !(1..=MAX_DREAM_EVENTS).contains(&max_events)
+        {
+            return Err(format!(
+                "max_events must be between 1 and {MAX_DREAM_EVENTS}"
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn cron_time(&self) -> Result<chrono::NaiveTime, String> {
+        let bytes = self.cron_at.as_bytes();
+        if bytes.len() != 5
+            || bytes[2] != b':'
+            || !bytes[..2].iter().all(u8::is_ascii_digit)
+            || !bytes[3..].iter().all(u8::is_ascii_digit)
+        {
+            return Err("cron_at must use zero-padded HH:MM".to_string());
+        }
+        let hour = self.cron_at[..2]
+            .parse::<u32>()
+            .map_err(|_| "cron_at hour is invalid".to_string())?;
+        let minute = self.cron_at[3..]
+            .parse::<u32>()
+            .map_err(|_| "cron_at minute is invalid".to_string())?;
+        chrono::NaiveTime::from_hms_opt(hour, minute, 0)
+            .ok_or_else(|| "cron_at must be a valid 24-hour time".to_string())
     }
 }
 

@@ -1343,6 +1343,8 @@ mod tests {
     fn dreaming_config_default_is_off() {
         let cfg = DreamingConfig::default();
         assert!(!cfg.enabled, "Phase 4c task is OFF by default");
+        assert_eq!(cfg.cron_at, "03:00");
+        assert!(cfg.timezone.is_none());
         assert!(cfg.interval_secs.is_none());
         assert!(cfg.window_secs.is_none());
         assert!(cfg.max_events.is_none());
@@ -1356,7 +1358,7 @@ mod tests {
     #[test]
     fn dreaming_merge_cross_themes_round_trips() {
         let dir = tempfile::tempdir().unwrap();
-        let path = write_yaml(dir.path(), "dreaming:\n  merge_cross_themes: true\n");
+        let path = write_yaml(dir.path(), "dream:\n  merge_cross_themes: true\n");
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.dreaming.merge_cross_themes);
     }
@@ -1371,34 +1373,90 @@ mod tests {
     }
 
     #[test]
-    fn dreaming_enabled_with_custom_interval_round_trips() {
+    fn dream_canonical_schedule_round_trips() {
         let dir = tempfile::tempdir().unwrap();
         let yaml = "operator_id: alice\n\
-                    dreaming:\n  \
-                    enabled: true\n  \
-                    interval_secs: 3600\n  \
+                    dream:\n  \
+                    cron_enabled: true\n  \
+                    cron_at: \"04:15\"\n  \
+                    timezone: Europe/Berlin\n  \
                     window_secs: 86400\n  \
                     max_events: 100\n";
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.dreaming.enabled);
-        assert_eq!(cfg.dreaming.interval_secs, Some(3600));
+        assert_eq!(cfg.dreaming.cron_at, "04:15");
+        assert_eq!(cfg.dreaming.timezone.as_deref(), Some("Europe/Berlin"));
         assert_eq!(cfg.dreaming.window_secs, Some(86_400));
         assert_eq!(cfg.dreaming.max_events, Some(100));
     }
 
     #[test]
-    fn dreaming_partial_block_inherits_defaults() {
+    fn legacy_dreaming_root_and_enabled_alias_load() {
         let dir = tempfile::tempdir().unwrap();
-        // Operator sets only `enabled: true` — rest fall through to
-        // None which means downstream uses the task's DEFAULT_*.
         let yaml = "dreaming:\n  enabled: true\n";
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.dreaming.enabled);
+        assert_eq!(cfg.dreaming.cron_at, "03:00");
         assert!(cfg.dreaming.interval_secs.is_none());
         assert!(cfg.dreaming.window_secs.is_none());
         assert!(cfg.dreaming.max_events.is_none());
+    }
+
+    #[test]
+    fn dream_alias_duplicates_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root_duplicate = write_yaml(
+            dir.path(),
+            "dream:\n  cron_enabled: true\ndreaming:\n  enabled: true\n",
+        );
+        assert!(FreedomConfig::load_from_path(&root_duplicate).is_err());
+
+        let field_duplicate = write_yaml(
+            dir.path(),
+            "dream:\n  cron_enabled: true\n  enabled: true\n",
+        );
+        assert!(FreedomConfig::load_from_path(&field_duplicate).is_err());
+    }
+
+    #[test]
+    fn dream_schedule_validation_rejects_bad_time_timezone_and_bounds() {
+        for body in [
+            "dream:\n  cron_at: \"3:00\"\n",
+            "dream:\n  cron_at: \"24:00\"\n",
+            "dream:\n  timezone: Mars/Olympus\n",
+            "dream:\n  window_secs: 0\n",
+            "dream:\n  max_events: 0\n",
+            "dream:\n  interval_secs: 3600\n",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = write_yaml(dir.path(), body);
+            assert!(
+                FreedomConfig::load_from_path(&path).is_err(),
+                "invalid dream config unexpectedly loaded: {body}"
+            );
+        }
+    }
+
+    #[test]
+    fn legacy_dream_update_publishes_one_canonical_key_and_preserves_unknowns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "dreaming:\n  enabled: true\n  interval_secs: 86400\n  future_knob: keep-me\n",
+        );
+        FreedomConfig::update_at(&path, |config| {
+            config.dreaming.enabled = false;
+            Ok(())
+        })
+        .unwrap();
+        let body = std::fs::read_to_string(path).unwrap();
+        assert!(body.contains("dream:"));
+        assert!(body.contains("cron_enabled: false"));
+        assert!(body.contains("future_knob: keep-me"));
+        assert!(!body.contains("dreaming:"));
+        assert!(!body.contains("interval_secs:"));
     }
 
     // ── C-16 proactive: enabled (Session 21) ────────────────────

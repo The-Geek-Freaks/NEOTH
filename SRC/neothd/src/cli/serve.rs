@@ -49,6 +49,45 @@ const START_STAGGER_PERMITS: usize = 4;
 /// unnecessarily.  500 ms covers the common cases without notable boot delay.
 const CRON_FIRST_TICK_WINDOW: std::time::Duration = std::time::Duration::from_millis(500);
 
+/// Reconcile liveness even when no config reload occurs.
+///
+/// A completed/panicked fleet child must not remain dead until the operator
+/// happens to edit freedom.yaml.
+const CRON_HEALTH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CronSupervisorWake {
+    Reload,
+    Health,
+}
+
+impl CronSupervisorWake {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Reload => "reload",
+            Self::Health => "health",
+        }
+    }
+}
+
+async fn next_cron_supervisor_wake(
+    generation: &mut tokio::sync::watch::Receiver<u64>,
+    health: &mut tokio::time::Interval,
+) -> Option<CronSupervisorWake> {
+    tokio::select! {
+        changed = generation.changed() => changed.ok().map(|()| CronSupervisorWake::Reload),
+        _ = health.tick() => Some(CronSupervisorWake::Health),
+    }
+}
+
+fn dream_needs_generation_restart(
+    wake: CronSupervisorWake,
+    is_running: bool,
+    is_desired: bool,
+) -> bool {
+    wake == CronSupervisorWake::Reload && is_running && is_desired
+}
+
 /// A reload must rebuild the email-ingest ticker when its cadence changes.
 /// Enabling a previously dormant supervisor also resets it so the first poll
 /// happens immediately instead of waiting for the old/default interval.
@@ -1179,23 +1218,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let obsidian_preload_task =
         crate::cli::serve_tasks::spawn_obsidian_preload(&config, &neoth_home, writer.clone());
 
-    // ── 5b-pent. R-02 Phase 4c — dreaming nightly task ─────────────────────
-    //
-    // Off by default. When freedom.yaml::dreaming.enabled = true,
-    // composes one batch of dreams per interval (default 24h) over a
-    // 24h window. Uses `compose_dreams_with_embeddings` when an
-    // `inference.embedding_provider` is wired + buildable; falls back
-    // to deterministic `compose_dream` per L-07 safe-default when
-    // not. Errors log + retry next tick; never crashes the daemon.
-    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let dreaming_task = crate::cli::serve_tasks::spawn_dreaming(
-        &config,
-        &neoth_home,
-        &shared_provider,
-        &writer,
-        &reload_controller,
-    )
-    .await;
+    // ADR-003 Dream calendar runtime is fleet-managed below. It is seeded from
+    // the accepted generation and restarted on schedule/effect-policy reloads.
 
     // ── 5b-arxiv. EL-02 arXiv topic-feed ingest task ───────────────────────
     //
@@ -1538,6 +1562,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         wal_dir: wal_dir.clone(),
         views_executor: views_executor.clone(),
         sse_tx: kanban_sse_tx.clone(),
+        shared_provider: shared_provider.clone(),
     };
     let cron_fleet: crate::cli::serve_tasks::CronFleet =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
@@ -1567,7 +1592,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
             // Seed: spawn all desired crons for the boot config.
             {
-                let boot_cfg = ctrl.latest();
+                let boot_accepted = ctrl.accepted_snapshot();
+                let boot_cfg = boot_accepted.config();
                 let desired = desired_cron_keys(&boot_cfg);
                 let mut seeded = 0usize;
                 for key in &desired {
@@ -1579,7 +1605,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .acquire_owned()
                         .await
                         .expect("boot_stagger_sem closed");
-                    if let Some(handle) = spawn_cron_for_key(*key, &boot_cfg, &deps) {
+                    if let Some(handle) =
+                        spawn_cron_for_key(*key, Arc::clone(&boot_accepted), &deps).await
+                    {
                         fleet
                             .lock()
                             .expect("cron_fleet mutex poisoned")
@@ -1601,46 +1629,47 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // no source_dir) never enters the fleet and must not be counted.
                 tracing::info!(seeded, "ZF-06 cron fleet seeded");
             }
-            // Hot-reload loop: diff desired vs running on every generation bump.
+            let mut health = tokio::time::interval(CRON_HEALTH_INTERVAL);
+            health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            health.tick().await;
+            // Reload + health loop: config changes rebuild affected tasks;
+            // health ticks independently reap and respawn dead children.
             loop {
-                if gen_rx.changed().await.is_err() {
-                    break; // ReloadController dropped → daemon shutting down
-                }
+                let Some(wake) = next_cron_supervisor_wake(&mut gen_rx, &mut health).await else {
+                    break;
+                };
+                let wake_label = wake.label();
 
                 // ── NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: is_finished() sweep ──
                 // Reap handles for crons that completed or panicked without
                 // being explicitly stopped. Removing them from the fleet lets
                 // diff_cron_fleet include them in to_start on this pass, so
                 // they are immediately respawned.
-                let finished_keys: Vec<crate::cli::serve_tasks::CronKey> = {
-                    let guard = fleet.lock().expect("cron_fleet mutex poisoned");
-                    guard
-                        .iter()
-                        .filter(|(_, h)| h.is_finished())
-                        .map(|(k, _)| *k)
-                        .collect()
-                };
-                if !finished_keys.is_empty() {
+                let finished_tasks = crate::cli::serve_tasks::take_finished_cron_tasks(&fleet);
+                if !finished_tasks.is_empty() {
+                    let finished_keys: Vec<_> =
+                        finished_tasks.iter().map(|(key, _)| *key).collect();
                     tracing::warn!(
                         count = finished_keys.len(),
                         keys = ?finished_keys,
-                        "ZF-06 cron fleet: reaped finished/panicked handles; will respawn",
+                        wake = wake_label,
+                        "ZF-06 cron fleet: reaping finished/panicked handles; will respawn",
                     );
-                    let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
-                    for k in &finished_keys {
-                        guard.remove(k);
-                        fp_map.remove(k);
+                    for (key, handle) in finished_tasks {
+                        fp_map.remove(&key);
+                        handle.reap_finished().await;
                     }
                 }
 
-                let live_cfg = ctrl.latest();
+                let live_accepted = ctrl.accepted_snapshot();
+                let live_cfg = live_accepted.config();
                 let desired = desired_cron_keys(&live_cfg);
 
                 // ── NEOTH-AUDIT-CRON-FLEET-LIFECYCLE-01: fingerprint-change
                 // detection — keys still present in both running and desired but
                 // whose effective spec (interval, path, flags) changed since they
                 // were last spawned need a restart, not just an enable/disable.
-                let fp_changed: std::collections::HashSet<crate::cli::serve_tasks::CronKey> = {
+                let mut fp_changed: std::collections::HashSet<crate::cli::serve_tasks::CronKey> = {
                     let guard = fleet.lock().expect("cron_fleet mutex poisoned");
                     guard
                         .keys()
@@ -1652,6 +1681,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                         .copied()
                         .collect()
                 };
+                // Dream's authority is bound to the exact accepted snapshot,
+                // not merely to its Dream sub-config fingerprint. Every
+                // successful reload retires the old snapshot's commit gate, so
+                // the owner must replace a still-desired Dream task immediately
+                // even when an unrelated config field changed.
+                let dream_is_desired = desired.contains(&crate::cli::serve_tasks::CronKey::Dream);
+                let dream_is_running = fleet
+                    .lock()
+                    .expect("cron_fleet mutex poisoned")
+                    .contains_key(&crate::cli::serve_tasks::CronKey::Dream);
+                if dream_needs_generation_restart(wake, dream_is_running, dream_is_desired) {
+                    fp_changed.insert(crate::cli::serve_tasks::CronKey::Dream);
+                }
 
                 let (to_stop, to_start) = {
                     let guard = fleet.lock().expect("cron_fleet mutex poisoned");
@@ -1662,9 +1704,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // Abort tasks that are no longer desired (or whose spec changed).
                 for key in &to_stop {
                     let handle = fleet.lock().expect("cron_fleet mutex poisoned").remove(key);
-                    if let Some(h) = handle {
-                        h.abort();
-                        let _ = h.await;
+                    if let Some(handle) = handle {
+                        handle.stop().await;
                     }
                     fp_map.remove(key);
                 }
@@ -1675,7 +1716,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 // forever without ever entering the fleet.
                 let mut started = 0usize;
                 for key in &to_start {
-                    if let Some(handle) = spawn_cron_for_key(*key, &live_cfg, &deps) {
+                    if let Some(handle) =
+                        spawn_cron_for_key(*key, Arc::clone(&live_accepted), &deps).await
+                    {
                         fleet
                             .lock()
                             .expect("cron_fleet mutex poisoned")
@@ -1688,7 +1731,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     tracing::info!(
                         stopped = to_stop.len(),
                         started,
-                        "ZF-06 cron fleet updated on reload"
+                        wake = wake_label,
+                        "ZF-06 cron fleet reconciled"
                     );
                 }
             }
@@ -2187,6 +2231,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
     restart_watcher.abort();
     let _ = restart_watcher.await;
+    // Linearize Dream shutdown at the signal/fatal-boundary decision, before
+    // breaker persistence and operator hooks can extend teardown. Existing
+    // commits drain; no new generation lease can start after this returns.
+    crate::cli::serve_tasks::retire_dream_runtime(&reload_controller).await;
     if required_boundary_died {
         info!("required daemon persistence/authority boundary died; aborting channels + exiting");
     } else {
@@ -2286,6 +2334,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         cron_task,
         cron_fleet,
         cron_supervisor_task,
+        reload_controller,
         snapshot_refresh_handle,
         omi_handle,
         updater_self_task,
@@ -2318,7 +2367,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         checkin_cron_handle,
         session_sort_cron_handle,
         email_ingest_cron_handle,
-        dreaming_task,
         arxiv_ingest_task,
         arxiv_skill_scan_task,
         rss_feed_task,
@@ -2440,6 +2488,16 @@ pub(crate) fn cron_spec_fingerprint(
         ConsolidationSweep => jh!(cfg.consolidation_sweep),
         SelfWiki => jh!(cfg.self_wiki),
         SelfImprovementCollector => jh!(cfg.self_improvement_collector),
+        Dream => {
+            jh!(cfg.dreaming);
+            cfg.user_tz.hash(&mut h);
+            cfg.autonomy.as_str().hash(&mut h);
+            cfg.skills.auto_distill.hash(&mut h);
+            cfg.obsidian_vault.hash(&mut h);
+            cfg.obsidian_subdir.hash(&mut h);
+            cfg.provider_model.hash(&mut h);
+            jh!(cfg.inference);
+        }
         EcologyCron => jh!(cfg.ecology),
         PatternCron => jh!(cfg.pattern_cron),
         ContradictionResolve => jh!(cfg.contradiction_resolve),
@@ -2808,6 +2866,50 @@ mod boot_stagger_tests {
             !CRON_FIRST_TICK_WINDOW.is_zero(),
             "CRON_FIRST_TICK_WINDOW must be > 0 or the stagger is a no-op",
         );
+    }
+}
+
+#[cfg(test)]
+mod cron_supervisor_health_tests {
+    use super::{CronSupervisorWake, dream_needs_generation_restart, next_cron_supervisor_wake};
+
+    #[tokio::test]
+    async fn health_wake_occurs_without_reload_generation_change() {
+        let (_generation_tx, mut generation_rx) = tokio::sync::watch::channel(0u64);
+        let mut health = tokio::time::interval(std::time::Duration::from_millis(1));
+        health.tick().await; // consume Interval's immediate first tick
+
+        let wake = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            next_cron_supervisor_wake(&mut generation_rx, &mut health),
+        )
+        .await
+        .expect("health wake timed out");
+        assert_eq!(wake, Some(CronSupervisorWake::Health));
+    }
+
+    #[test]
+    fn dream_restarts_only_for_an_accepted_generation_change() {
+        assert!(dream_needs_generation_restart(
+            CronSupervisorWake::Reload,
+            true,
+            true
+        ));
+        assert!(!dream_needs_generation_restart(
+            CronSupervisorWake::Health,
+            true,
+            true
+        ));
+        assert!(!dream_needs_generation_restart(
+            CronSupervisorWake::Reload,
+            false,
+            true
+        ));
+        assert!(!dream_needs_generation_restart(
+            CronSupervisorWake::Reload,
+            true,
+            false
+        ));
     }
 }
 

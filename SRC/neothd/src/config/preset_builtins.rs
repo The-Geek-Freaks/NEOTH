@@ -3,8 +3,9 @@
 //! NEOTH ships ~75 default-OFF feature flags; hand-toggling them is
 //! DAU-hostile. These four built-ins bundle them into one choice:
 //!
-//!   - `full-auto`       everything on, $25/day cap, Full autonomy
-//!                       (routed through the full-auto consent ceremony)
+//!   - `full-auto`       broad automation on, $25/day cap, Full autonomy
+//!                       (routed through the full-auto consent ceremony);
+//!                       separate explicit-opt-in features stay off
 //!   - `balanced`        background intelligence on, no cost/egress
 //!                       surprises, $10/day cap
 //!   - `essentials`      just chat, $5/day cap — enable things later
@@ -22,6 +23,8 @@
 //!   - `babel.federate` (only egress path — runtime consent gate),
 //!   - listener/infra features that need operator config to be useful
 //!     (webhook_manager, oai_serve, companion, cluster).
+//!   - `dream.cron_enabled`: unattended Dream work is always a separate,
+//!     explicit `neoth dream cron enable` operator decision.
 
 use std::collections::BTreeMap;
 
@@ -63,7 +66,6 @@ const BACKGROUND_SET: &[&str] = &[
     "consolidation_sweep.enabled",
     "profile_adapt.enabled",
     "pattern_cron.enabled",
-    "dreaming.enabled",
     "loop_config.enabled",
     "drift_alert.enabled",
     "token_anomaly.enabled",
@@ -94,16 +96,18 @@ const FULL_AUTO_EXTRAS: &[&str] = &[
     "task_engine.decompose_non_coding",
 ];
 
-/// Everything on. `autonomy: full` is NOT written directly — apply
+/// Broad automation bundle. `autonomy: full` is NOT written directly — apply
 /// reports it and the CLI/GUI routes through the full-auto ceremony
 /// (`neoth autonomy full-auto`), which also enables the full bundled
-/// skill library and emits the 0xDD sudomode audit anchor.
+/// skill library and emits the 0xDD sudomode audit anchor. Dream cron remains a
+/// separate explicit opt-in.
 pub fn builtin_full_auto() -> Preset {
     let mut overrides = on(BACKGROUND_SET);
     overrides.extend(on(FULL_AUTO_EXTRAS));
     Preset {
         description: Some(
-            "Everything on. NEOTH does the thinking. $25/day cap, full autonomy (asks once)."
+            "Broad automation on, $25/day cap, full autonomy (asks once). \
+             Dream cron remains a separate explicit opt-in."
                 .into(),
         ),
         daily_usd_cap: Some(25.0),
@@ -249,7 +253,10 @@ mod tests {
         let cfg: crate::config::FreedomConfig = serde_yaml::from_str(&body).unwrap();
         assert!(cfg.checkin_cron.enabled);
         assert!(cfg.proactive.enabled);
-        assert!(cfg.dreaming.enabled);
+        assert!(
+            !cfg.dreaming.enabled,
+            "even full-auto must not imply unattended Dream work"
+        );
         assert!(cfg.consolidation_sweep.enabled);
         assert!(cfg.council.groundtruth_injection);
         assert!(cfg.media.cloud_stt_enabled);
@@ -294,6 +301,25 @@ mod tests {
                     "built-in `{name}` override `{key}` hits the denylist"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn no_builtin_enables_dream_cron() {
+        for name in BUILTIN_NAMES {
+            let dir = tempdir().unwrap();
+            let preset = builtin_by_name(name).unwrap();
+            assert!(
+                !preset.overrides.contains_key("dream.cron_enabled")
+                    && !preset.overrides.contains_key("dreaming.enabled"),
+                "built-in `{name}` must leave Dream cron to explicit operator opt-in"
+            );
+            let (_, body) = plan_apply(dir.path(), &preset).unwrap();
+            let cfg: crate::config::FreedomConfig = serde_yaml::from_str(&body).unwrap();
+            assert!(
+                !cfg.dreaming.enabled,
+                "built-in `{name}` implicitly enabled Dream cron"
+            );
         }
     }
 

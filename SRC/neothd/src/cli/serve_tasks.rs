@@ -1,19 +1,11 @@
 //! GOLD-ARCH-01 (decomposition of `cli/serve.rs`) — background-task spawn helpers.
 //!
-//! `run_serve` is a ~2800-line function dominated by ~30 optional background-task
-//! spawn blocks. This module relocates the *construction* of those tasks out of
-//! `run_serve` into focused `spawn_*` helpers, one per task.
-//!
-//! **Behaviour-preserving by construction:** each helper returns the SAME handle
-//! type to the SAME binding name at the SAME call site in `run_serve`, so the
-//! spawn ORDER, the shutdown abort sequence, and the `worker_watch` liveness
-//! registrations are all UNCHANGED — this is a pure relocation of per-task setup
-//! logic, not a lifecycle change. The first increment covers WAL-FREE tasks
-//! (they capture no [`crate::wal::writer::WalWriterHandle`]), which keeps the
-//! helper signatures small and sidesteps the WAL-ordering-sensitive shutdown
-//! drain entirely (a WAL-free task's abort order relative to `drop(writer)` is
-//! irrelevant). WAL-emitting tasks can adopt the same pattern later by taking a
-//! `&WalWriterHandle` parameter.
+//! `run_serve` is dominated by optional background-task setup. This module owns
+//! their focused `spawn_*` helpers plus the matching lifecycle boundaries:
+//! fleet reconciliation owns the real child handles, Dream uses cooperative
+//! generation retirement, and ordered shutdown drains WAL-emitting tasks before
+//! the writer. Construction and teardown therefore stay wired in one place
+//! instead of drifting across wrapper tasks in `run_serve`.
 
 use std::sync::Arc;
 
@@ -24,7 +16,7 @@ use tracing::{info, warn};
 use crate::channels::{Channel, ChannelKind, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
-use crate::config::reload::ReloadController;
+use crate::config::reload::{AcceptedConfigSnapshot, ReloadController};
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
@@ -67,6 +59,7 @@ pub(crate) enum CronKey {
     SelfMap,
     ConsolidationSweep,
     MonitorCron,
+    Dream,
     #[cfg(feature = "cluster")]
     ResourceSnapshot,
 }
@@ -82,6 +75,7 @@ pub(crate) const WAL_EMITTING_CRON_KEYS: &[CronKey] = &[
     CronKey::SessionHealth,            // 0x6F
     CronKey::WebhookManager,           // 0x08/0x09/0x0A
     CronKey::SelfImprovementCollector, // 0xBE/0xBF
+    CronKey::Dream,                    // 0xF4
     #[cfg(feature = "cluster")]
     CronKey::ResourceSnapshot, // EXTENDED/LocalSnapshot
 ];
@@ -172,6 +166,9 @@ pub(crate) fn desired_cron_keys(cfg: &FreedomConfig) -> std::collections::HashSe
     if cfg.babel.enabled {
         keys.insert(Babel);
     }
+    if cfg.dreaming.enabled && crate::cron::scheduler::autonomy_allows_scheduler(cfg.autonomy) {
+        keys.insert(Dream);
+    }
     #[cfg(feature = "cluster")]
     if cfg.swarm.enabled {
         keys.insert(ResourceSnapshot);
@@ -232,10 +229,185 @@ pub(crate) fn plan_cron_fleet_reload(
     (to_stop, to_start)
 }
 
+enum CronTaskJoin {
+    Unit(JoinHandle<()>),
+    Result(JoinHandle<anyhow::Result<()>>),
+}
+
+/// Fleet-owned real task handle.
+///
+/// The old adapter spawned an outer task that awaited a result-bearing inner
+/// task. Aborting the outer task detached the inner one. This type owns the
+/// actual handle instead, so reload/shutdown always aborts (or cooperatively
+/// cancels Dream) and then joins the exact task that can still emit effects.
+pub(crate) struct CronTaskHandle {
+    join: CronTaskJoin,
+    dream_rail: Option<Arc<crate::cli::dreaming_task::DreamEffectRail>>,
+}
+
+impl CronTaskHandle {
+    fn unit(handle: JoinHandle<()>) -> Self {
+        Self {
+            join: CronTaskJoin::Unit(handle),
+            dream_rail: None,
+        }
+    }
+
+    fn result(handle: JoinHandle<anyhow::Result<()>>) -> Self {
+        Self {
+            join: CronTaskJoin::Result(handle),
+            dream_rail: None,
+        }
+    }
+
+    fn dream(
+        handle: JoinHandle<anyhow::Result<()>>,
+        effect_rail: Arc<crate::cli::dreaming_task::DreamEffectRail>,
+    ) -> Self {
+        Self {
+            join: CronTaskJoin::Result(handle),
+            dream_rail: Some(effect_rail),
+        }
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        match &self.join {
+            CronTaskJoin::Unit(handle) => handle.is_finished(),
+            CronTaskJoin::Result(handle) => handle.is_finished(),
+        }
+    }
+
+    /// Stop and join the exact owned task.
+    ///
+    /// Dream is cancelled cooperatively so an awaited `spawn_blocking` child is
+    /// joined. Its accepted generation is retired before the join, preventing
+    /// new commit leases and waiting for any already-started commit to finish.
+    /// Other fleet tasks retain abort+join semantics.
+    pub(crate) async fn stop(self) {
+        if let Some(effect_rail) = self.dream_rail.as_ref().map(Arc::clone) {
+            let retire = Arc::clone(&effect_rail);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || retire.retire_generation_and_wait()).await
+            {
+                warn!(%error, "Dream generation retirement task panicked");
+                // Fail closed on the exceptional worker failure. Blocking the
+                // current executor is preferable to returning while effects
+                // can still acquire or hold a generation lease.
+                effect_rail.retire_generation_and_wait();
+            }
+            // Cancellation comes after the drain. Waking it earlier could drop
+            // an in-flight WAL-ack future and release its lease while the
+            // writer still owns the queued irreversible commit.
+            effect_rail.cancel();
+        } else {
+            match &self.join {
+                CronTaskJoin::Unit(handle) => handle.abort(),
+                CronTaskJoin::Result(handle) => handle.abort(),
+            }
+        }
+        self.reap(true).await;
+    }
+
+    /// Daemon-shutdown variant: permanently closes the controller's Dream
+    /// runtime under the same lock used by config publication, so a concurrent
+    /// reload cannot publish a fresh effect gate after shutdown retirement.
+    pub(crate) async fn shutdown(self) {
+        if let Some(effect_rail) = self.dream_rail.as_ref().map(Arc::clone) {
+            let retire = Arc::clone(&effect_rail);
+            if let Err(error) =
+                tokio::task::spawn_blocking(move || retire.retire_runtime_and_wait()).await
+            {
+                warn!(%error, "Dream runtime retirement task panicked");
+                effect_rail.retire_runtime_and_wait();
+            }
+            effect_rail.cancel();
+        } else {
+            match &self.join {
+                CronTaskJoin::Unit(handle) => handle.abort(),
+                CronTaskJoin::Result(handle) => handle.abort(),
+            }
+        }
+        self.reap(true).await;
+    }
+
+    /// Join an already-finished task and surface its terminal state.
+    pub(crate) async fn reap_finished(self) {
+        self.reap(false).await;
+    }
+
+    async fn reap(self, stopping: bool) {
+        let cooperative_dream = self.dream_rail.is_some();
+        match self.join {
+            CronTaskJoin::Unit(handle) => match handle.await {
+                Ok(()) => {
+                    if !stopping {
+                        warn!("fleet cron task completed unexpectedly")
+                    }
+                }
+                Err(error) if stopping && error.is_cancelled() => {}
+                Err(error) => warn!(%error, "fleet cron task panicked"),
+            },
+            CronTaskJoin::Result(handle) => match handle.await {
+                Ok(Ok(())) => {
+                    if !stopping && !cooperative_dream {
+                        warn!("fleet cron task completed unexpectedly")
+                    }
+                }
+                Ok(Err(error)) => warn!(%error, "fleet cron task returned an error"),
+                Err(error) if stopping && error.is_cancelled() => {}
+                Err(error) => warn!(%error, "fleet cron task panicked"),
+            },
+        }
+    }
+}
+
+trait IntoCronTaskHandle {
+    fn into_cron_task(self) -> Option<CronTaskHandle>;
+}
+
+impl IntoCronTaskHandle for Option<JoinHandle<()>> {
+    fn into_cron_task(self) -> Option<CronTaskHandle> {
+        self.map(CronTaskHandle::unit)
+    }
+}
+
+impl IntoCronTaskHandle for Option<JoinHandle<anyhow::Result<()>>> {
+    fn into_cron_task(self) -> Option<CronTaskHandle> {
+        self.map(CronTaskHandle::result)
+    }
+}
+
 /// Shared map of running cron tasks, managed by the fleet supervisor.
 /// `Arc<Mutex<…>>` so the supervisor and shutdown can both access it.
 pub(crate) type CronFleet =
-    Arc<std::sync::Mutex<std::collections::HashMap<CronKey, JoinHandle<()>>>>;
+    Arc<std::sync::Mutex<std::collections::HashMap<CronKey, CronTaskHandle>>>;
+
+/// Remove finished children without holding the fleet lock across joins.
+pub(crate) fn take_finished_cron_tasks(fleet: &CronFleet) -> Vec<(CronKey, CronTaskHandle)> {
+    let mut guard = fleet.lock().expect("cron_fleet mutex poisoned");
+    let keys: Vec<_> = guard
+        .iter()
+        .filter(|(_, handle)| handle.is_finished())
+        .map(|(key, _)| *key)
+        .collect();
+    keys.into_iter()
+        .filter_map(|key| guard.remove(&key).map(|handle| (key, handle)))
+        .collect()
+}
+
+/// Permanently close Dream effect authority without blocking a Tokio worker.
+///
+/// Idempotent: the shutdown entry point invokes this immediately after the
+/// shutdown signal, and the centralized teardown repeats it defensively.
+pub(crate) async fn retire_dream_runtime(controller: &Arc<ReloadController>) {
+    let retire_controller = Arc::clone(controller);
+    if let Err(error) =
+        tokio::task::spawn_blocking(move || retire_controller.retire_dream_runtime()).await
+    {
+        warn!(%error, "Dream runtime shutdown retirement task failed");
+        controller.retire_dream_runtime();
+    }
+}
 
 /// Dependencies shared across all `spawn_cron_for_key` calls.
 #[derive(Clone)]
@@ -246,87 +418,79 @@ pub(crate) struct SpawnDeps {
     pub wal_dir: std::path::PathBuf,
     pub views_executor: Option<Arc<crate::memory::store::ViewsExecutor>>,
     pub sse_tx: Option<Arc<tokio::sync::broadcast::Sender<crate::coding::feed::FeedEntry>>>,
+    pub shared_provider: Option<Arc<dyn Provider>>,
 }
 
 /// Dispatch: spawn the cron task for `key` using the current live config.
 /// Returns `None` when the config gates the task off.
-/// Wraps every `Option<JoinHandle<anyhow::Result<()>>>` into
-/// `Option<JoinHandle<()>>` by mapping the inner result to `()`.
-pub(crate) fn spawn_cron_for_key(
+/// The returned owner retains the actual child handle; result-bearing tasks are
+/// never hidden behind an abortable outer wrapper.
+pub(crate) async fn spawn_cron_for_key(
     key: CronKey,
-    cfg: &FreedomConfig,
+    accepted: Arc<AcceptedConfigSnapshot>,
     deps: &SpawnDeps,
-) -> Option<JoinHandle<()>> {
+) -> Option<CronTaskHandle> {
     use CronKey::*;
+    let cfg = accepted.config();
+    let cfg = cfg.as_ref();
     let rc = &deps.reload_controller;
     let w = deps.writer.clone();
     let home = deps.home.as_path();
     let wd = deps.wal_dir.as_path();
 
     match key {
-        RecallLatency => spawn_recall_latency_cron(cfg, rc, home, w),
-        ResourceWatch => spawn_resource_watch(cfg, rc, w),
-        DoctorCron => spawn_doctor_cron(cfg, rc, home, w),
-        PatternCron => spawn_pattern_cron(cfg, rc, home),
-        WatchdogCron => spawn_watchdog_cron(cfg, rc, w),
-        SynthesisCron => spawn_synthesis_cron(cfg, rc, home),
-        GuidanceCron => spawn_guidance_cron(cfg, rc, home, wd),
-        EcologyCron => spawn_ecology_cron(cfg, rc, home, wd, w),
-        ProfileAdapt => spawn_profile_adapt_cron(cfg, rc, home, wd, w),
-        DriftAlert => spawn_drift_alert_cron(cfg, rc, home, &deps.writer),
-        TokenAnomaly => spawn_token_anomaly_cron(cfg, rc, wd, w),
-        SessionHealth => spawn_session_health_cron(cfg, rc, wd, w),
-        WebhookManager => spawn_webhook_manager_cron(cfg, rc, wd, home, w),
-        SkillCurator => spawn_skill_curator_cron(cfg, rc, home),
-        SelfWiki => spawn_self_wiki_cron(cfg, rc, home),
-        SelfImprovementCollector => spawn_self_improvement_collector_cron(cfg, home, w),
-        Babel => spawn_babel_cron(cfg, home, wd, &deps.views_executor, deps.sse_tx.clone()),
-        BgMonitor => spawn_bg_monitor_task(cfg, rc, home),
-        ContradictionResolve => spawn_contradiction_resolve_cron(cfg, home),
-        MonitorCron => spawn_monitor_cron(cfg, rc, home, wd, w),
-        ConsolidationSweep => spawn_consolidation_sweep_cron(cfg, rc, home, w),
-        ObsidianSync => wrap_result_handle(spawn_obsidian_sync(cfg, home, w.clone())),
-        ObsidianVaultReader => wrap_result_handle(spawn_obsidian_vault_reader(cfg, home)),
-        ObsidianWikiRebuild => wrap_result_handle(spawn_obsidian_wiki_rebuild(cfg, home, w)),
-        SelfMap => wrap_result_handle(spawn_self_map(cfg, home, w)),
+        RecallLatency => spawn_recall_latency_cron(cfg, rc, home, w).into_cron_task(),
+        ResourceWatch => spawn_resource_watch(cfg, rc, w).into_cron_task(),
+        DoctorCron => spawn_doctor_cron(cfg, rc, home, w).into_cron_task(),
+        PatternCron => spawn_pattern_cron(cfg, rc, home).into_cron_task(),
+        WatchdogCron => spawn_watchdog_cron(cfg, rc, w).into_cron_task(),
+        SynthesisCron => spawn_synthesis_cron(cfg, rc, home).into_cron_task(),
+        GuidanceCron => spawn_guidance_cron(cfg, rc, home, wd).into_cron_task(),
+        EcologyCron => spawn_ecology_cron(cfg, rc, home, wd, w).into_cron_task(),
+        ProfileAdapt => spawn_profile_adapt_cron(cfg, rc, home, wd, w).into_cron_task(),
+        DriftAlert => spawn_drift_alert_cron(cfg, rc, home, &deps.writer).into_cron_task(),
+        TokenAnomaly => spawn_token_anomaly_cron(cfg, rc, wd, w).into_cron_task(),
+        SessionHealth => spawn_session_health_cron(cfg, rc, wd, w).into_cron_task(),
+        WebhookManager => spawn_webhook_manager_cron(cfg, rc, wd, home, w).into_cron_task(),
+        SkillCurator => spawn_skill_curator_cron(cfg, rc, home).into_cron_task(),
+        SelfWiki => spawn_self_wiki_cron(cfg, rc, home).into_cron_task(),
+        SelfImprovementCollector => {
+            spawn_self_improvement_collector_cron(cfg, home, w).into_cron_task()
+        }
+        Babel => spawn_babel_cron(cfg, home, wd, &deps.views_executor, deps.sse_tx.clone())
+            .into_cron_task(),
+        BgMonitor => spawn_bg_monitor_task(cfg, rc, home).into_cron_task(),
+        ContradictionResolve => spawn_contradiction_resolve_cron(cfg, home).into_cron_task(),
+        MonitorCron => spawn_monitor_cron(cfg, rc, home, wd, w).into_cron_task(),
+        ConsolidationSweep => spawn_consolidation_sweep_cron(cfg, rc, home, w).into_cron_task(),
+        ObsidianSync => spawn_obsidian_sync(cfg, home, w.clone()).into_cron_task(),
+        ObsidianVaultReader => spawn_obsidian_vault_reader(cfg, home).into_cron_task(),
+        ObsidianWikiRebuild => spawn_obsidian_wiki_rebuild(cfg, home, w).into_cron_task(),
+        SelfMap => spawn_self_map(cfg, home, w).into_cron_task(),
+        Dream => {
+            let cancellation = crate::cli::dreaming_task::DreamCancellation::new();
+            let effect_rail = Arc::new(crate::cli::dreaming_task::DreamEffectRail::new(
+                Arc::clone(&deps.reload_controller),
+                accepted,
+                cancellation,
+            ));
+            let handle = spawn_dreaming(
+                cfg,
+                home,
+                &deps.shared_provider,
+                &deps.writer,
+                &deps.reload_controller,
+                Arc::clone(&effect_rail),
+            )
+            .await;
+            handle.map(|handle| CronTaskHandle::dream(handle, effect_rail))
+        }
         #[cfg(feature = "cluster")]
         ResourceSnapshot => {
             crate::daemon::resource_snapshot_cron::spawn_resource_snapshot_cron(cfg.swarm, w)
+                .into_cron_task()
         }
     }
-}
-
-/// Adapt `Option<JoinHandle<anyhow::Result<()>>>` → `Option<JoinHandle<()>>`.
-///
-/// Two subtleties the naive `spawn(async { let _ = h.await; })` gets wrong:
-///  1. Aborting the OUTER wrapper only drops the inner `JoinHandle`, which in
-///     Tokio *detaches* (not aborts) the inner task — so a WAL-emitting cron
-///     would keep ticking after `drop(writer)` at shutdown and append to a
-///     closed channel. `AbortOnDrop` aborts the inner task when the wrapper's
-///     future is dropped (including on shutdown abort).
-///  2. A `let _ = h.await` swallows a panic (`JoinError`) or an `Err(_)` from
-///     the task, so a dead cron looks healthy. We now surface both via `warn!`.
-fn wrap_result_handle(h: Option<JoinHandle<anyhow::Result<()>>>) -> Option<JoinHandle<()>> {
-    h.map(|handle| {
-        tokio::spawn(async move {
-            struct AbortOnDrop(JoinHandle<anyhow::Result<()>>);
-            impl Drop for AbortOnDrop {
-                fn drop(&mut self) {
-                    self.0.abort();
-                }
-            }
-            // `&mut JoinHandle` is a `Future` (JoinHandle is Unpin), so awaiting
-            // through the guard does not consume it — the guard's Drop still
-            // owns the inner handle and aborts it if this wrapper is cancelled.
-            let mut guard = AbortOnDrop(handle);
-            match (&mut guard.0).await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => warn!(error = %e, "fleet cron task returned an error"),
-                Err(e) if e.is_cancelled() => {} // normal shutdown/reload abort
-                Err(e) => warn!(error = %e, "fleet cron task panicked"),
-            }
-        })
-    })
 }
 
 /// R-5 — Obsidian vault auto-sync. Spawned only when `freedom.yaml::obsidian_vault`
@@ -3837,8 +4001,8 @@ pub(crate) async fn spawn_audit_rpc(
     }
 }
 
-/// R-02 Phase 4c dreaming nightly task. Off by default (`dreaming.enabled`);
-/// composes one batch of dreams per interval over a window, using
+/// R-02 Phase 4c / ADR-003 nightly Dream calendar task. Off by default
+/// (`dream.cron_enabled`); composes one batch per claimed local date, using
 /// `compose_dreams_with_embeddings` when an embedding provider is buildable
 /// (falls back to deterministic compose otherwise). Hands the chat provider in
 /// only when `dreaming.summarize_themes` is on (cost gate). WAL-emitting (0xF4
@@ -3850,10 +4014,38 @@ pub(crate) async fn spawn_dreaming(
     shared_provider: &Option<Arc<dyn Provider>>,
     writer: &WalWriterHandle,
     reload_controller: &Arc<ReloadController>,
+    effect_rail: Arc<crate::cli::dreaming_task::DreamEffectRail>,
 ) -> Option<JoinHandle<anyhow::Result<()>>> {
-    if !config.dreaming.enabled {
+    if !config.dreaming.enabled
+        || !crate::cron::scheduler::autonomy_allows_scheduler(config.autonomy)
+    {
         return None;
     }
+    // Provider construction can trigger a local model load/download. Bind the
+    // complete spawn path to the accepted snapshot so reload/shutdown either
+    // wins before setup starts or waits until setup and task handoff finish.
+    let _setup_lease = match effect_rail.acquire_runtime_setup_lease() {
+        Ok(lease) => lease,
+        Err(error) => {
+            warn!(%error, "Dream cron generation was superseded before spawn");
+            return None;
+        }
+    };
+    let schedule = match crate::cli::dreaming_task::DreamSchedule::from_config(config) {
+        Ok(schedule) => schedule,
+        Err(error) => {
+            warn!(error = %error, "Dream cron config rejected; task not started");
+            return None;
+        }
+    };
+    let pass_config =
+        match crate::cli::dreaming_task::DreamPassConfig::from_config(config, None, None) {
+            Ok(pass_config) => pass_config,
+            Err(error) => {
+                warn!(error = %error, "Dream pass config rejected; task not started");
+                return None;
+            }
+        };
     let embed_provider = crate::providers::embed_provider_from_config(config).await;
     // SPEC-12 Phase 4b — only hand the chat provider to the dreaming task when
     // `dreaming.summarize_themes` is on (cost-safe gate: it adds one LLM call
@@ -3881,21 +4073,12 @@ pub(crate) async fn spawn_dreaming(
         home.to_path_buf(),
         embed_provider,
         dream_chat,
-        config
-            .dreaming
-            .interval_secs
-            .map(std::time::Duration::from_secs),
-        config
-            .dreaming
-            .window_secs
-            .map(std::time::Duration::from_secs),
-        config.dreaming.max_events,
+        schedule,
+        pass_config,
         // SPEC-12 daemon-side audit: the daemon owns the WAL writer, so each
         // non-empty nightly pass emits a `0xF4 DREAM_COMPOSED` frame.
         Some(writer.clone()),
-        // GOLD-ADAPT-KB-03 — nightly distill scan, gated by skills.auto_distill
-        // (dreaming.enabled already gates whether this spawn runs at all).
-        config.skills.auto_distill,
+        effect_rail,
     ))
 }
 
@@ -6433,6 +6616,10 @@ pub(crate) struct BackgroundHandles {
     /// ZF-06 — fleet map + supervisor; replaces 21 individual cron handles.
     pub cron_fleet: CronFleet,
     pub cron_supervisor_task: JoinHandle<()>,
+    /// Shared accepted-config authority. Shutdown permanently retires Dream
+    /// effects even when Dream was configured but failed before producing a
+    /// fleet handle.
+    pub reload_controller: Arc<ReloadController>,
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
     pub updater_self_task: Option<JoinHandle<()>>,
@@ -6475,7 +6662,6 @@ pub(crate) struct BackgroundHandles {
     pub email_ingest_cron_handle: Option<JoinHandle<()>>,
     /// ADV-14 regression-anchor cron (async + provider dep; deferred).
     pub regression_cron_handle: Option<JoinHandle<()>>,
-    pub dreaming_task: Option<JoinHandle<anyhow::Result<()>>>,
     pub arxiv_ingest_task: Option<JoinHandle<anyhow::Result<()>>>,
     /// GOLD-ADAPT-MEM-16 — ArXiv skill-learning cron handle.
     /// WAL-free; `None` when `arxiv_skill_scan.enabled = false` (default)
@@ -6532,16 +6718,12 @@ fn release_wal_sender_roots(
     drop(companion_state);
 }
 
-/// GOLD-ARCH-01: the full ordered daemon shutdown sequence, moved VERBATIM out
-/// of `run_serve`. Aborts/drains every background task in the exact prior order
-/// (worker_watch FIRST per MONITOR-02; WAL-emitting tasks before `drop(writer)`;
-/// the self-dev outbox final-drained via `&writer`; n8n notify-then-await;
-/// cluster teardown; hysteria drop), then `drop(writer)` + `writer_join.await`.
-/// The destructure restores the original local names. GR-102 — the body is NOT
-/// byte-identical to the old inline sequence: every optional task is now drained
-/// through `abort_optional` (abort + `task.await`), which uniformly awaits the
-/// task — a deliberate improvement over the prior inline `audit_rpc_task.abort()`
-/// that aborted WITHOUT awaiting. The ordering + set of tasks is preserved.
+/// GOLD-ARCH-01: ordered daemon shutdown sequence extracted from `run_serve`.
+/// Dream authority is permanently retired first; background tasks then drain in
+/// the documented dependency order (worker-watch before watched tasks,
+/// WAL-emitting tasks before `drop(writer)`, outboxes before writer shutdown,
+/// then transports), followed by `writer_join.await`. Optional tasks use
+/// abort-plus-join rather than detaching their real children.
 pub(crate) async fn shutdown_background_tasks(
     home: &std::path::Path,
     handles: BackgroundHandles,
@@ -6559,6 +6741,7 @@ pub(crate) async fn shutdown_background_tasks(
         cron_task,
         cron_fleet,
         cron_supervisor_task,
+        reload_controller,
         snapshot_refresh_handle,
         omi_handle,
         updater_self_task,
@@ -6591,7 +6774,6 @@ pub(crate) async fn shutdown_background_tasks(
         checkin_cron_handle,
         session_sort_cron_handle,
         email_ingest_cron_handle,
-        dreaming_task,
         arxiv_ingest_task,
         arxiv_skill_scan_task,
         rss_feed_task,
@@ -6613,6 +6795,12 @@ pub(crate) async fn shutdown_background_tasks(
         ssh_tunnel_handles,
         confirm_drain_task,
     } = handles;
+
+    // Close Dream's permanent effect authority before tearing down any other
+    // subsystem. Publication uses the same lock, so a concurrent reload cannot
+    // create a fresh gate after this point; active commits drain before the
+    // shutdown sequence advances.
+    retire_dream_runtime(&reload_controller).await;
 
     // No hook may start a new plugin invocation after OnShutdown. The
     // registration guard owns the compiled invoker and its WAL sender.
@@ -6693,8 +6881,7 @@ pub(crate) async fn shutdown_background_tasks(
         (wal, rest)
     };
     for handle in wal_handles.into_iter().chain(rest_handles) {
-        handle.abort();
-        let _ = handle.await;
+        handle.shutdown().await;
     }
 
     // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
@@ -6842,13 +7029,6 @@ pub(crate) async fn shutdown_background_tasks(
     crate::cli::serve_tasks::abort_optional(session_sort_cron_handle).await;
     // GOLD-ADAPT-JV-PAPERLESS-01 — abort the email-ingest cron (deferred).
     crate::cli::serve_tasks::abort_optional(email_ingest_cron_handle).await;
-
-    // Abort the R-02 Phase 4c dreaming task. Embed-path callers
-    // hit `spawn_blocking` for OuroModel/local_qwen forward;
-    // aborting cancels the JoinHandle but the blocking task
-    // may run to completion (acceptable — drains naturally,
-    // never strands the model load).
-    crate::cli::serve_tasks::abort_optional(dreaming_task).await;
 
     // EL-02 arXiv ingest task — abort on shutdown. Mid-pass abort at
     // worst drops one topic's fetch, which the next boot re-runs.
@@ -7867,11 +8047,10 @@ mod tests {
         drop(occupied);
     }
 
-    /// Wave-4 regression: aborting the outer wrapper must abort the INNER task
-    /// (dropping a JoinHandle only detaches it). Deterministic via a drop-guard
-    /// that signals a oneshot — no sleep-polling, so it can't flake.
+    /// The fleet owner must abort and join the actual result-bearing task,
+    /// never an outer wrapper that can detach it.
     #[tokio::test]
-    async fn wrap_result_handle_aborts_inner_on_outer_abort() {
+    async fn cron_task_handle_stops_and_joins_actual_result_task() {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         let inner = tokio::spawn(async move {
             struct SendOnDrop(Option<tokio::sync::oneshot::Sender<()>>);
@@ -7888,10 +8067,9 @@ mod tests {
             #[allow(unreachable_code)]
             Ok(())
         });
-        let outer = wrap_result_handle(Some(inner)).expect("Some handle");
+        let owned = CronTaskHandle::result(inner);
         tokio::task::yield_now().await; // let the inner poll once
-        outer.abort();
-        let _ = outer.await;
+        owned.stop().await;
         tokio::time::timeout(std::time::Duration::from_secs(2), rx)
             .await
             .expect("inner task was not aborted within 2s")
@@ -7899,14 +8077,86 @@ mod tests {
     }
 
     /// Wave-4 regression: an inner task that returns Err must not hang or panic
-    /// the wrapper — the wrapper logs and completes cleanly.
+    /// the fleet owner — reaping logs and completes cleanly.
     #[tokio::test]
-    async fn wrap_result_handle_completes_on_inner_error() {
+    async fn cron_task_handle_reaps_inner_error() {
         let inner = tokio::spawn(async move { Err(anyhow::anyhow!("boom")) });
-        let outer = wrap_result_handle(Some(inner)).expect("Some handle");
-        outer
-            .await
-            .expect("wrapper must complete cleanly on inner Err");
+        let owned = CronTaskHandle::result(inner);
+        owned.reap_finished().await;
+    }
+
+    /// Health reconciliation must recover dead children without a generation
+    /// bump. Covers both normal completion and panic, then inserts replacement
+    /// tasks from the unchanged desired set.
+    #[tokio::test]
+    async fn health_sweep_reconciles_and_respawns_without_reload() {
+        use std::collections::{HashMap, HashSet};
+
+        let fleet: CronFleet = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        {
+            let mut guard = fleet.lock().unwrap();
+            guard.insert(
+                CronKey::DoctorCron,
+                CronTaskHandle::unit(tokio::spawn(async {})),
+            );
+            guard.insert(
+                CronKey::PatternCron,
+                CronTaskHandle::unit(tokio::spawn(async {
+                    panic!("intentional cron health-test panic")
+                })),
+            );
+        }
+        for _ in 0..32 {
+            if fleet
+                .lock()
+                .unwrap()
+                .values()
+                .all(CronTaskHandle::is_finished)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+
+        let finished = take_finished_cron_tasks(&fleet);
+        assert_eq!(finished.len(), 2, "both dead children must be swept");
+        for (_, handle) in finished {
+            handle.reap_finished().await;
+        }
+
+        let desired = HashSet::from([CronKey::DoctorCron, CronKey::PatternCron]);
+        let running: HashSet<_> = fleet.lock().unwrap().keys().copied().collect();
+        let (_, to_start) = plan_cron_fleet_reload(&running, &desired, &HashSet::new());
+        assert_eq!(
+            to_start.iter().copied().collect::<HashSet<_>>(),
+            desired,
+            "unchanged desired config must request both replacements"
+        );
+
+        {
+            let mut guard = fleet.lock().unwrap();
+            for key in to_start {
+                guard.insert(
+                    key,
+                    CronTaskHandle::unit(tokio::spawn(std::future::pending())),
+                );
+            }
+        }
+        assert_eq!(
+            fleet
+                .lock()
+                .unwrap()
+                .keys()
+                .copied()
+                .collect::<HashSet<_>>(),
+            desired,
+            "health reconciliation must restore the fleet without reload"
+        );
+
+        let replacements: Vec<_> = fleet.lock().unwrap().drain().map(|(_, h)| h).collect();
+        for handle in replacements {
+            handle.stop().await;
+        }
     }
 
     /// GOLD-PROG-08: the usage-meter export writes valid JSON that round-trips
@@ -8488,6 +8738,29 @@ mod zf06_fleet_tests {
             !desired_cron_keys(&off).contains(&CronKey::WebhookManager),
             "disabled webhook_manager must be GONE from the desired set (reload must stop it)"
         );
+    }
+
+    #[test]
+    fn desired_dream_cron_uses_explicit_fail_closed_autonomy_rail() {
+        use crate::permissions::AutonomyLevel;
+
+        let mut cfg = FreedomConfig::default();
+        cfg.dreaming.enabled = true;
+        for autonomy in [
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+            AutonomyLevel::Full,
+        ] {
+            cfg.autonomy = autonomy;
+            assert!(desired_cron_keys(&cfg).contains(&CronKey::Dream));
+        }
+        for autonomy in [AutonomyLevel::Strict, AutonomyLevel::Custom] {
+            cfg.autonomy = autonomy;
+            assert!(
+                !desired_cron_keys(&cfg).contains(&CronKey::Dream),
+                "{autonomy:?} must fail closed for unattended Dream work"
+            );
+        }
     }
 
     #[cfg(feature = "cluster")]

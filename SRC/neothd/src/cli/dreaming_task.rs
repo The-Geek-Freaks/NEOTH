@@ -1,23 +1,27 @@
 //! Background dreaming task — R-02 Phase 4c.
 //!
-//! Wraps the existing [`crate::daemon::dreaming`] composer in a tokio
-//! interval task so the daemon writes one batch of dreams per cadence
-//! tick (default: daily). When an `EmbedProvider` is wired into the
+//! Wraps the existing [`crate::daemon::dreaming`] composer in a calendar
+//! scheduler so the daemon attempts one batch at the configured local daily
+//! boundary. When an `EmbedProvider` is wired into the
 //! daemon (`freedom.yaml::inference.embedding_provider`) the task
 //! uses [`crate::daemon::dreaming::compose_dreams_with_embeddings`]
 //! for cosine-clustered themes; otherwise it falls back to the
 //! deterministic [`crate::daemon::dreaming::compose_dream`] path so
 //! operators without local inference still get a daily dream record.
 //!
-//! Off by default — opt in via `freedom.yaml::dreaming.enabled: true`.
-//! The interval is operator-tunable (`dreaming.interval_secs`). Errors
-//! log + retry next tick; never crash the daemon.
+//! Off by default — opt in via `freedom.yaml::dream.cron_enabled: true`.
+//! Boundaries are claimed durably before effects; boot never catches up an
+//! already-passed boundary.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, LocalResult, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use rusqlite::Connection;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
@@ -30,15 +34,176 @@ use crate::providers::cost_authorization::AuthorizedProvider;
 use crate::providers::embed::EmbedProvider;
 use crate::wal::writer::WalWriterHandle;
 
-/// Default cadence: every 24h. Matches the "nightly dreaming" UX the
-/// R-02 SPEC describes (cron 03:00). On a long-running daemon a 24h
-/// interval lands one batch per day; operators who want more
-/// frequent passes flip `dreaming.interval_secs: 3600` for hourly.
-pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
+const DREAM_CRON_POLL: Duration = Duration::from_secs(30);
+
+/// Cooperative cancellation shared with the Cron fleet owner.
+///
+/// Dream uses blocking leaves (JSONL/Obsidian/proposal persistence). Aborting
+/// only the async wrapper would detach an already-started `spawn_blocking`
+/// child. The fleet therefore signals this token and joins the real Dream task;
+/// every blocking commit re-checks the same token immediately before mutation.
+#[derive(Debug, Default)]
+pub(crate) struct DreamCancellation {
+    cancelled: AtomicBool,
+    notify: tokio::sync::Notify,
+}
+
+impl DreamCancellation {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    pub(crate) fn cancel(&self) {
+        if !self.cancelled.swap(true, Ordering::AcqRel) {
+            // `notify_one` stores a permit when the scheduler has not entered
+            // its select yet, avoiding a lost wake between the atomic check and
+            // `notified().await`.
+            self.notify.notify_one();
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    async fn cancelled(&self) {
+        loop {
+            if self.is_cancelled() {
+                return;
+            }
+            let notified = self.notify.notified();
+            if self.is_cancelled() {
+                return;
+            }
+            notified.await;
+        }
+    }
+}
+
+/// Irreversible effect classes owned by the Dream runtime.
+///
+/// Keeping these typed makes the call sites and the adversarial retirement
+/// test share one exhaustive vocabulary instead of relying on unrelated log
+/// strings.
+#[derive(Clone, Copy, Debug)]
+enum DreamCommitEffect {
+    RuntimeSetup,
+    StateClaim,
+    ProviderDispatch,
+    JsonlAppend,
+    ObsidianSync,
+    ProposalQueue,
+    SelfImproveProposal,
+    WalAppend,
+}
+
+impl DreamCommitEffect {
+    #[cfg(test)]
+    const ALL: [Self; 8] = [
+        Self::RuntimeSetup,
+        Self::StateClaim,
+        Self::ProviderDispatch,
+        Self::JsonlAppend,
+        Self::ObsidianSync,
+        Self::ProposalQueue,
+        Self::SelfImproveProposal,
+        Self::WalAppend,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::RuntimeSetup => "runtime setup",
+            Self::StateClaim => "state claim",
+            Self::ProviderDispatch => "provider dispatch",
+            Self::JsonlAppend => "Dream JSONL append",
+            Self::ObsidianSync => "Obsidian sync",
+            Self::ProposalQueue => "proposal/queue commit",
+            Self::SelfImproveProposal => "self-improve proposal staging",
+            Self::WalAppend => "DREAM_COMPOSED WAL append",
+        }
+    }
+}
+
+/// Authorization rail for one atomically accepted Dream Cron snapshot.
+///
+/// The retained snapshot is the config, epoch identity and commit gate that
+/// were published by one ArcSwap store. A leaf first proves Arc identity, then
+/// acquires the generation's gate. Reload/stop retirement serializes against
+/// acquisition and waits for already-leased commits to finish.
+#[derive(Clone)]
+pub(crate) struct DreamEffectRail {
+    reload_controller: Arc<crate::config::reload::ReloadController>,
+    accepted: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+    cancellation: Arc<DreamCancellation>,
+}
+
+impl DreamEffectRail {
+    pub(crate) fn new(
+        reload_controller: Arc<crate::config::reload::ReloadController>,
+        accepted: Arc<crate::config::reload::AcceptedConfigSnapshot>,
+        cancellation: Arc<DreamCancellation>,
+    ) -> Self {
+        Self {
+            reload_controller,
+            accepted,
+            cancellation,
+        }
+    }
+
+    pub(crate) fn ensure_current(&self, effect: &str) -> Result<()> {
+        anyhow::ensure!(
+            !self.cancellation.is_cancelled(),
+            "Dream {effect} blocked: task cancellation is active"
+        );
+        let current = self.reload_controller.accepted_snapshot();
+        anyhow::ensure!(
+            Arc::ptr_eq(&current, &self.accepted),
+            "Dream {effect} blocked: accepted generation {} was superseded by {}",
+            self.accepted.epoch(),
+            current.epoch()
+        );
+        let config = current.config();
+        anyhow::ensure!(
+            config.dreaming.enabled
+                && crate::cron::scheduler::autonomy_allows_scheduler(config.autonomy),
+            "Dream {effect} blocked: current policy disables unattended Dream work"
+        );
+        Ok(())
+    }
+
+    fn acquire_commit_lease(
+        &self,
+        effect: DreamCommitEffect,
+    ) -> Result<crate::config::reload::DreamCommitLease> {
+        self.ensure_current(effect.label())?;
+        // Retirement and acquisition serialize inside the accepted snapshot's
+        // gate. If reload/stop wins after ensure_current, this fails closed; if
+        // acquisition wins, retirement waits until the true commit returns.
+        self.accepted.acquire_dream_commit(effect.label())
+    }
+
+    pub(crate) fn acquire_runtime_setup_lease(
+        &self,
+    ) -> Result<crate::config::reload::DreamCommitLease> {
+        self.acquire_commit_lease(DreamCommitEffect::RuntimeSetup)
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    pub(crate) fn retire_generation_and_wait(&self) {
+        self.accepted.retire_dream_commits_and_wait();
+    }
+
+    pub(crate) fn retire_runtime_and_wait(&self) {
+        self.reload_controller.retire_dream_runtime();
+    }
+}
 
 /// Default window: last 24h. The composer reads `idx_episode` rows
 /// whose `ts_ns` falls inside `now - window`. Aligns with the daily
-/// interval so each tick processes one fresh day.
+/// calendar boundary so each pass processes one fresh day.
 pub const DEFAULT_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// Maximum events to embed per dreaming pass. Above this the task
@@ -47,11 +212,127 @@ pub const DEFAULT_WINDOW: Duration = Duration::from_secs(24 * 60 * 60);
 /// Tunable via `dreaming.max_events_per_pass`.
 pub const DEFAULT_MAX_EVENTS: usize = 500;
 
-/// Spawn the dreaming task. Returns the `JoinHandle` so the caller
-/// can `.abort()` on shutdown.
+#[derive(Clone, Debug)]
+struct DreamObsidianTarget {
+    vault: String,
+    subdir: String,
+}
+
+/// Effect-bearing inputs pinned to one accepted `freedom.yaml` generation.
 ///
-/// `interval = None` → [`DEFAULT_INTERVAL`]. `window = None` →
-/// [`DEFAULT_WINDOW`]. `max_events = None` → [`DEFAULT_MAX_EVENTS`].
+/// Cron reload validates a new `FreedomConfig` before constructing this value.
+/// The pass, vault sync, forge and self-improve leaves consume only this
+/// snapshot; none of them reread a possibly rejected on-disk rewrite.
+#[derive(Clone, Debug)]
+pub struct DreamPassConfig {
+    window: Duration,
+    max_events: usize,
+    merge_cross_themes: bool,
+    forge_skills: bool,
+    autonomy: crate::permissions::AutonomyLevel,
+    auto_distill: bool,
+    obsidian_target: Option<DreamObsidianTarget>,
+}
+
+impl DreamPassConfig {
+    pub fn from_config(
+        config: &crate::config::FreedomConfig,
+        window_override: Option<Duration>,
+        max_events_override: Option<usize>,
+    ) -> Result<Self> {
+        let mut validated = config.dreaming.clone();
+        if let Some(window) = window_override {
+            validated.window_secs = Some(window.as_secs());
+        }
+        if let Some(max_events) = max_events_override {
+            validated.max_events = Some(max_events);
+        }
+        validated
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid Dream pass config: {error}"))?;
+        let obsidian_target = resolve_obsidian_target(
+            config.obsidian_vault.clone(),
+            config.obsidian_subdir.clone(),
+        )
+        .map(|(vault, subdir)| DreamObsidianTarget { vault, subdir });
+        Ok(Self {
+            window: window_override
+                .or_else(|| config.dreaming.window_secs.map(Duration::from_secs))
+                .unwrap_or(DEFAULT_WINDOW),
+            max_events: max_events_override
+                .or(config.dreaming.max_events)
+                .unwrap_or(DEFAULT_MAX_EVENTS),
+            merge_cross_themes: config.dreaming.merge_cross_themes,
+            forge_skills: config.dreaming.forge_skills,
+            autonomy: config.autonomy,
+            auto_distill: config.skills.auto_distill,
+            obsidian_target,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DreamSchedule {
+    at: chrono::NaiveTime,
+    timezone: Tz,
+}
+
+impl DreamSchedule {
+    pub fn from_config(config: &crate::config::FreedomConfig) -> Result<Self> {
+        let at = config
+            .dreaming
+            .cron_time()
+            .map_err(|error| anyhow::anyhow!("invalid dream.cron_at: {error}"))?;
+        let timezone_name = config
+            .dreaming
+            .timezone
+            .as_deref()
+            .or(config.user_tz.as_deref())
+            .unwrap_or("Etc/UTC");
+        let timezone = timezone_name
+            .parse::<Tz>()
+            .with_context(|| format!("invalid Dream cron IANA timezone `{timezone_name}`"))?;
+        Ok(Self { at, timezone })
+    }
+
+    fn boundary_for(&self, now: DateTime<Utc>) -> Result<(String, DateTime<Utc>)> {
+        let local_date = now.with_timezone(&self.timezone).date_naive();
+        let due = resolve_local_boundary(self.timezone, local_date, self.at)?;
+        Ok((local_date.format("%Y-%m-%d").to_string(), due))
+    }
+}
+
+/// Deterministic DST policy: the earlier UTC instant wins an ambiguous fold;
+/// a nonexistent wall time advances minute-by-minute to the first valid instant
+/// (bounded to the normal three-hour transition envelope).
+fn resolve_local_boundary(
+    timezone: Tz,
+    date: NaiveDate,
+    at: chrono::NaiveTime,
+) -> Result<DateTime<Utc>> {
+    let local = NaiveDateTime::new(date, at);
+    for minute in 0..=180 {
+        let candidate = local
+            .checked_add_signed(chrono::Duration::minutes(minute))
+            .context("Dream cron local boundary overflow")?;
+        match timezone.from_local_datetime(&candidate) {
+            LocalResult::Single(value) => return Ok(value.with_timezone(&Utc)),
+            LocalResult::Ambiguous(first, second) => {
+                return Ok(std::cmp::min(first, second).with_timezone(&Utc));
+            }
+            LocalResult::None => {}
+        }
+    }
+    anyhow::bail!(
+        "Dream cron local boundary {date} {at} in {timezone} has no valid instant within 180 minutes"
+    )
+}
+
+/// Spawn the dreaming task. The fleet owner signals `effect_rail` cancellation
+/// and joins this exact handle on reload/shutdown.
+///
+/// `schedule` is an accepted-generation calendar schedule; `pass_config`
+/// carries the matching effect policy and resource bounds.
 /// `embed_provider = None` → deterministic theme labels only
 /// (composer still runs, dreams still land). `chat_provider = Some`
 /// (SPEC-12 Phase 4b) → LLM-summarised cluster theme labels; `None`
@@ -63,25 +344,20 @@ pub fn spawn(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
     chat_provider: Option<std::sync::Arc<AuthorizedProvider>>,
-    interval: Option<Duration>,
-    window: Option<Duration>,
-    max_events: Option<usize>,
+    schedule: DreamSchedule,
+    pass_config: DreamPassConfig,
     writer: Option<WalWriterHandle>,
-    auto_distill: bool,
+    effect_rail: Arc<DreamEffectRail>,
 ) -> JoinHandle<Result<()>> {
-    let interval = interval.unwrap_or(DEFAULT_INTERVAL);
-    let window = window.unwrap_or(DEFAULT_WINDOW);
-    let max_events = max_events.unwrap_or(DEFAULT_MAX_EVENTS);
     tokio::spawn(async move {
         run(
             home,
             embed_provider,
             chat_provider,
-            interval,
-            window,
-            max_events,
+            schedule,
+            pass_config,
             writer,
-            auto_distill,
+            effect_rail,
         )
         .await
     })
@@ -91,37 +367,125 @@ async fn run(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
     chat_provider: Option<std::sync::Arc<AuthorizedProvider>>,
-    interval: Duration,
-    window: Duration,
-    max_events: usize,
+    schedule: DreamSchedule,
+    pass_config: DreamPassConfig,
     writer: Option<WalWriterHandle>,
-    auto_distill: bool,
+    effect_rail: Arc<DreamEffectRail>,
 ) -> Result<()> {
+    effect_rail.ensure_current("scheduler start")?;
+    let mut generation = effect_rail.reload_controller.subscribe_generation();
+    let now = crate::time::utc_now();
+    let (boot_date, boot_due) = schedule.boundary_for(now)?;
+    let mut pending_boot_skip = None;
+    if now >= boot_due {
+        let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::StateClaim)?;
+        let persist = crate::cron::state::RuntimeState::modify(&home, |state| {
+            state.skip_dream_boundary_on_start(&boot_date);
+            Ok(())
+        });
+        match persist {
+            Ok(()) => info!(
+                local_date = %boot_date,
+                "Dream cron startup found an already-passed boundary; catch-up skipped"
+            ),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    local_date = %boot_date,
+                    "Dream no-boot-catch-up boundary is not durable yet; effects remain blocked"
+                );
+                pending_boot_skip = Some(boot_date);
+            }
+        }
+    }
     info!(
-        interval_secs = interval.as_secs(),
-        window_secs = window.as_secs(),
-        max_events,
+        cron_at = %schedule.at.format("%H:%M"),
+        timezone = %schedule.timezone,
+        window_secs = pass_config.window.as_secs(),
+        max_events = pass_config.max_events,
         embed_enabled = embed_provider.is_some(),
         summarize_themes = chat_provider.is_some(),
         "dreaming task started"
     );
-    let mut ticker = tokio::time::interval(interval);
-    // Burn the immediate tick — fresh boot has no new events to
-    // process yet (the prior daemon's last tick already covered
-    // the window).
+    let mut ticker = tokio::time::interval(DREAM_CRON_POLL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     ticker.tick().await;
     loop {
-        ticker.tick().await;
-        match run_one_pass(
+        tokio::select! {
+            _ = effect_rail.cancellation.cancelled() => return Ok(()),
+            _ = generation.changed() => return Ok(()),
+            _ = ticker.tick() => {}
+        }
+        let now = crate::time::utc_now();
+        let (local_date, due) = match schedule.boundary_for(now) {
+            Ok(boundary) => boundary,
+            Err(error) => {
+                warn!(error = %error, "Dream calendar boundary resolution failed; retrying");
+                continue;
+            }
+        };
+        if let Some(mut skipped_date) = pending_boot_skip.take() {
+            if now >= due && local_date > skipped_date {
+                skipped_date = local_date.clone();
+            }
+            let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::StateClaim)?;
+            match crate::cron::state::RuntimeState::modify(&home, |state| {
+                state.skip_dream_boundary_on_start(&skipped_date);
+                Ok(())
+            }) {
+                Ok(()) => info!(
+                    local_date = %skipped_date,
+                    "Dream no-boot-catch-up boundary became durable; scheduler resumed"
+                ),
+                Err(error) => {
+                    warn!(
+                        error = %error,
+                        local_date = %skipped_date,
+                        "Dream no-boot-catch-up persistence still unavailable; effects remain blocked"
+                    );
+                    pending_boot_skip = Some(skipped_date);
+                }
+            }
+            continue;
+        }
+        if now < due {
+            continue;
+        }
+        let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::StateClaim)?;
+        let claimed = match crate::cron::state::RuntimeState::modify(&home, |state| {
+            Ok(state.claim_dream_boundary(&local_date))
+        }) {
+            Ok(claimed) => claimed,
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    local_date = %local_date,
+                    "Dream boundary claim is not durable; effects blocked until the next poll"
+                );
+                continue;
+            }
+        };
+        drop(_lease);
+        if !claimed {
+            continue;
+        }
+        effect_rail.ensure_current("scheduled pass dispatch")?;
+        let pass = run_one_pass_for_day(
             &home,
             embed_provider.as_deref(),
             chat_provider.as_deref(),
-            window,
-            max_events,
+            &pass_config,
             writer.as_ref(),
-        )
-        .await
-        {
+            &local_date,
+            Some(effect_rail.as_ref()),
+        );
+        tokio::pin!(pass);
+        let pass_result = tokio::select! {
+            result = &mut pass => result,
+            _ = effect_rail.cancellation.cancelled() => return Ok(()),
+            _ = generation.changed() => return Ok(()),
+        };
+        match pass_result {
             Ok(report) => {
                 if report.dreams_written > 0 {
                     info!(
@@ -138,9 +502,16 @@ async fn run(
                     // re-enter recall/groundtruth, so no preload poisoning.
                     // The dream batch is already durable, so a vault failure
                     // cannot roll it back; surface it explicitly and retry on
-                    // the next tick instead of silently treating policy/config
+                    // the next scheduled pass instead of silently treating policy/config
                     // corruption as "no vault configured".
-                    if let Err(error) = sync_day_to_obsidian(&home, &report).await {
+                    if let Err(error) = sync_day_to_obsidian(
+                        &home,
+                        &report,
+                        pass_config.obsidian_target.as_ref(),
+                        Some(effect_rail.as_ref()),
+                    )
+                    .await
+                    {
                         warn!(
                             error = %error,
                             "dream→Obsidian sync failed (dreams still persisted locally)"
@@ -149,7 +520,11 @@ async fn run(
                 }
             }
             Err(e) => {
-                warn!(error = %e, "dreaming pass failed (will retry next tick)");
+                warn!(
+                    error = %e,
+                    local_date = %local_date,
+                    "dreaming pass failed after its durable boundary claim; not retrying automatically"
+                );
             }
         }
         // Slice C — nightly auto self-improve. In full-auto mode (or when the
@@ -158,11 +533,12 @@ async fn run(
         // auto-accepts: the review-then-adopt gate still requires an explicit
         // `accept`. Daemon-cron only — `neoth dream now` calls run_one_pass
         // directly and never triggers this. Best-effort: any miss logs + skips.
-        self_improve_auto_pass(&home).await;
+        self_improve_auto_pass(&home, pass_config.autonomy, effect_rail.as_ref()).await;
         // GOLD-ADAPT-KB-03 — Slice D: nightly distill scan (skills.auto_distill).
         // Reads trajectory JSONL under `~/trajectories/` and logs repeated
         // tool-call sequences via tracing. Daemon-cron only. Best-effort.
-        if auto_distill {
+        if pass_config.auto_distill {
+            effect_rail.ensure_current("automatic distill scan")?;
             distill_auto_pass(&home).await;
         }
     }
@@ -233,14 +609,20 @@ fn resolve_obsidian_target(
 /// operator's Obsidian vault. No-op when no `obsidian_vault` is configured.
 /// The day is taken from the pass report's JSONL filename stem so the exact
 /// composed day is synced (never a midnight-rollover mismatch). Runs the
-/// blocking file write off the async runtime. A genuinely missing config uses
-/// compiled defaults; an existing unreadable or malformed config is surfaced.
-async fn sync_day_to_obsidian(home: &Path, report: &PassReport) -> Result<()> {
-    let cfg = crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?;
-    let Some((vault, subdir)) = resolve_obsidian_target(cfg.obsidian_vault, cfg.obsidian_subdir)
-    else {
+/// blocking file write off the async runtime. The target belongs to the same
+/// accepted config generation as the pass; rejected disk rewrites cannot
+/// redirect this effect.
+async fn sync_day_to_obsidian(
+    home: &Path,
+    report: &PassReport,
+    target: Option<&DreamObsidianTarget>,
+    effect_rail: Option<&DreamEffectRail>,
+) -> Result<()> {
+    let Some(target) = target else {
         return Ok(()); // vault not configured → operator has not opted into a vault
     };
+    let vault = target.vault.clone();
+    let subdir = target.subdir.clone();
     let Some(day) = report
         .path
         .file_stem()
@@ -250,7 +632,12 @@ async fn sync_day_to_obsidian(home: &Path, report: &PassReport) -> Result<()> {
         return Ok(());
     };
     let home = home.to_path_buf();
+    let effect_rail = effect_rail.cloned();
     let outcome = tokio::task::spawn_blocking(move || {
+        let _lease = effect_rail
+            .as_ref()
+            .map(|rail| rail.acquire_commit_lease(DreamCommitEffect::ObsidianSync))
+            .transpose()?;
         crate::daemon::dreaming::sync_dreams_to_obsidian(
             &home,
             std::path::Path::new(&vault),
@@ -275,9 +662,18 @@ async fn sync_day_to_obsidian(home: &Path, report: &PassReport) -> Result<()> {
 /// wins) AND SkillOpt being installed. Stages one proposal for the default
 /// persona's `skill.md`; the operator still must `neoth self-improve accept`
 /// it. Runs the (blocking, possibly slow) engine off the async runtime.
-async fn self_improve_auto_pass(home: &Path) {
+async fn self_improve_auto_pass(
+    home: &Path,
+    autonomy: crate::permissions::AutonomyLevel,
+    effect_rail: &DreamEffectRail,
+) {
     let home = home.to_path_buf();
-    match tokio::task::spawn_blocking(move || self_improve_auto_pass_blocking(&home)).await {
+    let effect_rail = effect_rail.clone();
+    match tokio::task::spawn_blocking(move || {
+        self_improve_auto_pass_blocking(&home, autonomy, &effect_rail)
+    })
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(e)) => warn!(error = %format!("{e:#}"), "self-improve auto-pass failed closed"),
         Err(e) => warn!(error = %e, "self-improve auto-pass task join failed"),
@@ -348,16 +744,13 @@ fn baseline_error_is_not_found(error: &anyhow::Error) -> bool {
         .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
+fn self_improve_auto_pass_blocking(
+    home: &Path,
+    autonomy: crate::permissions::AutonomyLevel,
+    effect_rail: &DreamEffectRail,
+) -> Result<()> {
     use crate::self_improve as si;
-    let autonomy =
-        match crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml")) {
-            Ok(config) => config.autonomy,
-            Err(error) => {
-                return Err(error)
-                    .context("self-improve auto-pass: freedom.yaml invalid; refusing the tick");
-            }
-        };
+    effect_rail.ensure_current("self-improve scan")?;
     // B19: fail-closed — corrupt config stops this tick rather than defaulting
     // to auto-on and re-enabling a deliberately-disabled master switch.
     let cfg = match si::SelfImproveConfig::load_strict(home) {
@@ -393,6 +786,9 @@ fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
     if after.trim().is_empty() || after == before {
         return Ok(()); // engine proposed nothing new → don't stage a no-op
     }
+    // The SkillOpt process can run for minutes. Acquire immediately before the
+    // durable mutation and retain the lease through stage_proposal's return.
+    let _lease = effect_rail.acquire_commit_lease(DreamCommitEffect::SelfImproveProposal)?;
     let now = crate::time::now_unix_i64();
     let id = format!("p{now}");
     let staged_id = si::stage_proposal(
@@ -426,7 +822,7 @@ fn self_improve_auto_pass_blocking(home: &Path) -> Result<()> {
 pub struct PassReport {
     /// Number of `idx_episode` rows considered in the window.
     pub events_considered: usize,
-    /// Number of Dream records appended to today's JSONL.
+    /// Number of Dream records appended to the pass calendar day's JSONL.
     pub dreams_written: usize,
     /// JSONL file that received the appends (`~/.neoth/dreams/YYYY-MM-DD.jsonl`).
     pub path: PathBuf,
@@ -502,13 +898,38 @@ pub async fn run_one_pass(
     home: &Path,
     embed_provider: Option<&dyn EmbedProvider>,
     chat_provider: Option<&AuthorizedProvider>,
-    window: Duration,
-    max_events: usize,
+    pass_config: &DreamPassConfig,
     writer: Option<&WalWriterHandle>,
 ) -> Result<PassReport> {
-    let events = gather_window_events(home, window, max_events)?;
     let day = today_utc_date();
-    let path = crate::daemon::dreaming::jsonl_file_for_day(home, &day);
+    run_one_pass_for_day(
+        home,
+        embed_provider,
+        chat_provider,
+        pass_config,
+        writer,
+        &day,
+        None,
+    )
+    .await
+}
+
+/// Scheduled-pass implementation bound to the exact claimed calendar date.
+///
+/// The public one-shot wrapper above intentionally supplies UTC today. Cron
+/// supplies its claimed local date, so JSONL paths, Dream bodies, Obsidian sync
+/// and DREAM_COMPOSED all share one date even at UTC+14/-10 boundaries.
+async fn run_one_pass_for_day(
+    home: &Path,
+    embed_provider: Option<&dyn EmbedProvider>,
+    chat_provider: Option<&AuthorizedProvider>,
+    pass_config: &DreamPassConfig,
+    writer: Option<&WalWriterHandle>,
+    day: &str,
+    effect_rail: Option<&DreamEffectRail>,
+) -> Result<PassReport> {
+    let events = gather_window_events(home, pass_config.window, pass_config.max_events)?;
+    let path = crate::daemon::dreaming::jsonl_file_for_day(home, day);
 
     if events.is_empty() {
         return Ok(PassReport {
@@ -519,18 +940,17 @@ pub async fn run_one_pass(
         });
     }
 
-    let dreaming_config =
-        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))?
-            .dreaming;
-    let merge_cross_themes = dreaming_config.merge_cross_themes;
     let (dreams, path_taken) = if let Some(provider) = embed_provider {
+        let _lease = effect_rail
+            .map(|rail| rail.acquire_commit_lease(DreamCommitEffect::ProviderDispatch))
+            .transpose()?;
         match compose_dreams_with_embeddings(
-            &day,
+            day,
             &events,
             provider,
             chat_provider,
             DREAMING_CLUSTER_THRESHOLD,
-            merge_cross_themes,
+            pass_config.merge_cross_themes,
         )
         .await
         {
@@ -538,20 +958,23 @@ pub async fn run_one_pass(
             Err(e) => {
                 warn!(error = %e, "embedding compose failed; falling back to deterministic theme");
                 (
-                    vec![compose_dream(&day, "daily-deterministic", &events)],
+                    vec![compose_dream(day, "daily-deterministic", &events)],
                     DreamingPath::Deterministic,
                 )
             }
         }
     } else {
         (
-            vec![compose_dream(&day, "daily-deterministic", &events)],
+            vec![compose_dream(day, "daily-deterministic", &events)],
             DreamingPath::Deterministic,
         )
     };
 
     let mut written = 0;
     for dream in &dreams {
+        let _lease = effect_rail
+            .map(|rail| rail.acquire_commit_lease(DreamCommitEffect::JsonlAppend))
+            .transpose()?;
         match append_dream(home, dream) {
             Ok(_) => written += 1,
             Err(e) => {
@@ -564,9 +987,8 @@ pub async fn run_one_pass(
     // review (OB-03 queue). NEOTH never writes the skill; the operator
     // adopts it via `neoth proactive accept`. A forge/queue miss never
     // fails the pass — the dreams are already persisted above.
-    let forge_enabled = dreaming_config.forge_skills;
-    if forge_enabled {
-        forge_and_stage_dreams(home, &dreams);
+    if pass_config.forge_skills {
+        forge_and_stage_dreams(home, &dreams, effect_rail)?;
     }
 
     let report = PassReport {
@@ -583,6 +1005,9 @@ pub async fn run_one_pass(
     if report.dreams_written > 0
         && let Some(w) = writer
     {
+        let _lease = effect_rail
+            .map(|rail| rail.acquire_commit_lease(DreamCommitEffect::WalAppend))
+            .transpose()?;
         emit_dream_composed_daemon(w, &report).await;
     }
 
@@ -599,7 +1024,11 @@ pub async fn run_one_pass(
 /// cannot race the delivery tick's reconcile and accidentally resurrect
 /// delivered items via a blind bare-load/save cycle — the same pattern
 /// required by the G02-QUEUE-01 sweep.
-fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]) {
+fn forge_and_stage_dreams(
+    home: &Path,
+    dreams: &[crate::daemon::dreaming::Dream],
+    effect_rail: Option<&DreamEffectRail>,
+) -> Result<()> {
     use crate::proactive::ProactiveQueue;
     use crate::proactive::action_staging::stage_and_enqueue;
     let queue_path = home.join("proactive_queue.json");
@@ -612,9 +1041,12 @@ fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]
         .collect();
 
     if proposals.is_empty() {
-        return;
+        return Ok(());
     }
 
+    let _lease = effect_rail
+        .map(|rail| rail.acquire_commit_lease(DreamCommitEffect::ProposalQueue))
+        .transpose()?;
     let modify_result = ProactiveQueue::modify(&queue_path, |queue| {
         let mut staged = 0usize;
         for proposal in proposals {
@@ -636,6 +1068,7 @@ fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]
         Ok(_) => {} // nothing new staged (all dedup)
         Err(e) => warn!(error = %e, "skill-forge: queue load/save failed"),
     }
+    Ok(())
 }
 
 /// Load `idx_episode` rows whose `ts_ns` is within `window` of
@@ -698,6 +1131,198 @@ mod tests {
     use super::*;
     use crate::providers::Provider;
     use tempfile::tempdir;
+
+    #[test]
+    fn dream_schedule_resolves_dst_gap_and_fold_deterministically() {
+        let berlin: Tz = "Europe/Berlin".parse().unwrap();
+        let at = chrono::NaiveTime::from_hms_opt(2, 30, 0).unwrap();
+
+        let gap = resolve_local_boundary(berlin, NaiveDate::from_ymd_opt(2026, 3, 29).unwrap(), at)
+            .unwrap();
+        assert_eq!(gap.to_rfc3339(), "2026-03-29T01:00:00+00:00");
+
+        let fold =
+            resolve_local_boundary(berlin, NaiveDate::from_ymd_opt(2026, 10, 25).unwrap(), at)
+                .unwrap();
+        assert_eq!(
+            fold.to_rfc3339(),
+            "2026-10-25T00:30:00+00:00",
+            "ambiguous folds use the earlier UTC instant"
+        );
+    }
+
+    #[test]
+    fn dream_schedule_uses_user_timezone_only_when_dream_timezone_is_absent() {
+        let mut config = crate::config::FreedomConfig::default();
+        config.user_tz = Some("America/New_York".to_string());
+        assert_eq!(
+            DreamSchedule::from_config(&config).unwrap().timezone,
+            "America/New_York".parse::<Tz>().unwrap()
+        );
+        config.dreaming.timezone = Some("Europe/Berlin".to_string());
+        assert_eq!(
+            DreamSchedule::from_config(&config).unwrap().timezone,
+            "Europe/Berlin".parse::<Tz>().unwrap()
+        );
+    }
+
+    #[test]
+    fn dream_schedule_keeps_utc_plus_14_and_minus_10_calendar_dates_distinct() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 9, 30, 0).single().unwrap();
+        let at = chrono::NaiveTime::from_hms_opt(3, 0, 0).unwrap();
+        let plus_14 = DreamSchedule {
+            at,
+            timezone: "Pacific/Kiritimati".parse().unwrap(),
+        };
+        let minus_10 = DreamSchedule {
+            at,
+            timezone: "Pacific/Honolulu".parse().unwrap(),
+        };
+
+        assert_eq!(plus_14.boundary_for(now).unwrap().0, "2026-01-01");
+        assert_eq!(
+            minus_10.boundary_for(now).unwrap().0,
+            "2025-12-31",
+            "the scheduler must claim the operator's local date, not UTC today"
+        );
+
+        let after_dateline = Utc
+            .with_ymd_and_hms(2026, 1, 1, 10, 30, 0)
+            .single()
+            .unwrap();
+        assert_eq!(
+            plus_14.boundary_for(after_dateline).unwrap().0,
+            "2026-01-02"
+        );
+        assert_eq!(
+            minus_10.boundary_for(after_dateline).unwrap().0,
+            "2026-01-01"
+        );
+    }
+
+    #[test]
+    fn effect_rail_rejects_cancelled_and_superseded_generations() {
+        let dir = tempdir().unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        let mut config = crate::config::FreedomConfig::default();
+        config.dreaming.enabled = true;
+        config.autonomy = crate::permissions::AutonomyLevel::Standard;
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        let controller = Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            config_path.clone(),
+        ));
+
+        let cancellation = DreamCancellation::new();
+        let rail = DreamEffectRail::new(
+            Arc::clone(&controller),
+            controller.accepted_snapshot(),
+            Arc::clone(&cancellation),
+        );
+        rail.ensure_current("test commit").unwrap();
+
+        let mut replacement = config;
+        replacement.review_gate_enabled = !replacement.review_gate_enabled;
+        std::fs::write(&config_path, serde_yaml::to_string(&replacement).unwrap()).unwrap();
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            crate::config::reload::ReloadResult::Reloaded { .. }
+        ));
+        assert!(
+            format!("{:#}", rail.ensure_current("test commit").unwrap_err()).contains("superseded")
+        );
+
+        let cancelled_rail = DreamEffectRail::new(
+            Arc::clone(&controller),
+            controller.accepted_snapshot(),
+            Arc::clone(&cancellation),
+        );
+        cancellation.cancel();
+        assert!(
+            format!(
+                "{:#}",
+                cancelled_rail.ensure_current("test commit").unwrap_err()
+            )
+            .contains("cancellation")
+        );
+    }
+
+    #[test]
+    fn every_irreversible_effect_is_linearized_against_retirement() {
+        use std::sync::mpsc;
+
+        for effect in DreamCommitEffect::ALL {
+            let dir = tempdir().unwrap();
+            let config_path = dir.path().join("freedom.yaml");
+            let mut config = crate::config::FreedomConfig::default();
+            config.dreaming.enabled = true;
+            config.autonomy = crate::permissions::AutonomyLevel::Standard;
+            std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+            let controller = Arc::new(crate::config::reload::ReloadController::new(
+                config,
+                config_path,
+            ));
+            let rail = Arc::new(DreamEffectRail::new(
+                Arc::clone(&controller),
+                controller.accepted_snapshot(),
+                DreamCancellation::new(),
+            ));
+
+            let (lease_acquired_tx, lease_acquired_rx) = mpsc::channel();
+            let (release_tx, release_rx) = mpsc::channel();
+            let worker_rail = Arc::clone(&rail);
+            let worker = std::thread::spawn(move || {
+                let lease = worker_rail
+                    .acquire_commit_lease(effect)
+                    .expect("effect lease must enter before retirement");
+                lease_acquired_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+                drop(lease);
+            });
+            lease_acquired_rx.recv().unwrap();
+
+            let (retire_started_tx, retire_started_rx) = mpsc::channel();
+            let (retired_tx, retired_rx) = mpsc::channel();
+            let retire_rail = Arc::clone(&rail);
+            let retire = std::thread::spawn(move || {
+                retire_started_tx.send(()).unwrap();
+                retire_rail.retire_generation_and_wait();
+                retired_tx.send(()).unwrap();
+            });
+            retire_started_rx.recv().unwrap();
+
+            // Wait until the retirement thread has actually closed the gate.
+            // This avoids a timing-based assertion that could pass merely
+            // because the retirement thread had not been scheduled yet.
+            loop {
+                match rail.acquire_commit_lease(effect) {
+                    Ok(probe) => {
+                        drop(probe);
+                        std::thread::yield_now();
+                    }
+                    Err(_) => break,
+                }
+            }
+            assert!(
+                matches!(retired_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),
+                "{} retirement returned while its true commit was active",
+                effect.label()
+            );
+            release_tx.send(()).unwrap();
+            retired_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("retirement did not drain after commit release");
+            worker.join().unwrap();
+            retire.join().unwrap();
+
+            let error = rail.acquire_commit_lease(effect).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("retired"),
+                "{} accepted a new lease after retirement: {error:#}",
+                effect.label()
+            );
+        }
+    }
 
     #[test]
     fn read_installed_baseline_reads_through_capability_bound_store() {
@@ -763,6 +1388,15 @@ mod tests {
         crate::time::now_unix_ns_i64()
     }
 
+    fn test_pass_config(window: Duration, max_events: usize) -> DreamPassConfig {
+        DreamPassConfig::from_config(
+            &crate::config::FreedomConfig::default(),
+            Some(window),
+            Some(max_events),
+        )
+        .unwrap()
+    }
+
     struct AlwaysWeatherEmbed;
 
     #[async_trait::async_trait]
@@ -814,8 +1448,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -840,8 +1473,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -850,6 +1482,42 @@ mod tests {
         assert_eq!(report.dreams_written, 1);
         assert_eq!(report.path_taken, DreamingPath::Deterministic);
         assert!(report.path.exists());
+    }
+
+    #[tokio::test]
+    async fn scheduled_pass_binds_jsonl_dream_and_audit_day_to_claimed_local_date() {
+        let dir = tempdir().unwrap();
+        let n = now_ns();
+        seed_views_db(
+            dir.path(),
+            &[(1, n - 60 * 1_000_000_000, "dateline-bound event")],
+        );
+        let claimed_local_date = "2042-12-31";
+        let report = run_one_pass_for_day(
+            dir.path(),
+            None,
+            None,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
+            None,
+            claimed_local_date,
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(report.day_label(), claimed_local_date);
+        assert_eq!(
+            report.path.file_name().and_then(|name| name.to_str()),
+            Some("2042-12-31.jsonl")
+        );
+        let jsonl = std::fs::read_to_string(&report.path).unwrap();
+        assert!(
+            jsonl.contains("\"day\":\"2042-12-31\""),
+            "the persisted Dream body must use the claimed local date: {jsonl}"
+        );
+        let payload: serde_json::Value =
+            serde_json::from_slice(&dream_composed_payload(&report, 7)).unwrap();
+        assert_eq!(payload["day"], claimed_local_date);
     }
 
     #[tokio::test]
@@ -869,8 +1537,7 @@ mod tests {
             dir.path(),
             Some(&provider),
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -891,8 +1558,7 @@ mod tests {
             dir.path(),
             Some(&provider),
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -915,9 +1581,15 @@ mod tests {
             .collect();
         let rows_ref: Vec<_> = rows.iter().map(|(a, b, c)| (*a, *b, *c)).collect();
         seed_views_db(dir.path(), &rows_ref);
-        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, 3, None)
-            .await
-            .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            &test_pass_config(DEFAULT_WINDOW, 3),
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.events_considered, 3, "truncate at max_events=3");
     }
 
@@ -937,8 +1609,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            Duration::from_secs(1800),
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(Duration::from_secs(1800), DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -1005,11 +1676,12 @@ mod tests {
             dir.path().to_path_buf(),
             None,
             None,
-            Some(Duration::from_millis(50)),
+            DreamSchedule::from_config(&crate::config::FreedomConfig::default()).unwrap(),
+            DreamPassConfig {
+                auto_distill: true,
+                ..test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
+            },
             None,
-            None,
-            None,
-            true, // GOLD-ADAPT-KB-03: auto_distill
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
         task.abort();
@@ -1018,7 +1690,7 @@ mod tests {
 
     #[test]
     fn constants_pinned() {
-        assert_eq!(DEFAULT_INTERVAL.as_secs(), 86_400);
+        assert_eq!(DREAM_CRON_POLL.as_secs(), 30);
         assert_eq!(DEFAULT_WINDOW.as_secs(), 86_400);
         assert_eq!(DEFAULT_MAX_EVENTS, 500);
     }
@@ -1093,8 +1765,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             Some(&writer),
         )
         .await
@@ -1124,8 +1795,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await
@@ -1153,8 +1823,7 @@ mod tests {
             dir.path(),
             None,
             None,
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             Some(&writer),
         )
         .await
@@ -1191,8 +1860,7 @@ mod tests {
             dir.path(),
             Some(&embed),
             Some(&chat),
-            DEFAULT_WINDOW,
-            DEFAULT_MAX_EVENTS,
+            &test_pass_config(DEFAULT_WINDOW, DEFAULT_MAX_EVENTS),
             None,
         )
         .await

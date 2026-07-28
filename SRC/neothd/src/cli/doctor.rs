@@ -1774,28 +1774,41 @@ servers:
     #[test]
     fn advisable_dreaming_passes_when_enabled_is_true() {
         let dir = tempdir().unwrap();
-        write_freedom_with(dir.path(), "dreaming:\n  enabled: true\n");
+        write_freedom_with(dir.path(), "dream:\n  cron_enabled: true\n");
         let o = check_advisable_dreaming(dir.path());
         assert_eq!(o.status, CheckStatus::Pass);
-        assert!(o.detail.contains("true"));
+        assert!(o.detail.contains("dream.cron_enabled = true"));
     }
 
     #[test]
-    fn advisable_dreaming_warns_when_enabled_is_false() {
+    fn advisable_dreaming_accepts_explicitly_disabled_as_healthy() {
         let dir = tempdir().unwrap();
-        write_freedom_with(dir.path(), "dreaming:\n  enabled: false\n");
+        write_freedom_with(dir.path(), "dream:\n  cron_enabled: false\n");
         let o = check_advisable_dreaming(dir.path());
-        assert_eq!(o.status, CheckStatus::Warn);
-        assert!(o.detail.contains("dreaming.enabled"));
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("healthy explicit-opt-in default"));
     }
 
     #[test]
-    fn advisable_dreaming_warns_when_field_absent_from_yaml() {
+    fn advisable_dreaming_accepts_absent_field_default_as_healthy() {
         let dir = tempdir().unwrap();
         write_freedom_with(dir.path(), "operator_id: demo-user\n");
         let o = check_advisable_dreaming(dir.path());
+        assert_eq!(o.status, CheckStatus::Pass);
+        assert!(o.detail.contains("dream.cron_enabled = false"));
+    }
+
+    #[test]
+    fn advisable_dreaming_warns_when_enabled_but_custom_blocks_scheduler() {
+        let dir = tempdir().unwrap();
+        write_freedom_with(
+            dir.path(),
+            "autonomy: custom\ndream:\n  cron_enabled: true\n",
+        );
+        let o = check_advisable_dreaming(dir.path());
         assert_eq!(o.status, CheckStatus::Warn);
-        assert!(o.detail.contains("dreaming.enabled"));
+        assert!(o.detail.contains("autonomy `custom`"));
+        assert!(o.detail.contains("neoth dream cron disable"));
     }
 
     // ── ecology ──────────────────────────────────────────────────────────

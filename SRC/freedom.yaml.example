@@ -174,15 +174,18 @@ inference:
 
 # ── Dreaming pipeline (R-02 Phase 4c) ───────────────────────────────────────
 #
-# Nightly background pass that groups recent episodes from `idx_episode`
-# into themed "dreams". OFF by default — the task never spawns (zero CPU)
-# unless `enabled: true`. When `inference.embedding_provider` is also set,
+# On-demand pass (`neoth dream now`) plus an optional calendar cron that groups
+# recent episodes from `idx_episode` into themed "dreams". Cron is OFF by
+# default — no unattended work occurs unless `cron_enabled: true`. Strict and
+# Custom autonomy fail closed. When `inference.embedding_provider` is also set,
 # clustering is embedding-based (cosine over the local Qwen embeddings,
-# per ADR-004); otherwise it falls back to a deterministic compose. All
-# intervals omit-able — the commented values below are the defaults.
-# dreaming:
-#   enabled: false          # master switch; false = task never spawns
-#   interval_secs: 86400    # seconds between passes (default 86400 = 24h)
+# per ADR-004); otherwise it falls back to a deterministic compose. The daily
+# boundary is claimed durably before effects, is never replayed after restart,
+# and an already-passed boundary is not caught up on daemon boot.
+# dream:
+#   cron_enabled: false     # master cron switch; `dream now` remains available
+#   cron_at: "03:00"        # zero-padded local HH:MM
+#   timezone: Europe/Berlin # optional IANA zone; falls back to user_tz, then UTC
 #   window_secs: 86400      # episode lookback window per pass (default 24h)
 #   max_events: 500         # cap on events processed per pass (default 500)
 #   summarize_themes: false # LLM-label each cluster via the chat provider

@@ -42,12 +42,135 @@
 //! ```
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use anyhow::{Context, Result};
 use arc_swap::ArcSwap;
 
 use crate::config::FreedomConfig;
+
+#[derive(Debug, Default)]
+struct DreamCommitState {
+    retired: bool,
+    active: usize,
+}
+
+/// Per-accepted-generation linearization gate for irreversible Dream effects.
+///
+/// Retirement and lease acquisition serialize on `state`. Once retirement
+/// wins, no new effect can enter; retirement then waits until every lease that
+/// won earlier has released after its real commit.
+#[derive(Debug, Default)]
+struct DreamCommitGate {
+    state: Mutex<DreamCommitState>,
+    drained: Condvar,
+}
+
+impl DreamCommitGate {
+    fn acquire(self: &Arc<Self>, effect: &str) -> Result<DreamCommitLease> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        anyhow::ensure!(
+            !state.retired,
+            "Dream {effect} blocked: accepted generation is retired"
+        );
+        state.active = state
+            .active
+            .checked_add(1)
+            .context("Dream commit-lease counter overflow")?;
+        drop(state);
+        Ok(DreamCommitLease {
+            gate: Arc::clone(self),
+        })
+    }
+
+    fn retire_and_wait(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.retired = true;
+        while state.active != 0 {
+            state = self
+                .drained
+                .wait(state)
+                .unwrap_or_else(|poison| poison.into_inner());
+        }
+    }
+}
+
+/// Held over the true irreversible effect, including async WAL acknowledgement.
+#[derive(Debug)]
+#[must_use = "the Dream commit lease must be held until the irreversible effect returns"]
+pub(crate) struct DreamCommitLease {
+    gate: Arc<DreamCommitGate>,
+}
+
+impl Drop for DreamCommitLease {
+    fn drop(&mut self) {
+        let mut state = self
+            .gate
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.active = state
+            .active
+            .checked_sub(1)
+            .expect("Dream commit lease counter underflow");
+        if state.active == 0 {
+            self.gate.drained.notify_all();
+        }
+    }
+}
+
+/// Config, epoch identity and Dream commit gate published by one ArcSwap store.
+///
+/// Consumers that bind work to an accepted generation must retain this exact
+/// `Arc`; reading `latest()` and a watch counter separately is not an authority
+/// proof because a reload can occur between those reads.
+pub struct AcceptedConfigSnapshot {
+    config: Arc<FreedomConfig>,
+    epoch: u64,
+    dream_commit_gate: Arc<DreamCommitGate>,
+}
+
+impl AcceptedConfigSnapshot {
+    fn new(config: FreedomConfig, epoch: u64) -> Self {
+        let dream_commit_gate = Arc::new(DreamCommitGate::default());
+        if !config.dreaming.enabled
+            || !crate::cron::scheduler::autonomy_allows_scheduler(config.autonomy)
+        {
+            // A policy-disabled generation has no lease-acquisition window at
+            // all. This hardens the gate itself instead of relying solely on
+            // every caller remembering a separate policy check.
+            dream_commit_gate.retire_and_wait();
+        }
+        Self {
+            config: Arc::new(config),
+            epoch,
+            dream_commit_gate,
+        }
+    }
+
+    pub fn config(&self) -> Arc<FreedomConfig> {
+        Arc::clone(&self.config)
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    pub(crate) fn acquire_dream_commit(&self, effect: &str) -> Result<DreamCommitLease> {
+        self.dream_commit_gate.acquire(effect)
+    }
+
+    pub(crate) fn retire_dream_commits_and_wait(&self) {
+        self.dream_commit_gate.retire_and_wait();
+    }
+}
 
 /// Sentinel file name written into `~/.neoth/` by `neoth reload`.
 /// The daemon's polling tick checks for this file's existence; on
@@ -191,12 +314,11 @@ pub enum ReloadResult {
     Unchanged,
 }
 
-/// Owns the live `Arc<ArcSwap<FreedomConfig>>` + the source file
-/// path. Construct once at daemon startup; clone freely (every
-/// clone shares the same ArcSwap via inner Arc).
+/// Owns the live atomic accepted snapshot + the source file path.
+/// Construct once at daemon startup; clone freely.
 #[derive(Clone)]
 pub struct ReloadController {
-    inner: Arc<ArcSwap<FreedomConfig>>,
+    inner: Arc<ArcSwap<AcceptedConfigSnapshot>>,
     source_path: PathBuf,
     /// Q-4 (hermes port, Session 19): cached `xxh3_64(path +
     /// mtime + size)` snapshot of the source file. Lets a
@@ -211,6 +333,11 @@ pub struct ReloadController {
     /// (channel adapters) subscribe via [`Self::subscribe_generation`]
     /// and rebuild on a bump.
     generation_tx: Arc<tokio::sync::watch::Sender<u64>>,
+    /// Serializes accepted-generation publication and permanent shutdown
+    /// retirement. Without this lock two concurrent reloads can derive the same
+    /// epoch or shutdown can race publication of a fresh active Dream gate.
+    publication_lock: Arc<Mutex<()>>,
+    dream_runtime_retired: Arc<AtomicBool>,
 }
 
 impl ReloadController {
@@ -220,10 +347,14 @@ impl ReloadController {
         let initial_hash = compute_snapshot_hash(&source_path).ok();
         let (generation_tx, _initial_rx) = tokio::sync::watch::channel(0u64);
         Self {
-            inner: Arc::new(ArcSwap::new(Arc::new(initial))),
+            inner: Arc::new(ArcSwap::new(Arc::new(AcceptedConfigSnapshot::new(
+                initial, 0,
+            )))),
             source_path,
             snapshot_hash: Arc::new(std::sync::Mutex::new(initial_hash)),
             generation_tx: Arc::new(generation_tx),
+            publication_lock: Arc::new(Mutex::new(())),
+            dream_runtime_retired: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -239,7 +370,25 @@ impl ReloadController {
     /// every reader gets the same `Arc` until a reload swaps in a
     /// new one. Cheap: an atomic pointer load + Arc clone.
     pub fn latest(&self) -> Arc<FreedomConfig> {
+        self.accepted_snapshot().config()
+    }
+
+    /// Atomically capture config + monotonic epoch + Dream commit gate.
+    pub fn accepted_snapshot(&self) -> Arc<AcceptedConfigSnapshot> {
         self.inner.load_full()
+    }
+
+    /// Permanently retire Dream effects during daemon shutdown.
+    ///
+    /// The publication lock closes the reload-vs-shutdown race: after this
+    /// returns, no concurrent or future reload can publish a fresh active gate.
+    pub fn retire_dream_runtime(&self) {
+        let _publication = self
+            .publication_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        self.dream_runtime_retired.store(true, Ordering::Release);
+        self.inner.load_full().retire_dream_commits_and_wait();
     }
 
     /// Immutable snapshot of the currently active autonomy policy.
@@ -294,15 +443,28 @@ impl ReloadController {
     /// Attempt to reload from `source_path`. Validates that no
     /// immutable field has changed; on validation pass, swaps the
     /// ArcSwap atomically. Caller emits the audit WAL frame.
+    ///
+    /// A successful reload waits for active Dream commit leases. Async callers
+    /// must invoke this synchronous boundary through `spawn_blocking` (the
+    /// daemon reload loop does) so a lease-owning future can keep progressing.
     pub fn try_reload(&self) -> Result<ReloadResult> {
-        let old = self.inner.load_full();
+        let _publication = self
+            .publication_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        anyhow::ensure!(
+            !self.dream_runtime_retired.load(Ordering::Acquire),
+            "config reload refused: daemon Dream runtime is retired for shutdown"
+        );
+        let old = self.accepted_snapshot();
+        let old_config = old.config();
         let candidate = FreedomConfig::load_from_path(&self.source_path)
             .with_context(|| format!("re-read {}", self.source_path.display()))?;
 
         // Identical content → no-op. Compare via YAML round-trip so
         // deep-equal works without requiring `PartialEq` on every
         // nested config struct (which several lack).
-        let old_yaml = serde_yaml::to_string(&*old)
+        let old_yaml = serde_yaml::to_string(&*old_config)
             .context("serialize active config for reload comparison")?;
         let new_yaml = serde_yaml::to_string(&candidate)
             .context("serialize candidate config for reload comparison")?;
@@ -311,27 +473,37 @@ impl ReloadController {
         // effective private authority explicitly before the public-YAML
         // no-change fast path; a credentials-only edit must be rejected as a
         // restart-bound runtime change rather than mislabeled `Unchanged`.
-        let ssh_tunnels_changed = old.ssh_tunnels != candidate.ssh_tunnels;
+        let ssh_tunnels_changed = old_config.ssh_tunnels != candidate.ssh_tunnels;
         if old_yaml == new_yaml && !ssh_tunnels_changed {
             return Ok(ReloadResult::Unchanged);
         }
 
         // Validate immutable fields.
-        if let Some(rejection) = validate_reload(&old, &candidate) {
+        if let Some(rejection) = validate_reload(&old_config, &candidate) {
             return Ok(ReloadResult::Rejected { rejection });
         }
 
         // Compute changed top-level fields before publishing the new snapshot.
         // A serialization failure must reject the reload rather than silently
         // reporting an empty diff for a config that is about to become active.
-        let changed_fields = diff_top_level(&old, &candidate)?;
+        let changed_fields = diff_top_level(&old_config, &candidate)?;
 
-        // Atomic swap. Lock-free, no reader contention.
-        self.inner.store(Arc::new(candidate));
+        let next_epoch = old
+            .epoch()
+            .checked_add(1)
+            .context("accepted reload epoch overflow")?;
+        let next = Arc::new(AcceptedConfigSnapshot::new(candidate, next_epoch));
 
-        // Wake generation subscribers (adapter fleet supervisor) AFTER
-        // the store, so a woken consumer's `latest()` is the new config.
-        self.generation_tx.send_modify(|g| *g += 1);
+        // Linearization order:
+        // 1. retire old gate, preventing new irreversible effects;
+        // 2. wait for every already-leased commit to finish;
+        // 3. atomically publish config + epoch + fresh gate in one ArcSwap store.
+        old.retire_dream_commits_and_wait();
+        self.inner.store(Arc::clone(&next));
+
+        // Watch is notification only. Exact authority comes from the accepted
+        // snapshot Arc identity, never a separate counter/config read pair.
+        let _ = self.generation_tx.send_replace(next_epoch);
 
         Ok(ReloadResult::Reloaded { changed_fields })
     }
@@ -1074,6 +1246,184 @@ mod tests {
         // Both clones point to the same Arc — verified by pointer
         // equality (Arc::ptr_eq).
         assert!(Arc::ptr_eq(&a, &b), "latest() clones must share Arc");
+    }
+
+    #[test]
+    fn accepted_snapshot_never_observes_a_torn_config_epoch_pair() {
+        use std::sync::Barrier;
+
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.review_gate_enabled = false;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let controller = Arc::new(ReloadController::new(initial, yaml_path.clone()));
+
+        for expected_epoch in 1..=64u64 {
+            let before = controller.accepted_snapshot();
+            let before_pair = (before.epoch(), before.config().review_gate_enabled);
+            assert_eq!(before_pair.0, expected_epoch - 1);
+
+            let mut candidate = (*before.config()).clone();
+            candidate.review_gate_enabled = !before_pair.1;
+            let after_pair = (expected_epoch, candidate.review_gate_enabled);
+            write_yaml(&yaml_path, &serde_yaml::to_string(&candidate).unwrap());
+
+            let start = Arc::new(Barrier::new(2));
+            let writer_start = Arc::clone(&start);
+            let writer_controller = Arc::clone(&controller);
+            let writer = std::thread::spawn(move || {
+                writer_start.wait();
+                writer_controller.try_reload()
+            });
+
+            start.wait();
+            let observed = controller.accepted_snapshot();
+            let observed_pair = (observed.epoch(), observed.config().review_gate_enabled);
+            assert!(
+                observed_pair == before_pair || observed_pair == after_pair,
+                "atomic reader observed torn config/epoch pair {observed_pair:?}; \
+                 valid pairs were {before_pair:?} or {after_pair:?}"
+            );
+
+            assert!(matches!(
+                writer.join().unwrap().unwrap(),
+                ReloadResult::Reloaded { .. }
+            ));
+            let after = controller.accepted_snapshot();
+            assert_eq!(
+                (after.epoch(), after.config().review_gate_enabled),
+                after_pair
+            );
+        }
+    }
+
+    #[test]
+    fn reload_retires_old_dream_gate_and_waits_for_active_commit() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.dreaming.enabled = true;
+        initial.autonomy = crate::permissions::AutonomyLevel::Standard;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let controller = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
+        let old = controller.accepted_snapshot();
+        let active_commit = old.acquire_dream_commit("test JSONL commit").unwrap();
+
+        let mut candidate = initial;
+        candidate.review_gate_enabled = !candidate.review_gate_enabled;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&candidate).unwrap());
+        let reload_controller = Arc::clone(&controller);
+        let reload = std::thread::spawn(move || reload_controller.try_reload());
+
+        // Wait for reload to close the old gate. While our lease is active it
+        // must not yet publish the replacement snapshot.
+        loop {
+            match old.acquire_dream_commit("retirement probe") {
+                Ok(probe) => {
+                    drop(probe);
+                    std::thread::yield_now();
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            Arc::ptr_eq(&controller.accepted_snapshot(), &old),
+            "reload published before the active Dream commit drained"
+        );
+
+        drop(active_commit);
+        assert!(matches!(
+            reload.join().unwrap().unwrap(),
+            ReloadResult::Reloaded { .. }
+        ));
+        let current = controller.accepted_snapshot();
+        assert!(!Arc::ptr_eq(&current, &old));
+        assert_eq!(current.epoch(), 1);
+        assert!(
+            old.acquire_dream_commit("late old-generation commit")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn strict_and_custom_snapshots_never_open_a_dream_commit_gate() {
+        for autonomy in [
+            crate::permissions::AutonomyLevel::Strict,
+            crate::permissions::AutonomyLevel::Custom,
+        ] {
+            let mut config = fresh_config();
+            config.dreaming.enabled = true;
+            config.autonomy = autonomy;
+            let snapshot = AcceptedConfigSnapshot::new(config, 0);
+            assert!(
+                snapshot.acquire_dream_commit("policy probe").is_err(),
+                "{autonomy:?} opened an unattended Dream commit gate"
+            );
+        }
+    }
+
+    #[test]
+    fn policy_reenable_publishes_a_fresh_active_dream_gate() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.dreaming.enabled = true;
+        initial.autonomy = crate::permissions::AutonomyLevel::Custom;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let controller = ReloadController::new(initial.clone(), yaml_path.clone());
+        let blocked = controller.accepted_snapshot();
+        assert!(blocked.acquire_dream_commit("custom probe").is_err());
+
+        initial.autonomy = crate::permissions::AutonomyLevel::Standard;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        assert!(matches!(
+            controller.try_reload().unwrap(),
+            ReloadResult::Reloaded { .. }
+        ));
+        let enabled = controller.accepted_snapshot();
+        assert!(!Arc::ptr_eq(&blocked, &enabled));
+        assert!(
+            enabled.acquire_dream_commit("standard probe").is_ok(),
+            "re-enabling scheduled autonomy must create a new active gate"
+        );
+    }
+
+    #[test]
+    fn shutdown_retirement_is_permanent_and_blocks_future_reload() {
+        let dir = tempdir().unwrap();
+        let yaml_path = dir.path().join("freedom.yaml");
+        let mut initial = fresh_config();
+        initial.dreaming.enabled = true;
+        initial.autonomy = crate::permissions::AutonomyLevel::Standard;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&initial).unwrap());
+        let controller = Arc::new(ReloadController::new(initial.clone(), yaml_path.clone()));
+        let accepted = controller.accepted_snapshot();
+        let active_commit = accepted.acquire_dream_commit("test WAL commit").unwrap();
+
+        let retire_controller = Arc::clone(&controller);
+        let retire = std::thread::spawn(move || retire_controller.retire_dream_runtime());
+        loop {
+            match accepted.acquire_dream_commit("shutdown probe") {
+                Ok(probe) => {
+                    drop(probe);
+                    std::thread::yield_now();
+                }
+                Err(_) => break,
+            }
+        }
+        assert!(
+            !retire.is_finished(),
+            "shutdown did not wait for active commit"
+        );
+        drop(active_commit);
+        retire.join().unwrap();
+
+        let mut candidate = initial;
+        candidate.review_gate_enabled = !candidate.review_gate_enabled;
+        write_yaml(&yaml_path, &serde_yaml::to_string(&candidate).unwrap());
+        let error = controller.try_reload().unwrap_err();
+        assert!(format!("{error:#}").contains("retired for shutdown"));
     }
 
     // ── Q-4 snapshot_hash gate ──────────────────────────────────────

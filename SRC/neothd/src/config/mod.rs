@@ -1021,16 +1021,17 @@ pub struct FreedomConfig {
     /// operator opts that stage into `fail_fast = true`.
     #[serde(default)]
     pub hook_chain: std::collections::HashMap<String, HookChainConfig>,
-    /// R-02 Phase 4c (Session 22): nightly dreaming pipeline gate.
-    /// Off by default — operator opts in via `dreaming.enabled: true`.
-    /// When on, `cli::dreaming_task::spawn` runs on
-    /// `interval_secs` (default 24h) over a window of `window_secs`
-    /// (default 24h) capped at `max_events` (default 500). When an
+    /// R-02 Phase 4c / ADR-003: on-demand dreaming plus the optional nightly
+    /// calendar cron. Public YAML is `dream.cron_enabled`; `dreaming` remains
+    /// a read-only root alias for existing installs. When cron is on,
+    /// `cli::dreaming_task` runs at `cron_at` in the configured IANA timezone
+    /// over a window of `window_secs` (default 24h), capped at `max_events`
+    /// (default 500). When an
     /// `inference.embedding_provider` is also wired, the task uses
     /// `compose_dreams_with_embeddings` for cosine-clustered themes;
     /// otherwise it falls back to deterministic compose_dream
     /// (matches L-07 `allow_cloud_fallback: false` safe-default).
-    #[serde(default)]
+    #[serde(default, rename = "dream", alias = "dreaming")]
     pub dreaming: DreamingConfig,
 
     /// A3-01 — `neoth transfer export` hard size caps. A memory export can grow
@@ -1898,6 +1899,25 @@ fn canonicalize_public_yaml_aliases(value: &mut serde_yaml::Value) {
     let Some(root) = value.as_mapping_mut() else {
         return;
     };
+    // ADR-003: `dreaming` and its `enabled` spelling are compatibility-only.
+    // Move them before the canonical `dream.cron_enabled` generation is
+    // overlaid, otherwise a lossless update would preserve two live spellings.
+    let legacy_dream_key = serde_yaml::Value::String("dreaming".to_string());
+    let dream_key = serde_yaml::Value::String("dream".to_string());
+    if let Some(legacy_dream) = root.remove(&legacy_dream_key) {
+        // Parsing rejects simultaneous root aliases, so an occupied canonical
+        // key cannot occur here. Moving the complete mapping preserves unknown
+        // nested fields while changing only the public spelling.
+        root.entry(dream_key.clone()).or_insert(legacy_dream);
+    }
+    if let Some(dream) = root
+        .get_mut(&dream_key)
+        .and_then(serde_yaml::Value::as_mapping_mut)
+    {
+        remove_public_yaml_key(dream, "enabled");
+        remove_public_yaml_key(dream, "interval_secs");
+    }
+
     let loop_key = serde_yaml::Value::String("loop_config".to_string());
     let Some(loop_config) = root
         .get_mut(&loop_key)
@@ -2209,6 +2229,19 @@ impl FreedomConfig {
     }
 
     fn validate_public_sections(&self) -> Result<()> {
+        self.dreaming
+            .validate()
+            .map_err(|error| anyhow::anyhow!("invalid dream config: {error}"))?;
+        if self.dreaming.enabled
+            && self.dreaming.timezone.is_none()
+            && let Some(user_tz) = self.user_tz.as_deref()
+        {
+            user_tz.parse::<chrono_tz::Tz>().map_err(|error| {
+                anyhow::anyhow!(
+                    "invalid dream effective timezone from user_tz `{user_tz}`: {error}"
+                )
+            })?;
+        }
         self.proactive
             .validate()
             .map_err(|error| anyhow::anyhow!("invalid proactive config: {error}"))?;
