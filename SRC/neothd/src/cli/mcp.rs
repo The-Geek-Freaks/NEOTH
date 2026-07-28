@@ -12,7 +12,7 @@
 //!   - `codegraph-serve` runs NEOTH's built-in read-only codegraph MCP server.
 //!   - `codegraph-install` registers that server with an exact allowlist.
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -48,7 +48,7 @@ pub enum McpAction {
         #[arg(long, default_value = "{}")]
         args: String,
     },
-    /// Serve NEOTH's six read-only codegraph tools over MCP stdio. Intended as
+    /// Serve NEOTH's seven read-only codegraph tools over MCP stdio. Intended as
     /// a subprocess entrypoint for MCP hosts; stdout contains protocol messages
     /// only. Run `codegraph-install` to register it in NEOTH itself.
     CodegraphServe {
@@ -94,42 +94,354 @@ pub async fn run_mcp(args: McpArgs) -> Result<()> {
 }
 
 fn install_codegraph_server(db: Option<std::path::PathBuf>, output: &OutputFormat) -> Result<()> {
-    const SERVER_ID: &str = "neoth-codegraph";
     let executable = std::env::current_exe()?.canonicalize()?;
     let desired = codegraph_server_config(&executable, db);
     desired.validate_launcher()?;
     let path = McpServers::default_path();
-    McpServers::update_at(&path, |servers| {
-        match servers
-            .servers
-            .iter_mut()
-            .find(|server| server.id == SERVER_ID)
-        {
-            Some(existing) if existing == &desired => return Ok(false),
-            Some(existing) => *existing = desired.clone(),
-            None => servers.servers.push(desired.clone()),
-        }
-        Ok(true)
-    })?;
-    match output {
-        OutputFormat::Json | OutputFormat::Jsonl => println!(
-            "{}",
-            serde_json::json!({
-                "installed": true,
-                "id": SERVER_ID,
-                "config": path,
-                "command": desired.command,
-                "args": desired.args,
-                "allow_tools": desired.allow_tools,
-            })
-        ),
-        OutputFormat::Table => println!(
-            "installed `{SERVER_ID}` in {} ({} read-only tools)",
-            path.display(),
-            crate::mcp::codegraph_server::TOOL_NAMES.len()
-        ),
-    }
+    let rendered = install_codegraph_server_at(&path, &desired, output)?;
+    println!("{rendered}");
     Ok(())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodegraphRegistrationOutcome {
+    Created,
+    RepairedLegacy,
+    AlreadyCurrent,
+    Conflict,
+}
+
+impl CodegraphRegistrationOutcome {
+    fn changed(self) -> bool {
+        matches!(self, Self::Created | Self::RepairedLegacy)
+    }
+
+    fn status(self) -> &'static str {
+        match self {
+            Self::Created => "created",
+            Self::RepairedLegacy => "repaired_legacy",
+            Self::AlreadyCurrent => "already_current",
+            Self::Conflict => "conflict",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodegraphPostStateKind {
+    ExactGenerated,
+    RecognizedCustom,
+    Disabled,
+    Noncanonical,
+}
+
+impl CodegraphPostStateKind {
+    fn status(self) -> &'static str {
+        match self {
+            Self::ExactGenerated => "exact_generated",
+            Self::RecognizedCustom => "recognized_custom",
+            Self::Disabled => "disabled",
+            Self::Noncanonical => "noncanonical",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodegraphDbSelection<'a> {
+    Default,
+    Explicit(&'a str),
+}
+
+impl<'a> CodegraphDbSelection<'a> {
+    fn path(self) -> Option<&'a str> {
+        match self {
+            Self::Default => None,
+            Self::Explicit(path) => Some(path),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CodegraphPostState {
+    kind: CodegraphPostStateKind,
+    installed: bool,
+    read_only_verified: bool,
+    launcher_valid: bool,
+    launcher_posture: Option<&'static str>,
+    launcher_error: Option<String>,
+    invocation_valid: bool,
+    db_path: Option<String>,
+    db_matches_requested: bool,
+    command_verified: bool,
+    security_hardened: bool,
+    exact_tool_allowlist: bool,
+    tool_count: usize,
+    expected_tool_count: usize,
+}
+
+fn install_codegraph_server_at(
+    path: &std::path::Path,
+    desired: &crate::mcp::McpServerConfig,
+    output: &OutputFormat,
+) -> Result<String> {
+    let mut outcome = None;
+    McpServers::update_at(path, |servers| {
+        let registration = upsert_codegraph_server(servers, desired);
+        outcome = Some(registration);
+        if registration == CodegraphRegistrationOutcome::Conflict {
+            bail!(
+                "MCP server id {:?} is already owned by an unrecognized configuration; \
+                 refusing to overwrite it",
+                desired.id
+            );
+        }
+        Ok(registration.changed())
+    })?;
+    let outcome = outcome.context("codegraph registration mutation did not run")?;
+    let persisted = McpServers::load_from(path)
+        .with_context(|| format!("verify codegraph registration at {}", path.display()))?;
+    let actual = persisted
+        .servers
+        .iter()
+        .find(|server| server.id == desired.id)
+        .with_context(|| {
+            format!(
+                "codegraph registration {:?} disappeared before post-state verification",
+                desired.id
+            )
+        })?;
+    let post_state = inspect_codegraph_post_state(actual, desired);
+    render_codegraph_install(outcome, actual, &post_state, path, output)
+}
+
+fn inspect_codegraph_post_state(
+    actual: &crate::mcp::McpServerConfig,
+    desired: &crate::mcp::McpServerConfig,
+) -> CodegraphPostState {
+    let (launcher_valid, launcher_posture, launcher_error) = match actual.validate_launcher() {
+        Ok(posture) => (true, Some(posture.as_str()), None),
+        Err(error) => (false, None, Some(error.to_string())),
+    };
+    let actual_invocation = parse_codegraph_invocation(&actual.args);
+    let desired_invocation = parse_codegraph_invocation(&desired.args);
+    let exact_tool_allowlist = has_exact_codegraph_allowlist(actual);
+    let tool_count = actual.allow_tools.as_ref().map_or(0, Vec::len);
+    let expected_tool_count = crate::mcp::codegraph_server::TOOL_NAMES.len();
+    let command_verified = actual.command == desired.command && actual.env.is_empty();
+    let security_hardened = !actual.trust_all_tools && exact_tool_allowlist;
+    let invocation_valid = actual_invocation.is_some();
+    let read_only_verified = actual.enabled
+        && launcher_valid
+        && invocation_valid
+        && command_verified
+        && security_hardened;
+    let kind = if !actual.enabled {
+        CodegraphPostStateKind::Disabled
+    } else if actual == desired && read_only_verified {
+        CodegraphPostStateKind::ExactGenerated
+    } else if launcher_valid && invocation_valid && security_hardened {
+        CodegraphPostStateKind::RecognizedCustom
+    } else {
+        CodegraphPostStateKind::Noncanonical
+    };
+
+    CodegraphPostState {
+        kind,
+        installed: read_only_verified,
+        read_only_verified,
+        launcher_valid,
+        launcher_posture,
+        launcher_error,
+        invocation_valid,
+        db_path: actual_invocation
+            .and_then(CodegraphDbSelection::path)
+            .map(str::to_string),
+        db_matches_requested: actual_invocation.is_some()
+            && actual_invocation == desired_invocation,
+        command_verified,
+        security_hardened,
+        exact_tool_allowlist,
+        tool_count,
+        expected_tool_count,
+    }
+}
+
+fn parse_codegraph_invocation(args: &[String]) -> Option<CodegraphDbSelection<'_>> {
+    match args {
+        [mcp, serve] if mcp == "mcp" && serve == "codegraph-serve" => {
+            Some(CodegraphDbSelection::Default)
+        }
+        [mcp, serve, db_flag, db]
+            if mcp == "mcp"
+                && serve == "codegraph-serve"
+                && db_flag == "--db"
+                && !db.is_empty()
+                && !db.contains('\0') =>
+        {
+            Some(CodegraphDbSelection::Explicit(db))
+        }
+        _ => None,
+    }
+}
+
+fn has_exact_codegraph_allowlist(server: &crate::mcp::McpServerConfig) -> bool {
+    server.allow_tools.as_ref().is_some_and(|tools| {
+        tools.len() == crate::mcp::codegraph_server::TOOL_NAMES.len()
+            && crate::mcp::codegraph_server::TOOL_NAMES
+                .iter()
+                .all(|required| tools.iter().any(|tool| tool == required))
+    })
+}
+
+fn render_codegraph_install(
+    outcome: CodegraphRegistrationOutcome,
+    actual: &crate::mcp::McpServerConfig,
+    post_state: &CodegraphPostState,
+    path: &std::path::Path,
+    output: &OutputFormat,
+) -> Result<String> {
+    match output {
+        OutputFormat::Json => serde_json::to_string_pretty(&serde_json::json!({
+            "installed": post_state.installed,
+            "read_only_verified": post_state.read_only_verified,
+            "changed": outcome.changed(),
+            "status": post_state.kind.status(),
+            "mutation": outcome.status(),
+            "id": actual.id,
+            "config": path,
+            "command": actual.command,
+            "args": actual.args,
+            "enabled": actual.enabled,
+            "allow_tools": actual.allow_tools,
+            "tool_count": post_state.tool_count,
+            "expected_tool_count": post_state.expected_tool_count,
+            "exact_tool_allowlist": post_state.exact_tool_allowlist,
+            "security_hardened": post_state.security_hardened,
+            "command_verified": post_state.command_verified,
+            "invocation_valid": post_state.invocation_valid,
+            "db": post_state.db_path,
+            "db_matches_requested": post_state.db_matches_requested,
+            "launcher": {
+                "valid": post_state.launcher_valid,
+                "posture": post_state.launcher_posture,
+                "error": post_state.launcher_error,
+            },
+        }))
+        .context("serialize codegraph install result"),
+        OutputFormat::Jsonl => serde_json::to_string(&serde_json::json!({
+            "installed": post_state.installed,
+            "read_only_verified": post_state.read_only_verified,
+            "changed": outcome.changed(),
+            "status": post_state.kind.status(),
+            "mutation": outcome.status(),
+            "id": actual.id,
+            "config": path,
+            "command": actual.command,
+            "args": actual.args,
+            "enabled": actual.enabled,
+            "allow_tools": actual.allow_tools,
+            "tool_count": post_state.tool_count,
+            "expected_tool_count": post_state.expected_tool_count,
+            "exact_tool_allowlist": post_state.exact_tool_allowlist,
+            "security_hardened": post_state.security_hardened,
+            "command_verified": post_state.command_verified,
+            "invocation_valid": post_state.invocation_valid,
+            "db": post_state.db_path,
+            "db_matches_requested": post_state.db_matches_requested,
+            "launcher": {
+                "valid": post_state.launcher_valid,
+                "posture": post_state.launcher_posture,
+                "error": post_state.launcher_error,
+            },
+        }))
+        .context("serialize codegraph install JSONL result"),
+        OutputFormat::Table => Ok(format!(
+            "`{}` in {}: mutation={}, post_state={}, installed={}, \
+             read_only_verified={}, tools={}/{}, launcher_valid={}, \
+             command_verified={}, db={}",
+            actual.id,
+            path.display(),
+            outcome.status(),
+            post_state.kind.status(),
+            post_state.installed,
+            post_state.read_only_verified,
+            post_state.tool_count,
+            post_state.expected_tool_count,
+            post_state.launcher_valid,
+            post_state.command_verified,
+            post_state.db_path.as_deref().unwrap_or("<default>"),
+        )),
+    }
+}
+
+fn upsert_codegraph_server(
+    servers: &mut McpServers,
+    desired: &crate::mcp::McpServerConfig,
+) -> CodegraphRegistrationOutcome {
+    match servers
+        .servers
+        .iter_mut()
+        .find(|server| server.id == desired.id)
+    {
+        Some(existing) if &*existing == desired => CodegraphRegistrationOutcome::AlreadyCurrent,
+        Some(existing) if repair_legacy_codegraph_allowlist(existing) => {
+            CodegraphRegistrationOutcome::RepairedLegacy
+        }
+        Some(existing) if is_ready_codegraph_registration(existing) => {
+            CodegraphRegistrationOutcome::AlreadyCurrent
+        }
+        Some(_) => CodegraphRegistrationOutcome::Conflict,
+        None => {
+            servers.servers.push(desired.clone());
+            CodegraphRegistrationOutcome::Created
+        }
+    }
+}
+
+fn is_ready_codegraph_registration(server: &crate::mcp::McpServerConfig) -> bool {
+    server.args.first().map(String::as_str) == Some("mcp")
+        && server.args.get(1).map(String::as_str) == Some("codegraph-serve")
+        && server.allow_tools.as_ref().is_some_and(|tools| {
+            crate::mcp::codegraph_server::TOOL_NAMES
+                .iter()
+                .all(|required| tools.iter().any(|tool| tool == required))
+        })
+}
+
+fn repair_legacy_codegraph_allowlist(existing: &mut crate::mcp::McpServerConfig) -> bool {
+    const IMPACT_TOOL: &str = "codegraph_impact_radius";
+
+    // Only registrations that still launch NEOTH's codegraph subcommand and
+    // expose every member of the former six-tool catalogue are recognizable as
+    // legacy built-ins. Everything else may be an operator-owned server that
+    // merely reused the ID and must not be rewritten.
+    if existing.args.first().map(String::as_str) != Some("mcp")
+        || existing.args.get(1).map(String::as_str) != Some("codegraph-serve")
+    {
+        return false;
+    }
+    let Some(tools) = existing.allow_tools.as_mut() else {
+        return false;
+    };
+    if tools.iter().any(|tool| tool == IMPACT_TOOL) {
+        return false;
+    }
+    let has_legacy_catalogue = crate::mcp::codegraph_server::TOOL_NAMES
+        .iter()
+        .filter(|tool| **tool != IMPACT_TOOL)
+        .all(|required| tools.iter().any(|tool| tool == required));
+    if !has_legacy_catalogue {
+        return false;
+    }
+
+    // Preserve custom tools and their order. Inserting immediately before the
+    // old outline entry reproduces the canonical seven-tool order for an exact
+    // legacy registration without touching command/env/db/security settings.
+    let insertion = tools
+        .iter()
+        .position(|tool| tool == "codegraph_outline")
+        .unwrap_or(tools.len());
+    tools.insert(insertion, IMPACT_TOOL.to_string());
+    true
 }
 
 fn codegraph_server_config(
@@ -510,6 +822,353 @@ mod tests {
             config.args,
             ["mcp", "codegraph-serve", "--db", "relative-code-map.db"]
         );
+    }
+
+    #[test]
+    fn codegraph_registration_repairs_the_previous_exact_six_tool_allowlist() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let mut previous = desired.clone();
+        previous.allow_tools = Some(
+            crate::mcp::codegraph_server::TOOL_NAMES
+                .iter()
+                .filter(|name| **name != "codegraph_impact_radius")
+                .map(|name| (*name).to_string())
+                .collect(),
+        );
+        assert_eq!(previous.allow_tools.as_ref().unwrap().len(), 6);
+        let mut servers = McpServers {
+            smart_loading: true,
+            servers: vec![previous],
+        };
+
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::RepairedLegacy,
+            "an installed six-tool registration must be rewritten"
+        );
+        assert_eq!(servers.servers.len(), 1);
+        assert_eq!(
+            servers.servers[0].allow_tools.as_deref().unwrap(),
+            crate::mcp::codegraph_server::TOOL_NAMES
+        );
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::AlreadyCurrent,
+            "the repaired seven-tool registration must be idempotent"
+        );
+    }
+
+    #[test]
+    fn codegraph_registration_adds_seventh_tool_without_clobbering_custom_settings() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let mut customized = desired.clone();
+        customized.description = Some("operator-owned description".into());
+        customized.command = "C:/custom/neoth-wrapper.exe".into();
+        customized.args = vec![
+            "mcp".into(),
+            "codegraph-serve".into(),
+            "--db".into(),
+            "D:/custom/code-map.db".into(),
+        ];
+        customized
+            .env
+            .insert("NEOTH_CUSTOM".into(), "preserve-me".into());
+        customized.enabled = false;
+        customized.trust_all_tools = true;
+        customized.smart_approve = false;
+        customized.autonomy_gate = Some(crate::permissions::AutonomyLevel::Elevated);
+        customized.allow_tools = Some(
+            crate::mcp::codegraph_server::TOOL_NAMES
+                .iter()
+                .filter(|name| **name != "codegraph_impact_radius")
+                .map(|name| (*name).to_string())
+                .chain(std::iter::once("operator_custom_tool".into()))
+                .collect(),
+        );
+        let before = customized.clone();
+        let mut servers = McpServers {
+            smart_loading: true,
+            servers: vec![customized],
+        };
+
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::RepairedLegacy
+        );
+        let repaired = &servers.servers[0];
+        assert_eq!(repaired.description, before.description);
+        assert_eq!(repaired.command, before.command);
+        assert_eq!(repaired.args, before.args);
+        assert_eq!(repaired.env, before.env);
+        assert_eq!(repaired.enabled, before.enabled);
+        assert_eq!(repaired.trust_all_tools, before.trust_all_tools);
+        assert_eq!(repaired.smart_approve, before.smart_approve);
+        assert_eq!(repaired.autonomy_gate, before.autonomy_gate);
+        let tools = repaired.allow_tools.as_ref().unwrap();
+        assert!(tools.iter().any(|tool| tool == "operator_custom_tool"));
+        assert!(tools.iter().any(|tool| tool == "codegraph_impact_radius"));
+        assert_eq!(tools.len(), before.allow_tools.as_ref().unwrap().len() + 1);
+    }
+
+    #[test]
+    fn codegraph_registration_does_not_rewrite_unrecognized_same_id_server() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let custom = crate::mcp::McpServerConfig {
+            id: "neoth-codegraph".into(),
+            description: Some("different server".into()),
+            command: "custom-server".into(),
+            args: vec!["serve".into()],
+            env: std::collections::HashMap::from([("TOKEN".into(), "from_env".into())]),
+            enabled: false,
+            allow_tools: Some(vec!["custom_tool".into()]),
+            trust_all_tools: false,
+            smart_approve: false,
+            autonomy_gate: Some(crate::permissions::AutonomyLevel::Full),
+        };
+        let mut servers = McpServers {
+            smart_loading: true,
+            servers: vec![custom.clone()],
+        };
+
+        assert_eq!(
+            upsert_codegraph_server(&mut servers, &desired),
+            CodegraphRegistrationOutcome::Conflict
+        );
+        assert_eq!(servers.servers, vec![custom]);
+    }
+
+    #[test]
+    fn codegraph_install_reports_actual_post_state_in_json_and_table() {
+        for output in [OutputFormat::Json, OutputFormat::Jsonl, OutputFormat::Table] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp_servers.yaml");
+            let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+            McpServers::update_at(&path, |servers| {
+                servers.servers.push(desired.clone());
+                Ok(true)
+            })
+            .unwrap();
+
+            let rendered =
+                install_codegraph_server_at(&path, &desired, &output).expect("post-state is ready");
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+                    assert_eq!(value["installed"], true);
+                    assert_eq!(value["read_only_verified"], true);
+                    assert_eq!(value["changed"], false);
+                    assert_eq!(value["status"], "exact_generated");
+                    assert_eq!(value["mutation"], "already_current");
+                    assert_eq!(value["launcher"]["valid"], true);
+                    assert_eq!(value["launcher"]["posture"], "direct_executable");
+                    assert_eq!(value["command_verified"], true);
+                    assert_eq!(value["invocation_valid"], true);
+                    assert_eq!(value["db"], serde_json::Value::Null);
+                    assert_eq!(value["db_matches_requested"], true);
+                    assert_eq!(value["security_hardened"], true);
+                    assert_eq!(value["exact_tool_allowlist"], true);
+                    assert_eq!(
+                        value["tool_count"].as_u64(),
+                        Some(crate::mcp::codegraph_server::TOOL_NAMES.len() as u64)
+                    );
+                    assert_eq!(
+                        value["expected_tool_count"].as_u64(),
+                        Some(crate::mcp::codegraph_server::TOOL_NAMES.len() as u64)
+                    );
+                    assert_eq!(
+                        value["allow_tools"].as_array().unwrap().len(),
+                        crate::mcp::codegraph_server::TOOL_NAMES.len()
+                    );
+                }
+                OutputFormat::Table => {
+                    assert!(rendered.contains("mutation=already_current"));
+                    assert!(rendered.contains("post_state=exact_generated"));
+                    assert!(rendered.contains("installed=true"));
+                    assert!(rendered.contains("read_only_verified=true"));
+                    assert!(rendered.contains(&format!(
+                        "tools={0}/{0}",
+                        crate::mcp::codegraph_server::TOOL_NAMES.len()
+                    )));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn codegraph_install_preserves_disabled_registration_without_install_claims() {
+        for output in [OutputFormat::Json, OutputFormat::Table] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp_servers.yaml");
+            let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+            let mut disabled = desired.clone();
+            disabled.enabled = false;
+            McpServers::update_at(&path, |servers| {
+                servers.servers.push(disabled.clone());
+                Ok(true)
+            })
+            .unwrap();
+
+            let rendered = install_codegraph_server_at(&path, &desired, &output).unwrap();
+            match output {
+                OutputFormat::Json => {
+                    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+                    assert_eq!(value["status"], "disabled");
+                    assert_eq!(value["mutation"], "already_current");
+                    assert_eq!(value["installed"], false);
+                    assert_eq!(value["read_only_verified"], false);
+                    assert_eq!(value["enabled"], false);
+                    assert_eq!(value["launcher"]["valid"], true);
+                    assert_eq!(value["command_verified"], true);
+                    assert_eq!(value["security_hardened"], true);
+                    assert_eq!(value["exact_tool_allowlist"], true);
+                }
+                OutputFormat::Table => {
+                    assert!(rendered.contains("post_state=disabled"));
+                    assert!(rendered.contains("installed=false"));
+                    assert!(rendered.contains("read_only_verified=false"));
+                }
+                OutputFormat::Jsonl => unreachable!(),
+            }
+            assert_eq!(
+                McpServers::load_from(&path).unwrap().servers,
+                vec![disabled]
+            );
+        }
+    }
+
+    #[test]
+    fn codegraph_install_reports_custom_db_and_unverified_command_truthfully() {
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let db_config_path = db_dir.path().join("mcp_servers.yaml");
+        let mut custom_db = desired.clone();
+        custom_db.args = vec![
+            "mcp".into(),
+            "codegraph-serve".into(),
+            "--db".into(),
+            "D:/operator/code-map.db".into(),
+        ];
+        McpServers::update_at(&db_config_path, |servers| {
+            servers.servers.push(custom_db.clone());
+            Ok(true)
+        })
+        .unwrap();
+        let db_rendered =
+            install_codegraph_server_at(&db_config_path, &desired, &OutputFormat::Json).unwrap();
+        let db_value: serde_json::Value = serde_json::from_str(&db_rendered).unwrap();
+        assert_eq!(db_value["status"], "recognized_custom");
+        assert_eq!(db_value["mutation"], "already_current");
+        assert_eq!(db_value["installed"], true);
+        assert_eq!(db_value["read_only_verified"], true);
+        assert_eq!(db_value["db"], "D:/operator/code-map.db");
+        assert_eq!(db_value["db_matches_requested"], false);
+        assert_eq!(db_value["command_verified"], true);
+        assert_eq!(
+            McpServers::load_from(&db_config_path).unwrap().servers,
+            vec![custom_db]
+        );
+
+        let command_dir = tempfile::tempdir().unwrap();
+        let command_config_path = command_dir.path().join("mcp_servers.yaml");
+        let mut custom_command = desired.clone();
+        custom_command.command = "operator-codegraph".into();
+        McpServers::update_at(&command_config_path, |servers| {
+            servers.servers.push(custom_command.clone());
+            Ok(true)
+        })
+        .unwrap();
+        let command_rendered =
+            install_codegraph_server_at(&command_config_path, &desired, &OutputFormat::Json)
+                .unwrap();
+        let command_value: serde_json::Value = serde_json::from_str(&command_rendered).unwrap();
+        assert_eq!(command_value["status"], "recognized_custom");
+        assert_eq!(command_value["installed"], false);
+        assert_eq!(command_value["read_only_verified"], false);
+        assert_eq!(command_value["launcher"]["valid"], true);
+        assert_eq!(command_value["command_verified"], false);
+        assert_eq!(command_value["db_matches_requested"], true);
+        assert_eq!(
+            McpServers::load_from(&command_config_path).unwrap().servers,
+            vec![custom_command]
+        );
+    }
+
+    #[test]
+    fn codegraph_install_marks_invalid_launcher_security_and_tool_count_noncanonical() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp_servers.yaml");
+        let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+        let mut noncanonical = desired.clone();
+        noncanonical.command = "powershell".into();
+        noncanonical.trust_all_tools = true;
+        noncanonical
+            .allow_tools
+            .as_mut()
+            .unwrap()
+            .push("operator_unknown_tool".into());
+        McpServers::update_at(&path, |servers| {
+            servers.servers.push(noncanonical.clone());
+            Ok(true)
+        })
+        .unwrap();
+
+        let rendered = install_codegraph_server_at(&path, &desired, &OutputFormat::Json).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
+        assert_eq!(value["status"], "noncanonical");
+        assert_eq!(value["installed"], false);
+        assert_eq!(value["read_only_verified"], false);
+        assert_eq!(value["launcher"]["valid"], false);
+        assert!(
+            value["launcher"]["error"]
+                .as_str()
+                .unwrap()
+                .contains("opaque")
+        );
+        assert_eq!(value["security_hardened"], false);
+        assert_eq!(value["exact_tool_allowlist"], false);
+        assert_eq!(
+            value["tool_count"].as_u64(),
+            Some((crate::mcp::codegraph_server::TOOL_NAMES.len() + 1) as u64)
+        );
+        assert_eq!(
+            value["expected_tool_count"].as_u64(),
+            Some(crate::mcp::codegraph_server::TOOL_NAMES.len() as u64)
+        );
+        assert_eq!(
+            McpServers::load_from(&path).unwrap().servers,
+            vec![noncanonical]
+        );
+    }
+
+    #[test]
+    fn codegraph_install_conflict_is_nonzero_and_preserves_custom_server() {
+        for output in [OutputFormat::Json, OutputFormat::Table] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp_servers.yaml");
+            let desired = codegraph_server_config(std::path::Path::new("neothd"), None);
+            let custom = crate::mcp::McpServerConfig {
+                id: desired.id.clone(),
+                description: Some("operator-owned server".into()),
+                command: "custom-server".into(),
+                args: vec!["serve".into()],
+                env: std::collections::HashMap::new(),
+                enabled: true,
+                allow_tools: Some(vec!["custom_tool".into()]),
+                trust_all_tools: false,
+                smart_approve: false,
+                autonomy_gate: None,
+            };
+            McpServers::update_at(&path, |servers| {
+                servers.servers.push(custom.clone());
+                Ok(true)
+            })
+            .unwrap();
+
+            let error = install_codegraph_server_at(&path, &desired, &output).unwrap_err();
+            assert!(error.to_string().contains("already owned"));
+            assert_eq!(McpServers::load_from(&path).unwrap().servers, vec![custom]);
+        }
     }
 
     #[test]

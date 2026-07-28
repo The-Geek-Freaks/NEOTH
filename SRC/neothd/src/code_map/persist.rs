@@ -12,7 +12,7 @@
 //!   - Operators can introspect what NEOTH knows about their repo
 //!     between sessions (`sqlite3 ~/.neoth/code_map.db …`).
 //!
-//! ## Schema (v2 — CBM-04 incremental re-index)
+//! ## Schema (v4 — generation-bound graph snapshots)
 //!
 //! ```sql
 //! CREATE TABLE meta (
@@ -27,7 +27,9 @@
 //!     total_bytes INTEGER NOT NULL,
 //!     total_loc  INTEGER NOT NULL,
 //!     oversize_skipped INTEGER NOT NULL,
-//!     truncated_at INTEGER  -- nullable
+//!     truncated_at INTEGER,  -- nullable
+//!     index_generation INTEGER NOT NULL DEFAULT 0,
+//!     graph_generation INTEGER NOT NULL DEFAULT 0
 //! );
 //!
 //! CREATE TABLE code_map_files (
@@ -72,14 +74,11 @@
 //!
 //! A crash mid-persist leaves the prior snapshot intact (no partial
 //! state). A successful commit replaces the snapshot atomically.
-//!
-//! A crash mid-persist leaves the prior snapshot intact (no partial
-//! state). A successful commit replaces the snapshot atomically.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
-use rusqlite::{Connection, OptionalExtension};
+use anyhow::{Context, Result, bail};
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
 
 use super::symbols::{Symbol, SymbolKind};
 use super::walker::{Language, RepoFile, RepoMap, ScanReport};
@@ -89,7 +88,17 @@ use super::walker::{Language, RepoFile, RepoMap, ScanReport};
 /// v3 adds a monotonic per-root `index_generation` counter to
 /// `code_map_roots` (GOLD-R3-13) so a recall consumer can tell that a root
 /// was re-scanned under it and invalidate a cached result.
-pub const CODE_MAP_SCHEMA_VERSION: i64 = 3;
+/// v4 adds `graph_generation`, advanced only in the same transaction that
+/// replaces a root's edges. Consumers can therefore reject a mixed snapshot
+/// after `persist_map` succeeds but edge persistence does not.
+pub const CODE_MAP_SCHEMA_VERSION: i64 = 4;
+
+/// Hard ceiling for one filesystem freshness receipt. The count gate runs
+/// before row materialisation and every SELECT still carries `LIMIT cap + 1`
+/// so a concurrent count-to-query insertion cannot force unbounded allocation.
+pub(crate) const MAX_FRESHNESS_FILES: usize = 250_000;
+const MAX_FRESHNESS_TEXT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_FRESHNESS_ROW_TEXT_BYTES: usize = 64 * 1024;
 
 /// `~/.neoth/code_map.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -103,14 +112,40 @@ pub fn default_path() -> PathBuf {
 /// Open or create the code-map database. Applies schema on first
 /// touch; preserves existing rows on reopen.
 pub fn open(path: &Path) -> Result<Connection> {
+    open_with_migration_hooks(path, |_| {}, || {}, || {}, || {})
+}
+
+fn open_with_migration_hooks<
+    ConfigureConnection,
+    AfterVersionRead,
+    BeforeImmediate,
+    AfterImmediate,
+>(
+    path: &Path,
+    configure_connection: ConfigureConnection,
+    after_version_read: AfterVersionRead,
+    before_immediate: BeforeImmediate,
+    after_immediate: AfterImmediate,
+) -> Result<Connection>
+where
+    ConfigureConnection: FnOnce(&Connection),
+    AfterVersionRead: FnOnce(),
+    BeforeImmediate: FnOnce(),
+    AfterImmediate: FnOnce(),
+{
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent dir for {}", path.display()))?;
     }
     let is_new = !path.exists();
-    let conn = Connection::open(path)
+    let mut conn = Connection::open(path)
         .with_context(|| format!("open code_map SQLite db {}", path.display()))?;
 
+    // Set the busy handler before any pragma that may need the SQLite writer
+    // lock. Concurrent first-open/migration paths can otherwise fail at
+    // `journal_mode=WAL` before the later timeout is installed.
+    conn.busy_timeout(std::time::Duration::from_millis(5_000))
+        .context("set SQLite busy_timeout=5000")?;
     conn.pragma_update(None, "journal_mode", "WAL")
         .context("set SQLite journal_mode=WAL")?;
     conn.pragma_update(None, "synchronous", "NORMAL")
@@ -118,8 +153,6 @@ pub fn open(path: &Path) -> Result<Connection> {
     conn.pragma_update(None, "foreign_keys", "ON")
         .context("set SQLite foreign_keys=ON")?;
     // TRAIL-01/05: matching hardening pragmas (see memory/store.rs for rationale).
-    conn.pragma_update(None, "busy_timeout", 5_000i64)
-        .context("set SQLite busy_timeout=5000")?;
     conn.pragma_update(None, "wal_autocheckpoint", 1_000i64)
         .context("set SQLite wal_autocheckpoint=1000")?;
     conn.pragma_update(None, "mmap_size", 67_108_864i64)
@@ -130,6 +163,7 @@ pub fn open(path: &Path) -> Result<Connection> {
         .context("set SQLite temp_store=MEMORY")?;
     conn.pragma_update(None, "journal_size_limit", 209_715_200i64)
         .context("set SQLite journal_size_limit=200MiB")?;
+    configure_connection(&conn);
 
     if is_new {
         apply_schema(&conn)?;
@@ -143,12 +177,10 @@ pub fn open(path: &Path) -> Result<Connection> {
             let _ = crate::wal::win_acl::restrict_to_owner(path);
         }
     } else {
-        // Existing DB — check schema_version and migrate if needed.
-        // Mirrors the memory/store.rs pattern (lines 108-153 there):
-        // read current_version from meta, then run the migration chain.
-        // Concurrent openers are safe: SQLite WAL serialises writes and
-        // busy_timeout=5000 handles any brief contention window; the
-        // second opener will see version=2 and skip the migration.
+        // Existing DB — a cheap read avoids taking the migration writer lock
+        // for current schemas. The migration itself acquires IMMEDIATE and
+        // re-reads the version under that lock, so concurrent openers cannot
+        // both execute the same ALTER TABLE.
         let current_version: Option<i64> = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -160,12 +192,14 @@ pub fn open(path: &Path) -> Result<Connection> {
             )
             .optional()
             .context("read code_map schema_version")?;
+        after_version_read();
         if let Some(v) = current_version
             && v < CODE_MAP_SCHEMA_VERSION
         {
-            migrate_code_map(&conn, v).with_context(|| {
-                format!("migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}")
-            })?;
+            migrate_code_map_with_hooks(&mut conn, before_immediate, after_immediate)
+                .with_context(|| {
+                    format!("migrate code_map DB from v{v} to v{CODE_MAP_SCHEMA_VERSION}")
+                })?;
         }
         // If meta table doesn't exist yet (pre-schema DB), apply_schema
         // handles it; the is_new branch already covers that case via
@@ -176,21 +210,44 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Run code-map schema migrations from `current_version` up to
-/// [`CODE_MAP_SCHEMA_VERSION`]. Each step is atomic: the version stamp
-/// in `meta` only advances after the DDL succeeds.
-fn migrate_code_map(conn: &Connection, current_version: i64) -> Result<()> {
-    let mut v = current_version;
+/// Run code-map schema migrations under one IMMEDIATE writer transaction.
+/// The version is deliberately re-read after acquiring that lock: a second
+/// concurrent opener observes the first opener's committed version and skips
+/// every already-applied ALTER instead of racing it.
+fn migrate_code_map_with_hooks<BeforeImmediate, AfterImmediate>(
+    conn: &mut Connection,
+    before_immediate: BeforeImmediate,
+    after_immediate: AfterImmediate,
+) -> Result<()>
+where
+    BeforeImmediate: FnOnce(),
+    AfterImmediate: FnOnce(),
+{
+    before_immediate();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin locked code-map migration")?;
+    after_immediate();
+    let mut v: i64 = tx
+        .query_row(
+            "SELECT value FROM meta WHERE key='schema_version'",
+            [],
+            |row| {
+                let value: String = row.get(0)?;
+                Ok(value.parse::<i64>().unwrap_or(0))
+            },
+        )
+        .context("re-read code_map schema_version under migration lock")?;
 
     // v1 → v2: add sha256 + mtime_ns columns (CBM-04 incremental re-index).
     // SQLite's ADD COLUMN with a DEFAULT is always safe — no full table rebuild.
     if v < 2 {
-        conn.execute_batch(
+        tx.execute_batch(
             "ALTER TABLE code_map_files ADD COLUMN sha256   TEXT    NOT NULL DEFAULT ''; \
              ALTER TABLE code_map_files ADD COLUMN mtime_ns INTEGER NOT NULL DEFAULT 0;",
         )
         .context("v1→v2: add sha256 + mtime_ns to code_map_files")?;
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')",
             [],
         )
@@ -202,12 +259,12 @@ fn migrate_code_map(conn: &Connection, current_version: i64) -> Result<()> {
     // ADD COLUMN with a DEFAULT is a metadata-only change — no table rebuild.
     // Existing roots start at generation 0; their next re-scan bumps them.
     if v < 3 {
-        conn.execute_batch(
+        tx.execute_batch(
             "ALTER TABLE code_map_roots \
              ADD COLUMN index_generation INTEGER NOT NULL DEFAULT 0;",
         )
         .context("v2→v3: add index_generation to code_map_roots")?;
-        conn.execute(
+        tx.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '3')",
             [],
         )
@@ -215,7 +272,24 @@ fn migrate_code_map(conn: &Connection, current_version: i64) -> Result<()> {
         v = 3;
     }
 
-    let _ = v; // suppress unused-variable warning when no further migrations exist
+    // v3 → v4: bind the persisted edge set to the exact index generation.
+    // Existing roots deliberately receive an invalid negative graph
+    // generation. A legacy index generation can also be zero, and equality of
+    // two uncertified zero values must never be interpreted as a valid graph.
+    if v < 4 {
+        tx.execute_batch(
+            "ALTER TABLE code_map_roots \
+             ADD COLUMN graph_generation INTEGER NOT NULL DEFAULT -1;",
+        )
+        .context("v3→v4: add graph_generation to code_map_roots")?;
+        tx.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4')",
+            [],
+        )
+        .context("v3→v4: stamp schema_version=4")?;
+    }
+
+    tx.commit().context("commit locked code-map migration")?;
     Ok(())
 }
 
@@ -235,7 +309,8 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             total_loc        INTEGER NOT NULL,
             oversize_skipped INTEGER NOT NULL,
             truncated_at     INTEGER,
-            index_generation INTEGER NOT NULL DEFAULT 0
+            index_generation INTEGER NOT NULL DEFAULT 0,
+            graph_generation INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS code_map_files (
@@ -347,17 +422,18 @@ pub struct PersistStats {
     pub files_inserted: usize,
     pub symbols_inserted: usize,
     pub prior_files_replaced: usize,
-    /// Files skipped because their sha256 + mtime_ns matched the stored
-    /// row (CBM-04 incremental re-index). Skipped files already have
-    /// correct rows + symbols in the DB — no DELETE/INSERT needed.
+    /// Files skipped because sha256 + mtime_ns and, when supplied by the
+    /// scanner, the exact declaration set matched the stored row (CBM-04
+    /// incremental re-index). Skipped files already have correct rows +
+    /// symbols in the DB — no DELETE/INSERT needed.
     pub files_skipped_unchanged: usize,
 }
 
 /// Incrementally replace the snapshot for `map.root` (CBM-04).
 ///
-/// Pre-pass: query existing `(path, sha256, mtime_ns)` rows into a
-/// HashMap. Files whose hash + mtime match the new scan are skipped
-/// (already correct in the DB). Changed and new files are
+/// Pre-pass: query existing `(path, sha256, mtime_ns, symbols)` rows into a
+/// HashMap. Files whose hash + mtime and supplied symbol set match the new scan
+/// are skipped (already correct in the DB). Changed and new files are
 /// deleted-then-reinserted; removed files are deleted. The root
 /// metadata row is upserted in-place rather than cascade-deleted, so
 /// unchanged file rows survive across calls.
@@ -365,41 +441,126 @@ pub struct PersistStats {
 /// On error the transaction rolls back — the prior snapshot stays
 /// intact (no partial state).
 pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats> {
-    // ── Pre-pass: load existing (path → (sha256, mtime_ns)) ─────────
-    // Key: repo-relative path. Value: (sha256 hex, mtime_ns as i64).
-    // Empty when this is the first persist for this root.
-    let stored: std::collections::HashMap<String, (String, i64)> = {
-        let mut stmt = conn
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin persist-map transaction")?;
+    let stats = persist_map_in_transaction(&tx, map, SymbolComparisonMode::LegacyEmptyWildcard)?;
+    tx.commit().context("commit persist-map transaction")?;
+    Ok(stats)
+}
+
+#[derive(Clone, Copy)]
+enum SymbolComparisonMode {
+    /// Historical low-level `persist_map` callers use an empty declaration
+    /// list to mean "symbols were not supplied"; retain the stored rows.
+    LegacyEmptyWildcard,
+    /// A production map+graph snapshot is the exact scanner output. An empty
+    /// declaration list therefore means no declarations and removes stale
+    /// symbol rows from the prior generation.
+    ExactSnapshot,
+}
+
+/// Apply the map half of a snapshot to an already-exclusive transaction.
+///
+/// Keeping the pre-pass under the same IMMEDIATE transaction as the writes is
+/// essential: an incremental diff computed before acquiring the writer lock
+/// can otherwise be applied to a newer snapshot published by another process.
+fn persist_map_in_transaction(
+    tx: &Transaction<'_>,
+    map: &RepoMap,
+    symbol_comparison: SymbolComparisonMode,
+) -> Result<PersistStats> {
+    type StoredSymbols = Vec<(String, String, u32)>;
+    type StoredFile = (String, i64, StoredSymbols);
+
+    // ── Pre-pass: load existing file fingerprints + declarations ─────
+    // Exact declaration comparison matters when an older snapshot was built
+    // without `--symbols`: unchanged source bytes must still be replaced once
+    // so the now-mandatory concrete graph identities are adopted.
+    let mut stored: std::collections::HashMap<String, StoredFile> = {
+        let mut stmt = tx
             .prepare("SELECT path, sha256, mtime_ns FROM code_map_files WHERE root = ?1")
             .context("prepare pre-pass stored-hash query")?;
         stmt.query_map(rusqlite::params![&map.root], |row| {
             let path: String = row.get(0)?;
             let sha256: String = row.get(1)?;
             let mtime_ns: i64 = row.get(2)?;
-            Ok((path, (sha256, mtime_ns)))
+            Ok((path, (sha256, mtime_ns, StoredSymbols::new())))
         })
         .context("execute pre-pass stored-hash query")?
         .collect::<rusqlite::Result<_>>()
         .context("collect stored-hash rows")?
     };
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT f.path, s.name, s.kind, s.line \
+                 FROM code_map_files f \
+                 JOIN code_map_symbols s ON s.file_id = f.id \
+                 WHERE f.root = ?1 \
+                 ORDER BY f.path, s.name, s.kind, s.line",
+            )
+            .context("prepare pre-pass stored-symbol query")?;
+        let rows = stmt
+            .query_map(rusqlite::params![&map.root], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                ))
+            })
+            .context("execute pre-pass stored-symbol query")?;
+        for row in rows {
+            let (path, name, kind, line) = row.context("read stored symbol row")?;
+            let line = u32::try_from(line)
+                .with_context(|| format!("invalid stored symbol line {line} for {path}::{name}"))?;
+            if let Some((_, _, symbols)) = stored.get_mut(&path) {
+                symbols.push((name, kind, line));
+            }
+        }
+    }
 
     // Count prior files for operator feedback (mirrors old stats field).
     let prior_files_replaced = stored.len();
 
     // ── Partition scan into unchanged vs changed/new ─────────────────
-    // A file is "unchanged" when both sha256 AND mtime_ns match the
-    // stored row. The sha256 is the authoritative guard; mtime is a
-    // fast-path hint. If mtime changed but hash is the same (e.g. a
-    // `touch` with identical content), we still skip the reinsert —
-    // the DB content is correct, only the mtime_ns column would
-    // diverge, which is acceptable (minor mtime drift vs an I/O save).
+    // A file is "unchanged" when sha256 AND mtime_ns match and the scanner's
+    // declaration set matches according to the caller's explicit contract.
+    // The legacy low-level API treats an empty declaration set as "not
+    // supplied"; production atomic snapshots compare exact sets, including
+    // empty, so stale declarations cannot survive into a certified graph.
     let mut unchanged_paths: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut changed_files: Vec<&super::walker::RepoFile> = Vec::new();
 
     for file in &map.files {
-        if let Some((stored_sha, stored_mtime)) = stored.get(&file.path)
+        let mut scanned_symbols: StoredSymbols = file
+            .symbols
+            .iter()
+            .map(|symbol| {
+                (
+                    symbol.name.clone(),
+                    symbol.kind.label().to_string(),
+                    symbol.line,
+                )
+            })
+            .collect();
+        scanned_symbols.sort();
+        let symbols_match = match symbol_comparison {
+            SymbolComparisonMode::LegacyEmptyWildcard => {
+                scanned_symbols.is_empty()
+                    || stored
+                        .get(&file.path)
+                        .is_some_and(|(_, _, symbols)| symbols == &scanned_symbols)
+            }
+            SymbolComparisonMode::ExactSnapshot => stored
+                .get(&file.path)
+                .is_some_and(|(_, _, symbols)| symbols == &scanned_symbols),
+        };
+        if let Some((stored_sha, stored_mtime, _)) = stored.get(&file.path)
             && *stored_sha == file.sha256
             && *stored_mtime == file.mtime_ns as i64
+            && symbols_match
         {
             unchanged_paths.insert(&file.path);
             continue;
@@ -416,8 +577,6 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
         .map(String::as_str)
         .collect();
 
-    // ── Single transaction: upsert root + delete changed/removed + insert changed/new ──
-    let tx = conn.transaction().context("begin persist tx")?;
     let now_unix = crate::time::now_unix_i64();
 
     // Upsert the root metadata row. We use INSERT … ON CONFLICT UPDATE
@@ -428,8 +587,8 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     tx.execute(
         "INSERT INTO code_map_roots \
          (root, scanned_at, total_files, total_bytes, total_loc, oversize_skipped, truncated_at, \
-          index_generation) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1) \
+          index_generation, graph_generation) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, 0) \
          ON CONFLICT(root) DO UPDATE SET \
              scanned_at       = excluded.scanned_at, \
              total_files      = excluded.total_files, \
@@ -506,7 +665,6 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
         }
     }
 
-    tx.commit().context("commit persist tx")?;
     Ok(PersistStats {
         files_inserted,
         symbols_inserted,
@@ -515,19 +673,87 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
     })
 }
 
-/// QM-2 Phase 2: persist call-graph edges for `root`. Drops every
+/// Low-level compatibility helper: persist call-graph edges for `root`. Drops every
 /// prior edge under that root (cascade via `code_map_roots` is the
 /// safety net) + inserts the supplied set. Caller owns the
 /// `CallGraph::build` invocation upstream — this fn just stores.
+/// Production rebuilds must use [`persist_map_and_edges`] so the graph cannot
+/// be rebound to a map published by a concurrent writer.
 ///
-/// Idempotent: re-running with the same edges produces the same
-/// row count (per the upstream DELETE).
+/// Idempotent: re-running with the same edges produces the same row count
+/// (per the upstream DELETE). The root's current `index_generation` is read
+/// inside this transaction and copied to `graph_generation` only after every
+/// edge insert succeeds. A failed edge replacement therefore cannot make a
+/// mixed index/graph snapshot look current.
 pub fn persist_edges(
     conn: &mut Connection,
     root: &str,
     edges: &[crate::code_map::graph::CodeEdge],
 ) -> Result<usize> {
-    let tx = conn.transaction().context("open persist_edges tx")?;
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin persist-edges transaction")?;
+    let inserted = replace_edges_in_transaction(&tx, root, edges)?;
+    tx.commit().context("commit persist-edges transaction")?;
+    Ok(inserted)
+}
+
+/// Atomically publish one map and the exact edge set built from that map.
+///
+/// Production code-map rebuilds must use this entry point. Readers either see
+/// the prior certified pair or the complete new pair; they can never observe a
+/// newer map with an older edge set whose generation was rebound by a retry.
+pub fn persist_map_and_edges(
+    conn: &mut Connection,
+    map: &RepoMap,
+    edges: &[crate::code_map::graph::CodeEdge],
+) -> Result<(PersistStats, usize)> {
+    persist_map_and_edges_with_hooks(conn, map, edges, || {}, || {}, || {})
+}
+
+fn persist_map_and_edges_with_hooks<BeforeImmediate, AfterImmediate, AfterMap>(
+    conn: &mut Connection,
+    map: &RepoMap,
+    edges: &[crate::code_map::graph::CodeEdge],
+    before_immediate: BeforeImmediate,
+    after_immediate: AfterImmediate,
+    after_map: AfterMap,
+) -> Result<(PersistStats, usize)>
+where
+    BeforeImmediate: FnOnce(),
+    AfterImmediate: FnOnce(),
+    AfterMap: FnOnce(),
+{
+    before_immediate();
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin atomic code-map snapshot transaction")?;
+    after_immediate();
+    let stats = persist_map_in_transaction(&tx, map, SymbolComparisonMode::ExactSnapshot)?;
+    after_map();
+    let inserted = replace_edges_in_transaction(&tx, &map.root, edges)?;
+    tx.commit()
+        .context("commit atomic code-map snapshot transaction")?;
+    Ok((stats, inserted))
+}
+
+fn replace_edges_in_transaction(
+    tx: &Transaction<'_>,
+    root: &str,
+    edges: &[crate::code_map::graph::CodeEdge],
+) -> Result<usize> {
+    let index_generation = tx
+        .query_row(
+            "SELECT index_generation FROM code_map_roots WHERE root = ?1",
+            rusqlite::params![root],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("query index generation before edge replacement")?;
+    let Some(index_generation) = index_generation else {
+        bail!("cannot persist edges for unknown code-map root {root:?}; persist the map first");
+    };
+
     tx.execute(
         "DELETE FROM code_map_edges WHERE root = ?1",
         rusqlite::params![root],
@@ -553,7 +779,17 @@ pub fn persist_edges(
             inserted += 1;
         }
     }
-    tx.commit().context("commit persist_edges tx")?;
+    let updated = tx
+        .execute(
+            "UPDATE code_map_roots SET graph_generation = ?2 WHERE root = ?1",
+            rusqlite::params![root, index_generation],
+        )
+        .context("bind edge snapshot to index generation")?;
+    if updated != 1 {
+        bail!(
+            "code-map root {root:?} disappeared while binding graph generation; edge snapshot rolled back"
+        );
+    }
     Ok(inserted)
 }
 
@@ -565,28 +801,25 @@ pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::
              WHERE root = ?1 ORDER BY from_file, from_symbol, to_name",
         )
         .context("prepare load_edges stmt")?;
-    let mut out = Vec::new();
     let rows = stmt
         .query_map(rusqlite::params![root], |row| {
-            let from_file: String = row.get(0)?;
-            let from_symbol: String = row.get(1)?;
-            let to_name: String = row.get(2)?;
-            let kind_str: String = row.get(3)?;
-            let kind = match kind_str.as_str() {
-                "calls" => crate::code_map::graph::EdgeKind::Calls,
-                "references" => crate::code_map::graph::EdgeKind::References,
-                _ => crate::code_map::graph::EdgeKind::Calls,
-            };
-            Ok(crate::code_map::graph::CodeEdge {
-                from_file,
-                from_symbol,
-                to_name,
-                kind,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
         })
         .context("query edges")?;
-    for r in rows {
-        out.push(r.context("read edge row")?);
+    let mut out = Vec::new();
+    for row in rows {
+        let (from_file, from_symbol, to_name, kind) = row.context("read edge row")?;
+        out.push(crate::code_map::graph::CodeEdge {
+            from_file,
+            from_symbol,
+            to_name,
+            kind: parse_persisted_edge_kind(&kind)?,
+        });
     }
     Ok(out)
 }
@@ -612,6 +845,84 @@ pub fn load_edges_for_root(
     load_edges_filtered(conn, Some(root))
 }
 
+/// Load at most `limit + 1` edges for a root so callers can reject an
+/// oversized graph without first allocating its complete persisted edge set.
+pub(crate) fn load_edges_for_root_bounded(
+    conn: &Connection,
+    root: &str,
+    limit: usize,
+) -> Result<(Vec<crate::code_map::graph::CodeEdge>, bool)> {
+    load_edges_for_root_bounded_with_text_limit(conn, root, limit, usize::MAX)
+        .map(|(edges, truncated, _)| (edges, truncated))
+}
+
+/// Impact-analysis loader with a second, byte-based allocation boundary.
+/// SQLite reports each row's text size before Rust materialises its strings,
+/// so a concurrent insertion after an aggregate preflight cannot force one
+/// enormous edge allocation.
+pub(crate) fn load_edges_for_root_bounded_with_text_limit(
+    conn: &Connection,
+    root: &str,
+    limit: usize,
+    text_byte_limit: usize,
+) -> Result<(Vec<crate::code_map::graph::CodeEdge>, bool, usize)> {
+    const MAX_EDGE_ROW_TEXT_BYTES: usize = 64 * 1024;
+    let sql_limit = i64::try_from(limit.saturating_add(1))
+        .context("convert bounded edge-query limit to SQLite integer")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT from_file, from_symbol, to_name, kind, \
+                    length(CAST(from_file AS BLOB)) + \
+                    length(CAST(from_symbol AS BLOB)) + \
+                    length(CAST(to_name AS BLOB)) + \
+                    length(CAST(kind AS BLOB)) \
+             FROM code_map_edges \
+             WHERE root = ?1 ORDER BY from_file, from_symbol, to_name LIMIT ?2",
+        )
+        .context("prepare bounded root-edge query")?;
+    let mut rows = stmt
+        .query(rusqlite::params![root, sql_limit])
+        .context("query bounded root edges")?;
+    let mut out = Vec::with_capacity(limit.min(4_096).saturating_add(1));
+    let mut text_bytes = 0usize;
+    while let Some(row) = rows.next().context("advance bounded edge row")? {
+        let row_bytes: i64 = row.get(4).context("read bounded edge text-byte count")?;
+        let row_bytes = usize::try_from(row_bytes)
+            .with_context(|| format!("invalid negative edge text-byte count {row_bytes}"))?;
+        if row_bytes > MAX_EDGE_ROW_TEXT_BYTES {
+            bail!(
+                "impact edge row requires {row_bytes} text bytes; per-row ceiling is \
+                 {MAX_EDGE_ROW_TEXT_BYTES}"
+            );
+        }
+        text_bytes = text_bytes
+            .checked_add(row_bytes)
+            .context("edge text-byte count overflow")?;
+        if text_bytes > text_byte_limit {
+            bail!("impact edge materialization refused more than {text_byte_limit} text bytes");
+        }
+        let from_file = row
+            .get::<_, String>(0)
+            .context("read bounded edge source file")?;
+        let from_symbol = row
+            .get::<_, String>(1)
+            .context("read bounded edge source symbol")?;
+        let to_name = row
+            .get::<_, String>(2)
+            .context("read bounded edge target name")?;
+        let kind = row.get::<_, String>(3).context("read bounded edge kind")?;
+        out.push(crate::code_map::graph::CodeEdge {
+            from_file,
+            from_symbol,
+            to_name,
+            kind: parse_persisted_edge_kind(&kind)?,
+        });
+    }
+    let truncated = out.len() > limit;
+    out.truncate(limit);
+    Ok((out, truncated, text_bytes))
+}
+
 fn load_edges_filtered(
     conn: &Connection,
     root: Option<&str>,
@@ -628,29 +939,37 @@ fn load_edges_filtered(
     };
     let mut stmt = conn.prepare(sql).context("prepare load_edges stmt")?;
     let params: Vec<String> = root.map(|root| vec![root.to_string()]).unwrap_or_default();
-    let mut out = Vec::new();
     let rows = stmt
         .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            let from_file: String = row.get(0)?;
-            let from_symbol: String = row.get(1)?;
-            let to_name: String = row.get(2)?;
-            let kind_str: String = row.get(3)?;
-            let kind = match kind_str.as_str() {
-                "references" => crate::code_map::graph::EdgeKind::References,
-                _ => crate::code_map::graph::EdgeKind::Calls,
-            };
-            Ok(crate::code_map::graph::CodeEdge {
-                from_file,
-                from_symbol,
-                to_name,
-                kind,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
         })
         .context("query all edges")?;
-    for r in rows {
-        out.push(r.context("read edge row")?);
+    let mut out = Vec::new();
+    for row in rows {
+        let (from_file, from_symbol, to_name, kind) = row.context("read edge row")?;
+        out.push(crate::code_map::graph::CodeEdge {
+            from_file,
+            from_symbol,
+            to_name,
+            kind: parse_persisted_edge_kind(&kind)?,
+        });
     }
     Ok(out)
+}
+
+fn parse_persisted_edge_kind(kind: &str) -> Result<crate::code_map::graph::EdgeKind> {
+    match kind {
+        "calls" => Ok(crate::code_map::graph::EdgeKind::Calls),
+        "references" => Ok(crate::code_map::graph::EdgeKind::References),
+        other => bail!(
+            "unsupported persisted code-map edge kind {other:?}; rebuild the code map with this NEOTH version"
+        ),
+    }
 }
 
 /// Tuple shape returned by the `code_map_roots` row query. Named so
@@ -793,6 +1112,19 @@ pub fn root_index_generation(conn: &Connection, root: &str) -> Result<Option<i64
     .context("query code_map_roots index_generation")
 }
 
+/// The index generation for which `root`'s persisted edge set was built, or
+/// `None` when the root has no persisted snapshot. This advances atomically
+/// with edge replacement in [`persist_edges`].
+pub fn root_graph_generation(conn: &Connection, root: &str) -> Result<Option<i64>> {
+    conn.query_row(
+        "SELECT graph_generation FROM code_map_roots WHERE root = ?1",
+        rusqlite::params![root],
+        |row| row.get::<_, i64>(0),
+    )
+    .optional()
+    .context("query code_map_roots graph_generation")
+}
+
 /// GOLD-R3-13 — is the persisted snapshot for `root` stale relative to the
 /// files currently on disk? Re-scans the root (no symbol extraction) with the
 /// same ignore rules and compares content hashes against the stored rows: a
@@ -802,44 +1134,173 @@ pub fn root_index_generation(conn: &Connection, root: &str) -> Result<Option<i64
 /// This re-reads the root's files to hash them, so it is an EXPLICIT, opt-in
 /// check (an operator command), never the hot chat-context path. A stored row
 /// with an empty hash (a pre-CBM-04 v1 row not yet re-scanned) is treated as
-/// unknown and does not by itself signal staleness. Ceiling: both sides use the
-/// same walker caps, so a stable tree yields equal counts; a truncated giant
-/// repo could compare unequal set sizes and read as stale.
+/// unknown and does not by itself signal staleness. Both the persisted SELECT
+/// and filesystem walk are capped by [`MAX_FRESHNESS_FILES`]; exceeding that
+/// ceiling is an explicit error, never a partial receipt reported as fresh.
 pub fn is_index_stale(conn: &Connection, root: &str) -> Result<bool> {
-    let stored: std::collections::HashMap<String, String> = {
+    Ok(index_freshness_receipt(conn, root)?.stale)
+}
+
+/// One bounded filesystem observation used to ensure a long-running consumer
+/// does not report `stale = false` after the repository changed mid-query.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexFreshnessReceipt {
+    pub(crate) stale: bool,
+    pub(crate) filesystem_fingerprint: Vec<(String, String)>,
+}
+
+pub(crate) fn index_freshness_receipt(
+    conn: &Connection,
+    root: &str,
+) -> Result<IndexFreshnessReceipt> {
+    index_freshness_receipt_bounded_with_hook(conn, root, MAX_FRESHNESS_FILES, || {})
+}
+
+fn index_freshness_receipt_bounded_with_hook<F>(
+    conn: &Connection,
+    root: &str,
+    max_files: usize,
+    after_count: F,
+) -> Result<IndexFreshnessReceipt>
+where
+    F: FnOnce(),
+{
+    index_freshness_receipt_bounded_with_limits_and_hook(
+        conn,
+        root,
+        max_files,
+        MAX_FRESHNESS_TEXT_BYTES,
+        after_count,
+    )
+}
+
+fn index_freshness_receipt_bounded_with_limits_and_hook<F>(
+    conn: &Connection,
+    root: &str,
+    max_files: usize,
+    max_text_bytes: usize,
+    after_count: F,
+) -> Result<IndexFreshnessReceipt>
+where
+    F: FnOnce(),
+{
+    let stored_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM code_map_files WHERE root = ?1",
+            rusqlite::params![root],
+            |row| row.get(0),
+        )
+        .context("count stored code-map files before freshness receipt")?;
+    enforce_freshness_file_count(stored_count, max_files)?;
+    after_count();
+
+    let query_limit = i64::try_from(max_files.saturating_add(1))
+        .context("convert freshness file-query limit to SQLite integer")?;
+    let stored_rows: Vec<(String, String)> = {
         let mut stmt = conn
-            .prepare("SELECT path, sha256 FROM code_map_files WHERE root = ?1")
+            .prepare(
+                "SELECT path, sha256, \
+                        length(CAST(path AS BLOB)) + length(CAST(sha256 AS BLOB)) \
+                 FROM code_map_files \
+                 WHERE root = ?1 ORDER BY path LIMIT ?2",
+            )
             .context("prepare staleness stored-hash query")?;
-        stmt.query_map(rusqlite::params![root], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })
-        .context("execute staleness stored-hash query")?
-        .collect::<rusqlite::Result<_>>()
-        .context("collect staleness stored-hash rows")?
+        let mut rows = stmt
+            .query(rusqlite::params![root, query_limit])
+            .context("execute staleness stored-hash query")?;
+        let mut bounded = Vec::with_capacity(max_files.min(4_096).saturating_add(1));
+        let mut text_bytes = 0usize;
+        while let Some(row) = rows.next().context("advance staleness stored-hash row")? {
+            let row_bytes: i64 = row
+                .get(2)
+                .context("read staleness stored-hash text-byte count")?;
+            let row_bytes = usize::try_from(row_bytes).with_context(|| {
+                format!("invalid negative freshness row text-byte count {row_bytes}")
+            })?;
+            if row_bytes > MAX_FRESHNESS_ROW_TEXT_BYTES {
+                bail!(
+                    "code-map freshness row requires {row_bytes} text bytes; per-row \
+                     ceiling is {MAX_FRESHNESS_ROW_TEXT_BYTES}"
+                );
+            }
+            text_bytes = text_bytes
+                .checked_add(row_bytes)
+                .context("code-map freshness text-byte count overflow")?;
+            if text_bytes > max_text_bytes {
+                bail!(
+                    "code-map freshness refused more than {max_text_bytes} stored \
+                     path/hash text bytes"
+                );
+            }
+            bounded.push((
+                row.get::<_, String>(0)
+                    .context("read staleness stored path")?,
+                row.get::<_, String>(1)
+                    .context("read staleness stored hash")?,
+            ));
+        }
+        bounded
     };
-    if stored.is_empty() {
-        return Ok(false);
+    if stored_rows.len() > max_files {
+        bail!(
+            "code-map freshness refused more than {max_files} stored file rows; \
+             persist a narrower repository or select a smaller code-map root"
+        );
     }
+    if stored_rows.is_empty() {
+        return Ok(IndexFreshnessReceipt {
+            stale: false,
+            filesystem_fingerprint: Vec::new(),
+        });
+    }
+    let stored: std::collections::HashMap<String, String> = stored_rows.into_iter().collect();
+    let walker_limit = u64::try_from(max_files).context("convert freshness walker file ceiling")?;
     let scanned = super::walker::RepoMapBuilder::new(root)
+        .max_files(walker_limit)
         .with_symbols(false)
         .scan()
         .with_context(|| format!("re-scan {root} for staleness check"))?;
+    if scanned.report.truncated_at.is_some() {
+        bail!(
+            "code-map freshness refused a filesystem with more than {max_files} files; \
+             persist a narrower repository or select a smaller code-map root"
+        );
+    }
+    let mut filesystem_fingerprint: Vec<(String, String)> = scanned
+        .files
+        .iter()
+        .map(|file| (file.path.clone(), file.sha256.clone()))
+        .collect();
+    filesystem_fingerprint.sort();
 
     // Added or removed files change the set size (both sides bounded by the
     // same caps, so a stable tree yields equal counts).
-    if scanned.files.len() != stored.len() {
-        return Ok(true);
+    let stale = scanned.files.len() != stored.len()
+        || scanned.files.iter().any(|file| {
+            // Any on-disk file that is new, or whose content hash differs from
+            // the stored hash, means the index predates an edit. An empty
+            // stored hash is unknown and is not counted as a change.
+            !matches!(
+                stored.get(&file.path),
+                Some(stored_sha) if stored_sha.is_empty() || *stored_sha == file.sha256
+            )
+        });
+    Ok(IndexFreshnessReceipt {
+        stale,
+        filesystem_fingerprint,
+    })
+}
+
+fn enforce_freshness_file_count(count: i64, max_files: usize) -> Result<()> {
+    let count = usize::try_from(count)
+        .with_context(|| format!("invalid negative code-map freshness file count {count}"))?;
+    if count > max_files {
+        bail!(
+            "code-map freshness refused {count} stored file rows; hard ceiling is {max_files}. \
+             Persist a narrower repository or select a smaller code-map root"
+        );
     }
-    // Any on-disk file that is new, or whose content hash differs from the
-    // stored hash, means the index predates an edit. An empty stored hash is
-    // unknown and is not counted as a change.
-    for file in &scanned.files {
-        match stored.get(&file.path) {
-            Some(stored_sha) if stored_sha.is_empty() || *stored_sha == file.sha256 => {}
-            _ => return Ok(true),
-        }
-    }
-    Ok(false)
+    Ok(())
 }
 
 /// Find every persisted file whose symbol list contains a declaration
@@ -1041,6 +1502,20 @@ mod tests {
         (dir, conn)
     }
 
+    fn is_sqlite_busy(error: &anyhow::Error) -> bool {
+        error.chain().any(|cause| {
+            cause
+                .downcast_ref::<rusqlite::Error>()
+                .and_then(rusqlite::Error::sqlite_error_code)
+                .is_some_and(|code| {
+                    matches!(
+                        code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    )
+                })
+        })
+    }
+
     fn sample_map(root: &str) -> RepoMap {
         RepoMap {
             root: root.to_string(),
@@ -1101,10 +1576,234 @@ mod tests {
         ];
         let n = persist_edges(&mut conn, "/repo/a", &edges).unwrap();
         assert_eq!(n, 2);
+        assert_eq!(
+            root_graph_generation(&conn, "/repo/a").unwrap(),
+            root_index_generation(&conn, "/repo/a").unwrap(),
+            "edge replacement must atomically bind the graph to the current index"
+        );
         let loaded = load_edges(&conn, "/repo/a").unwrap();
         assert_eq!(loaded.len(), 2);
         assert!(loaded.iter().any(|e| e.from_file == "src/a.rs"));
         assert!(loaded.iter().any(|e| e.from_file == "src/b.rs"));
+    }
+
+    #[test]
+    fn atomic_snapshot_publish_serializes_two_writers_without_mixing_map_and_edges() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("code_map.db");
+        let root = "/repo/atomic";
+        let mut setup = open(&path).unwrap();
+
+        let mut baseline = sample_map(root);
+        baseline.files[0].symbols[0].name = "baseline".into();
+        let baseline_edge = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "baseline".into(),
+            to_name: "baseline_target".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+        persist_map_and_edges(&mut setup, &baseline, &[baseline_edge]).unwrap();
+        drop(setup);
+
+        let mut map_a = sample_map(root);
+        map_a.files[0].sha256 = "writer-a".into();
+        map_a.files[0].symbols[0].name = "writer_a".into();
+        let edge_a = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "writer_a".into(),
+            to_name: "target_a".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+        let mut map_b = sample_map(root);
+        map_b.files[0].sha256 = "writer-b".into();
+        map_b.files[0].symbols[0].name = "writer_b".into();
+        let edge_b = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "writer_b".into(),
+            to_name: "target_b".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+
+        let mut writer_a = open(&path).unwrap();
+        let mut writer_b = open(&path).unwrap();
+        writer_b.busy_timeout(std::time::Duration::ZERO).unwrap();
+        let observer = open(&path).unwrap();
+        let (start_b_tx, start_b_rx) = std::sync::mpsc::channel();
+        let (before_b_tx, before_b_rx) = std::sync::mpsc::channel();
+        let map_b_attempt = map_b.clone();
+        let edge_b_attempt = edge_b.clone();
+        let writer_b_thread = std::thread::spawn(move || {
+            start_b_rx.recv().unwrap();
+            persist_map_and_edges_with_hooks(
+                &mut writer_b,
+                &map_b_attempt,
+                &[edge_b_attempt],
+                move || before_b_tx.send(()).unwrap(),
+                || panic!("writer B acquired IMMEDIATE while writer A held it"),
+                || {},
+            )
+            .expect_err("writer B must receive SQLite BUSY while writer A owns IMMEDIATE")
+        });
+
+        persist_map_and_edges_with_hooks(
+            &mut writer_a,
+            &map_a,
+            &[edge_a],
+            || {},
+            || {
+                // A owns SQLite's real IMMEDIATE writer lock. B has a zero
+                // busy timeout, so its synchronized BEGIN IMMEDIATE must
+                // return DatabaseBusy/DatabaseLocked while this closure keeps
+                // A's transaction open. This is positive SQLite evidence, not
+                // a scheduler/timing assertion.
+                start_b_tx.send(()).unwrap();
+                before_b_rx.recv().unwrap();
+                let error = writer_b_thread.join().expect("writer B attempt panicked");
+                assert!(
+                    is_sqlite_busy(&error),
+                    "unexpected writer-B error: {error:#}"
+                );
+            },
+            || {},
+        )
+        .unwrap();
+
+        // Once A commits, the exact same candidate can acquire IMMEDIATE.
+        // While B's replacement is uncommitted, an independent reader still
+        // sees A's complete certified pair, never map B + edges A.
+        let root_for_b = root.to_string();
+        let mut writer_b_retry = open(&path).unwrap();
+        persist_map_and_edges_with_hooks(
+            &mut writer_b_retry,
+            &map_b,
+            &[edge_b],
+            || {},
+            || {},
+            || {
+                let visible = load_map(&observer, &root_for_b).unwrap().unwrap();
+                let visible_symbol = &visible
+                    .files
+                    .iter()
+                    .find(|file| file.path == "src/main.rs")
+                    .unwrap()
+                    .symbols[0]
+                    .name;
+                assert_eq!(visible_symbol, "writer_a");
+                assert_eq!(
+                    load_edges(&observer, &root_for_b).unwrap()[0].to_name,
+                    "target_a"
+                );
+                assert_eq!(
+                    root_index_generation(&observer, &root_for_b).unwrap(),
+                    Some(2)
+                );
+                assert_eq!(
+                    root_graph_generation(&observer, &root_for_b).unwrap(),
+                    Some(2)
+                );
+            },
+        )
+        .expect("writer B must acquire IMMEDIATE after writer A commits");
+
+        let final_state = open(&path).unwrap();
+        let final_map = load_map(&final_state, root).unwrap().unwrap();
+        let final_symbol = &final_map
+            .files
+            .iter()
+            .find(|file| file.path == "src/main.rs")
+            .unwrap()
+            .symbols[0]
+            .name;
+        assert_eq!(final_symbol, "writer_b");
+        assert_eq!(
+            load_edges(&final_state, root).unwrap()[0].to_name,
+            "target_b"
+        );
+        assert_eq!(
+            root_index_generation(&final_state, root).unwrap(),
+            root_graph_generation(&final_state, root).unwrap()
+        );
+        assert_eq!(root_index_generation(&final_state, root).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn atomic_snapshot_publish_rolls_back_map_when_edge_replacement_fails() {
+        let (_dir, mut conn) = temp_db();
+        let root = "/repo/atomic-rollback";
+        let mut baseline = sample_map(root);
+        baseline.files[0].symbols[0].name = "baseline".into();
+        let baseline_edge = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "baseline".into(),
+            to_name: "baseline_target".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+        persist_map_and_edges(&mut conn, &baseline, &[baseline_edge]).unwrap();
+        conn.execute_batch(
+            "CREATE TRIGGER reject_atomic_boom_edge \
+             BEFORE INSERT ON code_map_edges \
+             WHEN NEW.to_name = 'boom' \
+             BEGIN SELECT RAISE(ABORT, 'forced atomic edge failure'); END;",
+        )
+        .unwrap();
+
+        let mut candidate = sample_map(root);
+        candidate.files[0].sha256 = "candidate".into();
+        candidate.files[0].symbols[0].name = "candidate".into();
+        let replacement = [
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/main.rs".into(),
+                from_symbol: "candidate".into(),
+                to_name: "new_target".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/main.rs".into(),
+                from_symbol: "candidate".into(),
+                to_name: "boom".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+        ];
+
+        assert!(persist_map_and_edges(&mut conn, &candidate, &replacement).is_err());
+        let visible = load_map(&conn, root).unwrap().unwrap();
+        let visible_symbol = &visible
+            .files
+            .iter()
+            .find(|file| file.path == "src/main.rs")
+            .unwrap()
+            .symbols[0]
+            .name;
+        assert_eq!(visible_symbol, "baseline");
+        assert_eq!(
+            load_edges(&conn, root).unwrap()[0].to_name,
+            "baseline_target"
+        );
+        assert_eq!(root_index_generation(&conn, root).unwrap(), Some(1));
+        assert_eq!(root_graph_generation(&conn, root).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn bounded_root_edge_load_never_materializes_past_limit_plus_receipt() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/a");
+        persist_map(&mut conn, &map).unwrap();
+        let edges: Vec<_> = (0..3)
+            .map(|index| crate::code_map::graph::CodeEdge {
+                from_file: "src/main.rs".into(),
+                from_symbol: "main".into(),
+                to_name: format!("target_{index}"),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            })
+            .collect();
+        persist_edges(&mut conn, "/repo/a", &edges).unwrap();
+
+        let (loaded, truncated) = load_edges_for_root_bounded(&conn, "/repo/a", 2).unwrap();
+
+        assert!(truncated);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].to_name, "target_0");
+        assert_eq!(loaded[1].to_name, "target_1");
     }
 
     #[test]
@@ -1126,10 +1825,95 @@ mod tests {
     }
 
     #[test]
+    fn failed_edge_replacement_rolls_back_edges_and_generation_together() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/a");
+        persist_map(&mut conn, &map).unwrap();
+        let prior = crate::code_map::graph::CodeEdge {
+            from_file: "src/main.rs".into(),
+            from_symbol: "main".into(),
+            to_name: "old_target".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+        persist_edges(&mut conn, "/repo/a", std::slice::from_ref(&prior)).unwrap();
+
+        persist_map(&mut conn, &map).unwrap();
+        assert_eq!(root_index_generation(&conn, "/repo/a").unwrap(), Some(2));
+        assert_eq!(root_graph_generation(&conn, "/repo/a").unwrap(), Some(1));
+        conn.execute_batch(
+            "CREATE TRIGGER reject_boom_edge \
+             BEFORE INSERT ON code_map_edges \
+             WHEN NEW.to_name = 'boom' \
+             BEGIN SELECT RAISE(ABORT, 'forced edge failure'); END;",
+        )
+        .unwrap();
+        let replacement = [
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/main.rs".into(),
+                from_symbol: "main".into(),
+                to_name: "new_target".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/main.rs".into(),
+                from_symbol: "main".into(),
+                to_name: "boom".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+        ];
+
+        assert!(persist_edges(&mut conn, "/repo/a", &replacement).is_err());
+        assert_eq!(
+            root_graph_generation(&conn, "/repo/a").unwrap(),
+            Some(1),
+            "a failed replacement must not claim generation 2"
+        );
+        assert_eq!(
+            load_edges(&conn, "/repo/a").unwrap(),
+            vec![prior],
+            "the DELETE and partial INSERTs must roll back with the generation"
+        );
+    }
+
+    #[test]
     fn qm2_phase2_load_edges_unknown_root_returns_empty() {
         let (_dir, conn) = temp_db();
         let loaded = load_edges(&conn, "/never/seen").unwrap();
         assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn unknown_persisted_edge_kind_is_never_reinterpreted_as_a_call() {
+        let (_dir, mut conn) = temp_db();
+        persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
+        conn.execute(
+            "INSERT INTO code_map_edges \
+             (root, from_file, from_symbol, to_name, kind) \
+             VALUES ('/repo/a', 'a.rs', 'a', 'b', 'future-kind')",
+            [],
+        )
+        .unwrap();
+        let error = load_edges(&conn, "/repo/a").unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported persisted code-map edge kind")
+        );
+    }
+
+    #[test]
+    fn persist_edges_rejects_unknown_root_without_writing_rows() {
+        let (_dir, mut conn) = temp_db();
+        let edge = crate::code_map::graph::CodeEdge {
+            from_file: "src/a.rs".into(),
+            from_symbol: "a".into(),
+            to_name: "b".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        };
+
+        let error = persist_edges(&mut conn, "/never/seen", &[edge]).unwrap_err();
+        assert!(error.to_string().contains("unknown code-map root"));
+        assert!(load_edges(&conn, "/never/seen").unwrap().is_empty());
     }
 
     #[test]
@@ -1636,6 +2420,80 @@ mod tests {
     }
 
     #[test]
+    fn symbol_aware_persist_repairs_legacy_symbol_less_rows_without_source_edit() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("legacy.rs"), b"fn adopted() {}\n").unwrap();
+        let (_db_dir, mut conn) = temp_db();
+
+        let legacy = scan_dir(dir.path());
+        persist_map(&mut conn, &legacy).unwrap();
+        assert!(
+            load_map(&conn, &legacy.root).unwrap().unwrap().files[0]
+                .symbols
+                .is_empty()
+        );
+
+        let symbol_aware = crate::code_map::walker::RepoMapBuilder::new(dir.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let stats = persist_map(&mut conn, &symbol_aware).unwrap();
+        assert_eq!(stats.files_skipped_unchanged, 0);
+        assert_eq!(stats.files_inserted, 1);
+        assert_eq!(stats.symbols_inserted, 1);
+        let loaded = load_map(&conn, &symbol_aware.root).unwrap().unwrap();
+        assert_eq!(loaded.files[0].symbols[0].name, "adopted");
+    }
+
+    #[test]
+    fn legacy_empty_symbol_input_preserves_existing_declarations() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("legacy.rs"), b"fn retained() {}\n").unwrap();
+        let (_db_dir, mut conn) = temp_db();
+        let symbol_aware = crate::code_map::walker::RepoMapBuilder::new(dir.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        persist_map(&mut conn, &symbol_aware).unwrap();
+
+        let mut legacy_without_symbols = symbol_aware.clone();
+        legacy_without_symbols.files[0].symbols.clear();
+        let stats = persist_map(&mut conn, &legacy_without_symbols).unwrap();
+
+        assert_eq!(stats.files_skipped_unchanged, 1);
+        assert_eq!(stats.files_inserted, 0);
+        let loaded = load_map(&conn, &symbol_aware.root).unwrap().unwrap();
+        assert_eq!(loaded.files[0].symbols[0].name, "retained");
+    }
+
+    #[test]
+    fn atomic_snapshot_treats_empty_symbols_as_exact_and_removes_stale_rows() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("strict.rs"), b"fn removed() {}\n").unwrap();
+        let (_db_dir, mut conn) = temp_db();
+        let symbol_aware = crate::code_map::walker::RepoMapBuilder::new(dir.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        persist_map_and_edges(&mut conn, &symbol_aware, &[]).unwrap();
+
+        let mut exact_empty = symbol_aware.clone();
+        exact_empty.files[0].symbols.clear();
+        let (stats, edges) = persist_map_and_edges(&mut conn, &exact_empty, &[]).unwrap();
+
+        assert_eq!(stats.files_skipped_unchanged, 0);
+        assert_eq!(stats.files_inserted, 1);
+        assert_eq!(stats.symbols_inserted, 0);
+        assert_eq!(edges, 0);
+        let loaded = load_map(&conn, &symbol_aware.root).unwrap().unwrap();
+        assert!(loaded.files[0].symbols.is_empty());
+        assert_eq!(
+            root_index_generation(&conn, &symbol_aware.root).unwrap(),
+            root_graph_generation(&conn, &symbol_aware.root).unwrap()
+        );
+    }
+
+    #[test]
     fn incremental_persist_sha256_wins_over_mtime() {
         // If mtime changes but sha256 is identical (e.g. write same bytes),
         // the file should still be skipped — sha256 is the authoritative guard.
@@ -1689,6 +2547,18 @@ mod tests {
             Some(1),
             "first persist starts the generation at 1"
         );
+        assert_eq!(
+            root_graph_generation(&conn, "/repo/x").unwrap(),
+            Some(0),
+            "a map persist alone must not claim that graph edges are current"
+        );
+
+        persist_edges(&mut conn, "/repo/x", &[]).unwrap();
+        assert_eq!(
+            root_graph_generation(&conn, "/repo/x").unwrap(),
+            Some(1),
+            "even an empty edge snapshot is generation-bound"
+        );
 
         // Re-scan the same root → generation bumps in place (no reset).
         persist_map(&mut conn, &map).unwrap();
@@ -1696,6 +2566,11 @@ mod tests {
             root_index_generation(&conn, "/repo/x").unwrap(),
             Some(2),
             "a re-scan must bump the index generation"
+        );
+        assert_eq!(
+            root_graph_generation(&conn, "/repo/x").unwrap(),
+            Some(1),
+            "re-indexing invalidates the previously bound graph generation"
         );
 
         // A different root keeps its own independent counter.
@@ -1771,13 +2646,210 @@ mod tests {
     }
 
     #[test]
-    fn open_migrates_v1_to_v3_on_existing_db() {
+    fn freshness_receipt_rejects_stored_rows_above_cap_before_materializing_them() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/freshness-cap");
+        persist_map(&mut conn, &map).unwrap();
+
+        let error =
+            index_freshness_receipt_bounded_with_hook(&conn, &map.root, 1, || {}).unwrap_err();
+        assert!(error.to_string().contains("hard ceiling is 1"));
+    }
+
+    #[test]
+    fn freshness_receipt_limit_catches_count_to_query_insert_race() {
+        let (dir, mut conn) = temp_db();
+        let map = sample_map("/repo/freshness-race");
+        persist_map(&mut conn, &map).unwrap();
+        let racer = open(&dir.path().join("code_map.db")).unwrap();
+
+        let error = index_freshness_receipt_bounded_with_hook(&conn, &map.root, 2, || {
+            racer
+                .execute(
+                    "INSERT INTO code_map_files \
+                     (root, path, language, bytes, loc, sha256, mtime_ns) \
+                     VALUES (?1, 'race.rs', 'rust', 1, 1, 'race', 1)",
+                    rusqlite::params![&map.root],
+                )
+                .unwrap();
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("more than 2 stored file rows"));
+    }
+
+    #[test]
+    fn freshness_receipt_rejects_text_bytes_before_materializing_strings() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/freshness-bytes");
+        persist_map(&mut conn, &map).unwrap();
+
+        let error =
+            index_freshness_receipt_bounded_with_limits_and_hook(&conn, &map.root, 10, 1, || {})
+                .unwrap_err();
+        assert!(error.to_string().contains("path/hash text bytes"));
+    }
+
+    #[test]
+    fn freshness_receipt_row_guard_catches_count_to_query_long_string_race() {
+        let (dir, mut conn) = temp_db();
+        let map = sample_map("/repo/freshness-byte-race");
+        persist_map(&mut conn, &map).unwrap();
+        let racer = open(&dir.path().join("code_map.db")).unwrap();
+        let long_path = "x".repeat(MAX_FRESHNESS_ROW_TEXT_BYTES + 1);
+
+        let error = index_freshness_receipt_bounded_with_limits_and_hook(
+            &conn,
+            &map.root,
+            3,
+            MAX_FRESHNESS_TEXT_BYTES,
+            || {
+                racer
+                    .execute(
+                        "INSERT INTO code_map_files \
+                         (root, path, language, bytes, loc, sha256, mtime_ns) \
+                         VALUES (?1, ?2, 'rust', 1, 1, 'race', 1)",
+                        rusqlite::params![&map.root, long_path],
+                    )
+                    .unwrap();
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("per-row ceiling"));
+    }
+
+    #[test]
+    fn concurrent_v3_openers_recheck_version_after_competing_writer_commits() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("v3.db");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                 INSERT INTO meta (key, value) VALUES ('schema_version', '3');
+                 CREATE TABLE code_map_roots (
+                     root TEXT PRIMARY KEY,
+                     scanned_at INTEGER NOT NULL,
+                     total_files INTEGER NOT NULL,
+                     total_bytes INTEGER NOT NULL,
+                     total_loc INTEGER NOT NULL,
+                     oversize_skipped INTEGER NOT NULL,
+                     truncated_at INTEGER,
+                     index_generation INTEGER NOT NULL DEFAULT 0
+                 );
+                  INSERT INTO code_map_roots
+                      (root, scanned_at, total_files, total_bytes, total_loc,
+                       oversize_skipped, truncated_at, index_generation)
+                  VALUES ('/legacy', 0, 0, 0, 0, 0, NULL, 0);
+                  PRAGMA journal_mode=WAL;",
+            )
+            .unwrap();
+        }
+
+        let (a_read_tx, a_read_rx) = std::sync::mpsc::channel();
+        let (b_read_tx, b_read_rx) = std::sync::mpsc::channel();
+        let (allow_a_tx, allow_a_rx) = std::sync::mpsc::channel();
+        let (allow_b_tx, allow_b_rx) = std::sync::mpsc::channel();
+        let (a_before_tx, a_before_rx) = std::sync::mpsc::channel();
+        let (b_before_tx, b_before_rx) = std::sync::mpsc::channel();
+        let (a_locked_tx, a_locked_rx) = std::sync::mpsc::channel();
+        let (b_locked_tx, b_locked_rx) = std::sync::mpsc::channel();
+        let (release_a_tx, release_a_rx) = std::sync::mpsc::channel();
+
+        let path_a = path.clone();
+        let opener_a = std::thread::spawn(move || {
+            open_with_migration_hooks(
+                &path_a,
+                |_| {},
+                move || {
+                    a_read_tx.send(()).unwrap();
+                    allow_a_rx.recv().unwrap();
+                },
+                move || a_before_tx.send(()).unwrap(),
+                move || {
+                    a_locked_tx.send(()).unwrap();
+                    release_a_rx.recv().unwrap();
+                },
+            )
+        });
+        let path_b = path.clone();
+        let opener_b = std::thread::spawn(move || {
+            open_with_migration_hooks(
+                &path_b,
+                |_| {},
+                move || {
+                    b_read_tx.send(()).unwrap();
+                },
+                move || {
+                    b_before_tx.send(()).unwrap();
+                    allow_b_rx.recv().unwrap();
+                },
+                move || b_locked_tx.send(()).unwrap(),
+            )
+        });
+
+        // Both openers have observed v3 before either can request the writer
+        // lock. A acquires IMMEDIATE first and is held there deliberately.
+        a_read_rx.recv().unwrap();
+        b_read_rx.recv().unwrap();
+        allow_a_tx.send(()).unwrap();
+        a_before_rx.recv().unwrap();
+        a_locked_rx.recv().unwrap();
+
+        // The same B opener that observed v3 is held at the exact
+        // pre-IMMEDIATE boundary while A owns the writer lock.
+        b_before_rx.recv().unwrap();
+
+        release_a_tx.send(()).unwrap();
+        opener_a
+            .join()
+            .expect("first migration opener panicked")
+            .expect("first migration opener failed");
+
+        // Release that same stale-v3 opener only after A committed. It must
+        // acquire IMMEDIATE, re-read v4 under the lock, and skip a duplicate
+        // ALTER TABLE rather than relying on a fresh outer version read.
+        allow_b_tx.send(()).unwrap();
+        b_locked_rx
+            .recv()
+            .expect("stale-v3 opener never acquired IMMEDIATE after A committed");
+        let conn = opener_b
+            .join()
+            .expect("competing migration opener panicked")
+            .expect("same stale-v3 opener failed after A committed");
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "4");
+        let graph_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('code_map_roots') \
+                 WHERE name = 'graph_generation'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(graph_columns, 1);
+        assert_eq!(root_graph_generation(&conn, "/legacy").unwrap(), Some(-1));
+    }
+
+    #[test]
+    fn open_migrates_v1_to_v4_on_existing_db() {
         // Build a v1 DB manually (apply_schema with version stamped as 1,
         // without sha256/mtime_ns columns), then call open() and verify the
-        // migration chain fires: schema_version advances to "3" (v1→v2→v3),
-        // the v2 file columns exist, and the v3 index_generation column exists.
+        // migration chain fires: schema_version advances to "4"
+        // (v1→v2→v3→v4), the v2 file columns exist, and both generation
+        // columns exist.
         let dir = tempdir().unwrap();
         let path = dir.path().join("v1.db");
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("x.rs"), "pub fn x() {}\n").unwrap();
+        let root = repo.path().canonicalize().unwrap().display().to_string();
 
         // Create a minimal v1 DB: meta + code_map_roots + code_map_files
         // WITHOUT sha256/mtime_ns columns (as schema v1 was).
@@ -1841,22 +2913,22 @@ mod tests {
             .unwrap();
             // Insert a row without sha256/mtime_ns to confirm migration handles existing rows.
             conn.execute(
-                "INSERT INTO code_map_roots VALUES ('/r', 0, 1, 100, 10, 0, NULL)",
-                [],
+                "INSERT INTO code_map_roots VALUES (?1, 0, 1, 100, 10, 0, NULL)",
+                rusqlite::params![&root],
             )
             .unwrap();
             conn.execute(
                 "INSERT INTO code_map_files (root, path, language, bytes, loc) \
-                 VALUES ('/r', 'x.rs', 'rust', 100, 10)",
-                [],
+                 VALUES (?1, 'x.rs', 'rust', 100, 10)",
+                rusqlite::params![&root],
             )
             .unwrap();
         }
 
         // Open via the public API — should trigger v1→v2 migration.
-        let conn = open(&path).expect("open must succeed on a v1 DB");
+        let mut conn = open(&path).expect("open must succeed on a v1 DB");
 
-        // schema_version must now be "3" (v1→v2→v3 chain).
+        // schema_version must now be "4" (v1→v2→v3→v4 chain).
         let version: String = conn
             .query_row(
                 "SELECT value FROM meta WHERE key='schema_version'",
@@ -1865,8 +2937,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            version, "3",
-            "schema_version must advance to 3 after migration"
+            version, "4",
+            "schema_version must advance to 4 after migration"
         );
 
         // v3 column: code_map_roots.index_generation exists, and the migrated
@@ -1882,10 +2954,31 @@ mod tests {
             root_cols.iter().any(|c| c == "index_generation"),
             "v3 must add index_generation to code_map_roots; got {root_cols:?}"
         );
+        assert!(
+            root_cols.iter().any(|c| c == "graph_generation"),
+            "v4 must add graph_generation to code_map_roots; got {root_cols:?}"
+        );
         assert_eq!(
-            root_index_generation(&conn, "/r").unwrap(),
+            root_index_generation(&conn, &root).unwrap(),
             Some(0),
             "a migrated legacy root must default to generation 0"
+        );
+        assert_eq!(
+            root_graph_generation(&conn, &root).unwrap(),
+            Some(-1),
+            "a migrated legacy graph must carry an invalid sentinel until rebuilt"
+        );
+        let impact_error = crate::code_map::impact::impact_radius(
+            &conn,
+            &root,
+            &[crate::code_map::impact::ImpactSeed::symbol("x.rs", "x")],
+            crate::code_map::impact::ImpactOptions::default(),
+        )
+        .unwrap_err();
+        assert!(
+            impact_error
+                .to_string()
+                .contains("not a certified rebuilt snapshot")
         );
 
         // Both new columns must exist (PRAGMA table_info returns one row per column).
@@ -1918,5 +3011,20 @@ mod tests {
             "existing row sha256 must default to empty string"
         );
         assert_eq!(mtime_ns, 0, "existing row mtime_ns must default to 0");
+
+        let rebuilt = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        persist_map_and_edges(&mut conn, &rebuilt, &[]).unwrap();
+        let impact = crate::code_map::impact::impact_radius(
+            &conn,
+            &root,
+            &[crate::code_map::impact::ImpactSeed::symbol("x.rs", "x")],
+            crate::code_map::impact::ImpactOptions::default(),
+        )
+        .expect("a complete atomic rebuild must certify the migrated root");
+        assert_eq!(impact.index_generation, 1);
+        assert_eq!(impact.graph_generation, 1);
     }
 }

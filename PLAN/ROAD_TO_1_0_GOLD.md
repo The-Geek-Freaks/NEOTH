@@ -277,7 +277,7 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   | Leaf | Current disposition | Evidence owner | v1.0 closure state |
   |---|---|---|---|
   | CRG-01 prompt-targeted coding context | **ADOPTED / WIRED-PARTIAL** | `SRC/neothd/src/cli/code.rs`, `SRC/neothd/src/coding/decomposer.rs`, `SRC/neothd/src/code_map/recall.rs` | **OPEN:** CLI coding, Chat and Channel have consumers; lifecycle, explicit failure/staleness, configuration, GUI and Buddy parity are incomplete. |
-  | CRG-02 structural blast radius | **PRIMITIVES ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** per-symbol callers/callees exist; changed-set aggregation, impact scores/evidence and a production consumer do not. |
+  | CRG-02 structural blast radius | **NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL** | `SRC/neothd/src/code_map/impact.rs`, `SRC/neothd/src/cli/code_map.rs`, `SRC/neothd/src/mcp/codegraph_server.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** the generation-bound typed service, `neoth code-map impact` and seventh MCP tool are real; review/apply/decomposer/risk, config/reload, Doctor, GUI, Buddy and packaged clean-machine consumers remain. |
   | CRG-03 diff hunks to symbols | **RESEARCHED / FILE-LEVEL SUBSTRATE ONLY** | `SRC/neothd/src/code_map/risk.rs`, `SRC/neothd/src/code_map/symbols.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** changed filenames exist; exact hunk ranges and durable symbol extents/intersection do not. |
   | CRG-04 `TestedBy` and test gaps | **RESEARCHED / UNIMPLEMENTED** | `SRC/neothd/src/code_map/graph.rs`, `SRC/neothd/src/code_map/persist.rs` | **OPEN:** neither edge type, test-node evidence, transitive query nor risk/prompt consumer exists. |
   | CRG-05 tool-use enrichment | **GENERAL HOOK SUBSTRATE ADOPTED / LEAF UNWIRED** | `SRC/neothd/src/hooks/stages.rs`, `SRC/neothd/src/cli/chat.rs`, `SRC/neothd/src/mcp/codegraph_server.rs` | **OPEN:** `PreProviderCall` is not a per-tool `PreToolUse` boundary and no CRG enrichment result is consumed. |
@@ -382,48 +382,65 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
       containment, cancellation and GUI/CLI/Buddy parity before closing CRG-01.
 
   - [ ] **CRG-02 — structural blast radius:
-    PRIMITIVES ADOPTED / LEAF UNWIRED / OPEN for v1.0.**
+    NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL / OPEN for
+    v1.0.**
 
-    - **Ingestion -> index:** CRG-02 can reuse persisted Calls/References edges,
-      but no changed-file/node seed set or impact-result record is ingested or
-      persisted.
-    - **Index -> retrieval:** `CallGraph::callers_of`
-      (`code_map/graph.rs:270-305`) and `callees_of` (`:398-430`) are bounded BFS
-      primitives. MCP exposes them as `codegraph_callers` and
-      `codegraph_callees` (`mcp/codegraph_server.rs:125-189,413-485`), and
-      CRG-01 injects only depth-1 callers for prompt-matched symbols. This is
-      useful substrate, but it is not CRG `get_impact_radius`: there is no
-      multi-file/multi-symbol change seed, affected-node/file union, distance
-      score, traversed-edge evidence, max-node cap/truncation marker or stable
-      impact result.
-    - **Prompt/citation consumer:** no diff/apply/review/decomposer path invokes
-      an impact-radius operation. `neoth code-intel --coupling` reports
-      history-derived co-change pairs, not change-set blast radius. There is no
-      `codegraph_impact_radius` tool, direct CLI surface or generation-bound
-      citation block.
-    - **Config/lifecycle/surfaces/package:** no CRG-02 depth/node/file caps,
-      refresh rule, Doctor probe, GUI visualization, CLI command, Buddy action
-      or release smoke test exists. The underlying graph ships in core; the
-      leaf does not.
-    - [ ] Implement native root-scoped `impact_radius(seeds, max_depth,
+    - **Ingestion -> index:** `neoth code-map persist` now publishes files,
+      declarations, Calls/References edges, `index_generation` and
+      `graph_generation` in one SQLite transaction. Exact empty declaration
+      snapshots remove ghosts. Concurrent migration/publish paths acquire the
+      same deterministic writer lock and re-read schema state after the lock,
+      so readers cannot observe a half-new map/graph generation.
+    - **Index -> retrieval:** `SRC/neothd/src/code_map/impact.rs` implements the
+      canonical root-scoped service over concrete
+      `(root,file,symbol,line,kind)` identities. File and exact-symbol changed
+      sets expand to deterministic seed nodes; callers, callees or both produce
+      affected nodes/files, distance-decayed scores, shortest traversed-edge
+      evidence, unresolved seeds/edges and separate node-, evidence- and
+      resource-budget truncation truth.
+    - **Generation/staleness/resource contract:** queries require equal positive
+      index/graph generations, re-check both generations before returning and
+      fail closed on a stale on-disk tree unless `allow_stale` is explicit.
+      Seed/depth/node, SQLite row/text, identity/edge allocation, path/evidence,
+      result and MCP-frame ceilings bound adversarial fan-out before unbounded
+      materialisation. The result digest covers the canonical returned record.
+    - **Direct surfaces:** `neoth code-map impact` and the seventh codegraph MCP
+      tool `codegraph_impact_radius` call the same typed service. CLI table/JSON
+      and MCP preserve generations, digest, unresolved evidence, stale state and
+      distinct `truncated`, `budget_truncated` and `evidence_truncated` flags.
+      The generic MCP stdio encoder refuses frames above 16 MiB with a bounded
+      JSON-RPC error, including hostile oversized request IDs.
+    - **Remaining product consumers:** no diff/apply/review/decomposer/risk path
+      invokes the service yet. CRG-03 exact hunk seeds, validated Freedom config
+      and reload, automatic refresh lifecycle, Doctor, GUI graph/list,
+      Buddy explain/recompute and packaged release smoke coverage remain open.
+    - [x] Implement native root-scoped `impact_radius(seeds, max_depth,
       max_nodes)` over concrete `(root,file,symbol)` identities, with
       deterministic ordering, affected files/nodes, distances/scores, traversed
       evidence and an explicit truncation flag; never conflate same-name symbols
       across files or roots.
     - [ ] Accept changed files and CRG-03 symbol seeds, reject unindexed/outside
       roots visibly, and define direction semantics (callers, callees or both)
-      plus treatment of unresolved/Reference edges.
+      plus treatment of unresolved/Reference edges. **Partial:** changed files,
+      exact file/symbol seeds, visible rejection, directions and conservative
+      unresolved/Reference evidence are implemented; CRG-03 hunk-derived seeds
+      remain.
     - [ ] Expose one canonical typed service through CLI and a
       `codegraph_impact_radius` MCP tool, then wire it into code review/apply,
       coding decomposition and risk summaries with root/index-generation
-      citations.
+      citations. **Partial:** canonical service, CLI, MCP, generations and
+      digest are implemented; all named product consumers remain.
     - [ ] Add validated caps/config/reload, lifecycle/staleness handling,
       Doctor, GUI graph/list + progress/error state and Buddy
       explain/recompute actions; prove all surfaces return the same ordered
-      result.
+      result. **Partial:** hard safety caps and fail-closed staleness exist;
+      operator config/reload and the remaining surfaces do not.
     - [ ] Add adversarial tests for cycles, diamonds, duplicate names,
       multi-root indexes, huge fan-out, depth zero/caps, deleted nodes,
       unresolved calls, stale generations and packaged clean-machine use.
+      **Partial:** unit/service/CLI-MCP parity coverage exercises the graph,
+      identity, generation, race and size-bound contracts; packaged
+      clean-machine coverage remains.
 
   - [ ] **CRG-03 — git diff hunks to function-level nodes:
     RESEARCHED / FILE-LEVEL SUBSTRATE ONLY / OPEN for v1.0.**

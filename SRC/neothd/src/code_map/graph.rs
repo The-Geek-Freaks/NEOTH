@@ -7,7 +7,7 @@
 //! — the goal is "good enough to bootstrap zoom_out / improve_codebase
 //! architecture recommendations", not perfect static analysis.
 //!
-//! `neoth code-map persist --symbols` builds and stores edges in the
+//! `neoth code-map persist` builds and stores edges in the
 //! `code_map_edges` table next to `code_map_symbols`; architecture recall
 //! reloads them without rescanning source. Direct callers can still build a
 //! graph from an in-memory symbol set and source text.

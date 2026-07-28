@@ -577,6 +577,17 @@ REPOW-01/02/03 — git-derived repo intelligence
 
 Repository code-map (K-Repo-Map Phase 1, Session 14 Pick #13). `scan` walks the operator's project root, classifies files by language, counts LOC + bytes. Honours .gitignore / .neothignore. Phase 2 adds tree-sitter symbol extraction; Phase 3 persists into a `~/.neoth/code_map.db` SQLite for recall integration
 
+### `neoth code-map impact`
+
+Compute the structural blast radius of changed files or exact declarations in the active persisted repository. Callers (dependents) are the default; every result is bound to matching index/graph generations, refuses a stale index unless explicitly overridden, and reports node-cap versus evidence-budget truncation separately
+
+- `--file <FILE>` — Changed repo-relative file. Repeat for multiple files. Every persisted declaration in the file becomes a seed
+- `--symbol <FILE::SYMBOL>` — Exact changed declaration as `FILE::SYMBOL`. Repeatable
+- `--direction <DIRECTION>` — Relationship direction from each changed declaration. `callers | callees | both`. Defaults to `callers`
+- `--max-depth <N>` — Maximum relationship hops. Hard ceiling 32. Defaults to 3
+- `--max-nodes <N>` — Maximum affected declarations returned. Hard ceiling 10000. Defaults to 250
+- `--allow-stale` — Permit analysis against an index known to predate on-disk edits. The result still records `stale: true`
+
 ### `neoth code-map load`
 
 Phase 3a — read a previously persisted snapshot back from `~/.neoth/code_map.db`. PATH is the canonical scan root that `Persist` recorded. Useful for inspection without re-scanning
@@ -592,7 +603,6 @@ Phase 3a (Session 14 Pick #22) — scan PATH (or cwd) and persist the resulting 
 - `--max-files <N>` — Hard cap on total files counted. Defaults to 50000
 - `--max-file-bytes <BYTES>` — Hard cap on per-file byte size. Defaults to 2 MiB
 - `--include-hidden` — Include hidden directories. Default behaviour skips them
-- `--symbols` — Extract + persist top-level symbol declarations alongside each file entry. Default off (lighter scan)
 
 ### `neoth code-map relevant`
 
@@ -1864,7 +1874,7 @@ Idempotently register the built-in codegraph stdio server in `~/.neoth/mcp_serve
 
 ### `neoth mcp codegraph-serve`
 
-Serve NEOTH's six read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
+Serve NEOTH's seven read-only codegraph tools over MCP stdio. Intended as a subprocess entrypoint for MCP hosts; stdout contains protocol messages only. Run `codegraph-install` to register it in NEOTH itself
 
 - `--db <DB>` — Override the persisted code-map database path
 

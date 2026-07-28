@@ -42,11 +42,15 @@ coding hemisphere, which today ignores it entirely.**
   decomposition) using NEOTH's own (better) infra. Integration: `SRC/neothd/src/coding/`
   decomposer + `code_map/recall.rs`.
 
-- [ ] **CRG-02 — Structural blast-radius tool. (S)** Port CRG `graph.py:742
-  get_impact_radius` (BFS outward over CALLS from changed nodes, N hops → affected
-  set). NEOTH already has the halves: `codegraph_server.rs` `callers_inner`
-  (~:402) + `callees_inner` (~:428). Add `code_map/graph.rs::impact_radius(roots,
-  depth)` + 7th tool `codegraph_impact_radius`.
+- [ ] **CRG-02 — Structural blast-radius tool. (S; core built, product wiring
+  open)** The native generation-bound service now lives in
+  `code_map/impact.rs`, with `neoth code-map impact` and the seventh
+  `codegraph_impact_radius` MCP tool sharing it. It resolves concrete
+  root/file/symbol identities, reports deterministic distance/score/path and
+  unresolved evidence, fails closed on stale or split generations, and applies
+  bounded traversal/allocation/output contracts. Closure still requires
+  CRG-03 hunk seeds plus review/apply/decomposer/risk, config/reload, Doctor,
+  GUI, Buddy and packaged clean-machine consumers.
 
 - [ ] **CRG-03 — git diff → function-level node mapping. (M)** Port CRG
   `changes.py:33 parse_git_diff_ranges` (`git diff --unified=0` hunk headers →
@@ -142,3 +146,29 @@ codegraph path is exercised end-to-end; defer to v1.1 with CRG-01 completion.
 GOLD-R3-16 umbrella checkbox is ready for re-audit once the four DEFERRED-v1.1
 items are formally acknowledged as v1.1 scope and CRG-01's decomposer-wiring
 gap is either closed or moved to v1.1.
+
+## Current v1.0 correction (2026-07-28)
+
+The dated 2026-07-25 disposition above is retained as forensic history, not as
+the current release contract. `PLAN/ROAD_TO_1_0_GOLD.md` now requires CRG-01..05
+for v1.0 rather than accepting a v1.1 deferral.
+
+CRG-02 has advanced from the historical **DEFERRED-v1.1 / absent** state to
+**NATIVE SERVICE + CLI/MCP WIRED / PRODUCT CONSUMERS PARTIAL**:
+
+- `SRC/neothd/src/code_map/impact.rs` owns the canonical root-scoped typed
+  service and deterministic evidence-bearing result.
+- `SRC/neothd/src/code_map/persist.rs` atomically publishes map, symbols, edges
+  and matching index/graph generations, and supplies bounded freshness and
+  graph loaders.
+- `SRC/neothd/src/cli/code_map.rs` exposes `neoth code-map impact`;
+  `SRC/neothd/src/mcp/codegraph_server.rs` exposes the seventh
+  `codegraph_impact_radius` tool through the same service.
+- Independent three-round static review found no Critical, High or Medium
+  blocker after writer-lock, strict-empty snapshot, truthful installer
+  post-state, amplification, race, result-size and MCP-frame corrections.
+
+CRG-02 remains unchecked: CRG-03 hunk-derived seeds, production
+review/apply/decomposer/risk consumers, Freedom config/reload, automatic index
+lifecycle, Doctor, GUI, Buddy and packaged clean-machine parity are not yet
+built. CRG-03..05 also remain open v1.0 work.

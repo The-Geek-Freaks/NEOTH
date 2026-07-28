@@ -22,22 +22,25 @@
 //!   operator's code-map DB path and returns a [`ToolCallResult`]
 //!   ready for the MCP `tools/call` response envelope.
 //!
-//! Today's tool set (6 tools, mirrors the smallcode minimum + call-chain BFS):
+//! Today's tool set (7 tools, mirrors the smallcode minimum + graph analysis):
 //!
 //! - `codegraph_relevant_files` — top-N files for a prompt
 //! - `codegraph_extract_identifiers` — symbol-shape extraction
 //! - `codegraph_path_keywords` — path-segment extraction
 //! - `codegraph_callers` — transitive callers of a symbol (inverse BFS)
 //! - `codegraph_callees` — transitive callees of a symbol (forward BFS)
+//! - `codegraph_impact_radius` — generation-bound, concrete-node blast radius
 //! - `codegraph_outline` — structural outline for a file already indexed in
 //!   the persisted code map
 //!
 //! Each is a pure read against the operator's persisted code map
 //! (`~/.neoth/code_map.db`): relevant_files ranks stored file rows;
 //! callers/callees reconstruct the [`CallGraph`] from the stored
-//! `code_map_edges` table (no source rescan). No mutations, no provider
-//! calls, no network. Safe to expose to any MCP client the operator's
-//! autonomy level allows.
+//! `code_map_edges` table. Impact analysis additionally re-hashes the indexed
+//! root to enforce its default fail-closed staleness contract. No source is
+//! returned, no provider calls or network access occur, and no project files
+//! are mutated. Safe to expose to any MCP client the operator's autonomy level
+//! allows.
 
 use std::path::{Path, PathBuf};
 
@@ -188,6 +191,69 @@ pub fn codegraph_tools() -> Vec<McpTool> {
             }),
             annotations: read_only_annotations(),
         },
+        McpTool {
+            name: "codegraph_impact_radius".into(),
+            description: Some(
+                "Compute a deterministic structural blast radius from changed files or exact \
+                 declarations in the active persisted repository. Every traversed endpoint is \
+                 resolved to one concrete root/file/symbol/line identity; missing or ambiguous \
+                 name-only edges remain explicit unresolved evidence. Refuses mismatched graph \
+                 generations and stale indexes by default, and marks node-cap versus bounded \
+                 evidence truncation separately."
+                    .into(),
+            ),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "seeds": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": crate::code_map::impact::MAX_REQUESTED_SEEDS,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {
+                                    "type": "string",
+                                    "description": "Repo-relative indexed file path."
+                                },
+                                "symbol": {
+                                    "type": "string",
+                                    "description": "Optional exact declaration name. Omit to seed every declaration in the file."
+                                }
+                            },
+                            "required": ["file"],
+                            "additionalProperties": false
+                        }
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["callers", "callees", "both"],
+                        "default": "callers",
+                        "description": "Dependents, dependencies, or both neighborhoods."
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": crate::code_map::impact::MAX_IMPACT_DEPTH,
+                        "default": crate::code_map::impact::DEFAULT_MAX_DEPTH
+                    },
+                    "max_nodes": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": crate::code_map::impact::MAX_IMPACT_NODES,
+                        "default": crate::code_map::impact::DEFAULT_MAX_NODES
+                    },
+                    "allow_stale": {
+                        "type": "boolean",
+                        "default": false,
+                        "description": "Explicitly permit a stale index; the result still records stale=true."
+                    }
+                },
+                "required": ["seeds"],
+                "additionalProperties": false
+            }),
+            annotations: read_only_annotations(),
+        },
         // GOLD-ADAPT-CCS-04: native AST outline — per-file structural overview
         // (symbols + line ranges) without any Node.js or tree-sitter dep.
         McpTool {
@@ -227,6 +293,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "codegraph_path_keywords",
     "codegraph_callers",
     "codegraph_callees",
+    "codegraph_impact_radius",
     "codegraph_outline",
 ];
 
@@ -264,6 +331,7 @@ pub(crate) fn dispatch_codegraph_tool_at(
         "codegraph_relevant_files" => tool_relevant_files(db_path, args),
         "codegraph_callers" => tool_callers(db_path, args, cwd),
         "codegraph_callees" => tool_callees(db_path, args, cwd),
+        "codegraph_impact_radius" => tool_impact_radius(db_path, args, cwd),
         "codegraph_outline" => tool_outline(db_path, args, cwd),
         other => error_result(format!(
             "unknown codegraph tool `{other}` (known: {})",
@@ -383,6 +451,73 @@ struct CalleesArgs {
 
 fn default_bfs_depth() -> u32 {
     5
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImpactArgs {
+    seeds: Vec<crate::code_map::impact::ImpactSeed>,
+    #[serde(default)]
+    direction: crate::code_map::impact::ImpactDirection,
+    #[serde(default = "default_impact_depth")]
+    max_depth: usize,
+    #[serde(default = "default_impact_nodes")]
+    max_nodes: usize,
+    #[serde(default)]
+    allow_stale: bool,
+}
+
+fn default_impact_depth() -> usize {
+    crate::code_map::impact::DEFAULT_MAX_DEPTH
+}
+
+fn default_impact_nodes() -> usize {
+    crate::code_map::impact::DEFAULT_MAX_NODES
+}
+
+fn tool_impact_radius(db_path: &Path, args: &serde_json::Value, cwd: &Path) -> ToolCallResult {
+    let parsed: ImpactArgs = match serde_json::from_value(args.clone()) {
+        Ok(parsed) => parsed,
+        Err(error) => return error_result(format!("bad args: {error}")),
+    };
+    if !db_path.exists() {
+        return error_result(format!(
+            "codegraph_impact_radius failed: code-map DB {} does not exist; \
+             run `neoth code-map persist` first",
+            db_path.display()
+        ));
+    }
+    let conn = match crate::code_map::persist::open(db_path) {
+        Ok(conn) => conn,
+        Err(error) => {
+            return error_result(format!(
+                "codegraph_impact_radius failed to open {}: {error:#}",
+                db_path.display()
+            ));
+        }
+    };
+    let result = match crate::code_map::impact::impact_radius_for_path(
+        &conn,
+        cwd,
+        &parsed.seeds,
+        crate::code_map::impact::ImpactOptions {
+            direction: parsed.direction,
+            max_depth: parsed.max_depth,
+            max_nodes: parsed.max_nodes,
+            allow_stale: parsed.allow_stale,
+        },
+    ) {
+        Ok(result) => result,
+        Err(error) => {
+            return error_result(format!("codegraph_impact_radius failed: {error:#}"));
+        }
+    };
+    match serde_json::to_string(&result) {
+        Ok(payload) => text_result(payload),
+        Err(error) => error_result(format!(
+            "codegraph_impact_radius result serialisation failed: {error}"
+        )),
+    }
 }
 
 /// Load the call graph from the operator's persisted code-map DB. A
@@ -606,8 +741,7 @@ pub async fn serve_stdio(db_path: PathBuf) -> Result<()> {
         {
             buffer.drain(..consumed);
             if let Some(response) = handle_stdio_message(&db_path, &body, &mut session) {
-                let encoded = serde_json::to_vec(&response).context("encode MCP response")?;
-                let message = crate::mcp::transport::frame(&encoded);
+                let message = encode_bounded_stdio_response(&response)?;
                 output
                     .write_all(&message)
                     .await
@@ -631,6 +765,55 @@ pub async fn serve_stdio(db_path: PathBuf) -> Result<()> {
             );
         }
     }
+}
+
+fn encode_bounded_stdio_response(response: &serde_json::Value) -> Result<Vec<u8>> {
+    encode_bounded_stdio_response_with_limit(response, crate::mcp::transport::MAX_MCP_FRAME_BYTES)
+}
+
+fn encode_bounded_stdio_response_with_limit(
+    response: &serde_json::Value,
+    body_limit: usize,
+) -> Result<Vec<u8>> {
+    let encoded = serde_json::to_vec(response).context("encode MCP response")?;
+    if encoded.len() <= body_limit {
+        return Ok(crate::mcp::transport::frame(&encoded));
+    }
+
+    let id = response
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let fallback = rpc_error(
+        id,
+        -32003,
+        "Response exceeds MCP frame limit",
+        Some(serde_json::json!({
+            "encoded_bytes": encoded.len(),
+            "limit_bytes": body_limit,
+        })),
+    );
+    let mut fallback =
+        serde_json::to_vec(&fallback).context("encode bounded MCP error response")?;
+    if fallback.len() > body_limit {
+        // A request ID is client-controlled JSON and can itself be larger than
+        // the response cap. JSON-RPC permits `null` when an ID cannot be
+        // represented safely; never let an oversized ID turn the bounded
+        // fallback into a second oversized frame or terminate the server.
+        fallback = serde_json::to_vec(&rpc_error(
+            serde_json::Value::Null,
+            -32003,
+            "Response exceeds MCP frame limit",
+            Some(serde_json::json!({"limit_bytes": body_limit})),
+        ))
+        .context("encode minimal bounded MCP error response")?;
+    }
+    if fallback.len() > body_limit {
+        anyhow::bail!(
+            "MCP response limit {body_limit} bytes is too small for the bounded error envelope"
+        );
+    }
+    Ok(crate::mcp::transport::frame(&fallback))
 }
 
 /// Pure JSON-RPC request handler used by the stdio loop and protocol tests.
@@ -807,16 +990,16 @@ mod tests {
     }
 
     #[test]
-    fn codegraph_tools_lists_six_canonical_tools() {
-        // GOLD-ADAPT-CCS-04: codegraph_outline is the 6th tool.
+    fn codegraph_tools_lists_seven_canonical_tools() {
         let tools = codegraph_tools();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"codegraph_relevant_files"));
         assert!(names.contains(&"codegraph_extract_identifiers"));
         assert!(names.contains(&"codegraph_path_keywords"));
         assert!(names.contains(&"codegraph_callers"));
         assert!(names.contains(&"codegraph_callees"));
+        assert!(names.contains(&"codegraph_impact_radius"));
         assert!(names.contains(&"codegraph_outline"));
     }
 
@@ -1164,6 +1347,97 @@ fn root() { alpha(); beta(); }
         assert!(names.contains(&"leaf"), "wiring broken — got: {names:?}");
     }
 
+    #[test]
+    fn impact_dispatch_matches_the_canonical_typed_service() {
+        let repo = tempdir().unwrap();
+        std::fs::write(repo.path().join("changed.rs"), "fn changed() {}\n").unwrap();
+        std::fs::write(repo.path().join("caller.rs"), "fn caller() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(repo.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let mut conn = crate::code_map::persist::open(&db).unwrap();
+        crate::code_map::persist::persist_map(&mut conn, &map).unwrap();
+        crate::code_map::persist::persist_edges(
+            &mut conn,
+            &map.root,
+            &[crate::code_map::graph::CodeEdge {
+                from_file: "caller.rs".into(),
+                from_symbol: "caller".into(),
+                to_name: "changed".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            }],
+        )
+        .unwrap();
+        let seeds = vec![crate::code_map::impact::ImpactSeed::symbol(
+            "changed.rs",
+            "changed",
+        )];
+        let options = crate::code_map::impact::ImpactOptions {
+            direction: crate::code_map::impact::ImpactDirection::Callers,
+            max_depth: 3,
+            max_nodes: 25,
+            allow_stale: false,
+        };
+        let canonical =
+            crate::code_map::impact::impact_radius_for_path(&conn, repo.path(), &seeds, options)
+                .unwrap();
+
+        let dispatched = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_impact_radius",
+            &serde_json::json!({
+                "seeds": [{"file": "changed.rs", "symbol": "changed"}],
+                "direction": "callers",
+                "max_depth": 3,
+                "max_nodes": 25
+            }),
+            repo.path(),
+        );
+        assert!(!dispatched.is_error, "got: {}", text_content(&dispatched));
+        let from_mcp: crate::code_map::impact::ImpactResult =
+            serde_json::from_str(&text_content(&dispatched)).unwrap();
+        assert_eq!(from_mcp, canonical);
+        assert_eq!(from_mcp.impacted_nodes[0].node.symbol, "caller");
+    }
+
+    #[test]
+    fn impact_dispatch_fails_closed_without_index_or_active_root() {
+        let missing = tempdir().unwrap();
+        let missing_result = dispatch_codegraph_tool_at(
+            &missing.path().join("absent.db"),
+            "codegraph_impact_radius",
+            &serde_json::json!({"seeds": [{"file": "a.rs"}]}),
+            missing.path(),
+        );
+        assert!(missing_result.is_error);
+        assert!(text_content(&missing_result).contains("does not exist"));
+
+        let indexed = tempdir().unwrap();
+        let elsewhere = tempdir().unwrap();
+        std::fs::write(indexed.path().join("a.rs"), "fn a() {}\n").unwrap();
+        let map = crate::code_map::walker::RepoMapBuilder::new(indexed.path())
+            .with_symbols(true)
+            .scan()
+            .unwrap();
+        let db_dir = tempdir().unwrap();
+        let db = db_dir.path().join("code_map.db");
+        let mut conn = crate::code_map::persist::open(&db).unwrap();
+        crate::code_map::persist::persist_map(&mut conn, &map).unwrap();
+        crate::code_map::persist::persist_edges(&mut conn, &map.root, &[]).unwrap();
+
+        let outside = dispatch_codegraph_tool_at(
+            &db,
+            "codegraph_impact_radius",
+            &serde_json::json!({"seeds": [{"file": "a.rs", "symbol": "a"}]}),
+            elsewhere.path(),
+        );
+        assert!(outside.is_error);
+        assert!(text_content(&outside).contains("not inside a persisted code-map root"));
+    }
+
     /// PR5-016: the call graph must honour the same containment as
     /// `relevant_files`. A client working outside the indexed root must never
     /// see another repository's symbols.
@@ -1382,7 +1656,10 @@ fn root() { alpha(); beta(); }
             serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}),
         )
         .unwrap();
-        assert_eq!(listed["result"]["tools"].as_array().unwrap().len(), 6);
+        assert_eq!(
+            listed["result"]["tools"].as_array().unwrap().len(),
+            TOOL_NAMES.len()
+        );
     }
 
     #[test]
@@ -1409,6 +1686,43 @@ fn root() { alpha(); beta(); }
         let payload = response["result"]["content"][0]["text"].as_str().unwrap();
         assert!(payload.contains("OrderService"));
         assert!(payload.contains("auth_middleware"));
+    }
+
+    #[test]
+    fn stdio_outbound_guard_replaces_oversized_result_with_small_rpc_error() {
+        let response = rpc_result(
+            serde_json::json!("oversized-7"),
+            serde_json::json!({"payload": "x".repeat(2_048)}),
+        );
+        let framed = encode_bounded_stdio_response_with_limit(&response, 512).unwrap();
+        let (body, consumed) = crate::mcp::transport::parse_frame(&framed)
+            .unwrap()
+            .unwrap();
+        assert_eq!(consumed, framed.len());
+        assert!(body.len() <= 512);
+        let bounded: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(bounded["id"], "oversized-7");
+        assert_eq!(bounded["error"]["code"], -32003);
+        assert_eq!(
+            bounded["error"]["message"],
+            "Response exceeds MCP frame limit"
+        );
+        assert!(bounded["error"]["data"]["encoded_bytes"].as_u64().unwrap() > 512);
+        assert_eq!(bounded["error"]["data"]["limit_bytes"], 512);
+    }
+
+    #[test]
+    fn stdio_outbound_guard_drops_client_id_when_id_breaks_fallback_cap() {
+        let response = rpc_result(serde_json::json!("i".repeat(2_048)), serde_json::json!({}));
+        let framed = encode_bounded_stdio_response_with_limit(&response, 512).unwrap();
+        let (body, _) = crate::mcp::transport::parse_frame(&framed)
+            .unwrap()
+            .unwrap();
+        assert!(body.len() <= 512);
+        let bounded: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(bounded["id"].is_null());
+        assert_eq!(bounded["error"]["code"], -32003);
+        assert_eq!(bounded["error"]["data"]["limit_bytes"], 512);
     }
 
     #[test]
