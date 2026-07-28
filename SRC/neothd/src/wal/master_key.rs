@@ -17,8 +17,14 @@
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
 use super::crypto::{INFO_CONFIG, INFO_WAL_SEGMENT, WalMasterKey, WalSegmentKey, derive_subkey};
 use anyhow::{Context, Result};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+/// Raw keys are 32 bytes and a DPAPI envelope for that input is small. Keep a
+/// hard ceiling so a capture/read path never follows an unbounded `master.key`
+/// allocation controlled by the filesystem.
+const MAX_STORED_MASTER_KEY_BYTES: usize = 4 * 1024;
 
 /// Default master-key path: `<home>/wal/master.key`.
 pub fn master_key_path(home: &Path) -> PathBuf {
@@ -53,6 +59,56 @@ pub fn segment_key_at(home: &Path) -> Option<WalSegmentKey> {
     let raw = maybe_unwrap_dpapi(&body, &path).ok()?;
     let master = WalMasterKey::from_bytes(&raw).ok()?;
     derive_subkey(&master, INFO_WAL_SEGMENT).ok()
+}
+
+/// Checked variant for security-sensitive readers.
+///
+/// Every untrusted component below the trusted ancestor is opened
+/// capability-relatively without following symlinks or Windows reparse points.
+/// The leaf must be a real regular file and is read through the validated handle
+/// with [`MAX_STORED_MASTER_KEY_BYTES`] as a hard allocation ceiling.
+pub(crate) fn segment_key_at_checked(home: &Path) -> Result<Option<WalSegmentKey>> {
+    let Some(master) = load_master_key_at_checked(home)? else {
+        return Ok(None);
+    };
+    derive_subkey(&master, INFO_WAL_SEGMENT)
+        .context("derive WAL segment subkey")
+        .map(Some)
+}
+
+fn load_master_key_at_checked(home: &Path) -> Result<Option<WalMasterKey>> {
+    let wal_dir = home.join("wal");
+    let Some(parent) =
+        crate::skills::store::open_bound_directory(&wal_dir, false, "WAL master-key directory")?
+    else {
+        return Ok(None);
+    };
+    let path = wal_dir.join("master.key");
+    match parent.dir.symlink_metadata(OsStr::new("master.key")) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect WAL master key {}", path.display()));
+        }
+    }
+    let body = crate::skills::store::read_regular_file_bounded(
+        &parent.dir,
+        OsStr::new("master.key"),
+        &path,
+        MAX_STORED_MASTER_KEY_BYTES,
+    )
+    .with_context(|| {
+        format!(
+            "read WAL master key {} without following links (maximum {} bytes)",
+            path.display(),
+            MAX_STORED_MASTER_KEY_BYTES
+        )
+    })?;
+    let raw = maybe_unwrap_dpapi(&body, &path)?;
+    WalMasterKey::from_bytes(&raw)
+        .with_context(|| format!("WAL master key at {} is malformed", path.display()))
+        .map(Some)
 }
 
 /// Resolve the WAL encryption policy for an explicit daemon instance.
@@ -202,5 +258,71 @@ mod tests {
         let dst = dir.path().join("k.key");
         assert!(restore_master_key(&[0u8; 16], &dst).is_err());
         assert!(restore_master_key(&[0u8; 32], &dst).is_ok());
+    }
+
+    #[test]
+    fn checked_segment_key_read_is_bounded() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        std::fs::write(
+            wal_dir.join("master.key"),
+            vec![0u8; MAX_STORED_MASTER_KEY_BYTES + 1],
+        )
+        .unwrap();
+
+        let error = segment_key_at_checked(home.path())
+            .expect_err("oversized master.key must fail before allocation grows without bound");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("maximum") || message.contains("too large"),
+            "unexpected bounded-read error: {message}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_segment_key_read_rejects_symlink_leaf() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        let target = outside.path().join("master.key");
+        std::fs::write(&target, [0x5au8; 32]).unwrap();
+        std::os::unix::fs::symlink(&target, wal_dir.join("master.key")).unwrap();
+
+        let error = segment_key_at_checked(home.path())
+            .expect_err("master.key symlink must not be followed");
+        assert!(
+            format!("{error:#}").contains("without following links"),
+            "unexpected no-follow error: {error:#}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn checked_segment_key_read_rejects_wal_directory_junction() {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("master.key"), [0x5au8; 32]).unwrap();
+        let junction = home.path().join("wal");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(outside.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn mklink /J");
+        assert!(status.success(), "mklink /J must create test junction");
+
+        let result = segment_key_at_checked(home.path());
+        std::fs::remove_dir(&junction).expect("remove test junction without following it");
+        let error = result.expect_err("WAL directory junction must not redirect master.key read");
+        assert!(
+            format!("{error:#}").contains("real directory"),
+            "unexpected reparse rejection: {error:#}"
+        );
     }
 }

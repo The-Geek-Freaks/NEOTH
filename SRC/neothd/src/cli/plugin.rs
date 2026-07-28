@@ -74,10 +74,20 @@ pub enum PluginAction {
         /// Directory containing `plugin.toml` + `plugin.wasm`.
         path: std::path::PathBuf,
         /// UX-07b — capture the WAL frames (`0xC4`/`0xC6`/`0xC7`) the
-        /// invocation emits into a throwaway tempdir WAL and surface them in
-        /// the report. Requires the `wasm-plugin-host` feature; without it the
-        /// flag is inert (the slim build can't live-invoke). The live WAL is
-        /// never touched.
+        /// invocation emits into a throwaway WAL home and surface them in the
+        /// report. Requires the `wasm-plugin-host` feature; without it the flag
+        /// is inert (the slim build can't live-invoke). The live WAL, HMAC key,
+        /// and recovery state are never touched. Capture uses one non-rotating
+        /// segment and rejects the frame that would cross its 32 MiB physical
+        /// ceiling, so later frames cannot disappear into an unread segment;
+        /// reconstructed data is also capped at 32 MiB and 65,536 complete
+        /// frames. WAL and encrypted `master.key` reads are bounded, no-follow,
+        /// and accept only real regular files below the throwaway home. A
+        /// missing file, incomplete segment-header prefix, or genuinely torn
+        /// final frame remains crash-tolerant (including exactly 65,536 complete
+        /// frames plus a torn next frame); unsafe paths, malformed complete
+        /// data, limit breaches, and writer initialization/completion failures
+        /// are reported visibly as `capture_error` in JSON and table output.
         #[arg(long)]
         capture_wal: bool,
     },
@@ -196,6 +206,81 @@ struct TestInvocationSummary {
 struct TestInvocationWithWal {
     outcome: TestInvocationSummary,
     captured_frames: Vec<serde_json::Value>,
+    capture_error: Option<CaptureWalError>,
+}
+
+#[cfg(any(test, feature = "wasm-plugin-host"))]
+#[derive(Clone, Copy, Debug)]
+struct CaptureWalLimits {
+    max_physical_bytes: usize,
+    max_logical_frame_bytes: u64,
+    max_frames: usize,
+}
+
+#[cfg(any(test, feature = "wasm-plugin-host"))]
+impl Default for CaptureWalLimits {
+    fn default() -> Self {
+        // The capture writer is non-rotating and refuses the frame that would
+        // cross this physical ceiling. Keep reconstructed data under the same
+        // bound and far below the general forensic decompression ceiling.
+        Self {
+            max_physical_bytes: 32 * 1024 * 1024,
+            max_logical_frame_bytes: 32 * 1024 * 1024,
+            max_frames: 65_536,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum CaptureWalErrorKind {
+    InvalidPath,
+    UnsafeFile,
+    WriterInitFailed,
+    WriterCompletionFailed,
+    PhysicalLimitExceeded,
+    ReadFailed,
+    MasterKeyReadFailed,
+    LogicalLimitExceeded,
+    ReconstructFailed,
+    InvalidLogicalLayout,
+    CorruptFrame,
+    FrameLimitExceeded,
+}
+
+impl CaptureWalErrorKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::InvalidPath => "invalid_path",
+            Self::UnsafeFile => "unsafe_file",
+            Self::WriterInitFailed => "writer_init_failed",
+            Self::WriterCompletionFailed => "writer_completion_failed",
+            Self::PhysicalLimitExceeded => "physical_limit_exceeded",
+            Self::ReadFailed => "read_failed",
+            Self::MasterKeyReadFailed => "master_key_read_failed",
+            Self::LogicalLimitExceeded => "logical_limit_exceeded",
+            Self::ReconstructFailed => "reconstruct_failed",
+            Self::InvalidLogicalLayout => "invalid_logical_layout",
+            Self::CorruptFrame => "corrupt_frame",
+            Self::FrameLimitExceeded => "frame_limit_exceeded",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct CaptureWalError {
+    kind: CaptureWalErrorKind,
+    message: String,
+}
+
+impl CaptureWalError {
+    #[cfg(any(test, feature = "wasm-plugin-host"))]
+    fn new(kind: CaptureWalErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
 }
 
 /// UX-07 — read + validate a candidate plugin and (under the host
@@ -245,11 +330,18 @@ async fn run_test(path: &std::path::Path, output: OutputFormat, capture_wal: boo
         // the captured 0xC4/0xC6/0xC7 frames. The slim build returns None
         // (the renderer prints the rebuild hint, same as the dry-run path).
         let captured = run_test_invoke_with_wal(&manifest, &wasm_bytes).await;
-        let (outcome, frames) = match captured {
-            Some(c) => (Some(c.outcome), Some(c.captured_frames)),
-            None => (None, None),
+        let (outcome, frames, capture_error) = match captured {
+            Some(c) => (Some(c.outcome), Some(c.captured_frames), c.capture_error),
+            None => (None, None, None),
         };
-        render_test_report(&manifest, wasm_bytes.len(), outcome, frames, output)
+        render_test_report(
+            &manifest,
+            wasm_bytes.len(),
+            outcome,
+            frames,
+            capture_error,
+            output,
+        )
     } else {
         let invocation_outcome: Option<TestInvocationSummary> =
             run_test_invoke(&manifest, &wasm_bytes);
@@ -257,6 +349,7 @@ async fn run_test(path: &std::path::Path, output: OutputFormat, capture_wal: boo
             &manifest,
             wasm_bytes.len(),
             invocation_outcome,
+            None,
             None,
             output,
         )
@@ -832,6 +925,20 @@ async fn run_test_invoke_with_wal(
                 invoked_ok: false,
             },
             captured_frames: Vec::new(),
+            capture_error: None,
+        })
+    };
+    let capture_fail = |kind: CaptureWalErrorKind, message: String| {
+        Some(TestInvocationWithWal {
+            outcome: TestInvocationSummary {
+                // Preserve the pre-existing setup-failure stage while also
+                // putting the storage failure in the dedicated capture field.
+                stage: "compile".to_string(),
+                error: Some(message.clone()),
+                invoked_ok: false,
+            },
+            captured_frames: Vec::new(),
+            capture_error: Some(CaptureWalError::new(kind, message)),
         })
     };
 
@@ -858,6 +965,7 @@ async fn run_test_invoke_with_wal(
                 invoked_ok: false,
             },
             captured_frames: Vec::new(),
+            capture_error: None,
         });
     }
     let module = match &compile_outcome {
@@ -872,17 +980,44 @@ async fn run_test_invoke_with_wal(
     };
     let granted = hostcalls::HostcallPermission::from(manifest.requested_permissions);
 
-    // THROWAWAY WAL: a tempdir segment the invocation writes into, never the
-    // live `~/.neoth` WAL. `tmp` is held to fn-end so the file survives the
-    // read-back below.
+    // THROWAWAY WAL: segment, HMAC key, and recovery transaction state all
+    // live under one temp home. The dedicated capture writer never rotates and
+    // rejects a frame before the single segment crosses the read-back ceiling.
     let tmp = match tempfile::tempdir() {
         Ok(t) => t,
-        Err(e) => return fail("compile", format!("tempdir: {e}")),
+        Err(e) => {
+            return capture_fail(
+                CaptureWalErrorKind::WriterInitFailed,
+                format!("create throwaway WAL home: {e}"),
+            );
+        }
     };
-    let seg = tmp.path().join("000001.wal");
-    let (writer, join) = match crate::wal::writer::spawn(seg.clone()) {
-        Ok(p) => p,
-        Err(e) => return fail("compile", format!("wal writer spawn: {e}")),
+    let limits = CaptureWalLimits::default();
+    let wal_dir = tmp.path().join("wal");
+    if let Err(error) = std::fs::create_dir(&wal_dir) {
+        return capture_fail(
+            CaptureWalErrorKind::WriterInitFailed,
+            format!(
+                "create throwaway WAL directory {}: {error}",
+                wal_dir.display()
+            ),
+        );
+    }
+    let seg = wal_dir.join("capture-000001.wal");
+    let max_segment_bytes = u64::try_from(limits.max_physical_bytes).unwrap_or(u64::MAX);
+    let (writer, completion) = match crate::wal::writer::spawn_capture(
+        seg.clone(),
+        tmp.path().to_path_buf(),
+        max_segment_bytes,
+    ) {
+        Ok(writer) => writer,
+        Err(error) => {
+            let error = anyhow::Error::new(error);
+            return capture_fail(
+                CaptureWalErrorKind::WriterInitFailed,
+                format!("initialize throwaway WAL writer: {error:#}"),
+            );
+        }
     };
 
     // Caller-built state: manifest grant + limits + the throwaway writer.
@@ -896,9 +1031,28 @@ async fn run_test_invoke_with_wal(
     let invoked_ok = matches!(outcome.stage, InvocationStage::Run) && outcome.error.is_none();
 
     // Flush: the writer was moved into the state → store → dropped when invoke
-    // returned, so no clone is held here; join drains the writer task.
-    join.await.ok();
-    let captured_frames = decode_wal_frames(&seg, tmp.path());
+    // returned. Completion carries run_writer's actual Result, including
+    // asynchronous initialization, HMAC/recovery, write, and final-sync errors.
+    let writer_completion_error = completion.wait().await.err().map(|error| {
+        let error = anyhow::Error::new(error);
+        CaptureWalError::new(
+            CaptureWalErrorKind::WriterCompletionFailed,
+            format!("throwaway WAL writer failed before capture completed: {error:#}"),
+        )
+    });
+    let (captured_frames, capture_error) =
+        match decode_wal_frames_with_limits(&seg, tmp.path(), limits) {
+            Ok(frames) => (frames, writer_completion_error),
+            Err(mut error) => {
+                if let Some(writer_error) = writer_completion_error {
+                    error.message.push_str(&format!(
+                        "; additionally, the throwaway writer failed: {}",
+                        writer_error.message
+                    ));
+                }
+                (Vec::new(), Some(error))
+            }
+        };
 
     Some(TestInvocationWithWal {
         outcome: TestInvocationSummary {
@@ -907,6 +1061,7 @@ async fn run_test_invoke_with_wal(
             invoked_ok,
         },
         captured_frames,
+        capture_error,
     })
 }
 
@@ -920,32 +1075,271 @@ async fn run_test_invoke_with_wal(
     None
 }
 
-/// UX-07b — decode every frame in a (small, single-segment) WAL file into
-/// `{event_type, payload}` JSON, in emission order. Tolerant: a missing /
-/// torn / truncated segment yields the frames recovered so far. The `wal`
-/// read primitives are feature-independent, so the capture/read-back logic
-/// unit-tests without the wasm host (the `test` half of the cfg). `home` binds
-/// decryption to the same instance key used by home-owned one-shot writers.
+/// UX-07b — decode every frame in a small, single-segment WAL file through a
+/// capability-bound no-follow handle. Missing files and a torn final frame are
+/// normal crash-recovery states; unsafe file types, corrupt complete frames,
+/// and physical/logical/frame-count limit breaches are typed capture errors.
+/// `home` binds decryption to the same instance key used by home-owned writers.
 #[cfg(any(test, feature = "wasm-plugin-host"))]
-fn decode_wal_frames(segment: &std::path::Path, home: &std::path::Path) -> Vec<serde_json::Value> {
-    use crate::wal::frame::decode_frame;
+fn decode_wal_frames(
+    segment: &std::path::Path,
+    home: &std::path::Path,
+) -> std::result::Result<Vec<serde_json::Value>, CaptureWalError> {
+    decode_wal_frames_with_limits(segment, home, CaptureWalLimits::default())
+}
 
-    let Ok(bytes) = std::fs::read(segment) else {
-        return Vec::new();
+#[cfg(any(test, feature = "wasm-plugin-host"))]
+fn decode_wal_frames_with_limits(
+    segment: &std::path::Path,
+    home: &std::path::Path,
+    limits: CaptureWalLimits,
+) -> std::result::Result<Vec<serde_json::Value>, CaptureWalError> {
+    use std::io::Read as _;
+
+    let parent_path = segment.parent().ok_or_else(|| {
+        CaptureWalError::new(
+            CaptureWalErrorKind::InvalidPath,
+            format!("captured WAL path has no parent: {}", segment.display()),
+        )
+    })?;
+    let file_name = segment.file_name().ok_or_else(|| {
+        CaptureWalError::new(
+            CaptureWalErrorKind::InvalidPath,
+            format!("captured WAL path has no file name: {}", segment.display()),
+        )
+    })?;
+    let parent =
+        match crate::skills::store::open_bound_directory(parent_path, false, "captured WAL parent")
+        {
+            Ok(Some(parent)) => parent,
+            Ok(None) => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(CaptureWalError::new(
+                    CaptureWalErrorKind::UnsafeFile,
+                    format!(
+                        "captured WAL parent is not a safe real directory {}: {error:#}",
+                        parent_path.display()
+                    ),
+                ));
+            }
+        };
+    let file = match crate::skills::store::open_regular_file(&parent.dir, file_name, segment) {
+        Ok(file) => file,
+        Err(error) if error_has_io_kind(&error, std::io::ErrorKind::NotFound) => {
+            return Ok(Vec::new());
+        }
+        Err(error) => {
+            let kind = match std::fs::symlink_metadata(segment) {
+                Ok(metadata) if !metadata.is_file() || metadata.file_type().is_symlink() => {
+                    CaptureWalErrorKind::UnsafeFile
+                }
+                Ok(_) => CaptureWalErrorKind::ReadFailed,
+                Err(metadata_error) if metadata_error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Vec::new());
+                }
+                Err(_) => CaptureWalErrorKind::UnsafeFile,
+            };
+            return Err(CaptureWalError::new(
+                kind,
+                format!(
+                    "refused captured WAL file {} without following links: {error:#}",
+                    segment.display()
+                ),
+            ));
+        }
     };
-    let Ok((header_len, logical)) =
-        crate::wal::compaction::logical_segment_bytes_at_home(&bytes, home)
-    else {
-        return Vec::new();
+    let metadata = file.metadata().map_err(|error| {
+        CaptureWalError::new(
+            CaptureWalErrorKind::ReadFailed,
+            format!(
+                "inspect opened captured WAL file {}: {error}",
+                segment.display()
+            ),
+        )
+    })?;
+    let physical_limit = u64::try_from(limits.max_physical_bytes).unwrap_or(u64::MAX);
+    if metadata.len() > physical_limit {
+        return Err(CaptureWalError::new(
+            CaptureWalErrorKind::PhysicalLimitExceeded,
+            format!(
+                "captured WAL file {} is {} bytes; physical ceiling is {}",
+                segment.display(),
+                metadata.len(),
+                limits.max_physical_bytes
+            ),
+        ));
+    }
+    let capacity = usize::try_from(metadata.len()).map_err(|_| {
+        CaptureWalError::new(
+            CaptureWalErrorKind::PhysicalLimitExceeded,
+            format!(
+                "captured WAL file {} cannot fit the platform address space",
+                segment.display()
+            ),
+        )
+    })?;
+    let read_limit = physical_limit.saturating_add(1);
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            CaptureWalError::new(
+                CaptureWalErrorKind::ReadFailed,
+                format!("read captured WAL file {}: {error}", segment.display()),
+            )
+        })?;
+    if bytes.len() > limits.max_physical_bytes {
+        return Err(CaptureWalError::new(
+            CaptureWalErrorKind::PhysicalLimitExceeded,
+            format!(
+                "captured WAL file {} grew beyond the {}-byte physical ceiling while reading",
+                segment.display(),
+                limits.max_physical_bytes
+            ),
+        ));
+    }
+
+    // A freshly-created segment can be observed before its fixed header is
+    // complete after a crash. Only an exact prefix of the segment magic plus a
+    // known, possibly incomplete versioned header is a torn header; unrelated
+    // short garbage is corruption, not an empty capture.
+    let segment_magic = crate::wal::segment_header::SEGMENT_MAGIC;
+    let magic_prefix_len = bytes.len().min(segment_magic.len());
+    if bytes[..magic_prefix_len] != segment_magic[..magic_prefix_len] {
+        return Err(CaptureWalError::new(
+            CaptureWalErrorKind::ReconstructFailed,
+            format!(
+                "captured WAL file {} does not begin with a valid segment-header prefix",
+                segment.display()
+            ),
+        ));
+    }
+    if bytes.len() < 12 {
+        return Ok(Vec::new());
+    }
+    let version = u32::from_le_bytes(
+        bytes[8..12]
+            .try_into()
+            .expect("12-byte segment-header prefix includes version"),
+    );
+    let expected_header_len = match version {
+        crate::wal::segment_header::SEGMENT_FORMAT_VERSION_V1 => {
+            crate::wal::segment_header::SEGMENT_HEADER_LEN
+        }
+        crate::wal::segment_header::SEGMENT_FORMAT_VERSION_V2 => {
+            crate::wal::segment_header::SEGMENT_HEADER_V2_LEN
+        }
+        crate::wal::segment_header::SEGMENT_FORMAT_VERSION => {
+            crate::wal::segment_header::SEGMENT_HEADER_V3_LEN
+        }
+        unknown => {
+            return Err(CaptureWalError::new(
+                CaptureWalErrorKind::ReconstructFailed,
+                format!(
+                    "captured WAL file {} declares unknown segment format version {unknown}",
+                    segment.display()
+                ),
+            ));
+        }
     };
+    if bytes.len() < expected_header_len {
+        return Ok(Vec::new());
+    }
+    let parsed_header =
+        crate::wal::segment_header::parse_segment_header(&bytes).map_err(|error| {
+            CaptureWalError::new(
+                CaptureWalErrorKind::ReconstructFailed,
+                format!(
+                    "validate captured WAL segment header {}: {error}",
+                    segment.display()
+                ),
+            )
+        })?;
+
+    // Consult master.key only when the segment body is encrypted. That read is
+    // bounded, handle-relative, and no-follow; an unsafe/malformed key is a
+    // visible capture failure instead of an apparent empty WAL.
+    let physical_header_len = parsed_header.header_len();
+    let segment_key = if crate::wal::crypto::is_encrypted(&bytes[physical_header_len..]) {
+        crate::wal::master_key::segment_key_at_checked(home).map_err(|error| {
+            CaptureWalError::new(
+                CaptureWalErrorKind::MasterKeyReadFailed,
+                format!(
+                    "read captured WAL master key under {}: {error:#}",
+                    home.display()
+                ),
+            )
+        })?
+    } else {
+        None
+    };
+    let (header_len, logical) = crate::wal::compaction::logical_segment_bytes_with_key_capped(
+        &bytes,
+        segment_key.as_ref(),
+        limits.max_logical_frame_bytes,
+    )
+    .map_err(|error| {
+        let message = format!("{error:#}");
+        let normalized = message.to_ascii_lowercase();
+        let kind = if normalized.contains("exceed")
+            || normalized.contains("scanner cap")
+            || normalized.contains("decompression-bomb guard")
+        {
+            CaptureWalErrorKind::LogicalLimitExceeded
+        } else {
+            CaptureWalErrorKind::ReconstructFailed
+        };
+        CaptureWalError::new(
+            kind,
+            format!(
+                "reconstruct captured WAL file {}: {message}",
+                segment.display()
+            ),
+        )
+    })?;
+    if header_len > logical.len() {
+        return Err(CaptureWalError::new(
+            CaptureWalErrorKind::InvalidLogicalLayout,
+            format!(
+                "captured WAL header length {header_len} exceeds reconstructed length {}",
+                logical.len()
+            ),
+        ));
+    }
     let frames = &logical[header_len..];
     let mut out = Vec::new();
     let mut cursor = 0usize;
     while cursor < frames.len() {
-        let dec = match decode_frame(&frames[cursor..]) {
+        let tail = &frames[cursor..];
+        let dec = match decode_frame(tail) {
             Ok(d) => d,
-            Err(_) => break,
+            Err(crate::wal::error::HeaderParseError::BufferTooShort { .. })
+                if is_plausible_torn_frame_tail(tail) =>
+            {
+                break;
+            }
+            Err(error) => {
+                return Err(CaptureWalError::new(
+                    CaptureWalErrorKind::CorruptFrame,
+                    format!(
+                        "decode captured WAL frame {} at byte {cursor}: {error}",
+                        out.len()
+                    ),
+                ));
+            }
         };
+        // Decode first, then enforce the complete-frame count. This preserves
+        // exact-limit semantics: N complete frames plus a torn (N+1)th tail is
+        // accepted, while a complete (N+1)th frame is rejected.
+        if out.len() >= limits.max_frames {
+            return Err(CaptureWalError::new(
+                CaptureWalErrorKind::FrameLimitExceeded,
+                format!(
+                    "captured WAL contains more than {} complete frames",
+                    limits.max_frames
+                ),
+            ));
+        }
         let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
         out.push(serde_json::json!({
             "event_type": format!("0x{:02X}", dec.header.event_type),
@@ -953,11 +1347,48 @@ fn decode_wal_frames(segment: &std::path::Path, home: &std::path::Path) -> Vec<s
         }));
         let total = dec.header.total_len as usize;
         if total == 0 {
-            break;
+            return Err(CaptureWalError::new(
+                CaptureWalErrorKind::CorruptFrame,
+                format!("captured WAL frame {} declares zero length", out.len() - 1),
+            ));
         }
-        cursor = cursor.saturating_add(total);
+        cursor = cursor.checked_add(total).ok_or_else(|| {
+            CaptureWalError::new(
+                CaptureWalErrorKind::CorruptFrame,
+                "captured WAL frame cursor overflow",
+            )
+        })?;
     }
-    out
+    Ok(out)
+}
+
+#[cfg(any(test, feature = "wasm-plugin-host"))]
+fn is_plausible_torn_frame_tail(tail: &[u8]) -> bool {
+    use crate::wal::header::{HEADER_BODY_LEN, MAGIC, PREAMBLE_LEN};
+
+    let magic_prefix_len = tail.len().min(MAGIC.len());
+    if tail[..magic_prefix_len] != MAGIC[..magic_prefix_len] {
+        return false;
+    }
+    if tail.len() < PREAMBLE_LEN + HEADER_BODY_LEN {
+        return true;
+    }
+    let header_bytes: &[u8; HEADER_BODY_LEN] =
+        match tail[PREAMBLE_LEN..PREAMBLE_LEN + HEADER_BODY_LEN].try_into() {
+            Ok(header) => header,
+            Err(_) => return false,
+        };
+    crate::wal::header::EventHeaderV2::from_le_bytes(header_bytes)
+        .is_ok_and(|header| header.total_len as usize > tail.len())
+}
+
+#[cfg(any(test, feature = "wasm-plugin-host"))]
+fn error_has_io_kind(error: &anyhow::Error, kind: std::io::ErrorKind) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == kind)
+    })
 }
 
 fn render_test_report(
@@ -965,6 +1396,7 @@ fn render_test_report(
     wasm_size: usize,
     outcome: Option<TestInvocationSummary>,
     captured_frames: Option<Vec<serde_json::Value>>,
+    capture_error: Option<CaptureWalError>,
     output: OutputFormat,
 ) -> Result<()> {
     let host_built = cfg!(feature = "wasm-plugin-host");
@@ -985,6 +1417,7 @@ fn render_test_report(
             // (None on the dry-run path keeps the JSON shape unchanged there).
             if let Some(frames) = &captured_frames {
                 payload["captured_frames"] = json!(frames);
+                payload["capture_error"] = json!(&capture_error);
             }
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
@@ -1023,6 +1456,13 @@ fn render_test_report(
                         f.get("payload")
                             .map(|p| p.to_string())
                             .unwrap_or_else(|| "null".into()),
+                    );
+                }
+                if let Some(error) = &capture_error {
+                    println!(
+                        "  capture error: {} — {}",
+                        error.kind.as_str(),
+                        error.message
                     );
                 }
             }
@@ -2544,14 +2984,15 @@ version = \"0.1.0\"\n\
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
-        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(seg.clone(), dir.path().to_path_buf()).unwrap();
         let payload = hostcall_payload("snoop", 64);
         let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
         writer.append(header, payload).await.unwrap();
         drop(writer);
         let _ = join.await;
 
-        let frames = decode_wal_frames(&seg, dir.path());
+        let frames = decode_wal_frames(&seg, dir.path()).unwrap();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["event_type"], "0xC4");
         assert_eq!(frames[0]["payload"]["plugin"], "snoop");
@@ -2560,49 +3001,445 @@ version = \"0.1.0\"\n\
 
     #[test]
     fn decode_wal_frames_missing_segment_is_empty() {
-        let home = std::path::Path::new("/nonexistent-uxo7b");
-        let frames = decode_wal_frames(&home.join("does-not-exist.wal"), home);
+        let home = TempDir::new().unwrap();
+        let frames =
+            decode_wal_frames(&home.path().join("does-not-exist.wal"), home.path()).unwrap();
         assert!(
             frames.is_empty(),
             "a missing segment yields no frames, no panic"
         );
     }
 
-    /// UX-07b end-to-end plumbing (feature build): the capture path spawns a
-    /// throwaway WAL, invokes via `invoke_plugin_with_state`, drains, and
-    /// decodes — returning `Some` without panic. A minimal module (no
-    /// `neoth_run` export, no hostcall) reaches ExportLookup with an empty
-    /// frame list; the REAL hostcall→0xC4 capture is proven in dispatch's
-    /// `invoke_plugin_with_state_uses_injected_writer` + the frame round-trip
-    /// above.
+    #[test]
+    fn decode_wal_frames_rejects_short_non_header_garbage() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("garbage.wal");
+        std::fs::write(&segment, b"not-a-segment").unwrap();
+
+        let error = decode_wal_frames(&segment, home.path())
+            .expect_err("short bytes are torn only when they match the header prefix");
+        assert_eq!(error.kind, CaptureWalErrorKind::ReconstructFailed);
+    }
+
+    #[test]
+    fn decode_wal_frames_rejects_physical_oversize_before_parsing() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("oversize.wal");
+        std::fs::write(&segment, [0u8; 65]).unwrap();
+
+        let error = decode_wal_frames_with_limits(
+            &segment,
+            home.path(),
+            CaptureWalLimits {
+                max_physical_bytes: 64,
+                max_logical_frame_bytes: 64,
+                max_frames: 1,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, CaptureWalErrorKind::PhysicalLimitExceeded);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn decode_wal_frames_rejects_symlink_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let home = TempDir::new().unwrap();
+        let target = home.path().join("target.wal");
+        let segment = home.path().join("capture.wal");
+        std::fs::write(&target, []).unwrap();
+        symlink(&target, &segment).unwrap();
+
+        let error = decode_wal_frames(&segment, home.path()).unwrap_err();
+        assert_eq!(error.kind, CaptureWalErrorKind::UnsafeFile);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn decode_wal_frames_rejects_junction_parent_without_following_it() {
+        let home = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        std::fs::write(outside.path().join("capture.wal"), []).unwrap();
+        let junction = home.path().join("linked-wal");
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/D", "/C", "mklink", "/J"])
+            .arg(&junction)
+            .arg(outside.path())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .expect("spawn mklink /J");
+        assert!(status.success(), "mklink /J must create test junction");
+
+        let result = decode_wal_frames(&junction.join("capture.wal"), home.path());
+        std::fs::remove_dir(&junction).expect("remove test junction without following it");
+        let error = result.expect_err("capture read must reject a Windows reparse-point parent");
+        assert_eq!(error.kind, CaptureWalErrorKind::UnsafeFile);
+    }
+
+    #[test]
+    fn decode_wal_frames_rejects_non_regular_file() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("capture.wal");
+        std::fs::create_dir(&segment).unwrap();
+
+        let error = decode_wal_frames(&segment, home.path()).unwrap_err();
+        assert_eq!(error.kind, CaptureWalErrorKind::UnsafeFile);
+    }
+
+    #[test]
+    fn decode_wal_frames_rejects_compressed_logical_oversize() {
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("compressed.wal");
+        let logical_frames = vec![b'x'; 2_048];
+        let compressed = compress_frames(&logical_frames).unwrap();
+        let header =
+            SegmentHeaderV2::new(0, 1, 0, 0, [0; 16], SEGMENT_FLAG_COMPRESSED).to_le_bytes();
+        let mut physical = Vec::with_capacity(header.len() + compressed.len());
+        physical.extend_from_slice(&header);
+        physical.extend_from_slice(&compressed);
+        std::fs::write(&segment, physical).unwrap();
+
+        let error = decode_wal_frames_with_limits(
+            &segment,
+            home.path(),
+            CaptureWalLimits {
+                max_physical_bytes: 4_096,
+                max_logical_frame_bytes: 128,
+                max_frames: 8,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind, CaptureWalErrorKind::LogicalLimitExceeded);
+    }
+
+    #[test]
+    fn decode_wal_frames_uses_bounded_no_follow_master_key_reader() {
+        use crate::wal::segment_header::SegmentHeader;
+
+        let home = TempDir::new().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        std::fs::write(wal_dir.join("master.key"), vec![0u8; 8 * 1024]).unwrap();
+
+        let segment = wal_dir.join("encrypted.wal");
+        let header = SegmentHeader::new(0, 1, 0, 0, [0; 16]).to_le_bytes();
+        let encrypted = crate::wal::crypto::frame_encrypted(&[0u8; 12], &[0u8; 16]);
+        let mut bytes = Vec::with_capacity(header.len() + encrypted.len());
+        bytes.extend_from_slice(&header);
+        bytes.extend_from_slice(&encrypted);
+        std::fs::write(&segment, bytes).unwrap();
+
+        let error = decode_wal_frames(&segment, home.path())
+            .expect_err("oversized master.key must fail before decrypt/reconstruction");
+        assert_eq!(error.kind, CaptureWalErrorKind::MasterKeyReadFailed);
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_recovers_complete_frames_before_torn_tail() {
+        use std::io::Write as _;
+
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("torn.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&segment)
+            .unwrap()
+            .write_all(b"NEOT")
+            .unwrap();
+
+        let frames = decode_wal_frames(&segment, home.path()).unwrap();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["event_type"], "0xC4");
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_accepts_exact_limit_with_torn_next_frame() {
+        use std::io::Write as _;
+
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("exact-limit-torn.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&segment)
+            .unwrap()
+            .write_all(b"NEOT")
+            .unwrap();
+
+        let frames = decode_wal_frames_with_limits(
+            &segment,
+            home.path(),
+            CaptureWalLimits {
+                max_physical_bytes: 4_096,
+                max_logical_frame_bytes: 4_096,
+                max_frames: 1,
+            },
+        )
+        .expect("exactly one complete frame plus a plausible torn tail is allowed");
+        assert_eq!(frames.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_rejects_invalid_short_tail_at_exact_limit() {
+        use std::io::Write as _;
+
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("exact-limit-garbage.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&segment)
+            .unwrap()
+            .write_all(b"NOPE")
+            .unwrap();
+
+        let error = decode_wal_frames_with_limits(
+            &segment,
+            home.path(),
+            CaptureWalLimits {
+                max_physical_bytes: 4_096,
+                max_logical_frame_bytes: 4_096,
+                max_frames: 1,
+            },
+        )
+        .expect_err("garbage after the exact frame limit is corruption, not a torn frame");
+        assert_eq!(error.kind, CaptureWalErrorKind::CorruptFrame);
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_reports_corrupt_complete_frame() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("corrupt.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let mut bytes = std::fs::read(&segment).unwrap();
+        *bytes.last_mut().expect("writer emits a complete frame") ^= 0xff;
+        std::fs::write(&segment, bytes).unwrap();
+
+        let error = decode_wal_frames(&segment, home.path()).unwrap_err();
+        assert_eq!(error.kind, CaptureWalErrorKind::CorruptFrame);
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_reports_corrupt_complete_segment_header() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("corrupt-header.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.unwrap();
+
+        let mut bytes = std::fs::read(&segment).unwrap();
+        bytes[56] ^= 0xff;
+        std::fs::write(&segment, bytes).unwrap();
+
+        let error = decode_wal_frames(&segment, home.path()).unwrap_err();
+        assert_eq!(error.kind, CaptureWalErrorKind::ReconstructFailed);
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_tolerates_torn_versioned_segment_header() {
+        use crate::wal::segment_header::{SEGMENT_HEADER_V2_LEN, SegmentHeaderV3};
+
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("torn-header.wal");
+        let header = SegmentHeaderV3::new(0, 1, 0, 0, [0; 16], 0, 0).to_le_bytes();
+        std::fs::write(&segment, &header[..SEGMENT_HEADER_V2_LEN]).unwrap();
+
+        let frames = decode_wal_frames(&segment, home.path()).unwrap();
+        assert!(frames.is_empty());
+    }
+
+    #[tokio::test]
+    async fn decode_wal_frames_enforces_frame_count_ceiling() {
+        let home = TempDir::new().unwrap();
+        let segment = home.path().join("many.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+        for plugin in ["one", "two"] {
+            let payload = hostcall_payload(plugin, 1);
+            let header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+            writer.append(header, payload).await.unwrap();
+        }
+        drop(writer);
+        join.await.unwrap();
+
+        let error = decode_wal_frames_with_limits(
+            &segment,
+            home.path(),
+            CaptureWalLimits {
+                max_physical_bytes: 4_096,
+                max_logical_frame_bytes: 4_096,
+                max_frames: 1,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, CaptureWalErrorKind::FrameLimitExceeded);
+    }
+
+    #[test]
+    fn capture_error_kind_serializes_to_stable_snake_case() {
+        let error = CaptureWalError::new(CaptureWalErrorKind::PhysicalLimitExceeded, "too large");
+        let value = serde_json::to_value(error).unwrap();
+        assert_eq!(value["kind"], "physical_limit_exceeded");
+    }
+
+    /// Minimal ABI-v1 guest whose `neoth_run` calls the real
+    /// `neoth.emit_event(0, 0, 0, 0)` import and returns its status.
+    #[cfg(feature = "wasm-plugin-host")]
+    fn hostcall_emit_wasm() -> Vec<u8> {
+        fn uleb(mut value: u32) -> Vec<u8> {
+            let mut encoded = Vec::new();
+            loop {
+                let byte = (value & 0x7f) as u8;
+                value >>= 7;
+                encoded.push(if value == 0 { byte } else { byte | 0x80 });
+                if value == 0 {
+                    return encoded;
+                }
+            }
+        }
+        fn with_len(body: Vec<u8>) -> Vec<u8> {
+            let mut encoded = uleb(body.len() as u32);
+            encoded.extend(body);
+            encoded
+        }
+        fn wasm_str(value: &str) -> Vec<u8> {
+            let mut encoded = uleb(value.len() as u32);
+            encoded.extend_from_slice(value.as_bytes());
+            encoded
+        }
+        fn section(id: u8, body: Vec<u8>) -> Vec<u8> {
+            let mut encoded = vec![id];
+            encoded.extend(with_len(body));
+            encoded
+        }
+
+        // type 0: emit_event(i32, i32, i32, i32) -> i32
+        // type 1: neoth_abi_version/neoth_run() -> i32
+        let mut types = uleb(2);
+        types.extend([0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f]);
+        types.extend([0x60, 0x00, 0x01, 0x7f]);
+
+        let mut imports = uleb(1);
+        imports.extend(wasm_str(neoth_plugin_sdk::guest::IMPORT_MODULE));
+        imports.extend(wasm_str(neoth_plugin_sdk::guest::HOSTCALL_EMIT_EVENT));
+        imports.push(0x00);
+        imports.extend(uleb(0));
+
+        let mut functions = uleb(2);
+        functions.extend(uleb(1));
+        functions.extend(uleb(1));
+
+        let memory = vec![0x01, 0x00, 0x01];
+
+        let mut exports = uleb(3);
+        exports.extend(wasm_str(neoth_plugin_sdk::guest::ABI_VERSION_EXPORT));
+        exports.extend([0x00, 0x01]); // function 1: ABI version
+        exports.extend(wasm_str(neoth_plugin_sdk::guest::RUN_EXPORT));
+        exports.extend([0x00, 0x02]); // function 2: neoth_run
+        exports.extend(wasm_str("memory"));
+        exports.extend([0x02, 0x00]); // memory 0
+
+        let abi_body = vec![0x00, 0x41, neoth_plugin_sdk::guest::ABI_VERSION as u8, 0x0b];
+        let run_body = vec![
+            0x00, // no locals
+            0x41, 0x00, // kind_ptr = 0
+            0x41, 0x00, // kind_len = 0
+            0x41, 0x00, // payload_ptr = 0
+            0x41, 0x00, // payload_len = 0
+            0x10, 0x00, // call imported emit_event
+            0x0b,
+        ];
+        let mut code = uleb(2);
+        code.extend(with_len(abi_body));
+        code.extend(with_len(run_body));
+
+        let mut wasm = b"\0asm\x01\0\0\0".to_vec();
+        wasm.extend(section(1, types));
+        wasm.extend(section(2, imports));
+        wasm.extend(section(3, functions));
+        wasm.extend(section(5, memory));
+        wasm.extend(section(7, exports));
+        wasm.extend(section(10, code));
+        wasm
+    }
+
+    /// Full capture path: compile, instantiate, call the actual host import,
+    /// drain writer completion, and decode its 0xC4 frame.
     #[cfg(feature = "wasm-plugin-host")]
     #[tokio::test]
-    async fn run_test_invoke_with_wal_runs_end_to_end() {
+    async fn run_test_invoke_with_wal_captures_actual_emit_hostcall_end_to_end() {
         let manifest = crate::wasm_plugin::manifest::PluginManifest {
             id: "captest".into(),
             name: "captest".into(),
             version: "0.1.0".into(),
             description: None,
-            requested_permissions: Default::default(),
+            requested_permissions: crate::wasm_plugin::manifest::RequestedPermission::Write,
             hook_stages: vec![],
             fuel_budget_override: None,
             memory_limit_bytes: None,
             source: None,
             ui_surface: None,
         };
-        // Smallest valid module: magic + version, no `neoth_run` export.
-        let minimal = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
-        let cap = run_test_invoke_with_wal(&manifest, &minimal)
+        let cap = run_test_invoke_with_wal(&manifest, &hostcall_emit_wasm())
             .await
             .expect("capture path returns Some under the feature");
-        assert_eq!(
-            cap.outcome.stage, "export_lookup",
-            "minimal module has no neoth_run export"
-        );
+        assert_eq!(cap.outcome.stage, "run");
+        assert!(cap.outcome.invoked_ok, "{:?}", cap.outcome.error);
         assert!(
-            cap.captured_frames.is_empty(),
-            "no hostcall was made → no captured frames"
+            cap.capture_error.is_none(),
+            "healthy hostcall capture failed: {:?}",
+            cap.capture_error
         );
+        let hostcall = cap
+            .captured_frames
+            .iter()
+            .find(|frame| frame["event_type"] == "0xC4")
+            .expect("actual emit_event import must persist a 0xC4 frame");
+        assert_eq!(hostcall["payload"]["plugin"], "captest");
+        assert_eq!(hostcall["payload"]["kind"], "");
+        assert_eq!(hostcall["payload"]["payload_bytes"], 0);
     }
 
     /// UX-07b slim build: the capture fn is inert (returns None) without the
@@ -3231,13 +4068,40 @@ version = \"0.1.0\"\n\
         .await
         .unwrap();
 
-        let frames =
-            super::decode_wal_frames(&home.path().join("wal").join("000001.wal"), home.path());
-        assert_eq!(frames.len(), 2, "intent + result frames must both persist");
-        // Both are EXTENDED (event_type 0x00); their identity is the subtype.
-        assert_eq!(frames[0]["event_type"], "0x00");
-        assert_eq!(frames[1]["event_type"], "0x00");
-        let intent = &frames[0]["payload"];
+        let mut intent = None;
+        let mut result = None;
+        let mut removal_order = Vec::new();
+        crate::wal::scan::for_each_frame_at_home(
+            home.path(),
+            crate::wal::scan::HomeWalScanLimits::default(),
+            |_, frame| {
+                if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED {
+                    return Ok(());
+                }
+                let payload: serde_json::Value = serde_json::from_slice(frame.payload)?;
+                match frame.header.event_subtype {
+                    subtype
+                        if subtype
+                            == crate::wal::events::ExtendedSubtype::PluginRemovalIntent as u8 =>
+                    {
+                        removal_order.push("intent");
+                        intent = Some(payload);
+                    }
+                    subtype
+                        if subtype
+                            == crate::wal::events::ExtendedSubtype::PluginRemovalResult as u8 =>
+                    {
+                        removal_order.push("result");
+                        result = Some(payload);
+                    }
+                    _ => {}
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        let intent = intent.expect("removal intent must persist in a bounded home WAL segment");
+        let result = result.expect("removal result must persist in a bounded home WAL segment");
         assert_eq!(intent["phase"], "intent");
         assert_eq!(intent["operation_id"], op);
         assert_eq!(intent["plugin_id"], "wasm_hello");
@@ -3247,7 +4111,6 @@ version = \"0.1.0\"\n\
             intent["config_generation"], 0xfeed_beefu64,
             "the intent must bind the config generation it authorised"
         );
-        let result = &frames[1]["payload"];
         assert_eq!(result["status"], "committed");
         assert_eq!(
             result["operation_id"], op,
@@ -3256,6 +4119,11 @@ version = \"0.1.0\"\n\
         assert_eq!(result["removed"], true);
         assert_eq!(result["config_cleared"], true);
         assert_eq!(result["bytes_deleted"], true);
+        assert_eq!(
+            removal_order,
+            ["intent", "result"],
+            "durable removal intent must precede its terminal result in WAL order"
+        );
     }
 
     #[test]

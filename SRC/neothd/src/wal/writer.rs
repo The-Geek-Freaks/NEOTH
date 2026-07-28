@@ -101,6 +101,16 @@ impl Default for RotationPolicy {
     }
 }
 
+/// Active-segment lifecycle. Production rotates on size/age. Capture writers
+/// stay on one fresh segment and fail before a frame would cross their hard
+/// physical ceiling, so a caller cannot decode only `000001.wal` while later
+/// frames were silently moved to `000002.wal`.
+#[derive(Clone, Copy, Debug)]
+enum SegmentPolicy {
+    Rotating(RotationPolicy),
+    Fixed { max_bytes: u64 },
+}
+
 /// Reason recorded in the SEGMENT_ROLLOVER WAL event payload.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RotationReason {
@@ -701,11 +711,93 @@ pub fn spawn_for_home(
     let hmac_key_path = home.join("wal").join("hmac.key");
     spawn_with_policy_and_compression_at_home(
         segment_path,
-        RotationPolicy::default(),
+        SegmentPolicy::Rotating(RotationPolicy::default()),
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        None,
     )
+}
+
+/// Completion handle for a capture-only writer.
+///
+/// Production spawn APIs intentionally keep returning `JoinHandle<()>`.
+/// Capture needs the underlying [`run_writer`] result because initialization,
+/// HMAC/recovery setup, write, and final-sync errors would otherwise exist only
+/// in logs and the CLI could report an empty successful capture.
+#[derive(Debug)]
+pub(crate) struct WalWriterCompletion {
+    join: tokio::task::JoinHandle<()>,
+    outcome: oneshot::Receiver<Result<(), WalError>>,
+}
+
+impl WalWriterCompletion {
+    pub(crate) async fn wait(self) -> Result<(), WalError> {
+        self.join.await.map_err(|error| {
+            WalError::Io(std::io::Error::other(format!(
+                "WAL writer task join failed: {error}"
+            )))
+        })?;
+        self.outcome.await.map_err(|_| {
+            WalError::Io(std::io::Error::other(
+                "WAL writer task ended without publishing its completion result",
+            ))
+        })?
+    }
+}
+
+/// Spawn a fresh, home-bound, non-rotating writer for `plugin test
+/// --capture-wal`.
+///
+/// `segment_path` must be a direct child of `<home>/wal`. HMAC key creation and
+/// interrupted-key-rotation recovery therefore stay inside the throwaway home.
+/// The writer refuses an existing segment and returns a completion result that
+/// surfaces every asynchronous writer failure.
+pub(crate) fn spawn_capture(
+    segment_path: PathBuf,
+    home: PathBuf,
+    max_segment_bytes: u64,
+) -> Result<(WalWriterHandle, WalWriterCompletion), WalError> {
+    if max_segment_bytes < SEGMENT_HEADER_LEN as u64 {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "capture WAL ceiling {max_segment_bytes} is smaller than the \
+                 {SEGMENT_HEADER_LEN}-byte segment header"
+            ),
+        )));
+    }
+    let expected_parent = home.join("wal");
+    if segment_path.parent() != Some(expected_parent.as_path()) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "capture WAL segment {} must be a direct child of throwaway WAL directory {}",
+                segment_path.display(),
+                expected_parent.display()
+            ),
+        )));
+    }
+
+    let hmac_key_path = expected_parent.join("hmac.key");
+    let (outcome_tx, outcome_rx) = oneshot::channel();
+    let (writer, join) = spawn_with_policy_and_compression_at_home(
+        segment_path,
+        SegmentPolicy::Fixed {
+            max_bytes: max_segment_bytes,
+        },
+        CompressionPolicy::None,
+        home,
+        hmac_key_path,
+        Some(outcome_tx),
+    )?;
+    Ok((
+        writer,
+        WalWriterCompletion {
+            join,
+            outcome: outcome_rx,
+        },
+    ))
 }
 
 /// Refuse to open a home-bound writer when `freedom.yaml` configures a WAL
@@ -776,19 +868,21 @@ pub fn spawn_with_policy_and_compression(
     let hmac_key_path = crate::wal::compaction::default_key_path();
     spawn_with_policy_and_compression_at_home(
         segment_path,
-        policy,
+        SegmentPolicy::Rotating(policy),
         compression,
         hmac_home,
         hmac_key_path,
+        None,
     )
 }
 
 fn spawn_with_policy_and_compression_at_home(
     segment_path: PathBuf,
-    policy: RotationPolicy,
+    segment_policy: SegmentPolicy,
     compression: CompressionPolicy,
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
+    completion: Option<oneshot::Sender<Result<(), WalError>>>,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
     // Acquire before spawning so callers never receive an apparently-live
     // writer handle when another process owns the segment for redaction (or a
@@ -801,18 +895,21 @@ fn spawn_with_policy_and_compression_at_home(
         })?;
     let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
     let join = tokio::spawn(async move {
-        if let Err(e) = run_writer(
+        let outcome = run_writer(
             segment_path,
             initial_segment_lock,
             rx,
-            policy,
+            segment_policy,
             compression,
             hmac_home,
             hmac_key_path,
         )
-        .await
-        {
+        .await;
+        if let Err(e) = &outcome {
             error!(error = %e, "WAL writer task exited with error");
+        }
+        if let Some(completion) = completion {
+            let _ = completion.send(outcome);
         }
     });
     Ok((
@@ -950,7 +1047,7 @@ struct WriterState {
     /// Open timestamp in `SystemTime::UNIX_EPOCH.as_nanos()`; used for the
     /// `age_ns` rotation check.
     opened_at_ns: u64,
-    policy: RotationPolicy,
+    segment_policy: SegmentPolicy,
     /// Workstream F — compression policy for newly-written segments.
     compression: CompressionPolicy,
     /// In-memory accumulator for frame bytes when `compression == Zstd3`.
@@ -967,13 +1064,34 @@ struct WriterState {
 
 impl WriterState {
     fn should_rotate(&self, now_ns: u64) -> Option<RotationReason> {
-        if self.offset >= self.policy.max_bytes {
+        let SegmentPolicy::Rotating(policy) = self.segment_policy else {
+            return None;
+        };
+        if self.offset >= policy.max_bytes {
             return Some(RotationReason::SizeExceeded);
         }
-        if now_ns.saturating_sub(self.opened_at_ns) >= self.policy.max_age_ns {
+        if now_ns.saturating_sub(self.opened_at_ns) >= policy.max_age_ns {
             return Some(RotationReason::AgeExceeded);
         }
         None
+    }
+
+    fn is_fixed(&self) -> bool {
+        matches!(self.segment_policy, SegmentPolicy::Fixed { .. })
+    }
+
+    fn ensure_frame_fits(&self, frame_len: usize) -> std::io::Result<()> {
+        let SegmentPolicy::Fixed { max_bytes } = self.segment_policy else {
+            return Ok(());
+        };
+        let projected = self.offset.saturating_add(frame_len as u64);
+        if projected > max_bytes {
+            return Err(std::io::Error::other(format!(
+                "capture WAL single-segment ceiling exceeded: projected {projected} bytes, \
+                 ceiling {max_bytes} bytes"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1098,13 +1216,22 @@ async fn run_writer(
     segment_path: PathBuf,
     initial_segment_lock: std::fs::File,
     mut rx: mpsc::Receiver<WriteRequest>,
-    policy: RotationPolicy,
+    segment_policy: SegmentPolicy,
     compression: CompressionPolicy,
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
 ) -> Result<(), WalError> {
     let opened = open_segment_with_lock(&segment_path, initial_segment_lock).await?;
     let is_new = opened.is_new;
+    if !is_new && matches!(segment_policy, SegmentPolicy::Fixed { .. }) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            format!(
+                "capture WAL writer requires a fresh segment; {} already exists",
+                segment_path.display()
+            ),
+        )));
+    }
     // Declare the guard before the append handle: until WriterState owns both,
     // an initialization error must close `file` before unlocking the segment.
     let segment_rewrite_lock = opened.segment_rewrite_lock;
@@ -1268,7 +1395,7 @@ async fn run_writer(
         offset,
         seq,
         opened_at_ns,
-        policy,
+        segment_policy,
         compression,
         pending_frames: Vec::new(),
         compaction_epoch: initial_compaction_epoch,
@@ -1370,6 +1497,11 @@ async fn run_writer(
         }
 
         let frame = encode_frame(&req.header, &req.payload);
+        if let Err(error) = state.ensure_frame_fits(frame.len()) {
+            let completion_error = std::io::Error::new(error.kind(), error.to_string());
+            let _ = req.ack.send(Err(WalError::Io(error)));
+            return Err(WalError::Io(completion_error));
+        }
         let immediate = crate::wal::events::needs_immediate_sync(req.header.event_type);
         // Workstream F: compressed segments buffer frames in-memory;
         // the file write happens on finalize (rotate/shutdown).
@@ -1449,7 +1581,11 @@ async fn run_writer(
                         .flags(crate::wal::EventFlags::SYNTHETIC)
                         .build();
                         let marker_frame = encode_frame(&marker_header, &payload_bytes);
+                        state.ensure_frame_fits(marker_frame.len())?;
                         if let Err(e) = write_and_sync(&mut state.file, &marker_frame).await {
+                            if state.is_fixed() {
+                                return Err(WalError::Io(e));
+                            }
                             tracing::warn!(error = %e, "compaction marker write failed");
                         } else {
                             state.offset += marker_frame.len() as u64;
@@ -1473,6 +1609,12 @@ async fn run_writer(
             }
             Err(e) => {
                 error!(error = %e, "WAL frame write failed");
+                if state.is_fixed() {
+                    let completion_error =
+                        WalError::Io(std::io::Error::new(e.kind(), e.to_string()));
+                    let _ = req.ack.send(Err(WalError::Io(e)));
+                    return Err(completion_error);
+                }
                 if req.ack.send(Err(WalError::Io(e))).is_err() {
                     tracing::debug!("ack receiver dropped for failed WAL write");
                 }
@@ -1492,6 +1634,9 @@ async fn run_writer(
     // already closed the channel above; this is the last chance to
     // flush before the writer-task returns.
     if pending_unsynced && let Err(e) = state.file.sync_data().await {
+        if state.is_fixed() {
+            return Err(WalError::Io(e));
+        }
         warn!(error = %e, "shutdown-drain sync_data for batchable frames failed");
     }
 
@@ -1802,6 +1947,96 @@ mod tests {
             node_id: NodeId([0u8; 16]),
             payload_hash: 0,
         }
+    }
+
+    #[tokio::test]
+    async fn capture_writer_is_home_bound_non_rotating_and_hard_capped() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        let segment = wal_dir.join("capture-000001.wal");
+        let first_payload = b"first".to_vec();
+        let first_header = header_for(first_payload.len() as u32, 1);
+        let first_frame_len = encode_frame(&first_header, &first_payload).len() as u64;
+        let ceiling = SEGMENT_HEADER_LEN as u64 + first_frame_len;
+        let (writer, completion) =
+            spawn_capture(segment.clone(), home.path().to_path_buf(), ceiling)
+                .expect("spawn fixed capture writer");
+
+        writer
+            .append(first_header, first_payload)
+            .await
+            .expect("the frame that exactly reaches the ceiling must fit");
+        let second_payload = b"second".to_vec();
+        let second_header = header_for(second_payload.len() as u32, 2);
+        let append_error = writer
+            .append(second_header, second_payload)
+            .await
+            .expect_err("the first frame past the ceiling must fail");
+        drop(writer);
+        let completion_error = completion
+            .wait()
+            .await
+            .expect_err("capture completion must expose the fixed-limit failure");
+
+        assert!(
+            format!("{:#}", anyhow::Error::new(append_error)).contains("ceiling")
+                && format!("{:#}", anyhow::Error::new(completion_error)).contains("ceiling"),
+            "fixed-limit errors must retain their concrete ceiling context"
+        );
+        assert_eq!(
+            std::fs::metadata(&segment).unwrap().len(),
+            ceiling,
+            "capture file must stop exactly at the configured ceiling"
+        );
+        assert!(
+            !wal_dir.join("capture-000002.wal").exists(),
+            "capture writer must never rotate away frames"
+        );
+        assert!(
+            wal_dir.join("hmac.key").is_file(),
+            "capture HMAC state must be created under the throwaway home"
+        );
+    }
+
+    #[tokio::test]
+    async fn capture_writer_completion_surfaces_async_initialization_failure() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        let segment = wal_dir.join("capture-000001.wal");
+        std::fs::write(&segment, b"pre-existing").unwrap();
+
+        let (writer, completion) = spawn_capture(segment, home.path().to_path_buf(), 4 * 1024)
+            .expect("synchronous spawn acquires the segment lock");
+        drop(writer);
+        let error = completion
+            .wait()
+            .await
+            .expect_err("existing capture segment must fail during writer initialization");
+        let error = anyhow::Error::new(error);
+        assert!(
+            format!("{error:#}").contains("requires a fresh segment"),
+            "unexpected completion error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn capture_writer_rejects_segment_outside_throwaway_home() {
+        let home = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::create_dir(home.path().join("wal")).unwrap();
+        let error = spawn_capture(
+            outside.path().join("capture-000001.wal"),
+            home.path().to_path_buf(),
+            4 * 1024,
+        )
+        .expect_err("capture segment must be bound to <home>/wal");
+        let error = anyhow::Error::new(error);
+        assert!(
+            format!("{error:#}").contains("direct child"),
+            "unexpected path-binding error: {error:#}"
+        );
     }
 
     /// After F-14, every segment file begins with a 60-byte SegmentHeader.
