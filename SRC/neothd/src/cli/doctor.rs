@@ -464,8 +464,9 @@ mod tests {
         // synthesis_cron, skill_curator, auto_skill_extract) = 52;
         // + OMI runtime config/credential/ledger/supervisor posture = 53;
         // + canonical TTS runtime/provider readiness = 54;
-        // + ppt_master, graphify and officecli readiness = 57.
-        assert_eq!(all_check_docs().count(), 57);
+        // + ppt_master, graphify and officecli readiness = 57;
+        // + installed Skill authority integrity/recovery readiness = 58.
+        assert_eq!(all_check_docs().count(), 58);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -683,53 +684,63 @@ mod tests {
     mod cluster_doctor_tests {
         use super::*;
 
+        fn initialize_authority(
+            home: &std::path::Path,
+        ) -> crate::cluster::membership::MembershipStore {
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
+            crate::cluster::membership::MembershipStore::open(home).unwrap()
+        }
+
+        fn insert_active_member(home: &std::path::Path, expires_at: i64) {
+            let identity =
+                crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
+            let store = crate::cluster::membership::MembershipStore::open(home).unwrap();
+            let conn = rusqlite::Connection::open(store.path()).unwrap();
+            let now = crate::time::now_unix_i64();
+            conn.execute(
+                "INSERT INTO members
+                 (stable_node_id,label,state,auth_epoch,membership_epoch,created_at,updated_at)
+                 VALUES (?1,'laptop','active',1,1,?2,?2)",
+                rusqlite::params![identity.stable_node_id().as_str(), now],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO transport_bindings
+                 (stable_node_id,carrier,transport_identity,endpoint,assurance,
+                  auth_epoch,membership_epoch,expires_at,attestation_digest)
+                 VALUES (?1,'peeroxide',?1,'test','signed_attestation',1,1,?2,'digest')",
+                rusqlite::params![identity.stable_node_id().as_str(), expires_at],
+            )
+            .unwrap();
+        }
+
         #[test]
         fn cluster_registry_pass_when_empty() {
             let dir = tempdir().unwrap();
+            drop(initialize_authority(dir.path()));
             let outcome = check_cluster_registry(dir.path());
             assert_eq!(outcome.status, CheckStatus::Pass);
-            assert!(outcome.detail.contains("no confirmed"));
+            assert!(outcome.detail.contains("0 active"));
         }
 
         #[test]
         fn cluster_registry_pass_when_fresh() {
             let dir = tempdir().unwrap();
             let now = crate::time::now_unix_i64();
-            let peer = crate::cluster::registry::PairedPeer {
-                pub_key_hex: "ab".repeat(32),
-                instance_label: "laptop".into(),
-                hostname: String::new(),
-                addr: "192.0.2.1:4242".into(),
-                discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
-                paired_at_unix: now - 3600,
-                last_seen_unix: now - 60,
-                ..Default::default()
-            };
-            crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+            insert_active_member(dir.path(), now + 3_600);
             let outcome = check_cluster_registry(dir.path());
             assert_eq!(outcome.status, CheckStatus::Pass);
-            assert!(outcome.detail.contains("1 confirmed"));
+            assert!(outcome.detail.contains("1 active"));
         }
 
         #[test]
         fn cluster_registry_warns_on_stale() {
             let dir = tempdir().unwrap();
             let now = crate::time::now_unix_i64();
-            let peer = crate::cluster::registry::PairedPeer {
-                pub_key_hex: "ab".repeat(32),
-                instance_label: "old-laptop".into(),
-                hostname: String::new(),
-                addr: "192.0.2.1:4242".into(),
-                discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
-                paired_at_unix: now - 30 * 86_400,
-                last_seen_unix: now - 30 * 86_400, // 30 days old > 14d threshold
-                ..Default::default()
-            };
-            crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+            insert_active_member(dir.path(), now - 1);
             let outcome = check_cluster_registry(dir.path());
             assert_eq!(outcome.status, CheckStatus::Warn);
-            assert!(outcome.detail.contains("stale"));
-            assert!(outcome.detail.contains("old-laptop"));
+            assert!(outcome.detail.contains("1 expired active"));
         }
 
         // ── check_cluster_mdns_announcer (Bite #2) ─────────────────────────

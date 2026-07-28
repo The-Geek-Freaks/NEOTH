@@ -994,6 +994,18 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 
 Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass over the recent window on-demand — embed + cosine-cluster the window's episodes into themed Dream records under `~/.neoth/dreams/` — instead of waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`
 
+### `neoth dream cron`
+
+Explicitly opt in to or out of the unattended daily Dream cron
+
+#### `neoth dream cron disable`
+
+Disable the daily cron and request a daemon reload
+
+#### `neoth dream cron enable`
+
+Enable the daily cron and request a daemon reload
+
 ### `neoth dream list`
 
 List days that have a dream JSONL file in `~/.neoth/dreams/`. Output is sorted newest-first
@@ -1010,6 +1022,10 @@ Compose dreams over the recent window right now (default: last 24h)
 Show the dreams recorded on a specific day
 
 - `<DAY>` — Day to show (e.g. `2026-06-03`)
+
+### `neoth dream status`
+
+Show the manual and scheduled Dream runtime contract
 
 ## `neoth ecology`
 

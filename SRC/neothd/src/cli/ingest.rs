@@ -13,7 +13,7 @@
 //! them. `neoth ingest` is the operator-side cursor that runs the full
 //! pipeline end-to-end without a channel adapter wired in.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -73,8 +73,17 @@ pub struct IngestArgs {
 }
 
 pub async fn run_ingest(args: IngestArgs) -> Result<()> {
-    let path = args.path.clone();
     let neoth_home = FreedomConfig::default_neoth_home();
+    let effective_config = FreedomConfig::load_from_default_path()?;
+    run_ingest_with_context(args, &effective_config, &neoth_home).await
+}
+
+async fn run_ingest_with_context(
+    args: IngestArgs,
+    effective_config: &FreedomConfig,
+    neoth_home: &Path,
+) -> Result<()> {
+    let path = args.path.clone();
     if !path.exists() {
         anyhow::bail!("path does not exist: {}", path.display());
     }
@@ -86,7 +95,6 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
             path.display()
         )
     })?;
-    let effective_config = FreedomConfig::load_from_default_path()?;
 
     let asset = Asset::Path {
         kind,
@@ -100,7 +108,7 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     // ownership of its active segment. `--no-audit` deliberately supplies no
     // sink; proof-hardline cloud STT then refuses before egress.
     let stt_audit = if matches!(kind, AssetKind::Audio | AssetKind::Video) && !args.no_audit {
-        let wal_dir = FreedomConfig::default_wal_dir();
+        let wal_dir = neoth_home.join("wal");
         let opened = (|| -> anyhow::Result<_> {
             std::fs::create_dir_all(&wal_dir)?;
             Ok(wal_spawn(
@@ -126,7 +134,7 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
                         &asset,
                         &config.media,
                         &config.updater,
-                        &neoth_home,
+                        neoth_home,
                         stt_audit.as_ref().map(|(writer, _)| writer.clone()),
                     )
                     .await
@@ -137,7 +145,7 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
                         &asset,
                         &config.media,
                         &config.updater,
-                        &neoth_home,
+                        neoth_home,
                         stt_audit.as_ref().map(|(writer, _)| writer.clone()),
                     )
                     .await
@@ -157,17 +165,24 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     let mut persisted = false;
     let mut embedding_dim: Option<usize> = None;
     if !args.no_persist {
-        let (rows_written, dim) = persist_embedding_if_any(&args, &extraction)?;
+        let (rows_written, dim) = persist_embedding_if_any(&args, &extraction, neoth_home)?;
         persisted = rows_written;
         embedding_dim = dim;
     }
 
     if !args.no_audit {
-        emit_audit_events(&args, &extraction, kind, persisted, embedding_dim)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error = %e, "ingest audit-event emit failed (non-fatal)");
-            });
+        emit_audit_events(
+            &args,
+            &extraction,
+            kind,
+            persisted,
+            embedding_dim,
+            neoth_home,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "ingest audit-event emit failed (non-fatal)");
+        });
     }
 
     // ── Gap A: write extracted text into the ctx/recall memory store ─────────
@@ -176,7 +191,10 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     // are logged and logged but never abort the ingest (operator still gets the
     // extraction report). Mirrors the pattern in omi_ingest_task + arxiv_ingest_task.
     let chunk_count: Option<usize> = if !args.no_index && !extraction.text.is_empty() {
-        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let db_path = args
+            .db
+            .clone()
+            .unwrap_or_else(|| neoth_home.join("views.db"));
         match store::open(&db_path) {
             Ok(mut conn) => {
                 let req = IndexRequest {
@@ -281,6 +299,7 @@ fn preview(s: &str, max: usize) -> String {
 fn persist_embedding_if_any(
     args: &IngestArgs,
     extraction: &crate::media::Extraction,
+    neoth_home: &Path,
 ) -> Result<(bool, Option<usize>)> {
     let Some(arr) = extraction.metadata["embedding"].as_array() else {
         return Ok((false, None));
@@ -300,7 +319,10 @@ fn persist_embedding_if_any(
     if embedding.is_empty() {
         return Ok((false, None));
     }
-    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let db_path = args
+        .db
+        .clone()
+        .unwrap_or_else(|| neoth_home.join("views.db"));
     let conn = store::open(&db_path).context("open views.db")?;
     let source_ref = canonical_source_ref(&args.path);
     // Phase 2b only emits CLIP image embeddings today. When audio or
@@ -345,6 +367,7 @@ async fn emit_audit_events(
     asset_kind: AssetKind,
     embedding_persisted: bool,
     embedding_dim: Option<usize>,
+    home: &Path,
 ) -> Result<()> {
     // Build the frame payloads up front — both the forward path (daemon live)
     // and the one-shot-writer path emit the same bytes.
@@ -382,15 +405,14 @@ async fn emit_audit_events(
         None
     };
 
-    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let pidfile = home.join("neothd.pid");
     if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
         // AUDIT-RPC-01: daemon owns the WAL writer → forward the ingest frames
         // over the loopback channel (0x2C/0x2D allowlisted) instead of silently
         // skipping. Best-effort: an unreachable/disabled listener falls through
         // to no-frame (the asset was still ingested).
-        let home = FreedomConfig::default_neoth_home();
         if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
-            &home,
+            home,
             EVENT_TYPE_INGEST_EXTRACTED,
             &extracted_payload,
         )
@@ -400,7 +422,7 @@ async fn emit_audit_events(
         }
         if let Some(p) = &embed_payload
             && let Err(e) =
-                crate::daemon::audit_rpc::try_post_audit_frame(&home, EVENT_TYPE_EMBED_PERSISTED, p)
+                crate::daemon::audit_rpc::try_post_audit_frame(home, EVENT_TYPE_EMBED_PERSISTED, p)
                     .await
         {
             tracing::debug!(error = %e, "ingest 0x2D forward skipped (daemon listener unreachable)");
@@ -411,7 +433,7 @@ async fn emit_audit_events(
     let segment_path = args
         .wal_segment
         .clone()
-        .unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
+        .unwrap_or_else(|| home.join("wal").join("000001.wal"));
     if let Some(parent) = segment_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create WAL dir {}", parent.display()))?;
@@ -680,7 +702,9 @@ mod tests {
         };
 
         // run_ingest must complete without error.
-        run_ingest(args).await.expect("run_ingest failed");
+        run_ingest_with_context(args, &FreedomConfig::default(), dir.path())
+            .await
+            .expect("run_ingest failed");
 
         // Open the db and search for content from the fixture.
         let conn = crate::memory::store::open(&db_path).expect("open views.db");
@@ -724,7 +748,9 @@ mod tests {
             output: OutputFormat::Json,
         };
 
-        run_ingest(args).await.expect("run_ingest failed");
+        run_ingest_with_context(args, &FreedomConfig::default(), dir.path())
+            .await
+            .expect("run_ingest failed");
 
         // views.db should either not exist or be empty (no sources written).
         if db_path.exists() {

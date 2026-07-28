@@ -1653,7 +1653,7 @@ impl Credentials {
                     let mut public = SensitiveYamlValue(
                         serde_yaml::from_slice(freedom_source).with_context(|| {
                             format!(
-                                "parse {} before legacy SSH credential migration",
+                                "parse YAML at {} before legacy SSH credential migration",
                                 freedom_path.display()
                             )
                         })?,

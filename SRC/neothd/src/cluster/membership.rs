@@ -3944,6 +3944,8 @@ impl MembershipStore {
             .transpose()
             .context("parse persisted carrier teardown receipt")?
             .unwrap_or_default();
+        drop(conn);
+        let post_state_digest = self.full_snapshot()?.canonical_digest()?;
         Ok(Some(RevokeReceipt {
             operation: "cluster.membership.revoke".into(),
             request_id: request_id.unwrap_or_else(|| receipt_id.clone()),
@@ -3958,7 +3960,7 @@ impl MembershipStore {
             auth_epoch: AuthEpoch::new(auth)?,
             membership_epoch: MembershipEpoch::new(membership)?,
             authority_path: self.path.clone(),
-            post_state_digest: String::new(),
+            post_state_digest,
             tombstone_committed: true,
             already_revoked: true,
             live_teardown: status,

@@ -898,7 +898,7 @@ async fn run_test_invoke_with_wal(
     // Flush: the writer was moved into the state → store → dropped when invoke
     // returned, so no clone is held here; join drains the writer task.
     join.await.ok();
-    let captured_frames = decode_wal_frames(&seg);
+    let captured_frames = decode_wal_frames(&seg, tmp.path());
 
     Some(TestInvocationWithWal {
         outcome: TestInvocationSummary {
@@ -924,28 +924,21 @@ async fn run_test_invoke_with_wal(
 /// `{event_type, payload}` JSON, in emission order. Tolerant: a missing /
 /// torn / truncated segment yields the frames recovered so far. The `wal`
 /// read primitives are feature-independent, so the capture/read-back logic
-/// unit-tests without the wasm host (the `test` half of the cfg).
+/// unit-tests without the wasm host (the `test` half of the cfg). `home` binds
+/// decryption to the same instance key used by home-owned one-shot writers.
 #[cfg(any(test, feature = "wasm-plugin-host"))]
-fn decode_wal_frames(segment: &std::path::Path) -> Vec<serde_json::Value> {
-    use crate::wal::compress::decompress_frames;
+fn decode_wal_frames(segment: &std::path::Path, home: &std::path::Path) -> Vec<serde_json::Value> {
     use crate::wal::frame::decode_frame;
-    use crate::wal::segment_header::parse_segment_header;
 
     let Ok(bytes) = std::fs::read(segment) else {
         return Vec::new();
     };
-    let Ok(hdr) = parse_segment_header(&bytes) else {
+    let Ok((header_len, logical)) =
+        crate::wal::compaction::logical_segment_bytes_at_home(&bytes, home)
+    else {
         return Vec::new();
     };
-    let body = &bytes[hdr.header_len()..];
-    let frames = if hdr.is_compressed() {
-        match decompress_frames(body) {
-            Ok(f) => f,
-            Err(_) => return Vec::new(),
-        }
-    } else {
-        body.to_vec()
-    };
+    let frames = &logical[header_len..];
     let mut out = Vec::new();
     let mut cursor = 0usize;
     while cursor < frames.len() {
@@ -2558,7 +2551,7 @@ version = \"0.1.0\"\n\
         drop(writer);
         let _ = join.await;
 
-        let frames = decode_wal_frames(&seg);
+        let frames = decode_wal_frames(&seg, dir.path());
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0]["event_type"], "0xC4");
         assert_eq!(frames[0]["payload"]["plugin"], "snoop");
@@ -2567,9 +2560,8 @@ version = \"0.1.0\"\n\
 
     #[test]
     fn decode_wal_frames_missing_segment_is_empty() {
-        let frames = decode_wal_frames(std::path::Path::new(
-            "/nonexistent-uxo7b/does-not-exist.wal",
-        ));
+        let home = std::path::Path::new("/nonexistent-uxo7b");
+        let frames = decode_wal_frames(&home.join("does-not-exist.wal"), home);
         assert!(
             frames.is_empty(),
             "a missing segment yields no frames, no panic"
@@ -3239,7 +3231,8 @@ version = \"0.1.0\"\n\
         .await
         .unwrap();
 
-        let frames = super::decode_wal_frames(&home.path().join("wal").join("000001.wal"));
+        let frames =
+            super::decode_wal_frames(&home.path().join("wal").join("000001.wal"), home.path());
         assert_eq!(frames.len(), 2, "intent + result frames must both persist");
         // Both are EXTENDED (event_type 0x00); their identity is the subtype.
         assert_eq!(frames[0]["event_type"], "0x00");

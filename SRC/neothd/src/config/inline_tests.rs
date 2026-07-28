@@ -1456,7 +1456,16 @@ mod tests {
         assert!(body.contains("cron_enabled: false"));
         assert!(body.contains("future_knob: keep-me"));
         assert!(!body.contains("dreaming:"));
-        assert!(!body.contains("interval_secs:"));
+        let published: serde_yaml::Value = serde_yaml::from_str(&body).unwrap();
+        let dream = published
+            .get("dream")
+            .and_then(serde_yaml::Value::as_mapping)
+            .expect("canonical dream mapping");
+        let legacy_interval = serde_yaml::Value::String("interval_secs".into());
+        assert!(
+            !dream.contains_key(&legacy_interval),
+            "legacy dream.interval_secs must not survive canonical publication"
+        );
     }
 
     // ── C-16 proactive: enabled (Session 21) ────────────────────

@@ -922,17 +922,34 @@ mod tests {
     async fn run_reaches_target() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("v.db");
-        // Build an exact previous-version fixture from the canonical schema:
-        // v33 added only the mesh-sync request queue. Removing that table and
-        // restoring the v32 stamp avoids the invalid old pattern of stamping a
-        // latest-schema database as v3 and then replaying every ALTER over it.
-        assert_eq!(store::SCHEMA_VERSION, 33, "update the migration fixture");
-        let conn = store::open(&db).unwrap();
+        // Build the exact previous version through the canonical migration
+        // chain. Re-labelling a latest-schema DB leaves successor columns and
+        // archive tables behind, so it cannot prove the newest migration.
+        let previous = store::SCHEMA_VERSION
+            .checked_sub(1)
+            .expect("schema version must have a predecessor");
+        assert_eq!(
+            migrations::MIGRATIONS.last().map(|m| (m.from, m.to)),
+            Some((previous, store::SCHEMA_VERSION)),
+            "latest migration must end at SCHEMA_VERSION"
+        );
+        let mut conn = Connection::open(&db).unwrap();
         conn.execute_batch(
-            "DROP TABLE mesh_sync_requests;
-             UPDATE meta SET value = '32' WHERE key = 'schema_version';",
+            "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO meta (key, value) VALUES ('schema_version', '3');
+             CREATE TABLE idx_episode (
+                 event_id    INTEGER PRIMARY KEY,
+                 event_type  INTEGER NOT NULL,
+                 ts_ns       INTEGER NOT NULL,
+                 text        TEXT NOT NULL,
+                 text_hash   TEXT NOT NULL,
+                 channel     TEXT,
+                 sender_id   TEXT,
+                 operator_id TEXT
+             );",
         )
         .unwrap();
+        migrations::migrate(&mut conn, 3, previous).unwrap();
         drop(conn);
         let args = MigrateArgs {
             action: MigrateAction::Run {

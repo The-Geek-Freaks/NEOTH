@@ -408,6 +408,18 @@ pub(crate) enum TurnDispatchRoute {
     Direct,
 }
 
+#[derive(Debug)]
+struct CouncilSkipAudit {
+    prompt_hash: u64,
+    reason: String,
+}
+
+#[derive(Debug)]
+struct TurnRouteResolution {
+    route: TurnDispatchRoute,
+    council_skip: Option<CouncilSkipAudit>,
+}
+
 impl TurnDispatchRoute {
     pub(crate) const fn uses_mcp_catalogue(&self) -> bool {
         matches!(self, Self::McpDispatch { .. })
@@ -3099,19 +3111,22 @@ async fn resolve_chat_turn_route(
     base_req: &Request,
     prompt: &str,
     home: &std::path::Path,
-    writer: &crate::wal::writer::WalWriterHandle,
     mcp_servers: &crate::mcp::McpServers,
     skill_loop_trigger: bool,
     mcp_catalogue_allowed: bool,
-) -> TurnDispatchRoute {
+) -> TurnRouteResolution {
     let loop_trigger = LoopRouteTrigger::new(
         skill_loop_trigger,
         args.loop_mode || (config.loop_config.enabled && config.loop_config.max_rounds > 1),
     );
     if args.stream && !loop_trigger.is_active() {
-        let prompt_hash = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-        let _ = emit_council_skip(writer, prompt_hash, "streaming_mode_disables_council").await;
-        return TurnDispatchRoute::Streaming;
+        return TurnRouteResolution {
+            route: TurnDispatchRoute::Streaming,
+            council_skip: Some(CouncilSkipAudit {
+                prompt_hash: xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
+                reason: "streaming_mode_disables_council".to_string(),
+            }),
+        };
     }
 
     let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
@@ -3243,7 +3258,7 @@ async fn resolve_chat_turn_route(
             "council smart-trigger evaluated"
         );
     }
-    if !council_enable {
+    let council_skip = if !council_enable {
         let prompt_hash = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
         let reason = if let Some(reason) = council_deny_reason {
             reason
@@ -3252,8 +3267,13 @@ async fn resolve_chat_turn_route(
         } else {
             trigger_decision.reason()
         };
-        let _ = emit_council_skip(writer, prompt_hash, reason).await;
-    }
+        Some(CouncilSkipAudit {
+            prompt_hash,
+            reason: reason.to_string(),
+        })
+    } else {
+        None
+    };
 
     let council_route = if let Some(message) = council_mif_message {
         Some(TurnDispatchRoute::CouncilMif { message })
@@ -3266,12 +3286,15 @@ async fn resolve_chat_turn_route(
     };
     let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
     let autoroute = mcp_servers.autoroute_decision(autoroute_env.as_deref());
-    select_turn_dispatch_route(
-        council_route,
-        autoroute,
-        loop_trigger,
-        mcp_catalogue_allowed,
-    )
+    TurnRouteResolution {
+        route: select_turn_dispatch_route(
+            council_route,
+            autoroute,
+            loop_trigger,
+            mcp_catalogue_allowed,
+        ),
+        council_skip,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3304,6 +3327,7 @@ async fn dispatch_provider(
     provider_audit_context: crate::providers::cost_authorization::ProviderCallAuditContext,
     ephemeral_consent: &crate::consent::EphemeralConsent,
     route: TurnDispatchRoute,
+    council_skip: Option<CouncilSkipAudit>,
     stream_control_token: Option<&str>,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
@@ -3437,6 +3461,13 @@ async fn dispatch_provider(
             }
         }
     };
+
+    // Route selection happens before provider dispatch, but its audit record
+    // belongs to this exact turn. Emit it only after TURN_JOURNAL_OPENED so a
+    // replay can bind the decision to the journal that owns the provider call.
+    if let Some(skip) = council_skip {
+        let _ = emit_council_skip(&writer, skip.prompt_hash, &skip.reason).await;
+    }
 
     // AP-2: every local-inference call (stream OR non-stream) leaves a WAL
     // START + END trace pair. Hoisted out of the branch arms so the same
@@ -5919,13 +5950,15 @@ async fn run_chat_with_consent(
         stop_sequences: Vec::new(),
         thinking_budget: route_thinking_budget,
     };
-    let chat_route = resolve_chat_turn_route(
+    let TurnRouteResolution {
+        route: chat_route,
+        council_skip,
+    } = resolve_chat_turn_route(
         &args,
         &config,
         &base_route_request,
         &prompt,
         &home,
-        &writer,
         &mcp_servers,
         skill_loop_trigger,
         mcp_catalogue_slot.is_some(),
@@ -6057,6 +6090,7 @@ async fn run_chat_with_consent(
         provider_audit_context,
         &ephemeral_consent,
         chat_route,
+        council_skip,
         stream_control_token.as_ref().map(|token| token.as_str()),
     )
     .await?;
@@ -11987,8 +12021,8 @@ modes:
             crate::wal::events::EVENT_TYPE_TURN_JOURNAL_OPENED,
         );
         let rest = &rest[opened.header.total_len as usize..];
-        // B-1 (Session 13): COUNCIL_SKIP frame sits between PROVIDER_REQUEST and
-        // PROVIDER_RESPONSE whenever the council smart-trigger evaluates to Skip.
+        // B-1 (Session 13): COUNCIL_SKIP is bound to the opened turn journal
+        // and precedes the exact provider-leaf cost/permission gate.
         let council_skip = decode_frame(rest).expect("decode COUNCIL_SKIP frame");
         assert_eq!(
             council_skip.header.event_type,
@@ -14717,6 +14751,7 @@ modes:
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
             None,
+            None,
         )
         .await;
 
@@ -14850,6 +14885,7 @@ modes:
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
             None,
+            None,
         );
 
         let result = tokio::time::timeout(Duration::from_secs(2), dispatch)
@@ -14968,6 +15004,7 @@ modes:
             crate::providers::cost_authorization::ProviderCallAuditContext::default(),
             &ephemeral_consent,
             TurnDispatchRoute::Direct,
+            None,
             None,
         )
         .await;
