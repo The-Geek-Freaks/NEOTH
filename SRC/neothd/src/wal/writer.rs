@@ -512,6 +512,43 @@ impl WalWriterHandle {
         ack_rx.await.map_err(|_| WalError::WriterClosed)?
     }
 
+    /// Blocking counterpart to [`Self::append`] for authority work already
+    /// isolated on a dedicated blocking worker. Unlike [`Self::try_append_sync`],
+    /// this returns only after the writer has acknowledged the durable write
+    /// and therefore surfaces write/fsync failure to the caller.
+    #[cfg(feature = "cluster")]
+    pub(crate) fn append_blocking(
+        &self,
+        header: EventHeaderV2,
+        payload: Vec<u8>,
+    ) -> Result<u64, WalError> {
+        if payload.len() > MAX_PAYLOAD_BYTES {
+            return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
+        }
+        let admitted = payload.len() as u64;
+        if let Some(guard) = self.quota.as_ref() {
+            guard.try_admit(admitted)?;
+        }
+        let (ack_tx, ack_rx) = oneshot::channel();
+        if self
+            .tx
+            .blocking_send(WriteRequest {
+                header,
+                payload,
+                ack: ack_tx,
+                #[cfg(test)]
+                test_ack_gate: self.test_ack_gate.clone(),
+            })
+            .is_err()
+        {
+            if let Some(guard) = self.quota.as_ref() {
+                guard.release_reserved(admitted);
+            }
+            return Err(WalError::WriterClosed);
+        }
+        ack_rx.blocking_recv().map_err(|_| WalError::WriterClosed)?
+    }
+
     /// K-Perf-2 2026-05-17: fire-and-forget append for high-cadence
     /// streaming frames (`PROVIDER_STREAM_CHUNK` 0x23). Sends the
     /// write request into the writer's mpsc channel + drops the ack

@@ -17,23 +17,21 @@
 > multi-process release proof. The current runtime is not a stub: authenticated
 > Peeroxide, supervised Iroh, Vector-Clock Gossip, persist-before-ACK,
 > durable foreign-event/conflict/restore state and the worker-side
-> Cost/Consent/WAL-gated executor are live. It is not yet complete distributed
-> execution: no production master `TaskDelegate` sender/outbox/result-inbox
-> feeds a real Chat/Channel/Buddy request, inbound `TaskResult` is only logged,
-> task fencing has no cluster-wide linearizable generation authority, and
-> removing a registry peer does not yet prevent a stale or passphrase-holding
-> node from reconnecting after partition or restore. The present
-> `discover -> confirm` path also persists an mDNS passphrase-derived pseudonym
-> while Peeroxide admission compares its unrelated Noise public key, and that
-> Noise identity is auto-generated again on daemon restart. Passphrase-only
-> sessions can currently reach Heartbeat, Gossip/ACK and Result handling because
-> membership is checked only for `TaskDelegate`; queued provider and durable
-> Gossip effects are not revalidated at their commit leaves, and an old stream
-> can unregister a newer reconnect generation. Provider calls without a
-> proven upstream idempotency contract also require an explicit persistent
-> `Indeterminate` outcome instead of an impossible blanket exactly-once claim.
-> These are explicit P0 Gold blockers rather than hidden under the prior
-> rollup.
+> Cost/Consent/WAL-gated executor are live. Cluster M1 now also supplies a
+> persistent StableNode identity, persistent Peeroxide/Iroh carrier keys,
+> signed expiring endpoint attestations, one SQLite membership authority,
+> generation-bound grants/effects, strict legacy quarantine and real
+> revoke/status recovery across CLI, RPC, Buddy, GUI and Doctor. Passphrase
+> proof alone cannot create an admitted or durable effect, old disconnects
+> cannot unregister a replacement generation, and uncertain provider/carrier
+> outcomes are persisted as `Indeterminate`. It is still not complete
+> distributed execution: no production master `TaskDelegate`
+> sender/outbox/result-inbox feeds a real Chat/Channel/Buddy request, inbound
+> `TaskResult` is only logged, and task fencing has no cluster-wide
+> linearizable generation authority. Sole/quorum membership authority,
+> non-rollback `revocation_floor`, role/last-admin gates, rekey distribution
+> and the real two-node partition/restore matrix also remain explicit P0 Gold
+> blockers rather than hidden under the prior rollup.
 >
 > Buzz was reviewed on 2026-07-27 from canonical upstream
 > `https://github.com/block/buzz` at commit
@@ -70,6 +68,41 @@
 > endpoint-replacement, expiry, cross-carrier, SAS/replay and revoke-during-
 > pairing cases, and `GOLD-ADOPT-BUZZ-01` forbids source transplantation for
 > 1.0. Existing open counts remain honest.
+>
+> **Cluster M1 implementation checkpoint 2026-07-28 (no broad Cluster/NCT
+> box closed; counts unchanged):** the StableNode/attestation/membership layer
+> is now a real production boundary rather than a registry overlay.
+> `MembershipController` is the sole production revoke entry: a canonical
+> UUIDv7 request is immutably bound to snapshot digest, StableNodeId and
+> auth/membership epochs; the generation gate closes before its durable
+> intent, cancellation follows only after persistence, both carriers are
+> torn down, and every captured lease/external effect is drained or durably
+> classified before tombstone/outbox commit. Crash-orphaned `Pending` becomes
+> `Indeterminate`; a repeated request ID must match the exact binding; no
+> `partial -> closed` synthesis exists. Provider dispatch, Peeroxide physical
+> writes and Iroh physical phases carry generation effect permits. Iroh
+> ingress now adds a shared 64-slot pre-auth semaphore, 5-second proof/stream
+> budgets and 10-second admitted frame/handler/reply/ACK budgets with explicit
+> close/audit outcomes. Six hermetic local-Iroh timeout/saturation behaviors
+> pass inside the 41/41 focused filter.
+>
+> One strict core snapshot/status/runtime-health schema drives CLI,
+> authenticated daemon RPC, Buddy and GUI; the GUI starts revoke recovery
+> fail-closed, hydrates durable unresolved intents after restart, rejects
+> stale A-after-B responses and keeps pairing/revoke/confirm actions disabled
+> until authoritative health is resolved. Doctor exposes the same authority
+> state, and foreign backup refresh remains provenance-bound with Last-Known-
+> Good retention. Focused evidence: revocation core **12/12**, gate/crash
+> races **2/2**, provider/session/queued-effect **3/3**, retry **1/1**,
+> Doctor **1/1**, Buddy **4/4**, authenticated RPC **1/1**, GUI recovery
+> **2/2**, Iroh ingress **41/41**, generated CLI-doc regen/drift **2/2**,
+> core/GUI/`cluster-iroh` checks and diff/format gates green. Independent
+> full-spec, Rust and security reviews are clean after closing the public
+> Store-revoke bypass, GUI restart/refresh races and Iroh pre-auth/handler
+> resource-exhaustion path. `GOLD-R4-13a`, `GOLD-NCT-15` and `GOLD-NCT-16`
+> remain open for the authority/quorum, non-rollback floor, rekey/role,
+> task-fence and full multi-process/adversarial release matrix listed in the
+> Road.
 >
 > **Typed consumer-adoption checkpoint 2026-07-26 (R3-14 remains OPEN;
 > counts unchanged):** MCP catalogue assembly now returns a dedicated typed

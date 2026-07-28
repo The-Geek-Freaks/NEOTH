@@ -62,7 +62,7 @@ per-surface controls and documented best-effort/log-only exceptions are in the
 | **Babel-Index observer** | Async, content-free collapse scoring over the WAL stream: seven variables per rolling window, pre-registered failure labels, early warning before degradation ([babel-index.md](babel-index.md)). |
 | **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
 | **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
-| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, peeroxide/Hyperswarm, and consent-gated cluster nodes. This cluster protocol is distinct from the separately shipped Keet-identity channel companion; neither path claims access to existing Keet app rooms. |
+| **Private mesh** | Candidate discovery plus authority-gated cluster nodes over LAN/mDNS, Tailscale, Hysteria, and peeroxide/Hyperswarm. This cluster protocol is distinct from the separately shipped Keet-identity channel companion; neither path claims access to existing Keet app rooms. |
 
 ## WAL source of truth
 
@@ -198,13 +198,34 @@ NEOTH can run as one node or as a consent-gated private mesh.
 
 | Transport | Purpose |
 | :-- | :-- |
-| LAN/mDNS | Local discovery at home or office. |
+| LAN/mDNS | Local candidate discovery at home or office; announcements never grant membership. |
 | Tailscale/WireGuard | Private cross-device mesh. |
 | Hysteria | Restricted-network relay path. |
 | peeroxide/Hyperswarm | Optional transport for NEOTH's own authenticated cluster protocol; separate from the `neoth-keet-bridge` channel companion and not an adapter for existing Keet app rooms. |
-| Cluster policy | Node pairing, capability leases, topology view, health and resource state. |
+| Cluster policy | Stable identity, authoritative enrollment/revoke, capability leases, topology view, health and resource state. |
 
-Keys identify peers; operator approval grants membership and capabilities.
+The shared passphrase derives a `ClusterKey` used only for rendezvous/bootstrap
+HMAC proof. It is not an authorization database. Each node instead owns a
+passphrase-independent `LocalNodeIdentity`; its signing key derives the stable
+node ID and its carrier identity persists across normal daemon restarts.
+The mDNS v2 record combines those layers without conflating them: the HMAC
+filters the rendezvous domain, while a signed `EndpointAttestation`
+authenticates the candidate's stable identity and exact Peeroxide endpoint.
+Neither check grants membership.
+
+`cluster-membership.db` is the authority boundary. Discovery produces
+candidates only. Enrollment follows
+`authority invite -> exact carrier-bound signed EndpointAttestation -> confirm`,
+then carrier admission returns an epoch-bound `MembershipGrant`. Revocation is
+fail-closed and ordered: close the process-local admission gate; durably write
+a `Pending` UUIDv7 request bound to the exact snapshot/digest/authority/member
+generation; publish cancellation; tear down, drain, and classify every captured
+external carrier effect; persist `Indeterminate` for any uncertain remote
+outcome; only then commit the tombstone plus outbox. An orphaned `Pending`
+request recovers durably as `Indeterminate`, never silently as `Completed`.
+`cluster.yaml` is imported only as legacy `Pending` state and never authorizes a
+session or effect. Revocation intent reason/source/status metadata are plaintext
+in local SQLite (never secrets); OS file permissions are the storage boundary.
 
 ## Context assembly
 

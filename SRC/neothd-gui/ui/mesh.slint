@@ -40,10 +40,14 @@ export struct MeshPeerRow {
 
 /// DES-13 — per-origin-peer replicated-backup summary (idx_foreign_events).
 export struct MeshForeignRow {
-    peer: string,     // origin peer pubkey (mono, truncated)
-    count: string,    // pre-formatted event count e.g. "128"
-    bytes: string,    // pre-formatted total payload bytes e.g. "4.2 KB"
-    latest: string,   // pre-formatted latest received time e.g. "12:03"
+    peer: string,              // immutable carrier provenance
+    stable-node-id: string,    // full canonical StableNodeId
+    auth-epoch: string,
+    membership-epoch: string,
+    fence-state: string,
+    count: string,
+    bytes: string,
+    latest: string,
 }
 
 /// F2 — one durable per-peer sync row from `neoth cluster sync-state`.
@@ -382,6 +386,8 @@ export component MeshView inherits Rectangle {
     in property <int>    mesh-foreign-total: 0;
     in property <string> mesh-foreign-bytes: "";
     in property <int>    mesh-foreign-peers: 0;
+    in property <bool>   mesh-foreign-valid: true;
+    in property <string> mesh-foreign-error: "";
 
     // ── Typed conflict ledger ────────────────────────────────────────────────
     in property <[MeshConflictRow]> mesh-conflicts: [];
@@ -393,6 +399,9 @@ export component MeshView inherits Rectangle {
     in property <int> mesh-conflict-count: 0;
     in property <bool> mesh-conflicts-valid: true;
     in property <string> mesh-conflicts-error: "";
+    // Main cluster status is fail-closed: invalid/nonzero probes retain LKG.
+    in property <bool> mesh-status-valid: false;
+    in property <string> mesh-status-error: "";
 
     // ── Gossip stream + expansion (Wave 5) ───────────────────────────────────
     in property <[string]> gossip-events: [];  // newest-first log lines
@@ -476,6 +485,26 @@ export component MeshView inherits Rectangle {
             Rectangle {
                 height: 1px;
                 background: Theme.border-subtle;
+            }
+
+            if root.mesh-status-error != "": Rectangle {
+                min-height: 42px;
+                border-radius: Theme.radius-sm;
+                background: Theme.consent-tint;
+                border-width: 1px;
+                border-color: Theme.consent;
+                Text {
+                    text: "Cluster status unavailable: " + root.mesh-status-error
+                        + " Last known fleet state is retained.";
+                    color: Theme.consent;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-xs;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-alignment: left;
+                    accessible-role: text;
+                    accessible-label: self.text;
+                }
             }
 
             // ── Composite fleet-health bar ───────────────────────────────────
@@ -785,7 +814,7 @@ export component MeshView inherits Rectangle {
                             if root.mesh-peers.length == 0: EmptyState {
                                 glyph: "◯";
                                 title: "No peers discovered";
-                                hint: "NEOTH runs standalone — enable mDNS in Settings › Cluster, or add peers via `neoth cluster add <addr>`.";
+                                hint: "NEOTH runs standalone. Enable mDNS to discover authenticated candidates; activation still requires a signed, carrier-bound, one-time invite and exact EndpointAttestation confirmation.";
                             }
 
                             if root.mesh-gossip-note != "": Rectangle {
@@ -992,12 +1021,19 @@ export component MeshView inherits Rectangle {
                                     HorizontalLayout {
                                         spacing: 8px;
                                         alignment: start;
-                                        Led { state: root.mesh-foreign-total > 0 ? "live" : "off"; dot-size: 7px; }
+                                        Led {
+                                            state: !root.mesh-foreign-valid
+                                                ? "error"
+                                                : root.mesh-foreign-total > 0 ? "live" : "off";
+                                            dot-size: 7px;
+                                        }
                                         Text {
-                                            text: root.mesh-foreign-total > 0
+                                            text: !root.mesh-foreign-valid
+                                                ? "Backup provenance INVALID — showing last verified rows"
+                                                : root.mesh-foreign-total > 0
                                                 ? "Backup-at-rest is LIVE"
                                                 : "No peer data replicated yet";
-                                            color: Theme.accent-green;
+                                            color: root.mesh-foreign-valid ? Theme.accent-green : Theme.accent-pink;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
                                             font-weight: Theme.weight-semibold;
@@ -1006,59 +1042,57 @@ export component MeshView inherits Rectangle {
                                         }
                                     }
                                     Text {
-                                        text: root.mesh-foreign-total > 0
+                                        text: !root.mesh-foreign-valid
+                                            ? root.mesh-foreign-error
+                                            : root.mesh-foreign-total > 0
                                             ? "Holding " + root.mesh-foreign-total + " replicated event(s) from "
                                               + root.mesh-foreign-peers + " peer(s) · " + root.mesh-foreign-bytes
                                               + ". If a peer's disk dies, its gossiped events survive here."
-                                            : "Once paired peers gossip, their replicable events are persisted here as failover backup. Pair a peer to begin.";
+                                            : "Once authorized peers gossip, their replicable events are persisted here as failover backup.";
                                         color: Theme.text-secondary;
                                         font-family: Theme.font-sans;
                                         font-size: Theme.font-size-sm;
                                         wrap: word-wrap;
                                     }
 
-                                    for f in root.mesh-foreign-rows: HorizontalLayout {
-                                        spacing: 10px;
-                                        alignment: start;
-                                        height: 20px;
+                                    for f in root.mesh-foreign-rows: VerticalLayout {
+                                        spacing: 2px;
+                                        height: 38px;
+                                        HorizontalLayout {
+                                            spacing: 10px;
+                                            Text {
+                                                text: f.stable-node-id;
+                                                color: Theme.text-tertiary;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                width: 190px;
+                                                overflow: elide;
+                                            }
+                                            Text {
+                                                text: f.count + " ev · " + f.bytes + " · " + f.latest;
+                                                color: Theme.accent-green;
+                                                font-family: Theme.font-mono;
+                                                font-size: Theme.font-size-2xs;
+                                                overflow: elide;
+                                            }
+                                        }
                                         Text {
-                                            text: f.peer;
-                                            color: Theme.text-tertiary;
+                                            text: "auth=" + f.auth-epoch
+                                                + " membership=" + f.membership-epoch
+                                                + " fence=" + f.fence-state
+                                                + " carrier=" + f.peer;
+                                            color: f.fence-state == "active"
+                                                ? Theme.text-disabled
+                                                : Theme.accent-pink;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-2xs;
-                                            vertical-alignment: center;
-                                            width: 150px;
                                             overflow: elide;
-                                        }
-                                        Text {
-                                            text: f.count + " ev";
-                                            overflow: elide;
-                                            color: Theme.accent-green;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-2xs;
-                                            vertical-alignment: center;
-                                            width: 60px;
-                                        }
-                                        Text {
-                                            text: f.bytes;
-                                            color: Theme.text-tertiary;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-2xs;
-                                            vertical-alignment: center;
-                                            width: 72px;
-                                        }
-                                        Text {
-                                            text: f.latest;
-                                            color: Theme.text-disabled;
-                                            font-family: Theme.font-mono;
-                                            font-size: Theme.font-size-2xs;
-                                            vertical-alignment: center;
                                         }
                                     }
                                 }
                             }
 
-                            // Amber warning — honest about partial restore
+                            // Restore deliberately remains a CLI-only operator action.
                             Rectangle {
                                 border-radius: Theme.radius-md;
                                 background: Theme.warning-tint;
@@ -1080,7 +1114,7 @@ export component MeshView inherits Rectangle {
                                             vertical-alignment: center;
                                         }
                                         Text {
-                                            text: "Auto-restore is PARTIAL";
+                                            text: "Restore is CLI-only";
                                             color: Theme.warning;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-sm;
@@ -1091,7 +1125,7 @@ export component MeshView inherits Rectangle {
                                     }
 
                                     Text {
-                                        text: "Replicated events are stored (above), but automatic merge back into a recovered node's recall/memory is not yet complete. Treat the mesh as durable backup, not one-click restore.";
+                                        text: "GUI has no export or restore action. Canonical restore is keyed by (StableNodeId, AuthEpoch), requires membership_epoch plus fence=active, and rejects missing, non-active, or legacy_unbound provenance before work.";
                                         color: Theme.text-secondary;
                                         font-family: Theme.font-sans;
                                         font-size: Theme.font-size-sm;
@@ -1099,7 +1133,7 @@ export component MeshView inherits Rectangle {
                                     }
 
                                     Text {
-                                        text: "Do not rely on the mesh as your only backup.";
+                                        text: "Survivor: neoth cluster export-foreign --peer <stable_node_id> --out <file>";
                                         color: Theme.warning;
                                         font-family: Theme.font-mono;
                                         font-size: Theme.font-size-sm;
@@ -1118,7 +1152,7 @@ export component MeshView inherits Rectangle {
                                             vertical-alignment: center;
                                         }
                                         Text {
-                                            text: "Use the Backup tab for reliable data protection.";
+                                            text: "Recovered node: neoth cluster restore <file> --dry-run; inspect, then rerun with explicit confirmation.";
                                             color: Theme.text-tertiary;
                                             font-family: Theme.font-mono;
                                             font-size: Theme.font-size-xs;

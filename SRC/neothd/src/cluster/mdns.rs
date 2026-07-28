@@ -1,19 +1,11 @@
-//! mDNS announcer + listener — Phase 2 of cluster auto-discovery.
+//! Signed StableNode mDNS discovery.
 //!
-//! Cross-platform via the `mdns-sd` crate (pure-Rust zeroconf
-//! client, no system Avahi/Bonjour dependency). The announcer
-//! registers a `_neoth._udp.local.` service with TXT records
-//! carrying:
-//!   - `pubkey` = lowercase-hex of operator's 32-byte ed25519
-//!     pub key (per Q2 ratification — raw key, not pseudonym)
-//!   - `auth` = lowercase-hex of `sign_announce(cluster_key,
-//!     label, pub_key, addr)` HMAC-SHA256 authenticator
-//!   - `label` = operator-readable instance label
-//!
-//! The listener subscribes to the same service type + filters
-//! every received announcement through `verify_announce` so
-//! HMAC-failing impersonations from peers without `cluster_key`
-//! are rejected before they surface to the caller.
+//! The passphrase-derived cluster key is only a rendezvous filter. Identity is
+//! a signed [`EndpointAttestation`] from the persistent [`LocalNodeIdentity`],
+//! binding the StableNode signing key to the exact persistent carrier identity,
+//! endpoint, daemon boot, authority epochs, optional invite digest, and expiry.
+//! A valid announce is still only an untrusted enrollment candidate; it never
+//! creates Active membership.
 //!
 //! Operator-facing knobs (freedom.yaml):
 //!   - `cluster.mdns.enabled` (bool, default true via Q4 ratify) —
@@ -34,9 +26,14 @@
 use std::net::IpAddr;
 
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
 
 use super::discovery::{ClusterAnnouncePacket, ClusterKey, DiscoveryVia};
+use super::membership::{
+    AuthEpoch, BootId, CarrierKind, EndpointAttestation, LocalNodeIdentity, MembershipEpoch,
+    TransportIdentity,
+};
 
 /// Default mDNS service type. `_neoth._udp.local.` follows the
 /// standard `_<servicename>._<proto>.local.` pattern.
@@ -48,29 +45,24 @@ pub const DEFAULT_SERVICE_TYPE: &str = "_neoth._udp.local.";
 /// within a minute.
 pub const DEFAULT_ANNOUNCE_INTERVAL_SECS: u64 = 60;
 
-/// Operator-supplied identity for the announcer. Carries the
-/// already-signed authenticator so this module doesn't need to
-/// touch the secret key material itself.
 #[derive(Clone, Debug)]
 pub struct MdnsIdentity {
     pub instance_label: String,
-    /// 32-byte ed25519 public key.
-    pub pub_key: [u8; 32],
-    /// Listen socket the operator's peers should dial.
+    pub attestation: EndpointAttestation,
+    /// Passphrase proof used only to filter rendezvous domains.
+    pub rendezvous_proof: [u8; 32],
     pub listen_port: u16,
-    /// Pre-signed HMAC-SHA256 over (NS || pub_key || addr_len ||
-    /// addr_str || label_len || label_bytes). Caller computes
-    /// this via `discovery::sign_announce`.
-    pub auth: [u8; 32],
-    /// IP addresses the announcer should publish for this host.
-    /// Caller decides which interfaces to expose (LAN-only vs
-    /// Tailscale CGNAT vs both); the mDNS daemon picks the
-    /// best match per query.
     pub local_ips: Vec<IpAddr>,
 }
 
-/// Hex-encode 32 bytes lowercase — used for both `pubkey` and
-/// `auth` TXT records. Decoder roundtrip lives below.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MdnsAttestedCandidate {
+    pub instance_label: String,
+    pub attestation: EndpointAttestation,
+    pub addr: std::net::SocketAddr,
+    pub rendezvous_proof: [u8; 32],
+}
+
 pub fn hex_encode_32(bytes: &[u8; 32]) -> String {
     let mut out = String::with_capacity(64);
     for b in bytes {
@@ -102,46 +94,90 @@ fn hex_nibble(c: u8) -> Option<u8> {
     }
 }
 
-/// Compose the TXT record properties an announcer publishes.
-/// Caller passes the bytes from a verified `ClusterAnnouncePacket`
-/// (or hand-constructed identity); helper returns the
-/// `(key, value)` tuples `mdns-sd` expects.
+const ATTESTATION_CHUNK_BYTES: usize = 180;
+const MAX_ATTESTATION_CHUNKS: usize = 16;
+
 pub fn announce_txt_records(
     label: &str,
-    pub_key: &[u8; 32],
-    auth: &[u8; 32],
-) -> Vec<(String, String)> {
-    vec![
+    attestation: &EndpointAttestation,
+    rendezvous_proof: &[u8; 32],
+) -> Result<Vec<(String, String)>> {
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(attestation).context("serialize mDNS endpoint attestation")?);
+    let chunks = encoded
+        .as_bytes()
+        .chunks(ATTESTATION_CHUNK_BYTES)
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !chunks.is_empty() && chunks.len() <= MAX_ATTESTATION_CHUNKS,
+        "mDNS endpoint attestation exceeds bounded TXT capacity"
+    );
+    let mut records = vec![
         ("label".to_string(), label.to_string()),
-        ("pubkey".to_string(), hex_encode_32(pub_key)),
-        ("auth".to_string(), hex_encode_32(auth)),
-        // Schema version — Phase 6 (gossip state-sync) bumps to 2
-        // when the announce shape gains a `gossip_port` field.
-        ("v".to_string(), "1".to_string()),
-    ]
+        (
+            "stable_node_id".to_string(),
+            attestation.stable_node_id.as_str().to_string(),
+        ),
+        (
+            "rendezvous_proof".to_string(),
+            hex_encode_32(rendezvous_proof),
+        ),
+        ("attestation_chunks".to_string(), chunks.len().to_string()),
+        ("v".to_string(), "2".to_string()),
+    ];
+    for (index, chunk) in chunks.into_iter().enumerate() {
+        records.push((
+            format!("attestation_{index}"),
+            std::str::from_utf8(chunk)
+                .context("base64 mDNS attestation chunk is not UTF-8")?
+                .to_string(),
+        ));
+    }
+    Ok(records)
 }
 
-/// Parse the inverse — convert a TXT-records map back to an
-/// `ClusterAnnouncePacket`. Skips records with unrecognized
-/// schema versions so a future Phase 6 announcer publishing
-/// `v: 2` doesn't trigger spurious "malformed" warnings on
-/// older receivers.
 pub fn parse_announce_txt(
     txt: &std::collections::HashMap<String, String>,
     addr: std::net::SocketAddr,
-) -> Option<ClusterAnnouncePacket> {
-    // Schema version check — current parser handles v=1 only.
-    if txt.get("v").map(|s| s.as_str()) != Some("1") {
+    now_unix: i64,
+) -> Option<MdnsAttestedCandidate> {
+    if txt.get("v").map(String::as_str) != Some("2") {
         return None;
     }
     let label = txt.get("label")?.clone();
-    let pub_key = hex_decode_32(txt.get("pubkey")?)?;
-    let auth = hex_decode_32(txt.get("auth")?)?;
-    Some(ClusterAnnouncePacket {
+    let stable_node_id = txt.get("stable_node_id")?;
+    let rendezvous_proof = hex_decode_32(txt.get("rendezvous_proof")?)?;
+    let chunk_count = txt.get("attestation_chunks")?.parse::<usize>().ok()?;
+    if chunk_count == 0 || chunk_count > MAX_ATTESTATION_CHUNKS {
+        return None;
+    }
+    let mut encoded = String::new();
+    for index in 0..chunk_count {
+        encoded.push_str(txt.get(&format!("attestation_{index}"))?);
+    }
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .ok()?;
+    let attestation = serde_json::from_slice::<EndpointAttestation>(&bytes).ok()?;
+    if attestation.stable_node_id.as_str() != stable_node_id
+        || attestation.carrier != CarrierKind::Peeroxide
+        || attestation.endpoint != addr.to_string()
+        || attestation
+            .verify_exact(
+                CarrierKind::Peeroxide,
+                &attestation.transport_identity,
+                &addr.to_string(),
+                now_unix,
+            )
+            .is_err()
+    {
+        return None;
+    }
+    Some(MdnsAttestedCandidate {
         instance_label: label,
-        pub_key,
+        attestation,
         addr,
-        auth,
+        rendezvous_proof,
     })
 }
 
@@ -153,7 +189,11 @@ pub fn parse_announce_txt(
 pub fn spawn_announcer(identity: &MdnsIdentity) -> Result<ServiceDaemon> {
     let daemon = ServiceDaemon::new().context("create mdns daemon")?;
     let host_name = format!("{}.local.", sanitize_for_dns(&identity.instance_label));
-    let txt = announce_txt_records(&identity.instance_label, &identity.pub_key, &identity.auth);
+    let txt = announce_txt_records(
+        &identity.instance_label,
+        &identity.attestation,
+        &identity.rendezvous_proof,
+    )?;
     let info = ServiceInfo::new(
         DEFAULT_SERVICE_TYPE,
         &sanitize_for_dns(&identity.instance_label),
@@ -195,21 +235,6 @@ pub fn sanitize_for_dns(s: &str) -> String {
 /// surfaced peer.
 pub fn via() -> DiscoveryVia {
     DiscoveryVia::Mdns
-}
-
-/// Domain-separation namespace for [`derive_node_id`].
-const NODE_ID_NS: &[u8] = b"neoth.cluster.mdns-node-id.v1:";
-
-/// Deterministic per-node announce identity: HMAC-SHA256(cluster_key,
-/// NS || node_label). No on-disk keypair — announce authenticity is
-/// already the HMAC `auth` field (any passphrase holder can announce),
-/// so the pub_key's only job is to be a STABLE, unique node id that
-/// `neoth cluster confirm <pub_key>` survives reboots with.
-pub fn derive_node_id(key: &ClusterKey, node_label: &str) -> [u8; 32] {
-    let mut msg = Vec::with_capacity(NODE_ID_NS.len() + node_label.len());
-    msg.extend_from_slice(NODE_ID_NS);
-    msg.extend_from_slice(node_label.as_bytes());
-    crate::util::hmac::sha256(&key.0, &msg)
 }
 
 /// The operator-readable label this node announces as. Hostname when
@@ -261,33 +286,56 @@ pub fn primary_local_ip() -> Option<IpAddr> {
     Some(ip)
 }
 
-/// Build the full announce identity for this node: derived node id +
-/// `sign_announce` over EXACTLY the `ip:port` that gets published, so
-/// a browse-side `verify_announce` on the resolved address succeeds.
-/// Pure (caller supplies the ip) — unit-testable round-trip.
+#[allow(clippy::too_many_arguments)]
 pub fn build_announce_identity(
     key: &ClusterKey,
+    local_identity: &LocalNodeIdentity,
     node_label: &str,
     ip: IpAddr,
     listen_port: u16,
-) -> MdnsIdentity {
-    let pub_key = derive_node_id(key, node_label);
+    boot_id: BootId,
+    auth_epoch: AuthEpoch,
+    membership_epoch: MembershipEpoch,
+    invitation_digest: Option<String>,
+    expires_at_unix: i64,
+) -> Result<MdnsIdentity> {
     let addr = std::net::SocketAddr::new(ip, listen_port);
-    let auth = super::discovery::sign_announce(key, node_label, &pub_key, &addr);
-    MdnsIdentity {
+    let transport_identity =
+        TransportIdentity::peeroxide(&local_identity.peeroxide_key_pair().public_key);
+    let attestation = local_identity.attest_endpoint(
+        CarrierKind::Peeroxide,
+        transport_identity,
+        boot_id.clone(),
+        format!("mdns:{}", boot_id.as_str()),
+        addr.to_string(),
+        auth_epoch,
+        membership_epoch,
+        invitation_digest,
+        expires_at_unix,
+    )?;
+    let rendezvous_proof =
+        super::discovery::sign_announce(key, node_label, &attestation.signing_public_key, &addr);
+    Ok(MdnsIdentity {
         instance_label: node_label.to_string(),
-        pub_key,
+        attestation,
         listen_port,
-        auth,
+        rendezvous_proof,
         local_ips: vec![ip],
-    }
+    })
 }
 
-/// Verify a parsed announce against the operator's cluster_key.
-/// Wraps `discovery::verify_announce` so mdns-side callers don't
-/// reach across modules.
-pub fn verify_with_cluster_key(packet: &ClusterAnnouncePacket, key: &ClusterKey) -> bool {
-    super::discovery::verify_announce(key, packet)
+/// Verify only the rendezvous proof. Signed StableNode verification happens in
+/// [`parse_announce_txt`]; neither check grants membership.
+pub fn verify_with_cluster_key(candidate: &MdnsAttestedCandidate, key: &ClusterKey) -> bool {
+    super::discovery::verify_announce(
+        key,
+        &ClusterAnnouncePacket {
+            instance_label: candidate.instance_label.clone(),
+            pub_key: candidate.attestation.signing_public_key,
+            addr: candidate.addr,
+            auth: candidate.rendezvous_proof,
+        },
+    )
 }
 
 #[cfg(test)]
@@ -324,52 +372,129 @@ mod tests {
         assert!(hex_decode_32(&bad).is_none());
     }
 
-    #[test]
-    fn announce_txt_records_contain_schema_version_one() {
-        let txt = announce_txt_records("label", &[1u8; 32], &[2u8; 32]);
-        let map: HashMap<_, _> = txt.into_iter().collect();
-        assert_eq!(map.get("v").map(|s| s.as_str()), Some("1"));
-        assert_eq!(map.get("label").map(|s| s.as_str()), Some("label"));
-        assert!(map.get("pubkey").unwrap().starts_with("01"));
-        assert!(map.get("auth").unwrap().starts_with("02"));
+    fn signed_identity(
+        home: &std::path::Path,
+        key: &ClusterKey,
+        carrier: CarrierKind,
+    ) -> MdnsIdentity {
+        let local = LocalNodeIdentity::load_or_create(home).unwrap();
+        let ip: IpAddr = "192.0.2.7".parse().unwrap();
+        if carrier == CarrierKind::Peeroxide {
+            return build_announce_identity(
+                key,
+                &local,
+                "office-pc",
+                ip,
+                49737,
+                BootId::parse("00000000-0000-4000-8000-000000000001").unwrap(),
+                AuthEpoch::new(7).unwrap(),
+                MembershipEpoch::new(11).unwrap(),
+                Some("invite-digest".into()),
+                1_900_000_000,
+            )
+            .unwrap();
+        }
+        let addr = std::net::SocketAddr::new(ip, 49737);
+        let attestation = local
+            .attest_endpoint(
+                carrier,
+                TransportIdentity::parse("iroh-persistent-id").unwrap(),
+                BootId::parse("00000000-0000-4000-8000-000000000001").unwrap(),
+                "mdns:test".into(),
+                addr.to_string(),
+                AuthEpoch::new(7).unwrap(),
+                MembershipEpoch::new(11).unwrap(),
+                Some("invite-digest".into()),
+                1_900_000_000,
+            )
+            .unwrap();
+        MdnsIdentity {
+            instance_label: "office-pc".into(),
+            rendezvous_proof: super::super::discovery::sign_announce(
+                key,
+                "office-pc",
+                &attestation.signing_public_key,
+                &addr,
+            ),
+            attestation,
+            listen_port: addr.port(),
+            local_ips: vec![ip],
+        }
+    }
+
+    fn txt(identity: &MdnsIdentity) -> HashMap<String, String> {
+        announce_txt_records(
+            &identity.instance_label,
+            &identity.attestation,
+            &identity.rendezvous_proof,
+        )
+        .unwrap()
+        .into_iter()
+        .collect()
     }
 
     #[test]
-    fn parse_announce_txt_v1_roundtrip() {
-        let label = "laptop-alpha";
-        let pub_key = [0xabu8; 32];
-        let auth = [0xcdu8; 32];
-        let map: HashMap<_, _> = announce_txt_records(label, &pub_key, &auth)
-            .into_iter()
-            .collect();
-        let addr: std::net::SocketAddr = "192.0.2.1:4242".parse().unwrap();
-        let pkt = parse_announce_txt(&map, addr).expect("v1 parse");
-        assert_eq!(pkt.instance_label, label);
-        assert_eq!(pkt.pub_key, pub_key);
-        assert_eq!(pkt.auth, auth);
-        assert_eq!(pkt.addr, addr);
+    fn production_announce_round_trips_signed_stable_identity_and_exact_carrier() {
+        let home = tempfile::tempdir().unwrap();
+        let key = super::super::discovery::cluster_key("phrase a").unwrap();
+        let identity = signed_identity(home.path(), &key, CarrierKind::Peeroxide);
+        let addr = identity.attestation.endpoint.parse().unwrap();
+        let candidate = parse_announce_txt(&txt(&identity), addr, 1_800_000_000).unwrap();
+        assert_eq!(
+            candidate.attestation.stable_node_id,
+            *LocalNodeIdentity::load_existing(home.path())
+                .unwrap()
+                .unwrap()
+                .stable_node_id()
+        );
+        assert_eq!(candidate.attestation.carrier, CarrierKind::Peeroxide);
+        assert_eq!(candidate.attestation.endpoint, addr.to_string());
+        assert_eq!(
+            candidate.attestation.transport_identity,
+            TransportIdentity::peeroxide(
+                &LocalNodeIdentity::load_existing(home.path())
+                    .unwrap()
+                    .unwrap()
+                    .peeroxide_key_pair()
+                    .public_key
+            )
+        );
+        assert_eq!(
+            candidate.attestation.invitation_digest.as_deref(),
+            Some("invite-digest")
+        );
+        assert!(verify_with_cluster_key(&candidate, &key));
+        let records = txt(&identity);
+        assert!(!records.contains_key("pubkey"));
+        assert!(!records.contains_key("auth"));
+        assert_eq!(records.get("v").map(String::as_str), Some("2"));
     }
 
     #[test]
-    fn parse_announce_txt_unknown_version_returns_none() {
-        // Phase 6 will publish v=2; the v=1 parser must skip
-        // gracefully instead of mis-decoding.
-        let mut map = HashMap::new();
-        map.insert("v".to_string(), "2".to_string());
-        map.insert("label".to_string(), "x".to_string());
-        map.insert("pubkey".to_string(), "0".repeat(64));
-        map.insert("auth".to_string(), "0".repeat(64));
-        let addr: std::net::SocketAddr = "192.0.2.1:0".parse().unwrap();
-        assert!(parse_announce_txt(&map, addr).is_none());
+    fn rendezvous_wrong_key_is_rejected_without_becoming_membership() {
+        let home = tempfile::tempdir().unwrap();
+        let key_a = super::super::discovery::cluster_key("phrase a").unwrap();
+        let key_b = super::super::discovery::cluster_key("phrase b").unwrap();
+        let identity = signed_identity(home.path(), &key_a, CarrierKind::Peeroxide);
+        let addr = identity.attestation.endpoint.parse().unwrap();
+        let candidate = parse_announce_txt(&txt(&identity), addr, 1_800_000_000).unwrap();
+        assert!(!verify_with_cluster_key(&candidate, &key_b));
     }
 
     #[test]
-    fn parse_announce_txt_missing_field_returns_none() {
-        let mut map = HashMap::new();
-        map.insert("v".to_string(), "1".to_string());
-        // No label / pubkey / auth.
-        let addr: std::net::SocketAddr = "192.0.2.1:0".parse().unwrap();
-        assert!(parse_announce_txt(&map, addr).is_none());
+    fn attestation_tamper_and_wrong_carrier_are_rejected() {
+        let home = tempfile::tempdir().unwrap();
+        let key = super::super::discovery::cluster_key("phrase a").unwrap();
+        let identity = signed_identity(home.path(), &key, CarrierKind::Peeroxide);
+        let addr = identity.attestation.endpoint.parse().unwrap();
+        let mut tampered = txt(&identity);
+        let chunk = tampered.get_mut("attestation_0").unwrap();
+        let replacement = if chunk.starts_with('A') { "B" } else { "A" };
+        chunk.replace_range(0..1, replacement);
+        assert!(parse_announce_txt(&tampered, addr, 1_800_000_000).is_none());
+
+        let iroh = signed_identity(home.path(), &key, CarrierKind::Iroh);
+        assert!(parse_announce_txt(&txt(&iroh), addr, 1_800_000_000).is_none());
     }
 
     #[test]
@@ -388,87 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn verify_with_cluster_key_accepts_legit_packet() {
-        use super::super::discovery::{ClusterAnnouncePacket, cluster_key, sign_announce};
-        let key = cluster_key("alpha bravo charlie delta").unwrap();
-        let pub_key = [0xabu8; 32];
-        let addr: std::net::SocketAddr = "192.0.2.1:4242".parse().unwrap();
-        let label = "laptop";
-        let auth = sign_announce(&key, label, &pub_key, &addr);
-        let pkt = ClusterAnnouncePacket {
-            instance_label: label.into(),
-            pub_key,
-            addr,
-            auth,
-        };
-        assert!(verify_with_cluster_key(&pkt, &key));
-    }
-
-    #[test]
-    fn verify_with_cluster_key_rejects_wrong_key() {
-        use super::super::discovery::{ClusterAnnouncePacket, cluster_key, sign_announce};
-        let key_a = cluster_key("phrase a").unwrap();
-        let key_b = cluster_key("phrase b").unwrap();
-        let pub_key = [0x12u8; 32];
-        let addr: std::net::SocketAddr = "192.0.2.1:4242".parse().unwrap();
-        let auth = sign_announce(&key_a, "label", &pub_key, &addr);
-        let pkt = ClusterAnnouncePacket {
-            instance_label: "label".into(),
-            pub_key,
-            addr,
-            auth,
-        };
-        assert!(!verify_with_cluster_key(&pkt, &key_b));
-    }
-
-    #[test]
     fn default_constants_pinned() {
         assert_eq!(DEFAULT_SERVICE_TYPE, "_neoth._udp.local.");
         assert_eq!(DEFAULT_ANNOUNCE_INTERVAL_SECS, 60);
-    }
-
-    #[test]
-    fn derive_node_id_is_stable_and_distinct() {
-        use super::super::discovery::cluster_key;
-        let key_a = cluster_key("phrase a").unwrap();
-        let key_b = cluster_key("phrase b").unwrap();
-        // Stable: same inputs ⇒ same id (the `cluster confirm` contract).
-        assert_eq!(
-            derive_node_id(&key_a, "office-pc"),
-            derive_node_id(&key_a, "office-pc")
-        );
-        // Distinct per label AND per key.
-        assert_ne!(
-            derive_node_id(&key_a, "office-pc"),
-            derive_node_id(&key_a, "laptop")
-        );
-        assert_ne!(
-            derive_node_id(&key_a, "office-pc"),
-            derive_node_id(&key_b, "office-pc")
-        );
-    }
-
-    #[test]
-    fn build_announce_identity_round_trips_through_verify() {
-        // The announce a daemon publishes must verify on the browse side
-        // when reconstructed from the resolved `ip:port` — pins that
-        // sign_announce covers EXACTLY the published address.
-        use super::super::discovery::{ClusterAnnouncePacket, cluster_key};
-        let key = cluster_key("alpha bravo charlie delta").unwrap();
-        let ip: IpAddr = "192.0.2.7".parse().unwrap();
-        let id = build_announce_identity(&key, "office-pc", ip, 49737);
-        assert_eq!(id.instance_label, "office-pc");
-        assert_eq!(id.local_ips, vec![ip]);
-        let pkt = ClusterAnnouncePacket {
-            instance_label: id.instance_label.clone(),
-            pub_key: id.pub_key,
-            addr: std::net::SocketAddr::new(ip, id.listen_port),
-            auth: id.auth,
-        };
-        assert!(
-            verify_with_cluster_key(&pkt, &key),
-            "round-trip must verify"
-        );
     }
 
     #[test]

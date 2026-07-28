@@ -124,7 +124,14 @@ public snapshot and the owner-private identity binding.
 Native desktop release binaries support both Peeroxide and Iroh. The headless
 musl server supports Peeroxide only, and rejects an Iroh snapshot before
 commit. `cluster.peers` is the Iroh bootstrap Node-ID list; Peeroxide normally
-discovers and confirms peers through the authenticated discovery flow.
+discovers rendezvous candidates. Neither a discovered candidate nor the
+shared-key HMAC authorizes replication. mDNS v2 separately verifies the
+candidate's signed `EndpointAttestation`, which authenticates its stable
+identity and exact Peeroxide endpoint but still grants no authority. Active
+mesh traffic additionally
+requires the authority's exact carrier-bound membership grant from
+`cluster-membership.db`; enrollment is a one-time authority invite followed by
+the peer's signed `EndpointAttestation` confirmation.
 
 `neoth cluster sync-state` prints every peer's acknowledged cursor, exact
 pending sequence and attempt count, plus the next inbound sequence. Use

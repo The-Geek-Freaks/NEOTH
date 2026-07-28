@@ -1755,7 +1755,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Buddy(mut args) => {
             args.output = global_output;
-            buddy::run_buddy(args)?;
+            buddy::run_buddy(args).await?;
         }
         Commands::Rmas(args) => {
             rmas::run_rmas(args, global_output)?;

@@ -1406,8 +1406,48 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // WAL-owning) daemon so a `neoth os launch` / `fs` / `lease` run while the
     // daemon is up still lands its `0xA5..=0xAD` audit frames. Bearer-token +
     // loopback-only + a compile-time event-type allowlist (anti-poisoning).
-    let (audit_rpc_task, _audit_rpc_guard) =
-        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer).await;
+    #[cfg(feature = "cluster")]
+    let cluster_live_sessions =
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
+    #[cfg(feature = "cluster")]
+    let membership_store = crate::cluster::membership::MembershipStore::open(&neoth_home)
+        .context("open daemon membership authority")?;
+    #[cfg(feature = "cluster")]
+    let membership_controller = std::sync::Arc::new(
+        crate::cluster::membership::MembershipController::with_audit_writer(
+            membership_store,
+            std::sync::Arc::clone(&cluster_live_sessions),
+            writer.clone(),
+        ),
+    );
+    #[cfg(feature = "cluster")]
+    let startup_membership = std::sync::Arc::clone(&membership_controller);
+    #[cfg(feature = "cluster")]
+    tokio::task::spawn_blocking(move || {
+        startup_membership.drain_outbox(crate::time::now_unix_i64())
+    })
+    .await
+    .context("join membership outbox startup replay")?
+    .context("replay membership outbox before carrier startup")?;
+    #[cfg(feature = "cluster")]
+    let membership_listener_required =
+        config.cluster.enabled || neoth_home.join("cluster-membership.db").exists();
+    #[cfg(feature = "cluster")]
+    let (audit_rpc_task, mut audit_rpc_guard) = crate::cli::serve_tasks::spawn_audit_rpc(
+        &config,
+        &neoth_home,
+        &writer,
+        std::sync::Arc::clone(&membership_controller),
+    )
+    .await
+    .context("start daemon membership/audit RPC")?;
+    #[cfg(not(feature = "cluster"))]
+    let membership_listener_required = false;
+    #[cfg(not(feature = "cluster"))]
+    let (audit_rpc_task, mut audit_rpc_guard) =
+        crate::cli::serve_tasks::spawn_audit_rpc(&config, &neoth_home, &writer)
+            .await
+            .context("start daemon audit RPC")?;
 
     // ── 5d. Cron scheduler — Phase 33a AU-B5 ───────────────────────────────
     //
@@ -1977,6 +2017,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         writer.clone(),
         std::sync::Arc::clone(&reload_controller),
         shared_provider.clone(),
+        std::sync::Arc::clone(&cluster_live_sessions),
     )
     .await?;
 
@@ -2099,7 +2140,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         })
     };
 
-    let writer_died = tokio::select! {
+    let mut audit_rpc_task = audit_rpc_task;
+    let required_boundary_died = tokio::select! {
         biased;
         _ = shutdown::wait_for_signal() => false,
         _ = restart_notify.notified() => {
@@ -2120,11 +2162,34 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
             true
         }
+        result = async {
+            audit_rpc_task
+                .as_mut()
+                .expect("required membership listener task missing after startup")
+                .await
+        }, if membership_listener_required => {
+            match result {
+                Ok(Ok(())) => error!(
+                    "required membership/audit listener exited unexpectedly — authority mutations can no longer be served safely"
+                ),
+                Ok(Err(error)) => error!(
+                    %error,
+                    "required membership/audit listener failed — treating authority boundary loss as fatal"
+                ),
+                Err(error) => error!(
+                    %error,
+                    "required membership/audit listener panicked — treating authority boundary loss as fatal"
+                ),
+            }
+            audit_rpc_guard.take();
+            crate::daemon::audit_rpc::remove_sidecar(&neoth_home);
+            true
+        }
     };
     restart_watcher.abort();
     let _ = restart_watcher.await;
-    if writer_died {
-        info!("WAL writer death detected; aborting channels + exiting");
+    if required_boundary_died {
+        info!("required daemon persistence/authority boundary died; aborting channels + exiting");
     } else {
         info!("shutdown signal received; aborting channels + draining WAL writer");
     }
@@ -2277,6 +2342,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         confirm_drain_task,
     };
     crate::cli::serve_tasks::shutdown_background_tasks(&neoth_home, bg, writer, writer_join).await;
+    anyhow::ensure!(
+        !required_boundary_died,
+        "required daemon persistence/authority boundary exited unexpectedly"
+    );
     Ok(())
 }
 

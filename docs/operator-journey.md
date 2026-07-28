@@ -155,9 +155,20 @@ documents paths whose audit is best-effort or log-only.
   through wiring each. Inbound messages flow through the same
   prompt-injection sanitizer and consent gate as the CLI; a destructive command from a
   channel (raising autonomy, granting consent) is refused — those stay CLI + local-auth only.
-- **Cluster.** `neoth cluster discover` finds your other NEOTH nodes over mDNS / Tailscale
-  magic-DNS; `neoth cluster confirm` pairs them behind a consent gate, and
-  `neoth cluster status` shows node health + the channel mesh. Cross-device memory and
+- **Cluster.** `neoth cluster discover` finds candidate NEOTH rendezvous over mDNS.
+  Discovery never grants membership: an HMAC-valid announcement
+  proves only possession of the shared rendezvous secret. The v2 mDNS payload separately
+  carries a signed `EndpointAttestation` from the peer's stable local identity, so the
+  candidate's `StableNodeId`, Peeroxide identity, and endpoint are authenticated but still
+  untrusted. The legacy `neoth cluster confirm` path can record a submitted manual or
+  Tailscale candidate only as `Pending`; mDNS candidates must use authority enrollment.
+  Enrollment starts when
+  the authority issues a short-lived, one-time `neoth buddy cluster invite` bound to the
+  peer's stable signing identity, exact carrier identity, and endpoint. The peer returns a
+  signed `EndpointAttestation` containing that invitation digest; `neoth buddy cluster
+  confirm` activates it only when every binding and epoch matches. `neoth cluster status`,
+  `list`, and `topology` read the resulting authority snapshot from
+  `~/.neoth/cluster-membership.db`, not `cluster.yaml`. Cross-device memory and
   ground-truth synchronization uses a durable per-peer state machine: persisted cursors,
   authenticated content-bound ACKs, byte-exact restart replay, transactional receiver
   materialization, and explicit conflict records. Credentials, permissions, consent,
@@ -167,9 +178,17 @@ documents paths whose audit is best-effort or log-only.
   `neoth cluster status`, `neoth doctor`, and the GUI Mesh panel. Use `neoth cluster
   conflicts` to inspect both digests and explicitly choose the preferred materialized
   origin; NEOTH retains the resolved rows as forensic history.
+- **Cluster revoke.** `neoth cluster revoke <stable-node-id>` (also exposed through
+  `neoth buddy cluster revoke`) commits a versioned revocation tombstone and durable
+  membership/audit/teardown outbox before acknowledging the mutation. A running daemon
+  closes live Peeroxide and Iroh sessions immediately; an offline mutation leaves durable
+  outbox work that is replayed before either carrier starts. Revocation removes future
+  access and authority; it cannot retract plaintext already disclosed to that node.
 - **Cluster setup.** The GUI Cluster panel and `neoth cluster configure` submit one
   complete typed snapshot instead of editing individual YAML fields. A first enabled
-  setup needs a cluster name and a write-only shared passphrase. Native desktop releases
+  setup needs a cluster name and a write-only shared rendezvous passphrase. That
+  passphrase derives the `ClusterKey` used for bootstrap/HMAC proof only; it is not the
+  membership authority. Native desktop releases
   offer Peeroxide and Iroh; headless musl offers Peeroxide only. After Apply, obey
   `restart_required`: when true, the configuration is durable but the current
   transport/mDNS lifecycle does not hot-switch and must be activated by

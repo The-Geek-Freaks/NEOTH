@@ -232,6 +232,18 @@ string arrays so a peer ID or SSID containing commas or intentional edge spaces
 round-trips exactly. `cluster.peers` seeds outbound Iroh Node IDs; leave it
 empty for Peeroxide discovery. Enabling additionally requires a non-empty
 `cluster.name` and a usable existing or stdin-supplied shared passphrase.
+The passphrase derives the `ClusterKey` used for rendezvous/bootstrap HMAC
+proof; it is not a membership list or authorization source. Stable local
+identity is persisted separately in owner-private
+`cluster-node-identity.json`, and authoritative member state lives in
+`cluster-membership.db`. Discovery produces candidates only. An `Active`
+binding requires an authority-issued, short-lived, one-time invite followed by
+confirmation of the peer's exact carrier-bound signed `EndpointAttestation`.
+Legacy `cluster.yaml` rows import once as unattested `Pending` state.
+For mDNS v2, the ClusterKey HMAC filters the rendezvous domain while a separate
+`LocalNodeIdentity` signature authenticates the candidate's stable identity and
+exact Peeroxide endpoint. Both checks remain pre-authority and grant no
+membership.
 
 Native desktop releases include both `peeroxide` and `iroh`. The static
 headless musl release and ordinary default source builds include Peeroxide but

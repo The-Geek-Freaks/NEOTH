@@ -554,12 +554,22 @@ fn fmt_peer_last_seen(age: Option<i64>) -> String {
 }
 
 /// PURE + robust: parse `neoth cluster topology --output json` into peer rows.
-/// Garbage / a missing `peers` array → empty (panel shows the "no peers" hint).
+/// Accepts both the legacy heartbeat `peers` shape and the authoritative
+/// membership `members` shape. The live runtime uses
+/// [`parse_cluster_topology_envelope`] so invalid authority snapshots are never
+/// rendered as an honest empty fleet.
 pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
+    if let Ok(rows) = parse_cluster_topology_envelope(json) {
+        return rows;
+    }
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
     };
-    let Some(peers) = v.get("peers").and_then(|p| p.as_array()) else {
+    let peers = v
+        .get("peers")
+        .and_then(|p| p.as_array())
+        .or_else(|| v.get("members").and_then(|p| p.as_array()));
+    let Some(peers) = peers else {
         return Vec::new();
     };
     peers
@@ -572,6 +582,10 @@ pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
                 let l = s("label");
                 if l.is_empty() { s("pub_key_short") } else { l }
             };
+            let binding = p
+                .get("bindings")
+                .and_then(|value| value.as_array())
+                .and_then(|values| values.first());
             let rtt_ms = match p.get("rtt_ms").and_then(|x| x.as_u64()) {
                 Some(ms) => format!("{ms} ms"),
                 None => "---".to_string(),
@@ -587,14 +601,55 @@ pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
                 fmt_peer_last_seen(p.get("last_seen_age_secs").and_then(|x| x.as_i64()));
             ClusterPeerRow {
                 label,
-                addr: s("addr"),
-                status: s("status"),
+                addr: {
+                    let addr = s("addr");
+                    if addr.is_empty() {
+                        binding
+                            .and_then(|value| value.get("endpoint"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("")
+                            .to_string()
+                    } else {
+                        addr
+                    }
+                },
+                status: {
+                    let status = s("status");
+                    if status.is_empty() {
+                        s("state")
+                    } else {
+                        status
+                    }
+                },
                 rtt_ms,
                 stability_pct,
                 last_seen,
             }
         })
         .collect()
+}
+
+/// Strict runtime contract shared by `cluster list` and `cluster topology`.
+/// The digest is recomputed over the fully typed snapshot before any row is
+/// projected into display-only fields.
+pub fn parse_cluster_topology_envelope(json: &str) -> Result<Vec<ClusterPeerRow>, String> {
+    let snapshot = parse_membership_snapshot_envelope(json)?;
+    Ok(snapshot
+        .members
+        .into_iter()
+        .map(|member| ClusterPeerRow {
+            label: member.label,
+            addr: member
+                .bindings
+                .first()
+                .map(|binding| binding.endpoint.clone())
+                .unwrap_or_default(),
+            status: member.state.as_str().to_string(),
+            rtt_ms: "---".to_string(),
+            stability_pct: "---".to_string(),
+            last_seen: "never".to_string(),
+        })
+        .collect())
 }
 
 // ── GOLD-PROG-08 live token budget (parse `~/.neoth/usage_meter.json`) ──────
@@ -5355,6 +5410,83 @@ pub struct BuddyStatusSnap {
     pub proactive_enabled: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BuddyClusterStatusSnap {
+    pub summary: String,
+    pub pending_id: String,
+    pub revocable_id: String,
+    pub revocable_state: String,
+    pub snapshot_version: u16,
+    pub snapshot_digest: String,
+    pub authority_path: String,
+    pub authority_epoch: u64,
+    pub revocation_floor: u64,
+    pub pending_outbox: u64,
+    pub members: Vec<BuddyClusterMemberSnap>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuddyClusterMemberSnap {
+    pub stable_node_id: String,
+    pub state: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
+    pub tombstoned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevokeConfirmationBinding {
+    pub stable_node_id: String,
+    pub snapshot_version: u16,
+    pub snapshot_digest: String,
+    pub authority_path: String,
+    pub authority_epoch: u64,
+    pub member_auth_epoch: u64,
+    pub member_membership_epoch: u64,
+}
+
+#[derive(Clone, Default)]
+pub struct MemberSingleflight {
+    active: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+}
+
+pub struct MemberSingleflightGuard {
+    stable_node_id: String,
+    active: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+}
+
+impl MemberSingleflight {
+    pub fn begin(&self, stable_node_id: &str) -> Result<Option<MemberSingleflightGuard>, String> {
+        if !valid_stable_node_id(stable_node_id) {
+            return Err("mesh membership singleflight requires a full stable node id".to_string());
+        }
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "mesh membership singleflight lock is poisoned".to_string())?;
+        if !active.insert(stable_node_id.to_string()) {
+            return Ok(None);
+        }
+        Ok(Some(MemberSingleflightGuard {
+            stable_node_id: stable_node_id.to_string(),
+            active: std::sync::Arc::clone(&self.active),
+        }))
+    }
+}
+
+impl Drop for MemberSingleflightGuard {
+    fn drop(&mut self) {
+        match self.active.lock() {
+            Ok(mut active) => {
+                active.remove(&self.stable_node_id);
+            }
+            Err(poisoned) => {
+                poisoned.into_inner().remove(&self.stable_node_id);
+            }
+        }
+    }
+}
+
 /// One peer from `neoth cluster status --output json`.
 #[derive(Debug, Default)]
 pub struct MeshPeerData {
@@ -5542,101 +5674,292 @@ pub fn parse_buddy_status(json: &str) -> Result<BuddyStatusSnap, String> {
     Ok(snapshot)
 }
 
-/// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
-///
-/// Expected shape: `{"node_id":"...","listen_port":7700,"mdns_enabled":true,
-///   "trusted_ssids":["HomeNet"],"conflict_count":0,"gossip":{...},
-///   "peers":[{"id":"...","last_seen":"3s ago","reachable":true}]}`
-/// On parse failure all fields are empty / defaults (the cluster feature may not be built).
-pub fn parse_mesh_status(json: &str) -> MeshStatusSnap {
-    let v = serde_json::from_str::<serde_json::Value>(json).unwrap_or_default();
-    let node_id = v
-        .get("node_id")
-        .and_then(|x| x.as_str())
-        .unwrap_or("")
-        .to_string();
-    let listen_port = v
-        .get("listen_port")
-        .map(|x| x.to_string().replace('"', ""))
-        .unwrap_or_default();
-    let mdns_enabled = v
-        .get("mdns_enabled")
-        .and_then(|x| x.as_bool())
-        .unwrap_or(false);
-    let trusted_ssids = v
-        .get("trusted_ssids")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-    let peers = v
-        .get("peers")
-        .and_then(|x| x.as_array())
-        .map(|arr| {
-            arr.iter()
-                .map(|p| MeshPeerData {
-                    id: p
-                        .get("id")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    last_seen: p
-                        .get("last_seen")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    reachable: p
-                        .get("reachable")
-                        .and_then(|x| x.as_bool())
-                        .unwrap_or(false),
+fn parse_membership_snapshot_envelope(
+    json: &str,
+) -> Result<neothd::cluster::membership::MembershipSnapshot, String> {
+    neothd::cluster::membership::MembershipSnapshotEnvelope::from_json(json)
+        .map(|envelope| envelope.snapshot)
+        .map_err(|error| format!("invalid membership snapshot envelope JSON: {error:#}"))
+}
+
+pub fn parse_buddy_cluster_status(json: &str) -> Result<BuddyClusterStatusSnap, String> {
+    let wire = neothd::cluster::membership::MembershipSnapshotEnvelope::from_json(json)
+        .map_err(|error| format!("invalid Buddy cluster status JSON: {error:#}"))?;
+    let snapshot = &wire.snapshot;
+    let count = |state: &str| {
+        snapshot
+            .members
+            .iter()
+            .filter(|member| member.state.as_str() == state)
+            .count()
+    };
+    let active = count("active");
+    let pending = count("pending");
+    let revoked = count("revoked");
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("system clock is before Unix epoch: {error}"))?
+        .as_secs() as i64;
+    let live = snapshot
+        .members
+        .iter()
+        .filter(|member| {
+            member.state == neothd::cluster::membership::MembershipState::Active
+                && member.bindings.iter().any(|binding| {
+                    binding
+                        .expires_at_unix
+                        .is_none_or(|expiry| expiry > now_unix)
                 })
-                .collect()
         })
+        .count();
+    let pending_id = wire
+        .snapshot
+        .members
+        .iter()
+        .find(|member| member.state == neothd::cluster::membership::MembershipState::Pending)
+        .map(|member| member.stable_node_id.to_string())
         .unwrap_or_default();
-    let conflict_count = v
-        .get("conflict_count")
-        .and_then(|x| x.as_u64())
-        .unwrap_or(0) as usize;
-    let gossip_note = v
-        .get("gossip")
-        .map(|gossip| {
-            let raw = gossip
-                .get("replicate_raw_ingress")
-                .and_then(|x| x.as_bool())
-                .unwrap_or(false);
-            let days = gossip
-                .get("replay_budget_days")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(30);
-            format!(
-                "raw ingress {} · replay window {days} days",
-                if raw { "enabled" } else { "disabled" }
-            )
+    let revocable = wire
+        .snapshot
+        .members
+        .iter()
+        .find(|member| member.state == neothd::cluster::membership::MembershipState::Active);
+    let members = wire
+        .snapshot
+        .members
+        .iter()
+        .map(|member| BuddyClusterMemberSnap {
+            stable_node_id: member.stable_node_id.to_string(),
+            state: member.state.as_str().to_string(),
+            auth_epoch: member.auth_epoch.get(),
+            membership_epoch: member.membership_epoch.get(),
+            tombstoned: member.tombstoned,
         })
-        .unwrap_or_default();
-    MeshStatusSnap {
-        node_id,
-        listen_port,
-        mdns_enabled,
-        trusted_ssids,
-        peers,
-        conflict_count,
-        gossip_note,
+        .collect();
+    Ok(BuddyClusterStatusSnap {
+        summary: format!(
+            "active={} · pending={} · revoked={} · live={} · outbox={}",
+            active, pending, revoked, live, snapshot.pending_outbox
+        ),
+        pending_id,
+        revocable_id: revocable
+            .map(|member| member.stable_node_id.to_string())
+            .unwrap_or_default(),
+        revocable_state: revocable
+            .map(|member| member.state.as_str().to_string())
+            .unwrap_or_default(),
+        snapshot_version: wire.snapshot_version,
+        snapshot_digest: wire.snapshot_digest,
+        authority_path: wire.snapshot.authority_path.display().to_string(),
+        authority_epoch: wire.snapshot.authority_epoch.get(),
+        revocation_floor: wire.snapshot.revocation_floor.get(),
+        pending_outbox: wire.snapshot.pending_outbox,
+        members,
+    })
+}
+
+impl BuddyClusterStatusSnap {
+    pub fn bind_revoke_confirmation(
+        &self,
+        stable_node_id: &str,
+        snapshot_version: u16,
+        snapshot_digest: &str,
+        expected_authority_path: &std::path::Path,
+    ) -> Result<RevokeConfirmationBinding, String> {
+        if !valid_stable_node_id(stable_node_id) {
+            return Err("membership revoke requires a full stable node id".to_string());
+        }
+        if snapshot_version == 0
+            || self.snapshot_version != snapshot_version
+            || !valid_lower_sha256(snapshot_digest)
+            || self.snapshot_digest != snapshot_digest
+        {
+            return Err(
+                "membership revoke confirmation no longer matches the current snapshot".to_string(),
+            );
+        }
+        require_exact_authority_path(&self.authority_path, expected_authority_path)?;
+        let member = self
+            .members
+            .iter()
+            .find(|member| member.stable_node_id == stable_node_id)
+            .ok_or_else(|| {
+                format!("stable node `{stable_node_id}` is absent from the bound snapshot")
+            })?;
+        if member.state != "active" || member.tombstoned {
+            return Err(format!(
+                "stable node `{stable_node_id}` is not an active revocable membership"
+            ));
+        }
+        Ok(RevokeConfirmationBinding {
+            stable_node_id: stable_node_id.to_string(),
+            snapshot_version,
+            snapshot_digest: snapshot_digest.to_string(),
+            authority_path: self.authority_path.clone(),
+            authority_epoch: self.authority_epoch,
+            member_auth_epoch: member.auth_epoch,
+            member_membership_epoch: member.membership_epoch,
+        })
     }
 }
 
-/// DES-13 — one origin-peer's aggregated backup summary for the Mesh
+pub fn verify_buddy_revoke_post_state(
+    binding: &RevokeConfirmationBinding,
+    receipt_stable_node_id: &str,
+    receipt_auth_epoch: u64,
+    receipt_membership_epoch: u64,
+    receipt_authority_path: &str,
+    receipt_post_state_digest: &str,
+    fresh: &BuddyClusterStatusSnap,
+    expected_authority_path: &std::path::Path,
+) -> Result<(), String> {
+    require_exact_authority_path(&binding.authority_path, expected_authority_path)?;
+    require_exact_authority_path(receipt_authority_path, expected_authority_path)?;
+    require_exact_authority_path(&fresh.authority_path, expected_authority_path)?;
+    if receipt_stable_node_id != binding.stable_node_id
+        || receipt_auth_epoch == 0
+        || receipt_membership_epoch == 0
+        || !valid_lower_sha256(receipt_post_state_digest)
+    {
+        return Err("cluster revoke receipt is not bound to the confirmed member".to_string());
+    }
+    if fresh.snapshot_version != binding.snapshot_version
+        || !valid_lower_sha256(&fresh.snapshot_digest)
+        || fresh.snapshot_digest != receipt_post_state_digest
+        || fresh.snapshot_digest == binding.snapshot_digest
+        || fresh.authority_epoch <= binding.authority_epoch
+        || fresh.authority_epoch < receipt_membership_epoch
+        || fresh.revocation_floor < receipt_membership_epoch
+    {
+        return Err(
+            "fresh Buddy authority snapshot does not prove the confirmed revocation".to_string(),
+        );
+    }
+    let member = fresh
+        .members
+        .iter()
+        .find(|member| member.stable_node_id == binding.stable_node_id)
+        .ok_or_else(|| {
+            format!(
+                "fresh Buddy authority snapshot omitted stable node `{}`",
+                binding.stable_node_id
+            )
+        })?;
+    if member.state != "revoked"
+        || !member.tombstoned
+        || member.auth_epoch != receipt_auth_epoch
+        || member.membership_epoch != receipt_membership_epoch
+        || member.auth_epoch <= binding.member_auth_epoch
+        || member.membership_epoch <= binding.member_membership_epoch
+    {
+        return Err(
+            "fresh Buddy authority snapshot has an inconsistent revoked member state".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn valid_stable_node_id(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_lower_sha256(value: &str) -> bool {
+    valid_stable_node_id(value)
+}
+
+fn require_exact_authority_path(
+    actual: &str,
+    expected_path: &std::path::Path,
+) -> Result<(), String> {
+    if actual.trim().is_empty() {
+        return Err("Buddy authority snapshot omitted its authority path".to_string());
+    }
+    let actual = std::path::absolute(actual)
+        .map_err(|error| format!("could not normalize Buddy authority path `{actual}`: {error}"))?;
+    let expected = std::path::absolute(expected_path).map_err(|error| {
+        format!(
+            "could not normalize expected Buddy authority path `{}`: {error}",
+            expected_path.display()
+        )
+    })?;
+    #[cfg(windows)]
+    let matches = actual
+        .to_string_lossy()
+        .eq_ignore_ascii_case(&expected.to_string_lossy());
+    #[cfg(not(windows))]
+    let matches = actual == expected;
+    if matches {
+        Ok(())
+    } else {
+        Err(format!(
+            "Buddy authority path `{}`, expected `{}`",
+            actual.display(),
+            expected.display()
+        ))
+    }
+}
+
+/// Parse `neoth cluster status --output json` → `MeshStatusSnap`.
+///
+/// The fail-closed acknowledgement type rejects unknown, missing and mistyped
+/// fields. Callers retain their last-known-good view on any error.
+pub fn parse_mesh_status(json: &str) -> Result<MeshStatusSnap, String> {
+    let wire = crate::gui_action::ClusterStatusAck::from_json(json)
+        .map_err(|error| format!("invalid cluster status JSON: {error:#}"))?;
+    mesh_status_from_ack(wire)
+}
+
+pub fn mesh_status_from_ack(
+    wire: crate::gui_action::ClusterStatusAck,
+) -> Result<MeshStatusSnap, String> {
+    wire.validate()
+        .map_err(|error| format!("invalid cluster status envelope: {error:#}"))?;
+    let runtime = wire.runtime;
+    Ok(MeshStatusSnap {
+        node_id: runtime.node_id,
+        listen_port: runtime.listen_port.to_string(),
+        mdns_enabled: runtime.mdns_enabled,
+        trusted_ssids: runtime.trusted_ssids.join(", "),
+        peers: wire
+            .membership
+            .snapshot
+            .members
+            .into_iter()
+            .filter(|member| member.state == neothd::cluster::membership::MembershipState::Active)
+            .map(|member| MeshPeerData {
+                id: member.stable_node_id.to_string(),
+                last_seen: "authority-only".to_string(),
+                reachable: false,
+            })
+            .collect(),
+        conflict_count: runtime.conflict_count,
+        gossip_note: format!(
+            "raw ingress {} · replay window {} days",
+            if runtime.gossip.replicate_raw_ingress {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            runtime.gossip.replay_budget_days
+        ),
+    })
+}
+
+/// DES-13 — one immutable canonical backup provenance generation for the Mesh
 /// redundancy panel.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignBackupPeer {
-    pub peer: String, // origin peer pubkey (truncated for display)
+    pub origin_peer_pk: String,
+    pub stable_node_id: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
+    pub fence_state: String,
     pub count: u64,
     pub bytes: u64,
-    pub latest_at: i64, // latest received_at unix secs
+    pub latest_at: i64,
 }
 
 /// DES-13 — aggregate of `neoth cluster events --output json` for the Mesh tab.
@@ -5647,57 +5970,96 @@ pub struct ForeignBackupSummary {
     pub total_bytes: u64,
 }
 
-/// DES-13 — parse + aggregate `neoth cluster events --output json`
-/// (`idx_foreign_events`) into a per-peer backup summary. The input is a JSON
-/// array of `{origin_peer_pk, origin_seq, event_type, payload_bytes,
-/// received_at}`. On any parse failure the summary is empty (cluster feature
-/// may not be built / no peers paired) — never panics.
-pub fn parse_foreign_backup(json: &str) -> ForeignBackupSummary {
-    let arr = match serde_json::from_str::<serde_json::Value>(json) {
-        Ok(serde_json::Value::Array(a)) => a,
-        _ => return ForeignBackupSummary::default(),
-    };
-    // Preserve first-seen peer order; aggregate count/bytes/latest per peer.
-    let mut order: Vec<String> = Vec::new();
-    let mut by_peer: std::collections::HashMap<String, ForeignBackupPeer> =
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ForeignBackupEventWire {
+    origin_peer_pk: String,
+    stable_node_id: String,
+    auth_epoch: u64,
+    membership_epoch: u64,
+    fence_state: String,
+    origin_seq: u64,
+    event_type: String,
+    payload_bytes: u64,
+    received_at: i64,
+}
+
+type ForeignBackupKey = (String, String, u64, u64, String);
+
+/// Parse + aggregate `neoth cluster events --output json` without weakening the
+/// canonical restore fence. Missing/legacy/non-active provenance invalidates
+/// the refresh, allowing the caller to retain its last-known-good rows.
+pub fn parse_foreign_backup(json: &str) -> Result<ForeignBackupSummary, String> {
+    let rows = serde_json::from_str::<Vec<ForeignBackupEventWire>>(json)
+        .map_err(|error| format!("invalid foreign-backup JSON: {error}"))?;
+    let mut order: Vec<ForeignBackupKey> = Vec::new();
+    let mut by_generation: std::collections::HashMap<ForeignBackupKey, ForeignBackupPeer> =
         std::collections::HashMap::new();
     let mut total_events = 0u64;
     let mut total_bytes = 0u64;
-    for e in &arr {
-        let peer = e
-            .get("origin_peer_pk")
-            .and_then(|x| x.as_str())
-            .unwrap_or("")
-            .to_string();
-        if peer.is_empty() {
-            continue;
+    for row in rows {
+        if row.origin_peer_pk.trim().is_empty() || row.origin_peer_pk.trim() != row.origin_peer_pk {
+            return Err("foreign backup row has invalid carrier provenance".to_string());
         }
-        let bytes = e.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
-        let received = e.get("received_at").and_then(|x| x.as_i64()).unwrap_or(0);
+        neothd::cluster::membership::StableNodeId::parse(row.stable_node_id.clone())
+            .map_err(|error| format!("foreign backup row has invalid stable_node_id: {error:#}"))?;
+        neothd::cluster::membership::AuthEpoch::new(row.auth_epoch)
+            .map_err(|error| format!("foreign backup row has invalid auth_epoch: {error:#}"))?;
+        neothd::cluster::membership::MembershipEpoch::new(row.membership_epoch).map_err(
+            |error| format!("foreign backup row has invalid membership_epoch: {error:#}"),
+        )?;
+        if row.fence_state != "active" {
+            return Err(format!(
+                "foreign backup canonical provenance is `{}`; only active fences are eligible and legacy_unbound fails closed",
+                row.fence_state
+            ));
+        }
+        if row.origin_seq == 0
+            || row.received_at <= 0
+            || row.event_type.len() != 4
+            || !row.event_type.starts_with("0x")
+            || !row.event_type[2..]
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("foreign backup row has invalid event provenance".to_string());
+        }
+
+        let key = (
+            row.origin_peer_pk.clone(),
+            row.stable_node_id.clone(),
+            row.auth_epoch,
+            row.membership_epoch,
+            row.fence_state.clone(),
+        );
         total_events += 1;
-        total_bytes += bytes;
-        let entry = by_peer.entry(peer.clone()).or_insert_with(|| {
-            order.push(peer.clone());
+        total_bytes = total_bytes.saturating_add(row.payload_bytes);
+        let entry = by_generation.entry(key.clone()).or_insert_with(|| {
+            order.push(key);
             ForeignBackupPeer {
-                peer: peer.clone(),
+                origin_peer_pk: row.origin_peer_pk,
+                stable_node_id: row.stable_node_id,
+                auth_epoch: row.auth_epoch,
+                membership_epoch: row.membership_epoch,
+                fence_state: row.fence_state,
                 count: 0,
                 bytes: 0,
                 latest_at: 0,
             }
         });
         entry.count += 1;
-        entry.bytes += bytes;
-        entry.latest_at = entry.latest_at.max(received);
+        entry.bytes = entry.bytes.saturating_add(row.payload_bytes);
+        entry.latest_at = entry.latest_at.max(row.received_at);
     }
     let peers = order
         .into_iter()
-        .filter_map(|k| by_peer.remove(&k))
+        .filter_map(|key| by_generation.remove(&key))
         .collect();
-    ForeignBackupSummary {
+    Ok(ForeignBackupSummary {
         peers,
         total_events,
         total_bytes,
-    }
+    })
 }
 
 /// DES-13 — human byte formatter for the backup panel (B / KB / MB).
@@ -6132,6 +6494,70 @@ mod tests {
         assert_eq!(rows[0].last_seen, "never");
         assert_eq!(rows[0].stability_pct, "0%");
         assert_eq!(rows[0].label, "deadbeef");
+    }
+
+    #[test]
+    fn parse_cluster_topology_accepts_authoritative_members_shape() {
+        let json = r#"{"members":[{
+            "stable_node_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "label":"authority-peer","state":"active","auth_epoch":1,"membership_epoch":2,
+            "tombstoned":false,"bindings":[{"carrier":"peeroxide",
+            "transport_identity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "endpoint":"127.0.0.1:31337","assurance":"signed_attestation",
+            "auth_epoch":1,"membership_epoch":2,"expires_at_unix":null}]
+        }]}"#;
+        let rows = parse_cluster_topology(json);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "authority-peer");
+        assert_eq!(rows[0].addr, "127.0.0.1:31337");
+        assert_eq!(rows[0].status, "active");
+    }
+
+    #[test]
+    fn parse_cluster_topology_requires_exact_typed_envelope_at_runtime() {
+        let home = tempfile::tempdir().unwrap();
+        let snapshot = neothd::cluster::membership::MembershipSnapshot {
+            version: neothd::cluster::membership::MEMBERSHIP_SNAPSHOT_VERSION,
+            authority_path: home.path().join("cluster-membership.db"),
+            authority_epoch: neothd::cluster::membership::MembershipEpoch::new(2).unwrap(),
+            revocation_floor: neothd::cluster::membership::MembershipEpoch::new(1).unwrap(),
+            pending_outbox: 0,
+            members: vec![neothd::cluster::membership::MemberSnapshot {
+                stable_node_id: neothd::cluster::membership::StableNodeId::parse("a".repeat(64))
+                    .unwrap(),
+                label: "authority-peer".to_string(),
+                state: neothd::cluster::membership::MembershipState::Active,
+                auth_epoch: neothd::cluster::membership::AuthEpoch::new(1).unwrap(),
+                membership_epoch: neothd::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                tombstoned: false,
+                bindings: vec![neothd::cluster::membership::CarrierBindingSnapshot {
+                    carrier: neothd::cluster::membership::CarrierKind::Peeroxide,
+                    transport_identity: neothd::cluster::membership::TransportIdentity::parse(
+                        "peeroxide:test-peer",
+                    )
+                    .unwrap(),
+                    endpoint: "127.0.0.1:31337".to_string(),
+                    assurance: "signed_attestation".to_string(),
+                    auth_epoch: neothd::cluster::membership::AuthEpoch::new(1).unwrap(),
+                    membership_epoch: neothd::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                    expires_at_unix: None,
+                }],
+            }],
+        };
+        let envelope =
+            serde_json::to_value(snapshot.into_envelope().unwrap()).expect("serialize envelope");
+        let rows = parse_cluster_topology_envelope(&envelope.to_string()).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "authority-peer");
+        assert_eq!(rows[0].addr, "127.0.0.1:31337");
+        assert_eq!(rows[0].status, "active");
+
+        let mut wrong_digest = envelope.clone();
+        wrong_digest["snapshot_digest"] = serde_json::json!("f".repeat(64));
+        assert!(parse_cluster_topology_envelope(&wrong_digest.to_string()).is_err());
+        let mut unknown_nested = envelope;
+        unknown_nested["snapshot"]["future_field"] = serde_json::json!(true);
+        assert!(parse_cluster_topology_envelope(&unknown_nested.to_string()).is_err());
     }
 
     // ── GOLD-PROG-08 usage meter parser ───────────────────────────────────
@@ -8494,18 +8920,294 @@ mod tests {
         );
     }
 
+    fn buddy_cluster_status_json(
+        authority_path: &std::path::Path,
+        state: &str,
+        auth_epoch: u64,
+        member_epoch: u64,
+        authority_epoch: u64,
+        revocation_floor: u64,
+    ) -> String {
+        let snapshot_value = serde_json::json!({
+            "version": 1,
+            "authority_path": authority_path,
+            "authority_epoch": authority_epoch,
+            "revocation_floor": revocation_floor,
+            "pending_outbox": 0,
+            "members": [{
+                "stable_node_id": "a".repeat(64),
+                "label": "peer",
+                "state": state,
+                "auth_epoch": auth_epoch,
+                "membership_epoch": member_epoch,
+                "tombstoned": state == "revoked",
+                "bindings": [{
+                    "carrier": "peeroxide",
+                    "transport_identity": "peeroxide:test-peer",
+                    "endpoint": "127.0.0.1:4242",
+                    "assurance": if state == "pending" {
+                        "legacy_unattested"
+                    } else {
+                        "signed_attestation"
+                    },
+                    "auth_epoch": if state == "revoked" {
+                        auth_epoch.saturating_sub(1)
+                    } else {
+                        auth_epoch
+                    },
+                    "membership_epoch": member_epoch,
+                    "expires_at_unix": null
+                }]
+            }]
+        });
+        let typed: neothd::cluster::membership::MembershipSnapshot =
+            serde_json::from_value(snapshot_value).unwrap();
+        serde_json::to_string(&typed.into_envelope().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn parse_buddy_cluster_status_binds_exact_snapshot_and_counts() {
+        let home = tempfile::tempdir().unwrap();
+        let authority_path = home.path().join("cluster-membership.db");
+        let json = buddy_cluster_status_json(&authority_path, "active", 1, 2, 2, 1);
+        let snapshot = super::parse_buddy_cluster_status(&json).unwrap();
+        assert_eq!(snapshot.revocable_id, "a".repeat(64));
+        assert_eq!(snapshot.revocable_state, "active");
+        assert_eq!(snapshot.snapshot_version, 1);
+        assert_eq!(snapshot.snapshot_digest.len(), 64);
+        assert!(snapshot.summary.contains("live=1"));
+
+        let future_wire = json.replacen("\"wire_version\":1", "\"wire_version\":2", 1);
+        assert!(super::parse_buddy_cluster_status(&future_wire).is_err());
+        let unknown = json.replacen(
+            "\"operation\":\"cluster.membership.snapshot\"",
+            "\"operation\":\"cluster.membership.snapshot\",\"unexpected\":true",
+            1,
+        );
+        assert!(super::parse_buddy_cluster_status(&unknown).is_err());
+        let wrong_digest = json.replacen(snapshot.snapshot_digest.as_str(), &"f".repeat(64), 1);
+        assert!(super::parse_buddy_cluster_status(&wrong_digest).is_err());
+        let pending = buddy_cluster_status_json(&authority_path, "pending", 1, 2, 2, 1);
+        assert_eq!(
+            super::parse_buddy_cluster_status(&pending)
+                .unwrap()
+                .pending_id,
+            "a".repeat(64),
+            "typed legacy pending bindings remain visible but never revocable"
+        );
+    }
+
+    #[test]
+    fn revoke_confirmation_binds_member_version_digest_and_exact_path() {
+        let home = tempfile::tempdir().unwrap();
+        let authority_path = home.path().join("cluster-membership.db");
+        let snapshot = super::parse_buddy_cluster_status(&buddy_cluster_status_json(
+            &authority_path,
+            "active",
+            1,
+            2,
+            2,
+            1,
+        ))
+        .unwrap();
+        let stable = "a".repeat(64);
+        let binding = snapshot
+            .bind_revoke_confirmation(
+                &stable,
+                snapshot.snapshot_version,
+                &snapshot.snapshot_digest,
+                &authority_path,
+            )
+            .unwrap();
+        assert_eq!(binding.stable_node_id, stable);
+
+        assert!(
+            snapshot
+                .bind_revoke_confirmation(
+                    &binding.stable_node_id,
+                    binding.snapshot_version,
+                    &"f".repeat(64),
+                    &authority_path,
+                )
+                .is_err()
+        );
+        assert!(
+            snapshot
+                .bind_revoke_confirmation(
+                    &binding.stable_node_id,
+                    binding.snapshot_version,
+                    &binding.snapshot_digest,
+                    &home.path().join("wrong-authority.db"),
+                )
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn revoke_post_state_requires_fresh_exact_authority_tombstone() {
+        let home = tempfile::tempdir().unwrap();
+        let authority_path = home.path().join("cluster-membership.db");
+        let before = super::parse_buddy_cluster_status(&buddy_cluster_status_json(
+            &authority_path,
+            "active",
+            1,
+            2,
+            2,
+            1,
+        ))
+        .unwrap();
+        let stable = "a".repeat(64);
+        let binding = before
+            .bind_revoke_confirmation(
+                &stable,
+                before.snapshot_version,
+                &before.snapshot_digest,
+                &authority_path,
+            )
+            .unwrap();
+        let after = super::parse_buddy_cluster_status(&buddy_cluster_status_json(
+            &authority_path,
+            "revoked",
+            2,
+            3,
+            3,
+            3,
+        ))
+        .unwrap();
+        super::verify_buddy_revoke_post_state(
+            &binding,
+            &stable,
+            2,
+            3,
+            after.authority_path.as_str(),
+            after.snapshot_digest.as_str(),
+            &after,
+            &authority_path,
+        )
+        .unwrap();
+
+        assert!(
+            super::verify_buddy_revoke_post_state(
+                &binding,
+                &stable,
+                2,
+                3,
+                after.authority_path.as_str(),
+                after.snapshot_digest.as_str(),
+                &before,
+                &authority_path,
+            )
+            .is_err(),
+            "the pre-mutation snapshot is not authoritative post-state proof"
+        );
+        assert!(
+            super::verify_buddy_revoke_post_state(
+                &binding,
+                &stable,
+                2,
+                3,
+                after.authority_path.as_str(),
+                after.snapshot_digest.as_str(),
+                &after,
+                &home.path().join("other.db"),
+            )
+            .is_err()
+        );
+        assert!(
+            super::verify_buddy_revoke_post_state(
+                &binding,
+                &stable,
+                2,
+                3,
+                home.path().join("other.db").to_string_lossy().as_ref(),
+                after.snapshot_digest.as_str(),
+                &after,
+                &authority_path,
+            )
+            .is_err(),
+            "receipt authority path must exactly bind the configured authority"
+        );
+        assert!(
+            super::verify_buddy_revoke_post_state(
+                &binding,
+                &stable,
+                2,
+                3,
+                after.authority_path.as_str(),
+                &"f".repeat(64),
+                &after,
+                &authority_path,
+            )
+            .is_err(),
+            "receipt post-state digest must exactly bind the fresh authority snapshot"
+        );
+    }
+
+    #[test]
+    fn member_singleflight_blocks_only_the_same_stable_node() {
+        let flights = MemberSingleflight::default();
+        let node_a = "a".repeat(64);
+        let node_b = "b".repeat(64);
+        assert!(flights.begin("short-id").is_err());
+        let first = flights.begin(&node_a).unwrap().unwrap();
+        assert!(flights.begin(&node_a).unwrap().is_none());
+        let other = flights.begin(&node_b).unwrap().unwrap();
+        drop(first);
+        assert!(flights.begin(&node_a).unwrap().is_some());
+        drop(other);
+    }
+
     // ── Wave 4b: parse_mesh_status ────────────────────────────────────────────
+
+    fn mesh_status_json() -> String {
+        let membership: neothd::cluster::membership::MembershipSnapshotEnvelope =
+            serde_json::from_str(&buddy_cluster_status_json(
+                std::path::Path::new("cluster-membership.db"),
+                "active",
+                1,
+                1,
+                1,
+                1,
+            ))
+            .unwrap();
+        let runtime = neothd::cluster::status_wire::ClusterRuntimeStatus {
+            version: neothd::cluster::status_wire::CLUSTER_RUNTIME_STATUS_VERSION,
+            mode: "cluster".into(),
+            policy: "announce-trusted-wifi-only".into(),
+            conflict_count: 2,
+            operator_id: "operator".into(),
+            node_id: "node-abc".into(),
+            cluster_name: Some("studio".into()),
+            cluster_passphrase_set: true,
+            cluster_identity_configured: true,
+            cluster_enabled: true,
+            restart_required: false,
+            transport_active: true,
+            transport: "peeroxide".into(),
+            listen_port: 7700,
+            mdns_enabled: true,
+            trusted_ssids: vec!["HomeNet".into()],
+            gossip: neothd::cluster::status_wire::ClusterGossipStatus {
+                replicate_raw_ingress: false,
+                replay_budget_days: 14,
+            },
+        };
+        serde_json::to_string(
+            &neothd::cluster::status_wire::ClusterStatusEnvelope::new(membership, runtime).unwrap(),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn parse_mesh_status_happy_path() {
-        let json = r#"{"node_id":"node-abc","listen_port":7700,"mdns_enabled":true,"trusted_ssids":["HomeNet"],"conflict_count":2,"gossip":{"replicate_raw_ingress":false,"replay_budget_days":14},"peers":[{"id":"peer-1","last_seen":"3s ago","reachable":true}]}"#;
-        let snap = super::parse_mesh_status(json);
+        let json = mesh_status_json();
+        let snap = super::parse_mesh_status(&json).unwrap();
         assert_eq!(snap.node_id, "node-abc");
         assert!(snap.listen_port.contains("7700"));
         assert!(snap.mdns_enabled);
         assert!(snap.trusted_ssids.contains("HomeNet"));
         assert_eq!(snap.peers.len(), 1);
-        assert!(snap.peers[0].reachable);
+        assert!(!snap.peers[0].reachable);
         assert_eq!(snap.conflict_count, 2);
         assert_eq!(
             snap.gossip_note,
@@ -8514,10 +9216,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_mesh_status_malformed_returns_empty() {
-        let snap = super::parse_mesh_status("not json");
-        assert!(snap.node_id.is_empty());
-        assert!(snap.peers.is_empty());
+    fn parse_mesh_status_malformed_or_unknown_is_rejected_for_lkg() {
+        assert!(super::parse_mesh_status("not json").is_err());
+        let mut raw: serde_json::Value = serde_json::from_str(&mesh_status_json()).unwrap();
+        raw["unknown"] = serde_json::json!(true);
+        assert!(super::parse_mesh_status(&raw.to_string()).is_err());
+        let mut bad_digest: serde_json::Value = serde_json::from_str(&mesh_status_json()).unwrap();
+        bad_digest["membership"]["snapshot_digest"] = serde_json::json!("f".repeat(64));
+        assert!(super::parse_mesh_status(&bad_digest.to_string()).is_err());
     }
 
     // ── parse_autonomy_mode ──────────────────────────────────────────────────
@@ -8889,38 +9595,51 @@ mod tests {
 
     // ── DES-13 foreign-backup aggregation ─────────────────────────────────
     #[test]
-    fn parse_foreign_backup_aggregates_per_peer() {
-        let json = r#"[
-            {"origin_peer_pk":"aaaa1111","origin_seq":1,"event_type":"0x32","payload_bytes":100,"received_at":1000},
-            {"origin_peer_pk":"aaaa1111","origin_seq":2,"event_type":"0x33","payload_bytes":50,"received_at":1500},
-            {"origin_peer_pk":"bbbb2222","origin_seq":1,"event_type":"0x32","payload_bytes":200,"received_at":1200}
-        ]"#;
-        let s = parse_foreign_backup(json);
+    fn parse_foreign_backup_preserves_and_separates_canonical_provenance() {
+        let stable = "a".repeat(64);
+        let json = format!(
+            r#"[
+            {{"origin_peer_pk":"carrier-a","stable_node_id":"{stable}","auth_epoch":1,"membership_epoch":4,"fence_state":"active","origin_seq":1,"event_type":"0x32","payload_bytes":100,"received_at":1000}},
+            {{"origin_peer_pk":"carrier-a","stable_node_id":"{stable}","auth_epoch":1,"membership_epoch":4,"fence_state":"active","origin_seq":2,"event_type":"0x33","payload_bytes":50,"received_at":1500}},
+            {{"origin_peer_pk":"carrier-a","stable_node_id":"{stable}","auth_epoch":2,"membership_epoch":7,"fence_state":"active","origin_seq":1,"event_type":"0x32","payload_bytes":200,"received_at":1200}}
+        ]"#
+        );
+        let s = parse_foreign_backup(&json).unwrap();
         assert_eq!(s.total_events, 3);
         assert_eq!(s.total_bytes, 350);
         assert_eq!(s.peers.len(), 2);
-        // First-seen order preserved.
-        assert_eq!(s.peers[0].peer, "aaaa1111");
+        assert_eq!(s.peers[0].origin_peer_pk, "carrier-a");
+        assert_eq!(s.peers[0].stable_node_id, stable);
+        assert_eq!(s.peers[0].auth_epoch, 1);
+        assert_eq!(s.peers[0].membership_epoch, 4);
+        assert_eq!(s.peers[0].fence_state, "active");
         assert_eq!(s.peers[0].count, 2);
         assert_eq!(s.peers[0].bytes, 150);
         assert_eq!(s.peers[0].latest_at, 1500, "latest = max received_at");
-        assert_eq!(s.peers[1].peer, "bbbb2222");
+        assert_eq!(s.peers[1].auth_epoch, 2);
+        assert_eq!(s.peers[1].membership_epoch, 7);
         assert_eq!(s.peers[1].count, 1);
     }
 
     #[test]
-    fn parse_foreign_backup_empty_and_malformed() {
-        assert_eq!(parse_foreign_backup("[]"), ForeignBackupSummary::default());
+    fn parse_foreign_backup_fails_closed_on_missing_or_inactive_provenance() {
         assert_eq!(
-            parse_foreign_backup("not json"),
+            parse_foreign_backup("[]").unwrap(),
             ForeignBackupSummary::default()
         );
-        // Object (not array) → empty (cluster feature returns array).
-        assert_eq!(parse_foreign_backup("{}"), ForeignBackupSummary::default());
-        // Rows missing origin_peer_pk are skipped.
-        let s = parse_foreign_backup(r#"[{"payload_bytes":10,"received_at":1}]"#);
-        assert_eq!(s.total_events, 0);
-        assert!(s.peers.is_empty());
+        assert!(parse_foreign_backup("not json").is_err());
+        assert!(parse_foreign_backup("{}").is_err());
+        assert!(parse_foreign_backup(r#"[{"payload_bytes":10,"received_at":1}]"#).is_err());
+
+        let stable = "b".repeat(64);
+        let row = |fence: &str, auth_epoch: u64| {
+            format!(
+                r#"[{{"origin_peer_pk":"carrier","stable_node_id":"{stable}","auth_epoch":{auth_epoch},"membership_epoch":2,"fence_state":"{fence}","origin_seq":1,"event_type":"0x90","payload_bytes":10,"received_at":1}}]"#
+            )
+        };
+        assert!(parse_foreign_backup(&row("legacy_unbound", 1)).is_err());
+        assert!(parse_foreign_backup(&row("revoked", 1)).is_err());
+        assert!(parse_foreign_backup(&row("active", 0)).is_err());
     }
 
     #[test]

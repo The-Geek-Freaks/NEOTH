@@ -177,8 +177,53 @@ The cluster transport is dark unless all three activation inputs exist:
 passphrase. The default peeroxide/Hyperswarm carrier uses its authenticated
 Noise static keys; the optional `cluster-iroh` carrier uses QUIC endpoint keys.
 Both then require an asymmetric HMAC-SHA256 proof over the two transport
-identities using the derived cluster key. A reachable peer that cannot prove
-membership is rejected before its gossip frame is evaluated.
+identities using the derived `ClusterKey`. This is a rendezvous/bootstrap
+proof: a reachable peer that does not possess the shared secret is rejected
+early, but a valid proof does not grant membership, register a stream, or
+authorize a durable effect. Likewise, an HMAC-valid mDNS announcement is a
+candidate signal, not an admission decision. The v2 mDNS payload also carries
+an Ed25519-signed `EndpointAttestation` from `LocalNodeIdentity`; parsing
+verifies its `StableNodeId`, Peeroxide transport identity, exact endpoint,
+expiry, and signature. That signature authenticates the candidate binding,
+while the HMAC filters the rendezvous domain. Neither check writes authority or
+produces a membership grant.
+
+Authoritative admission is separate and fail-closed:
+
+1. Each node persists an owner-private `LocalNodeIdentity` in
+   `~/.neoth/cluster-node-identity.json`. Its signing key derives the
+   passphrase-independent `StableNodeId`; its Peeroxide seed survives ordinary
+   daemon restarts and passphrase rotation.
+2. `~/.neoth/cluster-membership.db` is the admission authority. An authenticated
+   carrier identity receives a `MembershipGrant` only when it has an exact
+   `Active` binding at the current auth/membership epochs, is above the
+   revocation floor, is unexpired, and has no matching tombstone. Effect and
+   durable-commit leaves revalidate that grant.
+3. Enrollment is authority-first: the authority issues a short-lived,
+   single-use invite bound to the expected `StableNodeId`, signing key, carrier,
+   authenticated transport identity, endpoint, epochs, and expiry. The peer
+   signs an `EndpointAttestation` v2 that carries the exact invitation digest.
+   Confirmation consumes only that exact invite and activates the binding only
+   when the signature and every invited/runtime value match. The serialized
+   invite exposes `issued_at_membership_epoch`, the signed attestation echoes it
+   as `proof_membership_epoch`, and the authority receipt separately exposes
+   `committed_membership_epoch`; unrelated authority mutations can therefore
+   rebase a still-valid invite without treating its signed proof epoch as the
+   committed grant epoch. Discovery and the legacy
+   direct-confirm surface can create at most an unattested `Pending` candidate.
+4. Revocation is fail-closed and ordered: first close the process-local
+   admission gate; then durably write a `Pending` UUIDv7 request bound to the
+   exact snapshot/digest/authority/member generation; publish cancellation;
+   tear down, drain, and classify every captured Peeroxide/Iroh external
+   effect; persist `Indeterminate` for each uncertain remote outcome; and only
+   then commit the tombstone plus `membership_revoked`, `audit`, and `teardown`
+   outbox entries. An orphaned `Pending` request recovers durably as
+   `Indeterminate`, never silently as `Completed`. Revocation intent
+   reason/source/status metadata are plaintext in the local SQLite authority;
+   they contain no secrets and OS file permissions are the storage boundary.
+
+Revocation prevents future admission and effects; it cannot claw back plaintext
+that the node received before revocation.
 
 Gossip applies the same acceptance stack on both carriers:
 
@@ -197,13 +242,23 @@ Gossip applies the same acceptance stack on both carriers:
    sender ticks are best-effort and do not yet keep durable per-peer delivery
    cursors or acknowledgements, so that later retransmission is not guaranteed.
 4. `neoth cluster events` / `export-foreign` expose the backup-at-rest without
-   silently mixing it into local recall. `neoth cluster restore` can apply the
-   supported same-origin frames with conflict checks, durable idempotency,
-   `--dry-run`, and operator consent; cross-origin rows remain skipped.
+   silently mixing it into local recall. Foreign-event identity is durable as
+   `(stable_node_id, auth_epoch, origin_seq)`; the carrier
+   `origin_peer_pk` remains provenance, not authority. JSONL exports preserve
+   the exact stable identity, auth epoch, observed membership epoch, and active
+   fence state. `neoth cluster restore` scopes canonical local-ID mappings and
+   replay evidence to `(stable_node_id, auth_epoch, content_id)`, so passphrase
+   or carrier rotation does not split one authority generation and a later
+   re-enrollment cannot mutate an earlier generation. Membership epoch is
+   evidence, not a restore identity key, because unrelated authority commits
+   may advance it. Canonical legacy rows without that authority provenance fail
+   closed; supported same-origin rows retain conflict checks, durable
+   idempotency, `--dry-run`, and operator consent.
 
-Peer confirmation and capability leases additionally govern delegated cluster
-tasks. Possession of the cluster key authenticates gossip membership; it does
-not by itself grant arbitrary task execution.
+An active, carrier-bound membership grant and any required capability lease
+additionally govern delegated cluster tasks. Possession of the `ClusterKey`
+proves rendezvous-secret possession only; it never grants gossip membership or
+task authority.
 
 ### 1.6 Obsidian sync
 

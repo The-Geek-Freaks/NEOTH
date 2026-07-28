@@ -177,6 +177,7 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(FreedomConfig::default_neoth_home);
     let mut outcomes = run_all_checks(&home);
+    outcomes.push(checks::cluster::check_cluster_runtime_membership(&home).await);
 
     // GOLD-ADAPT-ODY-22: append live network probes when --live is requested.
     if args.live {

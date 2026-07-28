@@ -1,7 +1,7 @@
 # CLI Codemap — Operational Commands
 
-**Last Updated:** 2026-07-14
-**Entry Points:** `SRC/neothd/src/cli/hysteria.rs`, `SRC/neothd/src/cli/cluster.rs`, `SRC/neothd/src/cli/cluster_swarm.rs`, `SRC/neothd/src/cli/cloud.rs`
+**Last Updated:** 2026-07-27
+**Entry Points:** `SRC/neothd/src/cli/hysteria.rs`, `SRC/neothd/src/cli/cluster.rs`, `SRC/neothd/src/cli/buddy.rs`, `SRC/neothd/src/cluster/membership.rs`, `SRC/neothd/src/cli/cluster_swarm.rs`, `SRC/neothd/src/cli/cloud.rs`
 
 ## cli/hysteria.rs
 
@@ -35,7 +35,8 @@ YAML are not over-redacted.
 
 Operator-facing surface for the authenticated cluster implementation. A disabled
 cluster or one with no active peer transport still resolves honestly to
-`local-only`; enabled builds can discover and confirm peers, inspect replicated
+`local-only`; enabled builds can discover candidates, enroll exact carrier
+bindings through the membership authority, inspect replicated
 foreign frames, restore same-origin backups, and read the live resource-snapshot
 dashboard. The peeroxide/Hyperswarm path is NEOTH's own protocol, not Keet
 interop.
@@ -44,14 +45,38 @@ interop.
 
 | Subcommand | What it does |
 |------------|-------------|
-| `status` | Reports effective cluster mode/policy and the actual confirmed-peer count from `cluster.yaml`; malformed registry state is an error, not a silent zero. |
+| `status` | Reports effective cluster mode/policy plus the versioned member/binding snapshot and pending outbox count from `cluster-membership.db`; malformed authority state is an error, not a silent zero. |
 | `plan --peers a:10,b:5.5 [--policy local-only|least-loaded]` | Parse synthetic peer-load table, run the selected policy's `pick_peer`, print decision. |
-| `list` / `topology` | List confirmed peers, last-seen state, persisted heartbeat RTT, and stability. |
-| `discover [--timeout N] [--force]` | Browse authenticated mDNS announcements without mutating the peer registry. The policy gate can refuse discovery unless the operator explicitly forces this one scan. |
-| `confirm` / `revoke` / `enable` / `disable` | Atomically maintain the confirmed-peer registry and the mDNS policy switch. |
+| `list` / `topology` | Read stable nodes, `Discovered`/`Pending`/`Active`/`Revoked` state, epochs, tombstones, and exact carrier bindings from the membership authority. |
+| `discover [--timeout N] [--force]` | Browse candidate-only mDNS v2 records. The ClusterKey HMAC filters the rendezvous domain; a separate signed `EndpointAttestation` authenticates the advertised stable identity and exact Peeroxide endpoint. Neither check grants membership or mutates authority. |
+| `confirm` | Legacy manual/Tailscale intake only: records the submitted transport as unattested `Pending`. The explicit `--via mdns` form is rejected because signed mDNS candidates must use authority invite/attestation confirmation. It cannot create an `Active` membership. |
+| `revoke` | Revoke a stable membership through the daemon authority RPC when live, or the guarded offline authority otherwise. It closes the process-local admission gate, durably writes a `Pending` UUIDv7 request bound to the exact snapshot/digest/authority/member generation, publishes cancellation, then tears down/drains/classifies all captured external carrier effects. Uncertain remote outcomes become durable `Indeterminate`; only then are the tombstone and outbox committed. |
+| `enable` / `disable` | Mutate the cluster transport configuration; neither command grants node membership. |
 | `events` / `export-foreign` | Inspect or export replicated foreign frames without mixing them into local recall. |
 | `restore <export> [--dry-run] [--yes]` | Restore only frames whose origin matches the local node identity; cross-origin rows are counted and skipped. |
 | `swarm [--watch] [--stale-secs N]` | In `cluster` builds, read local/peer CPU, RAM, and VRAM snapshot frames from WAL. Config supplies sampling cadence and the default positive stale window. |
+
+### Membership operations
+
+`neoth buddy cluster status|invite|confirm|revoke`
+
+These commands use the same daemon/offline `MembershipController` as
+`neoth cluster`. `invite` creates a short-lived, carrier-bound, one-time
+authority record for one stable signing identity, authenticated transport, and
+endpoint. `confirm` accepts only the peer's signed `EndpointAttestation` with
+the exact invitation digest and bindings; only that transition produces
+`Active`. `revoke` closes admission, persists the exact-bound `Pending` UUIDv7
+request, publishes cancellation, and tears down/drains/classifies captured
+carrier effects before it commits the versioned tombstone plus durable
+membership/audit/teardown outbox. Uncertain remote outcomes remain durable
+`Indeterminate`; orphaned `Pending` recovery is `Indeterminate`, never silent
+`Completed`. Its reason/source/status intent metadata are plaintext in local
+SQLite (no secrets); OS file permissions are the storage boundary.
+
+The shared passphrase-derived `ClusterKey` and its HMAC prove rendezvous-secret
+possession only. Runtime authorization comes from an exact `MembershipGrant`
+issued by `cluster-membership.db` for the stable `LocalNodeIdentity` and current
+carrier/auth/membership epochs.
 
 ### Policies
 
@@ -108,7 +133,8 @@ the local filesystem inside the desktop client's sync folder.
 ## Related Areas
 
 - `transport/hysteria.rs` — `locate_binary`, `render_yaml_config`, `probe_socks_port`
-- `cluster/` — routing policies, authenticated discovery/transports, foreign-event views, and swarm snapshot wire format
+- `cluster/membership.rs` — stable local identity, SQLite authority, invites, signed carrier bindings, grants, tombstones, outbox, and teardown receipts
+- `cluster/` — routing policies, candidate discovery/transports, foreign-event views, and swarm snapshot wire format
 - `daemon/resource_snapshot_cron.rs` — local sampling and WAL emission
 - `cli/cloud_sync_task.rs` — background periodic sync task spawned by `neoth serve`
 - `cli/doctor.rs` — `check_hysteria_config`, `check_cloud_archive_dest`, `check_disk_space`

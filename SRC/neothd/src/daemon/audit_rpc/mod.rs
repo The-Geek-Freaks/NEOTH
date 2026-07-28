@@ -68,6 +68,11 @@ pub use client::{
     is_reachable, mint_fullauto_token, mint_jobs_run_token, try_post_audit_frame,
     try_post_audit_frame_with_subtype,
 };
+#[cfg(feature = "cluster")]
+pub use client::{
+    membership_confirm, membership_invite, membership_legacy_pending, membership_revocation_status,
+    membership_revoke, membership_runtime_health, membership_snapshot,
+};
 pub use fullauto_token::{FULLAUTO_TOKEN_TTL, FullAutoTokenStore, JOBS_RUN_TOKEN_TTL};
 pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState, bind_and_serve,

@@ -130,13 +130,26 @@ pub(crate) fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
         }
     };
     let ssid = crate::cluster::policy::current_ssid();
-    let peer_count = match crate::cluster::registry::load(home) {
-        Ok(registry) => registry.peers.len(),
+    let peer_count = match crate::cluster::membership::inspect_authority_read_only(
+        home,
+        crate::time::now_unix_i64(),
+    ) {
+        Ok(Some(health)) => match usize::try_from(health.active) {
+            Ok(active) => active,
+            Err(error) => {
+                return CheckOutcome {
+                    name: "cluster mDNS announcer",
+                    status: CheckStatus::Fail,
+                    detail: format!("invalid active membership count: {error}"),
+                };
+            }
+        },
+        Ok(None) => 0,
         Err(error) => {
             return CheckOutcome {
                 name: "cluster mDNS announcer",
                 status: CheckStatus::Fail,
-                detail: format!("cannot load paired-peer registry: {error}"),
+                detail: format!("cannot inspect membership authority read-only: {error}"),
             };
         }
     };
@@ -249,60 +262,206 @@ pub(crate) fn evaluate_announcer_state(
     }
 }
 
-/// Cluster registry surface — Phase 4 doctor entry. Reads
-/// `~/.neoth/cluster.yaml` + reports peer count + stale-peer warning
-/// when any paired peer hasn't been seen in 14 days. Empty registry
-/// passes silently — single-instance operators don't see noise.
+/// Dedicated authority health. `cluster.yaml` is intentionally not read:
+/// legacy data enters only through MembershipStore's one-time importer.
 #[cfg(feature = "cluster")]
 pub(crate) fn check_cluster_registry(home: &Path) -> CheckOutcome {
-    let reg = match crate::cluster::registry::load(home) {
-        Ok(r) => r,
-        Err(e) => {
+    let cluster_enabled =
+        crate::config::FreedomConfig::load_from_path_or_default(&home.join("freedom.yaml"))
+            .map(|config| config.cluster.enabled)
+            .unwrap_or(false);
+    let Some(health) = (match crate::cluster::membership::inspect_authority_read_only(
+        home,
+        crate::time::now_unix_i64(),
+    ) {
+        Ok(health) => health,
+        Err(error) => {
             return CheckOutcome {
-                name: "cluster registry",
-                status: CheckStatus::Warn,
-                detail: format!("cluster.yaml unreadable: {e}"),
+                name: "cluster membership authority",
+                status: CheckStatus::Fail,
+                detail: format!("membership DB read-only inspection failed: {error}"),
+            };
+        }
+    }) else {
+        return CheckOutcome {
+            name: "cluster membership authority",
+            status: if cluster_enabled {
+                CheckStatus::Fail
+            } else {
+                CheckStatus::Pass
+            },
+            detail: if cluster_enabled {
+                "cluster is enabled but membership authority is missing".to_string()
+            } else {
+                "membership DB not initialized (single-instance)".to_string()
+            },
+        };
+    };
+    if health.integrity != "ok"
+        || health.schema_version != crate::cluster::membership::AUTHORITY_SCHEMA_VERSION
+        || !health.local_identity_valid
+    {
+        return CheckOutcome {
+            name: "cluster membership authority",
+            status: CheckStatus::Fail,
+            detail: format!(
+                "authority integrity={} schema={}/{} local_identity_valid={}",
+                health.integrity,
+                health.schema_version,
+                crate::cluster::membership::AUTHORITY_SCHEMA_VERSION,
+                health.local_identity_valid
+            ),
+        };
+    }
+    let issues = health.expired_active
+        + health.legacy_unattested
+        + health.active_without_valid_binding
+        + health.expired_invites
+        + u64::from(health.floor_projection_mismatch)
+        + u64::from(health.pending_outbox > 0)
+        + health.pending_revocations
+        + health.indeterminate_revocations;
+    CheckOutcome {
+        name: "cluster membership authority",
+        status: if issues == 0 {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Warn
+        },
+        detail: format!(
+            "{} active; {} pending; {} expired active; {} legacy unattested; {} active \
+             without valid binding; pending outbox={} (teardown={}, audit={}); expired \
+             invites={}; revocations pending={} indeterminate={}; \
+             floor/projection mismatch={}{}",
+            health.active,
+            health.pending,
+            health.expired_active,
+            health.legacy_unattested,
+            health.active_without_valid_binding,
+            health.pending_outbox,
+            health.pending_teardown,
+            health.pending_audit,
+            health.expired_invites,
+            health.pending_revocations,
+            health.indeterminate_revocations,
+            health.floor_projection_mismatch,
+            if health.pending_revocations + health.indeterminate_revocations > 0 {
+                "; inspect with `neoth cluster revoke-status <request-id>`"
+            } else {
+                ""
+            }
+        ),
+    }
+}
+
+#[cfg(feature = "cluster")]
+pub(crate) async fn check_cluster_runtime_membership(home: &Path) -> CheckOutcome {
+    let name = "cluster membership runtime";
+    if !home.join("cluster-membership.db").exists() {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "membership authority not initialized; no live generations".into(),
+        };
+    }
+    let daemon_pid = match crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")) {
+        Ok(pid) => pid,
+        Err(error) => {
+            return CheckOutcome {
+                name,
+                status: CheckStatus::Fail,
+                detail: format!("cannot inspect daemon ownership: {error}"),
             };
         }
     };
-    if reg.peers.is_empty() {
+    let Some(daemon_pid) = daemon_pid else {
         return CheckOutcome {
-            name: "cluster registry",
+            name,
             status: CheckStatus::Pass,
-            detail: "no confirmed cluster peers (single-instance)".to_string(),
+            detail: "daemon offline; no process-local membership generations".into(),
+        };
+    };
+    let health = match crate::daemon::audit_rpc::membership_runtime_health(home).await {
+        Ok(health) => health,
+        Err(error) => {
+            return CheckOutcome {
+                name,
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "daemon PID {daemon_pid} is live but authenticated membership health RPC failed: {error}"
+                ),
+            };
+        }
+    };
+    if health.wire_version != 1 {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "daemon returned unsupported membership runtime wire version {}",
+                health.wire_version
+            ),
         };
     }
-    const STALE_AFTER_SECS: i64 = 14 * 86_400;
-    let now = crate::time::now_unix_i64();
-    let mut stale = Vec::new();
-    for p in &reg.peers {
-        if now - p.last_seen_unix > STALE_AFTER_SECS {
-            stale.push(format!(
-                "{}({})",
-                p.instance_label,
-                &p.pub_key_hex[..8.min(p.pub_key_hex.len())]
-            ));
-        }
+    if !health.invalid_live_generations.is_empty() {
+        let examples = health
+            .invalid_live_generations
+            .iter()
+            .take(3)
+            .map(|generation| {
+                format!(
+                    "{}:{}@{}/{}",
+                    generation.stable_node_id,
+                    generation.kind,
+                    generation.auth_epoch.get(),
+                    generation.membership_epoch.get()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Fail,
+            detail: format!(
+                "{} revoked or stale live generation(s) remain after authority commit: {examples}",
+                health.invalid_live_generations.len()
+            ),
+        };
     }
-    let detail = format!(
-        "{} confirmed peer(s); {} stale (>14d since last_seen)",
-        reg.peers.len(),
-        stale.len()
-    );
-    let status = if stale.is_empty() {
-        CheckStatus::Pass
-    } else {
-        CheckStatus::Warn
-    };
-    let detail = if stale.is_empty() {
-        detail
-    } else {
-        format!("{} — stale: {}", detail, stale.join(", "))
-    };
+    if !health.unresolved_revocations.is_empty() {
+        let examples = health
+            .unresolved_revocations
+            .iter()
+            .take(3)
+            .map(|status| format!("{}:{}", status.request_id, status.state.as_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "{} unresolved revocation intent(s): {examples}; inspect with \
+                 `neoth cluster revoke-status <request-id>`",
+                health.unresolved_revocations.len()
+            ),
+        };
+    }
     CheckOutcome {
-        name: "cluster registry",
-        status,
-        detail,
+        name,
+        status: CheckStatus::Pass,
+        detail: format!(
+            "{} live route/effect generation(s), all exact-current",
+            health.live_generations.len()
+        ),
+    }
+}
+
+#[cfg(not(feature = "cluster"))]
+pub(crate) async fn check_cluster_runtime_membership(_home: &Path) -> CheckOutcome {
+    CheckOutcome {
+        name: "cluster membership runtime",
+        status: CheckStatus::Pass,
+        detail: "cluster feature not compiled in this build".into(),
     }
 }
 
@@ -310,7 +469,7 @@ pub(crate) fn check_cluster_registry(home: &Path) -> CheckOutcome {
 #[cfg(not(feature = "cluster"))]
 pub(crate) fn check_cluster_registry(_home: &Path) -> CheckOutcome {
     CheckOutcome {
-        name: "cluster registry",
+        name: "cluster membership authority",
         status: CheckStatus::Pass,
         detail: "cluster feature not compiled in this build".to_string(),
     }
@@ -327,23 +486,26 @@ pub(crate) const CHECKS: &[CheckFn] = &[
 /// Operator runbook entries for this domain (the `--explain` surface).
 pub(crate) const DOCS: &[CheckDoc] = &[
     CheckDoc {
-        name: "cluster registry",
-        purpose: "Cluster auto-discovery Phase 4 visibility surface. \
-                  Reads `~/.neoth/cluster.yaml` + reports the count \
-                  of confirmed peers + warns when any haven't been \
-                  seen in 14 days (Phase 2+ gossip refreshes \
-                  last_seen_unix on each authenticated announce). \
-                  Single-instance operators see Pass with `no \
-                  confirmed cluster peers` — no noise.",
-        common_failures: "Peer device offline for >14 days (laptop \
-                          retired, server move, network change). \
-                          Stale entry keeps eating Phase 6 gossip \
-                          retry budget until revoked.",
-        fix: "Verify the peer device is still reachable: `neoth \
-              cluster list` shows the addr + via. If the device \
-              is truly gone, `neoth cluster revoke <pub_key_prefix>` \
-              removes it. If it's just been offline, leave it — \
-              gossip will refresh once the peer returns.",
+        name: "cluster membership authority",
+        purpose: "Validates dedicated cluster-membership.db schema/integrity and \
+                  reports invalid authorization projections without consulting \
+                  cluster.yaml as a second authority.",
+        common_failures: "Expired Active bindings, one-time imported legacy \
+                          unattested rows, pending audit/teardown outbox work, \
+                          or a tombstone/state projection mismatch.",
+        fix: "Inspect `neoth cluster list --output json`. Re-enroll expired or \
+              legacy Pending nodes with a signed carrier attestation. Restart \
+              the daemon to replay pending teardown/audit outbox work.",
+    },
+    CheckDoc {
+        name: "cluster membership runtime",
+        purpose: "Uses the daemon's authenticated authority RPC to verify that every live \
+                  route and queued, in-flight, network, or durable effect still matches the \
+                  exact current StableNode/AuthEpoch/MembershipEpoch generation.",
+        common_failures: "A revoked or restamped generation remains live, or a daemon that owns \
+                          the membership authority has lost its required loopback RPC listener.",
+        fix: "Treat this as fail-closed. Stop the daemon if it did not already terminate, inspect \
+              the revoke receipt and carrier teardown, then restart and confirm the check passes.",
     },
     CheckDoc {
         name: "cluster mDNS announcer",
@@ -430,5 +592,113 @@ mod conflict_tests {
         let resolved = check_cluster_conflicts(dir.path());
         assert_eq!(resolved.status, CheckStatus::Pass);
         assert!(resolved.detail.contains("0 unresolved"));
+    }
+}
+
+#[cfg(all(test, feature = "cluster"))]
+mod membership_authority_tests {
+    use super::*;
+    use rusqlite::params;
+
+    #[test]
+    fn doctor_membership_inspection_is_byte_read_only() {
+        let home = tempfile::tempdir().unwrap();
+        crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path()).unwrap();
+        let store = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        drop(store);
+        let path = home.path().join("cluster-membership.db");
+        let before = std::fs::read(&path).unwrap();
+
+        let outcome = check_cluster_registry(home.path());
+
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn doctor_surfaces_binding_floor_invite_and_outbox_invariants() {
+        let home = tempfile::tempdir().unwrap();
+        let identity =
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path()).unwrap();
+        let store = crate::cluster::membership::MembershipStore::open(home.path()).unwrap();
+        let conn = rusqlite::Connection::open(store.path()).unwrap();
+        let now = crate::time::now_unix_i64();
+        conn.execute(
+            "INSERT INTO members
+             (stable_node_id,label,state,auth_epoch,membership_epoch,created_at,updated_at)
+             VALUES (?1,'broken','active',1,1,?2,?2)",
+            params![identity.stable_node_id().as_str(), now],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transport_bindings
+             (stable_node_id,carrier,transport_identity,endpoint,assurance,
+              auth_epoch,membership_epoch,expires_at,attestation_digest)
+             VALUES (?1,'peeroxide',?1,'test','signed_attestation',1,1,?2,'digest')",
+            params![identity.stable_node_id().as_str(), now - 1],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO enrollment_invites
+             (invite_id,invitation_digest,stable_node_id,signing_public_key,carrier,
+              transport_identity,endpoint,label,auth_epoch,membership_epoch,
+              created_at,expires_at,consumed_at)
+             VALUES ('expired','expired-digest',?1,?2,'peeroxide',?1,'test',
+                     'broken',1,1,?3,?4,NULL)",
+            params![
+                identity.stable_node_id().as_str(),
+                identity.verifying_key().to_bytes().as_slice(),
+                now - 2,
+                now - 1
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO membership_outbox
+             (kind,stable_node_id,auth_epoch,membership_epoch,payload,created_at)
+             VALUES ('audit',?1,1,1,'{}',?2)",
+            params![identity.stable_node_id().as_str(), now],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE authority_meta SET membership_epoch=2,revocation_floor=2
+             WHERE singleton=1",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO revocation_intents
+             (request_id,request_digest,stable_node_id,reason,source,
+              snapshot_version,snapshot_digest,authority_epoch,
+              member_auth_epoch,member_membership_epoch,state,
+              external_effects_unclassified,tombstone_committed,receipt_id,
+              indeterminate_reason,created_at,updated_at)
+             VALUES (?1,?2,?3,'operator_cli','operator_cli',1,?4,1,1,1,
+                     'indeterminate',0,0,NULL,'provider outcome unknown',?5,?5)",
+            params![
+                crate::cluster::membership::new_revocation_request_id(),
+                "a".repeat(64),
+                identity.stable_node_id().as_str(),
+                "b".repeat(64),
+                now
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let health = crate::cluster::membership::inspect_authority_read_only(home.path(), now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(health.expired_active, 1);
+        assert_eq!(health.active_without_valid_binding, 1);
+        assert_eq!(health.expired_invites, 1);
+        assert_eq!(health.pending_outbox, 1);
+        assert_eq!(health.pending_audit, 1);
+        assert_eq!(health.indeterminate_revocations, 1);
+        assert!(health.floor_projection_mismatch);
+        let outcome = check_cluster_registry(home.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("indeterminate=1"));
+        assert!(outcome.detail.contains("revoke-status"));
     }
 }

@@ -20,6 +20,9 @@ use super::gossip_wire::{
     MemorySnapshot, SYNC_ENVELOPE_VERSION, SYNC_PROTOCOL_VERSION, SyncContent, SyncEnvelope,
     VectorClock,
 };
+use super::membership::{
+    MembershipEffectGuard, MembershipEffectKind, MembershipGrant, StableNodeId,
+};
 use super::wal_sync::{
     GossipWalCursor, ReplicationClass, SharedGossipState, classify_event_ext,
     gossip_payload_event_meta, gossip_payload_timestamp_unix, is_replicable_ext,
@@ -123,6 +126,9 @@ pub struct MeshPeerStatus {
 pub struct MeshSyncRequest {
     pub operation: String,
     pub peer_pk: String,
+    pub stable_node_id: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
     pub state: String,
     pub requested_at: i64,
     pub expires_at: i64,
@@ -146,6 +152,10 @@ impl MeshSyncRequest {
             self.peer_pk == expected_peer,
             "mesh sync receipt peer `{}` does not match requested peer `{expected_peer}`",
             self.peer_pk
+        );
+        ensure!(
+            self.stable_node_id == self.peer_pk && self.auth_epoch > 0 && self.membership_epoch > 0,
+            "mesh sync receipt has an invalid membership fence"
         );
         ensure!(
             self.state == "queued",
@@ -212,6 +222,200 @@ struct PendingRow {
     next_cursor_offset: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MembershipFence {
+    stable_node_id: StableNodeId,
+    auth_epoch: u64,
+    membership_epoch: u64,
+}
+
+impl MembershipFence {
+    fn from_grant(grant: &MembershipGrant) -> Self {
+        Self {
+            stable_node_id: grant.stable_node_id().clone(),
+            auth_epoch: grant.auth_epoch().get(),
+            membership_epoch: grant.membership_epoch().get(),
+        }
+    }
+
+    fn from_effect(effect: &MembershipEffectGuard) -> Self {
+        Self {
+            stable_node_id: effect.stable_node_id().clone(),
+            auth_epoch: effect.auth_epoch().get(),
+            membership_epoch: effect.membership_epoch().get(),
+        }
+    }
+
+    fn peer(&self) -> PeerPubkey {
+        PeerPubkey::new(self.stable_node_id.as_str().to_string())
+    }
+}
+
+type AuthorizedDurableMutation<'a> = (&'a MembershipFence, &'a MembershipEffectGuard);
+
+fn attach_durable_authority(
+    conn: &Connection,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
+) -> Result<()> {
+    if let Some((_, effect)) = authorized {
+        effect.transition(MembershipEffectKind::DurableCommit)?;
+        effect.attach_authority(conn)?;
+    }
+    Ok(())
+}
+
+fn validate_and_activate_durable_authority(
+    conn: &Connection,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
+) -> Result<()> {
+    if let Some((fence, effect)) = authorized {
+        effect.validate_attached(conn, crate::time::now_unix_i64())?;
+        activate_membership_fence(conn, fence)?;
+        #[cfg(test)]
+        pause_authorized_mutation_for_test(fence);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+#[derive(Clone)]
+struct AuthorizedMutationTestPause {
+    entered: std::sync::Arc<std::sync::Barrier>,
+    release: std::sync::Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+fn authorized_mutation_test_pauses()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, AuthorizedMutationTestPause>> {
+    static PAUSES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, AuthorizedMutationTestPause>>,
+    > = std::sync::OnceLock::new();
+    PAUSES.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+#[cfg(test)]
+fn install_authorized_mutation_test_pause(
+    stable_node_id: &StableNodeId,
+) -> AuthorizedMutationTestPause {
+    let pause = AuthorizedMutationTestPause {
+        entered: std::sync::Arc::new(std::sync::Barrier::new(2)),
+        release: std::sync::Arc::new(std::sync::Barrier::new(2)),
+    };
+    authorized_mutation_test_pauses()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(stable_node_id.as_str().to_string(), pause.clone());
+    pause
+}
+
+#[cfg(test)]
+fn pause_authorized_mutation_for_test(fence: &MembershipFence) {
+    let pause = authorized_mutation_test_pauses()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(fence.stable_node_id.as_str());
+    if let Some(pause) = pause {
+        pause.entered.wait();
+        pause.release.wait();
+    }
+}
+
+fn activate_membership_fence(conn: &Connection, fence: &MembershipFence) -> Result<()> {
+    // Membership epoch is a current authorization fence, not a node
+    // incarnation. Preserve same-(stable,auth) local sequence history across
+    // survivor restamps so origin_seq never rewinds after another peer is
+    // revoked.
+    conn.execute(
+        "DELETE FROM mesh_sync_local_events
+         WHERE peer_pk=?1 AND
+               (fence_state!='active' OR stable_node_id!=?1 OR auth_epoch!=?2)",
+        params![fence.stable_node_id.as_str(), fence.auth_epoch],
+    )?;
+    conn.execute(
+        "UPDATE mesh_sync_local_events SET membership_epoch=?3
+         WHERE peer_pk=?1 AND stable_node_id=?1 AND auth_epoch=?2 AND fence_state='active'",
+        params![
+            fence.stable_node_id.as_str(),
+            fence.auth_epoch,
+            fence.membership_epoch
+        ],
+    )?;
+    for (table, peer_column) in [
+        ("mesh_sync_outbound", "peer_pk"),
+        ("mesh_sync_outbound_pending", "peer_pk"),
+        ("mesh_sync_requests", "peer_pk"),
+        ("mesh_sync_inbound", "origin_peer_pk"),
+        ("mesh_sync_inbound_receipts", "origin_peer_pk"),
+    ] {
+        conn.execute(
+            &format!(
+                "DELETE FROM {table} WHERE {peer_column}=?1 AND \
+                 (fence_state!='active' OR stable_node_id!=?1 OR auth_epoch!=?2)"
+            ),
+            params![fence.stable_node_id.as_str(), fence.auth_epoch],
+        )?;
+        conn.execute(
+            &format!(
+                "UPDATE {table} SET membership_epoch=?3
+                 WHERE {peer_column}=?1 AND stable_node_id=?1
+                   AND auth_epoch=?2 AND fence_state='active'"
+            ),
+            params![
+                fence.stable_node_id.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch
+            ],
+        )?;
+    }
+    conn.execute(
+        "DELETE FROM mesh_sync_vector_frontier
+         WHERE stable_node_id=?1 AND (fence_state!='active' OR auth_epoch!=?2)",
+        params![fence.stable_node_id.as_str(), fence.auth_epoch],
+    )?;
+    conn.execute(
+        "UPDATE mesh_sync_vector_frontier SET membership_epoch=?3
+         WHERE stable_node_id=?1 AND auth_epoch=?2 AND fence_state='active'",
+        params![
+            fence.stable_node_id.as_str(),
+            fence.auth_epoch,
+            fence.membership_epoch
+        ],
+    )?;
+    Ok(())
+}
+
+/// Remove every mutable/transient sync projection for a revoked stable
+/// identity. Canonical materialized and conflict rows are retained as
+/// provenance; only queues, cursors, ACK state, and vector frontiers that
+/// could continue network effects are quarantined.
+pub(crate) fn quarantine_revoked_membership(
+    db_path: &Path,
+    stable_node_id: &StableNodeId,
+) -> Result<usize> {
+    if !db_path.exists() {
+        return Ok(0);
+    }
+    let mut conn = crate::memory::store::open(db_path)
+        .with_context(|| format!("open durable mesh DB {}", db_path.display()))?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut removed = 0usize;
+    for table in [
+        "mesh_sync_outbound_pending",
+        "mesh_sync_outbound",
+        "mesh_sync_requests",
+        "mesh_sync_inbound_receipts",
+        "mesh_sync_inbound",
+        "mesh_sync_vector_frontier",
+    ] {
+        removed += tx.execute(
+            &format!("DELETE FROM {table} WHERE stable_node_id=?1"),
+            [stable_node_id.as_str()],
+        )?;
+    }
+    tx.commit()?;
+    Ok(removed)
+}
+
 impl DurableMeshSync {
     pub fn new(db_path: impl Into<PathBuf>) -> Self {
         Self {
@@ -226,9 +430,43 @@ impl DurableMeshSync {
     /// Load an exact pending frame or stage the next WAL event for one peer.
     /// Staging stores the pending frame and next cursor atomically; it does not
     /// advance the acknowledged cursor.
+    pub async fn prepare_peer_frame_authorized(
+        &self,
+        grant: &MembershipGrant,
+        origin: &PeerPubkey,
+        wal_dir: &Path,
+        policy: &GossipPolicy,
+        state: &SharedGossipState,
+    ) -> Result<Option<PreparedFrame>> {
+        grant.revalidate(crate::time::now_unix_i64())?;
+        self.prepare_peer_frame_inner(
+            &MembershipFence::from_grant(grant).peer(),
+            Some(grant.clone()),
+            origin,
+            wal_dir,
+            policy,
+            state,
+        )
+        .await
+    }
+
+    #[cfg(test)]
     pub async fn prepare_peer_frame(
         &self,
         peer: &PeerPubkey,
+        origin: &PeerPubkey,
+        wal_dir: &Path,
+        policy: &GossipPolicy,
+        state: &SharedGossipState,
+    ) -> Result<Option<PreparedFrame>> {
+        self.prepare_peer_frame_inner(peer, None, origin, wal_dir, policy, state)
+            .await
+    }
+
+    async fn prepare_peer_frame_inner(
+        &self,
+        peer: &PeerPubkey,
+        grant: Option<MembershipGrant>,
         origin: &PeerPubkey,
         wal_dir: &Path,
         policy: &GossipPolicy,
@@ -238,32 +476,65 @@ impl DurableMeshSync {
         let peer_for_load = peer.clone();
         let origin_for_load = origin.clone();
         let wal_dir_owned = wal_dir.to_path_buf();
+        let grant_for_load = grant.clone();
+        let state_for_load = state.clone();
         let loaded = tokio::task::spawn_blocking(move || -> Result<_> {
-            let conn = crate::memory::store::open(&db_path)
+            let mut conn = crate::memory::store::open(&db_path)
                 .with_context(|| format!("open durable mesh DB {}", db_path.display()))?;
-            if let Some(pending) = load_pending(&conn, &peer_for_load)? {
-                let frame = validate_pending(&pending, &origin_for_load)?;
-                validate_pending_cursor(&pending, &wal_dir_owned)?;
-                return Ok((
-                    Some(PreparedFrame {
-                        frame,
-                        replayed_pending: true,
-                    }),
-                    None,
-                ));
+            let effect = grant_for_load
+                .as_ref()
+                .map(|grant| {
+                    grant.begin_effect_kind(
+                        crate::time::now_unix_i64(),
+                        MembershipEffectKind::DurableCommit,
+                    )
+                })
+                .transpose()?;
+            let fence = effect.as_ref().map(MembershipFence::from_effect);
+            let authorized = fence.as_ref().zip(effect.as_ref());
+            attach_durable_authority(&conn, authorized)?;
+
+            let load = |read_conn: &Connection| -> Result<_> {
+                if let Some(pending) = load_pending(read_conn, &peer_for_load)? {
+                    let frame = validate_pending(&pending, &origin_for_load)?;
+                    validate_pending_cursor(&pending, &wal_dir_owned)?;
+                    return Ok((
+                        Some(PreparedFrame {
+                            frame,
+                            replayed_pending: true,
+                        }),
+                        None,
+                    ));
+                }
+                let state = load_outbound_state(read_conn, &peer_for_load, &wal_dir_owned)?;
+                Ok((None, Some(state)))
+            };
+            let (pending, outbound_state) = if authorized.is_some() {
+                let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                validate_and_activate_durable_authority(&tx, authorized)?;
+                let loaded = load(&tx)?;
+                tx.commit()
+                    .context("commit authorized durable mesh state load")?;
+                loaded
+            } else {
+                load(&conn)?
+            };
+            if let Some(prepared) = pending.as_ref() {
+                state_for_load
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .commit_outbound(&prepared.frame);
             }
-            let state = load_outbound_state(&conn, &peer_for_load, &wal_dir_owned)?;
-            Ok((None, Some(state)))
+            if let Some(effect) = effect {
+                effect.finish()?;
+            }
+            Ok((pending, outbound_state))
         })
         .await
         .context("durable mesh state loader panicked")??;
 
         let (pending, outbound_state) = loaded;
         if let Some(prepared) = pending {
-            state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .commit_outbound(&prepared.frame);
             return Ok(Some(prepared));
         }
         let mut cursor = outbound_state
@@ -275,9 +546,29 @@ impl DurableMeshSync {
         let Some((event_type, raw)) = frames.into_iter().next() else {
             let db_path = self.db_path.clone();
             let peer = peer.clone();
+            let grant = grant.clone();
             tokio::task::spawn_blocking(move || -> Result<()> {
                 let mut conn = crate::memory::store::open(&db_path)?;
-                persist_idle_cursor(&mut conn, &peer, &cursor)
+                let effect = grant
+                    .as_ref()
+                    .map(|grant| {
+                        grant.begin_effect_kind(
+                            crate::time::now_unix_i64(),
+                            MembershipEffectKind::DurableCommit,
+                        )
+                    })
+                    .transpose()?;
+                let fence = effect.as_ref().map(MembershipFence::from_effect);
+                persist_idle_cursor(
+                    &mut conn,
+                    &peer,
+                    &cursor,
+                    fence.as_ref().zip(effect.as_ref()),
+                )?;
+                if let Some(effect) = effect {
+                    effect.finish()?;
+                }
+                Ok(())
             })
             .await
             .context("durable mesh idle-cursor task panicked")??;
@@ -295,9 +586,21 @@ impl DurableMeshSync {
         let peer = peer.clone();
         let origin = origin.clone();
         let policy = policy.clone();
-        let prepared = tokio::task::spawn_blocking(move || -> Result<Option<PreparedFrame>> {
+        let grant_for_stage = grant;
+        let state_for_stage = state.clone();
+        let prepared = tokio::task::spawn_blocking(move || -> Result<_> {
             let mut conn = crate::memory::store::open(&db_path)?;
-            stage_frame(
+            let effect = grant_for_stage
+                .as_ref()
+                .map(|grant| {
+                    grant.begin_effect_kind(
+                        crate::time::now_unix_i64(),
+                        MembershipEffectKind::DurableCommit,
+                    )
+                })
+                .transpose()?;
+            let fence = effect.as_ref().map(MembershipFence::from_effect);
+            let prepared = stage_frame(
                 &mut conn,
                 &peer,
                 &origin,
@@ -306,20 +609,53 @@ impl DurableMeshSync {
                 &raw,
                 &cursor,
                 &policy,
-            )
-            .map(Some)
-        })
-        .await
-        .context("durable mesh frame-staging task panicked")??;
-        if let Some(prepared) = prepared.as_ref() {
-            state
+                fence.as_ref().zip(effect.as_ref()),
+            )?;
+            state_for_stage
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .commit_outbound(&prepared.frame);
-        }
-        Ok(prepared)
+            if let Some(effect) = effect {
+                effect.finish()?;
+            }
+            Ok(prepared)
+        })
+        .await
+        .context("durable mesh frame-staging task panicked")??;
+        Ok(Some(prepared))
     }
 
+    pub fn record_send_attempt_authorized(&self, grant: &MembershipGrant) -> Result<()> {
+        let now = crate::time::now_unix_i64();
+        let effect = grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit)?;
+        let fence = MembershipFence::from_effect(&effect);
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        let authorized = Some((&fence, &effect));
+        attach_durable_authority(&conn, authorized)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_and_activate_durable_authority(&tx, authorized)?;
+        let changed = tx.execute(
+            "UPDATE mesh_sync_outbound_pending SET attempts=attempts+1
+             WHERE peer_pk=?1 AND stable_node_id=?1 AND auth_epoch=?2
+               AND membership_epoch=?3 AND fence_state='active'",
+            params![
+                fence.stable_node_id.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch
+            ],
+        )?;
+        ensure!(
+            changed == 1,
+            "no pending mesh frame for peer {}",
+            fence.stable_node_id
+        );
+        tx.commit()
+            .context("commit authorized mesh send-attempt counter")?;
+        effect.finish()?;
+        Ok(())
+    }
+
+    #[cfg(test)]
     pub fn record_send_attempt(&self, peer: &PeerPubkey) -> Result<()> {
         let conn = crate::memory::store::open(&self.db_path)?;
         let changed = conn.execute(
@@ -336,6 +672,19 @@ impl DurableMeshSync {
 
     /// Apply an ACK from the authenticated peer. Only an exact match advances
     /// the cursor; duplicate ACKs are idempotent and mismatches fail closed.
+    pub fn acknowledge_outbound_authorized(
+        &self,
+        effect: &MembershipEffectGuard,
+        local_origin: &PeerPubkey,
+        ack: &GossipAck,
+    ) -> Result<OutboundAckOutcome> {
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        let fence = MembershipFence::from_effect(effect);
+        let authorized = Some((&fence, effect));
+        acknowledge_outbound_on_conn_inner(&mut conn, &fence.peer(), local_origin, ack, authorized)
+    }
+
+    #[cfg(test)]
     pub fn acknowledge_outbound(
         &self,
         authenticated_peer: &PeerPubkey,
@@ -347,6 +696,19 @@ impl DurableMeshSync {
     }
 
     /// Persist one inbound frame and return an ACK only after SQLite commits.
+    pub fn persist_inbound_authorized(
+        &self,
+        effect: &MembershipEffectGuard,
+        frame: &GossipFrame,
+        policy: &GossipPolicy,
+    ) -> Result<InboundCommit> {
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        let fence = MembershipFence::from_effect(effect);
+        let authorized = Some((&fence, effect));
+        persist_inbound_on_conn_inner(&mut conn, &fence.peer(), frame, policy, authorized)
+    }
+
+    #[cfg(test)]
     pub fn persist_inbound(
         &self,
         authenticated_peer: &PeerPubkey,
@@ -364,10 +726,35 @@ impl DurableMeshSync {
 
     /// Enqueue (or restart) an accelerated catch-up for one already-paired
     /// peer. Repeated requests coalesce into the peer's primary-key row.
+    pub fn request_sync_authorized(
+        &self,
+        grant: &MembershipGrant,
+        now: i64,
+    ) -> Result<MeshSyncRequest> {
+        let effect = grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit)?;
+        let fence = MembershipFence::from_effect(&effect);
+        let receipt = self.request_sync_for_fence(&fence.peer(), now, Some((&fence, &effect)))?;
+        effect.finish()?;
+        Ok(receipt)
+    }
+
+    #[cfg(test)]
     pub fn request_sync(&self, peer: &PeerPubkey, now: i64) -> Result<MeshSyncRequest> {
+        self.request_sync_for_fence(peer, now, None)
+    }
+
+    fn request_sync_for_fence(
+        &self,
+        peer: &PeerPubkey,
+        now: i64,
+        authorized: Option<AuthorizedDurableMutation<'_>>,
+    ) -> Result<MeshSyncRequest> {
         ensure!(now > 0, "mesh sync request timestamp must be positive");
         let mut conn = crate::memory::store::open(&self.db_path)?;
+        attach_durable_authority(&conn, authorized)?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_and_activate_durable_authority(&tx, authorized)?;
+        let fence = authorized.map(|(fence, _)| fence);
         // Terminal receipts are useful briefly for GUI feedback, but never
         // grow without bound across long-lived installations.
         tx.execute(
@@ -396,16 +783,44 @@ impl DurableMeshSync {
         let expires_at = requested_at
             .checked_add(SYNC_REQUEST_TTL_SECS)
             .context("mesh sync request expiry overflow")?;
-        tx.execute(
-            "INSERT INTO mesh_sync_requests \
-             (peer_pk,requested_at,expires_at,state,updated_at,last_attempt_at,send_attempts,last_error) \
-             VALUES (?1,?2,?3,'queued',?2,NULL,0,NULL) \
-             ON CONFLICT(peer_pk) DO UPDATE SET \
-               requested_at=excluded.requested_at, expires_at=excluded.expires_at, \
-               state='queued', updated_at=excluded.updated_at, last_attempt_at=NULL, \
-               send_attempts=0, last_error=NULL",
-            params![peer.as_str(), requested_at, expires_at],
-        )?;
+        if let Some(fence) = fence {
+            tx.execute(
+                "INSERT INTO mesh_sync_requests
+                 (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+                  requested_at,expires_at,state,updated_at,last_attempt_at,send_attempts,last_error)
+                 VALUES (?1,?1,?2,?3,'active',?4,?5,'queued',?4,NULL,0,NULL)
+                 ON CONFLICT(peer_pk) DO UPDATE SET
+                   stable_node_id=excluded.stable_node_id,
+                   auth_epoch=excluded.auth_epoch,
+                   membership_epoch=excluded.membership_epoch,
+                   fence_state='active',
+                   requested_at=excluded.requested_at,
+                   expires_at=excluded.expires_at,
+                   state='queued',updated_at=excluded.updated_at,
+                   last_attempt_at=NULL,send_attempts=0,last_error=NULL",
+                params![
+                    peer.as_str(),
+                    fence.auth_epoch,
+                    fence.membership_epoch,
+                    requested_at,
+                    expires_at
+                ],
+            )?;
+        } else {
+            tx.execute(
+                "INSERT INTO mesh_sync_requests \
+                 (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+                  requested_at,expires_at,state,updated_at,last_attempt_at,send_attempts,last_error) \
+                 VALUES (?1,?1,1,1,'active',?2,?3,'queued',?2,NULL,0,NULL) \
+                 ON CONFLICT(peer_pk) DO UPDATE SET \
+                   stable_node_id=excluded.stable_node_id,auth_epoch=1,membership_epoch=1,
+                   fence_state='active',requested_at=excluded.requested_at,
+                   expires_at=excluded.expires_at,state='queued',
+                   updated_at=excluded.updated_at,last_attempt_at=NULL,
+                   send_attempts=0,last_error=NULL",
+                params![peer.as_str(), requested_at, expires_at],
+            )?;
+        }
         let receipt = load_sync_request_on_conn(&tx, peer)?
             .context("mesh sync request vanished before commit")?;
         tx.commit()?;
@@ -426,14 +841,70 @@ impl DurableMeshSync {
     /// Peers absent from `eligible_peers` are not leased. This prevents an old
     /// carrier that is still winding down from starving the newly-active
     /// carrier during a runtime handoff.
+    pub fn claim_due_sync_requests_authorized(
+        &self,
+        now: i64,
+        eligible_grants: &[MembershipGrant],
+    ) -> Result<Vec<MeshSyncRequest>> {
+        if eligible_grants.is_empty() {
+            return Ok(Vec::new());
+        }
+        let effects = eligible_grants
+            .iter()
+            .map(|grant| grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit))
+            .collect::<Result<Vec<_>>>()?;
+        let eligible_peers = effects
+            .iter()
+            .map(|effect| effect.stable_node_id().as_str().to_string())
+            .collect();
+        let requests = self.claim_due_sync_requests_inner(now, &eligible_peers, Some(&effects))?;
+        for effect in effects {
+            effect.finish()?;
+        }
+        Ok(requests)
+    }
+
+    #[cfg(test)]
     pub fn claim_due_sync_requests(
         &self,
         now: i64,
         eligible_peers: &HashSet<String>,
     ) -> Result<Vec<MeshSyncRequest>> {
+        self.claim_due_sync_requests_inner(now, eligible_peers, None)
+    }
+
+    fn claim_due_sync_requests_inner(
+        &self,
+        now: i64,
+        eligible_peers: &HashSet<String>,
+        eligible_effects: Option<&[MembershipEffectGuard]>,
+    ) -> Result<Vec<MeshSyncRequest>> {
         ensure!(now > 0, "mesh sync request poll timestamp must be positive");
         let mut conn = crate::memory::store::open(&self.db_path)?;
+        if let Some(effects) = eligible_effects {
+            for effect in effects {
+                effect.attach_authority(&conn)?;
+            }
+        }
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(effects) = eligible_effects {
+            let authority_now = crate::time::now_unix_i64();
+            for effect in effects {
+                effect.validate_attached(&tx, authority_now)?;
+            }
+            for effect in effects {
+                let fence = MembershipFence::from_effect(effect);
+                activate_membership_fence(&tx, &fence)?;
+                #[cfg(test)]
+                pause_authorized_mutation_for_test(&fence);
+            }
+            tx.execute(
+                "UPDATE mesh_sync_requests SET state='expired',
+                 last_error='legacy request has no membership fence'
+                 WHERE fence_state!='active' AND state!='expired'",
+                [],
+            )?;
+        }
         tx.execute(
             "UPDATE mesh_sync_requests SET state='expired', updated_at=?1, \
              last_error='request expired before the peer caught up' \
@@ -496,24 +967,55 @@ impl DurableMeshSync {
 
     /// Bind one actual transport attempt to the exact current claim. A stale
     /// carrier receives `false` and must not send the frame.
+    pub fn mark_sync_request_sending_authorized(
+        &self,
+        grant: &MembershipGrant,
+        claim: &MeshSyncRequest,
+        now: i64,
+    ) -> Result<bool> {
+        let effect = grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit)?;
+        ensure_claim_matches_effect(claim, &effect)?;
+        let fence = MembershipFence::from_effect(&effect);
+        let changed = self.mark_sync_request_sending_inner(claim, now, Some((&fence, &effect)))?;
+        effect.finish()?;
+        Ok(changed)
+    }
+
+    #[cfg(test)]
     pub fn mark_sync_request_sending(&self, claim: &MeshSyncRequest, now: i64) -> Result<bool> {
+        self.mark_sync_request_sending_inner(claim, now, None)
+    }
+
+    fn mark_sync_request_sending_inner(
+        &self,
+        claim: &MeshSyncRequest,
+        now: i64,
+        authorized: Option<AuthorizedDurableMutation<'_>>,
+    ) -> Result<bool> {
         ensure!(now > 0, "mesh sync send timestamp must be positive");
         let claimed_at = validate_active_sync_claim(claim)?;
         let prior_send_attempts = i64::try_from(claim.send_attempts)
             .context("mesh sync claim send_attempts exceeds SQLite range")?;
         let send_at = now.max(claimed_at);
-        let conn = crate::memory::store::open(&self.db_path)?;
-        let changed = conn.execute(
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        attach_durable_authority(&conn, authorized)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        validate_and_activate_durable_authority(&tx, authorized)?;
+        let changed = tx.execute(
             "UPDATE mesh_sync_requests SET updated_at=MAX(updated_at,?2), \
              send_attempts=send_attempts+1,last_error=NULL \
              WHERE peer_pk=?1 AND requested_at=?3 AND state='active' \
-               AND last_attempt_at=?4 AND send_attempts=?5 AND expires_at > ?2",
+               AND last_attempt_at=?4 AND send_attempts=?5 AND expires_at > ?2
+               AND fence_state='active' AND stable_node_id=?1
+               AND auth_epoch=?6 AND membership_epoch=?7",
             params![
                 claim.peer_pk.as_str(),
                 send_at,
                 claim.requested_at,
                 claimed_at,
                 prior_send_attempts,
+                claim.auth_epoch,
+                claim.membership_epoch,
             ],
         )?;
         ensure!(
@@ -521,36 +1023,86 @@ impl DurableMeshSync {
             "mesh sync primary-key invariant violated for peer {}",
             claim.peer_pk
         );
+        tx.commit()
+            .context("commit authorized mesh request send state")?;
         Ok(changed == 1)
     }
 
     /// Resolve an exact active claim as retryable. Returns `false` when the
     /// claim was superseded by a retry or a newer operator request.
+    pub fn mark_sync_request_waiting_authorized(
+        &self,
+        grant: &MembershipGrant,
+        claim: &MeshSyncRequest,
+        now: i64,
+        error: &str,
+    ) -> Result<bool> {
+        let effect = grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit)?;
+        ensure_claim_matches_effect(claim, &effect)?;
+        let fence = MembershipFence::from_effect(&effect);
+        let changed =
+            self.mark_sync_request_waiting_inner(claim, now, error, Some((&fence, &effect)))?;
+        effect.finish()?;
+        Ok(changed)
+    }
+
+    #[cfg(test)]
     pub fn mark_sync_request_waiting(
         &self,
         claim: &MeshSyncRequest,
         now: i64,
         error: &str,
     ) -> Result<bool> {
+        self.mark_sync_request_waiting_inner(claim, now, error, None)
+    }
+
+    fn mark_sync_request_waiting_inner(
+        &self,
+        claim: &MeshSyncRequest,
+        now: i64,
+        error: &str,
+        authorized: Option<AuthorizedDurableMutation<'_>>,
+    ) -> Result<bool> {
+        let mut conn = crate::memory::store::open(&self.db_path)?;
         resolve_sync_request_claim_on_conn(
-            &crate::memory::store::open(&self.db_path)?,
+            &mut conn,
             claim,
             now,
             "waiting_peer",
             Some(error),
+            authorized,
         )
     }
 
     /// Complete an exact active claim. A stale transport completion returns
     /// `false` and cannot overwrite the newer lease owner.
+    pub fn mark_sync_request_complete_authorized(
+        &self,
+        grant: &MembershipGrant,
+        claim: &MeshSyncRequest,
+        now: i64,
+    ) -> Result<bool> {
+        let effect = grant.begin_effect_kind(now, MembershipEffectKind::DurableCommit)?;
+        ensure_claim_matches_effect(claim, &effect)?;
+        let fence = MembershipFence::from_effect(&effect);
+        let changed = self.mark_sync_request_complete_inner(claim, now, Some((&fence, &effect)))?;
+        effect.finish()?;
+        Ok(changed)
+    }
+
+    #[cfg(test)]
     pub fn mark_sync_request_complete(&self, claim: &MeshSyncRequest, now: i64) -> Result<bool> {
-        resolve_sync_request_claim_on_conn(
-            &crate::memory::store::open(&self.db_path)?,
-            claim,
-            now,
-            "complete",
-            None,
-        )
+        self.mark_sync_request_complete_inner(claim, now, None)
+    }
+
+    fn mark_sync_request_complete_inner(
+        &self,
+        claim: &MeshSyncRequest,
+        now: i64,
+        authorized: Option<AuthorizedDurableMutation<'_>>,
+    ) -> Result<bool> {
+        let mut conn = crate::memory::store::open(&self.db_path)?;
+        resolve_sync_request_claim_on_conn(&mut conn, claim, now, "complete", None, authorized)
     }
 
     /// Read the authoritative durable causal frontier in stable peer-id order.
@@ -826,11 +1378,28 @@ fn canonical_frame_sha256(frame: &GossipFrame) -> Result<[u8; 32]> {
 }
 
 fn load_vector_frontier(conn: &Connection) -> Result<VectorClock> {
-    let mut stmt =
-        conn.prepare("SELECT peer_pk,counter FROM mesh_sync_vector_frontier ORDER BY peer_pk ASC")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    load_vector_frontier_for(conn, None)
+}
+
+fn load_vector_frontier_for(
+    conn: &Connection,
+    fence: Option<&MembershipFence>,
+) -> Result<VectorClock> {
+    let mut stmt = conn.prepare(
+        "SELECT peer_pk,counter FROM mesh_sync_vector_frontier
+         WHERE (?1 IS NULL AND fence_state='legacy_unbound')
+            OR (fence_state='active' AND stable_node_id=?1
+                AND auth_epoch=?2 AND membership_epoch=?3)
+         ORDER BY peer_pk ASC",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            fence.map(|value| value.stable_node_id.as_str()),
+            fence.map(|value| value.auth_epoch),
+            fence.map(|value| value.membership_epoch)
+        ],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+    )?;
     let mut clocks = BTreeMap::new();
     for row in rows {
         let (peer, counter) = row?;
@@ -850,22 +1419,56 @@ fn load_vector_frontier(conn: &Connection) -> Result<VectorClock> {
     Ok(VectorClock { clocks })
 }
 
-fn persist_vector_frontier(conn: &Connection, frontier: &VectorClock) -> Result<()> {
+fn persist_vector_frontier_for(
+    conn: &Connection,
+    frontier: &VectorClock,
+    fence: Option<&MembershipFence>,
+) -> Result<()> {
     ensure!(
         frontier.clocks.len() <= MAX_VECTOR_CLOCK_PEERS,
         "durable vector frontier exceeds the bounded peer limit"
     );
-    conn.execute("DELETE FROM mesh_sync_vector_frontier", [])?;
+    if let Some(fence) = fence {
+        conn.execute(
+            "DELETE FROM mesh_sync_vector_frontier
+             WHERE stable_node_id=?1 AND auth_epoch=?2 AND membership_epoch=?3",
+            params![
+                fence.stable_node_id.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch
+            ],
+        )?;
+    } else {
+        conn.execute(
+            "DELETE FROM mesh_sync_vector_frontier WHERE fence_state='legacy_unbound'",
+            [],
+        )?;
+    }
     for (peer, counter) in &frontier.clocks {
         ensure!(
             !peer.as_str().is_empty(),
             "vector frontier peer id is empty"
         );
         ensure!(*counter > 0, "vector frontier counter must be positive");
-        conn.execute(
-            "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES (?1,?2)",
-            params![peer.as_str(), i64::try_from(*counter)?],
-        )?;
+        if let Some(fence) = fence {
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier
+                 (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,counter)
+                 VALUES (?1,?2,?3,?4,'active',?5)",
+                params![
+                    peer.as_str(),
+                    fence.stable_node_id.as_str(),
+                    fence.auth_epoch,
+                    fence.membership_epoch,
+                    i64::try_from(*counter)?
+                ],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO mesh_sync_vector_frontier (peer_pk,counter) VALUES (?1,?2)",
+                params![peer.as_str(), i64::try_from(*counter)?],
+            )?;
+        }
     }
     Ok(())
 }
@@ -892,10 +1495,11 @@ fn seed_legacy_local_counter(
     Ok(())
 }
 
-fn merge_vector_frontier(
+fn merge_vector_frontier_for(
     conn: &Connection,
     authenticated_origin: &PeerPubkey,
     incoming: &VectorClock,
+    fence: Option<&MembershipFence>,
 ) -> Result<VectorClock> {
     ensure!(
         incoming.clocks.len() <= MAX_VECTOR_CLOCK_PEERS,
@@ -908,7 +1512,7 @@ fn merge_vector_frontier(
             .all(|(peer, counter)| !peer.as_str().is_empty() && *counter > 0),
         "inbound mesh vector clock contains an invalid slot"
     );
-    let mut frontier = load_vector_frontier(conn)?;
+    let mut frontier = load_vector_frontier_for(conn, fence)?;
     let origin_counter = incoming.get(authenticated_origin);
     ensure!(
         origin_counter > 0,
@@ -939,7 +1543,7 @@ fn merge_vector_frontier(
             *counter = (*counter).max(*incoming_counter);
         }
     }
-    persist_vector_frontier(conn, &frontier)?;
+    persist_vector_frontier_for(conn, &frontier, fence)?;
     Ok(frontier)
 }
 
@@ -1043,8 +1647,11 @@ fn persist_idle_cursor(
     conn: &mut Connection,
     peer: &PeerPubkey,
     cursor: &GossipWalCursor,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
 ) -> Result<()> {
+    attach_durable_authority(conn, authorized)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    validate_and_activate_durable_authority(&tx, authorized)?;
     let pending: i64 = tx.query_row(
         "SELECT count(*) FROM mesh_sync_outbound_pending WHERE peer_pk = ?1",
         [peer.as_str()],
@@ -1054,21 +1661,49 @@ fn persist_idle_cursor(
         pending == 0,
         "pending frame appeared while persisting idle cursor"
     );
-    tx.execute(
-        "INSERT INTO mesh_sync_outbound (peer_pk, cursor_segment, cursor_offset, updated_at) \
-         VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(peer_pk) DO UPDATE SET cursor_segment=excluded.cursor_segment, \
-         cursor_offset=excluded.cursor_offset, updated_at=excluded.updated_at",
-        params![
-            peer.as_str(),
-            cursor
-                .segment
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-            i64::try_from(cursor.offset).context("mesh cursor offset exceeds SQLite i64")?,
-            crate::time::now_unix_i64(),
-        ],
-    )?;
+    let cursor_segment = cursor
+        .segment
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    let cursor_offset =
+        i64::try_from(cursor.offset).context("mesh cursor offset exceeds SQLite i64")?;
+    if let Some((fence, _)) = authorized {
+        tx.execute(
+            "INSERT INTO mesh_sync_outbound
+             (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              cursor_segment,cursor_offset,updated_at)
+             VALUES (?1,?1,?2,?3,'active',?4,?5,?6)
+             ON CONFLICT(peer_pk) DO UPDATE SET
+               stable_node_id=excluded.stable_node_id,
+               auth_epoch=excluded.auth_epoch,
+               membership_epoch=excluded.membership_epoch,
+               fence_state='active',
+               cursor_segment=excluded.cursor_segment,
+               cursor_offset=excluded.cursor_offset,
+               updated_at=excluded.updated_at",
+            params![
+                peer.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                cursor_segment,
+                cursor_offset,
+                crate::time::now_unix_i64(),
+            ],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO mesh_sync_outbound (peer_pk, cursor_segment, cursor_offset, updated_at) \
+             VALUES (?1, ?2, ?3, ?4) \
+             ON CONFLICT(peer_pk) DO UPDATE SET cursor_segment=excluded.cursor_segment, \
+             cursor_offset=excluded.cursor_offset, updated_at=excluded.updated_at",
+            params![
+                peer.as_str(),
+                cursor_segment,
+                cursor_offset,
+                crate::time::now_unix_i64(),
+            ],
+        )?;
+    }
     tx.commit().context("commit idle durable mesh cursor")
 }
 
@@ -1082,8 +1717,12 @@ fn stage_frame(
     raw: &[u8],
     next_cursor: &GossipWalCursor,
     policy: &GossipPolicy,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
 ) -> Result<PreparedFrame> {
+    attach_durable_authority(conn, authorized)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    validate_and_activate_durable_authority(&tx, authorized)?;
+    let fence = authorized.map(|(fence, _)| fence);
     if let Some(pending) = load_pending(&tx, peer)? {
         let frame = validate_pending(&pending, origin)?;
         tx.commit()?;
@@ -1105,8 +1744,10 @@ fn stage_frame(
     // frame. Reading the migration baseline after the insert would count the
     // current event once as legacy state and then tick it a second time,
     // starting a fresh node-global frontier at 2 instead of 1.
-    let mut vector_clock = load_vector_frontier(&tx)?;
-    seed_legacy_local_counter(&tx, origin, &mut vector_clock)?;
+    let mut vector_clock = load_vector_frontier_for(&tx, fence)?;
+    if fence.is_none() {
+        seed_legacy_local_counter(&tx, origin, &mut vector_clock)?;
+    }
     ensure!(
         vector_clock.clocks.contains_key(origin)
             || vector_clock.clocks.len() < MAX_VECTOR_CLOCK_PEERS,
@@ -1143,21 +1784,39 @@ fn stage_frame(
             )?;
             let seq = positive_u64(next, "next local mesh origin_seq")?;
             let envelope_bytes = serde_json::to_vec(&envelope)?;
-            tx.execute(
-                "INSERT INTO mesh_sync_local_events \
-                 (peer_pk, origin_seq, content_sha256, envelope, created_at) VALUES (?1,?2,?3,?4,?5)",
-                params![
-                    peer.as_str(),
-                    i64::try_from(seq)?,
-                    digest.as_slice(),
-                    envelope_bytes,
-                    crate::time::now_unix_i64(),
-                ],
-            )?;
+            if let Some(fence) = fence {
+                tx.execute(
+                    "INSERT INTO mesh_sync_local_events
+                     (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+                      origin_seq,content_sha256,envelope,created_at)
+                     VALUES (?1,?1,?2,?3,'active',?4,?5,?6,?7)",
+                    params![
+                        peer.as_str(),
+                        fence.auth_epoch,
+                        fence.membership_epoch,
+                        i64::try_from(seq)?,
+                        digest.as_slice(),
+                        envelope_bytes,
+                        crate::time::now_unix_i64(),
+                    ],
+                )?;
+            } else {
+                tx.execute(
+                    "INSERT INTO mesh_sync_local_events \
+                     (peer_pk, origin_seq, content_sha256, envelope, created_at) VALUES (?1,?2,?3,?4,?5)",
+                    params![
+                        peer.as_str(),
+                        i64::try_from(seq)?,
+                        digest.as_slice(),
+                        envelope_bytes,
+                        crate::time::now_unix_i64(),
+                    ],
+                )?;
+            }
             seq
         }
     };
-    persist_vector_frontier(&tx, &vector_clock)?;
+    persist_vector_frontier_for(&tx, &vector_clock, fence)?;
     let frame = GossipFrame {
         protocol_version: SYNC_PROTOCOL_VERSION,
         vector_clock,
@@ -1170,28 +1829,64 @@ fn stage_frame(
         envelope,
     };
     let wire = serde_json::to_vec(&frame)?;
-    tx.execute(
-        "INSERT OR IGNORE INTO mesh_sync_outbound \
-         (peer_pk, cursor_segment, cursor_offset, updated_at) VALUES (?1, NULL, 0, ?2)",
-        params![peer.as_str(), crate::time::now_unix_i64()],
-    )?;
-    tx.execute(
-        "INSERT INTO mesh_sync_outbound_pending \
-         (peer_pk, origin_seq, content_sha256, wire_frame, next_cursor_segment, \
-          next_cursor_offset, attempts, created_at) VALUES (?1,?2,?3,?4,?5,?6,0,?7)",
-        params![
-            peer.as_str(),
-            i64::try_from(origin_seq)?,
-            digest.as_slice(),
-            wire,
-            next_cursor
-                .segment
-                .as_ref()
-                .map(|p| p.to_string_lossy().into_owned()),
-            i64::try_from(next_cursor.offset).context("mesh cursor offset exceeds SQLite i64")?,
-            crate::time::now_unix_i64(),
-        ],
-    )?;
+    let next_segment = next_cursor
+        .segment
+        .as_ref()
+        .map(|p| p.to_string_lossy().into_owned());
+    let next_offset =
+        i64::try_from(next_cursor.offset).context("mesh cursor offset exceeds SQLite i64")?;
+    if let Some(fence) = fence {
+        tx.execute(
+            "INSERT OR IGNORE INTO mesh_sync_outbound
+             (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              cursor_segment,cursor_offset,updated_at)
+             VALUES (?1,?1,?2,?3,'active',NULL,0,?4)",
+            params![
+                peer.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                crate::time::now_unix_i64()
+            ],
+        )?;
+        tx.execute(
+            "INSERT INTO mesh_sync_outbound_pending
+             (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              origin_seq,content_sha256,wire_frame,next_cursor_segment,
+              next_cursor_offset,attempts,created_at)
+             VALUES (?1,?1,?2,?3,'active',?4,?5,?6,?7,?8,0,?9)",
+            params![
+                peer.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                i64::try_from(origin_seq)?,
+                digest.as_slice(),
+                wire,
+                next_segment,
+                next_offset,
+                crate::time::now_unix_i64(),
+            ],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT OR IGNORE INTO mesh_sync_outbound \
+             (peer_pk, cursor_segment, cursor_offset, updated_at) VALUES (?1, NULL, 0, ?2)",
+            params![peer.as_str(), crate::time::now_unix_i64()],
+        )?;
+        tx.execute(
+            "INSERT INTO mesh_sync_outbound_pending \
+             (peer_pk, origin_seq, content_sha256, wire_frame, next_cursor_segment, \
+              next_cursor_offset, attempts, created_at) VALUES (?1,?2,?3,?4,?5,?6,0,?7)",
+            params![
+                peer.as_str(),
+                i64::try_from(origin_seq)?,
+                digest.as_slice(),
+                wire,
+                next_segment,
+                next_offset,
+                crate::time::now_unix_i64(),
+            ],
+        )?;
+    }
     tx.commit()
         .context("commit durable outbound pending frame")?;
     Ok(PreparedFrame {
@@ -1412,12 +2107,24 @@ fn acknowledge_outbound_on_conn(
     local_origin: &PeerPubkey,
     ack: &GossipAck,
 ) -> Result<OutboundAckOutcome> {
+    acknowledge_outbound_on_conn_inner(conn, authenticated_peer, local_origin, ack, None)
+}
+
+fn acknowledge_outbound_on_conn_inner(
+    conn: &mut Connection,
+    authenticated_peer: &PeerPubkey,
+    local_origin: &PeerPubkey,
+    ack: &GossipAck,
+    authorized: Option<(&MembershipFence, &MembershipEffectGuard)>,
+) -> Result<OutboundAckOutcome> {
     ensure!(
         ack.protocol_version == SYNC_PROTOCOL_VERSION,
         "old or unknown mesh ACK protocol"
     );
     ensure!(ack.origin == *local_origin, "mesh ACK origin mismatch");
+    attach_durable_authority(conn, authorized)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    validate_and_activate_durable_authority(&tx, authorized)?;
     let pending = tx
         .query_row(
             "SELECT origin_seq,content_sha256,next_cursor_segment,next_cursor_offset \
@@ -1488,11 +2195,33 @@ fn acknowledge_outbound_on_conn(
     Ok(OutboundAckOutcome::Applied)
 }
 
+#[cfg(test)]
 pub(crate) fn persist_inbound_on_conn(
     conn: &mut Connection,
     authenticated_peer: &PeerPubkey,
     frame: &GossipFrame,
     policy: &GossipPolicy,
+) -> Result<InboundCommit> {
+    persist_inbound_on_conn_inner(conn, authenticated_peer, frame, policy, None)
+}
+
+pub(crate) fn persist_inbound_on_conn_authorized(
+    conn: &mut Connection,
+    effect: &MembershipEffectGuard,
+    frame: &GossipFrame,
+    policy: &GossipPolicy,
+) -> Result<InboundCommit> {
+    let fence = MembershipFence::from_effect(effect);
+    let authorized = Some((&fence, effect));
+    persist_inbound_on_conn_inner(conn, &fence.peer(), frame, policy, authorized)
+}
+
+fn persist_inbound_on_conn_inner(
+    conn: &mut Connection,
+    authenticated_peer: &PeerPubkey,
+    frame: &GossipFrame,
+    policy: &GossipPolicy,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
 ) -> Result<InboundCommit> {
     ensure!(
         frame.vector_clock.clocks.len() <= MAX_VECTOR_CLOCK_PEERS,
@@ -1510,9 +2239,9 @@ pub(crate) fn persist_inbound_on_conn(
         frame.vector_clock.get(authenticated_peer) > 0,
         "inbound mesh vector clock is missing its origin slot"
     );
-    let now = crate::time::now_unix_i64();
+    let acceptance_now = crate::time::now_unix_i64();
     let replay_budget = super::gossip::ReplayBudget::from_policy(policy);
-    let preliminary = frame.evaluate_acceptance(&replay_budget, now, false);
+    let preliminary = frame.evaluate_acceptance(&replay_budget, acceptance_now, false);
     if !matches!(preliminary, GossipAcceptance::Accept) {
         return Ok(InboundCommit::Dropped(preliminary));
     }
@@ -1530,7 +2259,11 @@ pub(crate) fn persist_inbound_on_conn(
     validate_content_shape(frame, event_type, event_subtype, policy)?;
     let frame_sha256 = canonical_frame_sha256(frame)?;
 
+    attach_durable_authority(conn, authorized)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let now = crate::time::now_unix_i64();
+    validate_and_activate_durable_authority(&tx, authorized)?;
+    let fence = authorized.map(|(fence, _)| fence);
     let next = tx
         .query_row(
             "SELECT next_expected_seq,last_content_sha256 FROM mesh_sync_inbound WHERE origin_peer_pk=?1",
@@ -1584,33 +2317,68 @@ pub(crate) fn persist_inbound_on_conn(
                 == frame_sha256,
             "replayed mesh sequence carries a different canonical frame"
         );
-        merge_vector_frontier(&tx, authenticated_peer, &frame.vector_clock)?;
+        merge_vector_frontier_for(&tx, authenticated_peer, &frame.vector_clock, fence)?;
         tx.commit()?;
         return Ok(InboundCommit::Duplicate(ack));
     }
 
     let store_content = !raw_frame_matches_forget_tombstone(&tx, event_type, &frame.payload)?;
-    tx.execute(
-        "INSERT INTO mesh_sync_inbound_receipts \
-          (origin_peer_pk,origin_seq,content_sha256,frame_sha256,content_stored,committed_at) \
-          VALUES (?1,?2,?3,?4,?5,?6)",
-        params![
-            authenticated_peer.as_str(),
-            i64::try_from(frame.event_seq)?,
-            frame.content_sha256.as_slice(),
-            frame_sha256.as_slice(),
-            if store_content { 1_i64 } else { 0_i64 },
-            now,
-        ],
-    )?;
+    if let Some(fence) = fence {
+        tx.execute(
+            "INSERT INTO mesh_sync_inbound_receipts
+             (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              origin_seq,content_sha256,frame_sha256,content_stored,committed_at)
+             VALUES (?1,?1,?2,?3,'active',?4,?5,?6,?7,?8)",
+            params![
+                authenticated_peer.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                i64::try_from(frame.event_seq)?,
+                frame.content_sha256.as_slice(),
+                frame_sha256.as_slice(),
+                if store_content { 1_i64 } else { 0_i64 },
+                now,
+            ],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO mesh_sync_inbound_receipts \
+              (origin_peer_pk,origin_seq,content_sha256,frame_sha256,content_stored,committed_at) \
+              VALUES (?1,?2,?3,?4,?5,?6)",
+            params![
+                authenticated_peer.as_str(),
+                i64::try_from(frame.event_seq)?,
+                frame.content_sha256.as_slice(),
+                frame_sha256.as_slice(),
+                if store_content { 1_i64 } else { 0_i64 },
+                now,
+            ],
+        )?;
+    }
     if store_content {
+        let (stable_node_id, auth_epoch, membership_epoch, fence_state) = fence
+            .map(|fence| {
+                (
+                    fence.stable_node_id.as_str(),
+                    fence.auth_epoch,
+                    fence.membership_epoch,
+                    "active",
+                )
+            })
+            .unwrap_or((authenticated_peer.as_str(), 1, 1, "legacy_unbound"));
         let envelope_bytes = serde_json::to_vec(&frame.envelope)?;
         tx.execute(
             "INSERT INTO idx_foreign_events \
-             (origin_peer_pk,origin_seq,event_type,payload,received_at,envelope_version,content_sha256,content_kind,content_payload) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+             (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              origin_seq,event_type,payload,received_at,envelope_version,content_sha256,
+              content_kind,content_payload) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
             params![
                 authenticated_peer.as_str(),
+                stable_node_id,
+                auth_epoch,
+                membership_epoch,
+                fence_state,
                 i64::try_from(frame.event_seq)?,
                 i64::from(event_type),
                 &frame.payload,
@@ -1621,26 +2389,52 @@ pub(crate) fn persist_inbound_on_conn(
                 &envelope_bytes,
             ],
         )?;
-        materialize_inbound(&tx, authenticated_peer, frame, &envelope_bytes, now)?;
+        materialize_inbound(&tx, authenticated_peer, frame, &envelope_bytes, now, fence)?;
     }
-    tx.execute(
-        "INSERT INTO mesh_sync_inbound \
-         (origin_peer_pk,next_expected_seq,last_content_sha256,updated_at) VALUES (?1,?2,?3,?4) \
-         ON CONFLICT(origin_peer_pk) DO UPDATE SET next_expected_seq=excluded.next_expected_seq, \
-         last_content_sha256=excluded.last_content_sha256,updated_at=excluded.updated_at",
-        params![
-            authenticated_peer.as_str(),
-            i64::try_from(
-                frame
-                    .event_seq
-                    .checked_add(1)
-                    .context("mesh sequence overflow")?
-            )?,
-            frame.content_sha256.as_slice(),
-            now,
-        ],
+    let next_expected = i64::try_from(
+        frame
+            .event_seq
+            .checked_add(1)
+            .context("mesh sequence overflow")?,
     )?;
-    merge_vector_frontier(&tx, authenticated_peer, &frame.vector_clock)?;
+    if let Some(fence) = fence {
+        tx.execute(
+            "INSERT INTO mesh_sync_inbound
+             (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              next_expected_seq,last_content_sha256,updated_at)
+             VALUES (?1,?1,?2,?3,'active',?4,?5,?6)
+             ON CONFLICT(origin_peer_pk) DO UPDATE SET
+               stable_node_id=excluded.stable_node_id,
+               auth_epoch=excluded.auth_epoch,
+               membership_epoch=excluded.membership_epoch,
+               fence_state='active',
+               next_expected_seq=excluded.next_expected_seq,
+               last_content_sha256=excluded.last_content_sha256,
+               updated_at=excluded.updated_at",
+            params![
+                authenticated_peer.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                next_expected,
+                frame.content_sha256.as_slice(),
+                now,
+            ],
+        )?;
+    } else {
+        tx.execute(
+            "INSERT INTO mesh_sync_inbound \
+             (origin_peer_pk,next_expected_seq,last_content_sha256,updated_at) VALUES (?1,?2,?3,?4) \
+             ON CONFLICT(origin_peer_pk) DO UPDATE SET next_expected_seq=excluded.next_expected_seq, \
+             last_content_sha256=excluded.last_content_sha256,updated_at=excluded.updated_at",
+            params![
+                authenticated_peer.as_str(),
+                next_expected,
+                frame.content_sha256.as_slice(),
+                now,
+            ],
+        )?;
+    }
+    merge_vector_frontier_for(&tx, authenticated_peer, &frame.vector_clock, fence)?;
     tx.commit().context("commit inbound durable mesh content")?;
     Ok(InboundCommit::Committed(ack))
 }
@@ -1835,12 +2629,23 @@ fn materialize_inbound(
     frame: &GossipFrame,
     envelope_bytes: &[u8],
     now: i64,
+    fence: Option<&MembershipFence>,
 ) -> Result<()> {
+    let (stable_node_id, auth_epoch, membership_epoch, fence_state) = fence
+        .map(|fence| {
+            (
+                fence.stable_node_id.as_str(),
+                fence.auth_epoch,
+                fence.membership_epoch,
+                "active",
+            )
+        })
+        .unwrap_or((origin.as_str(), 1, 1, "legacy_unbound"));
     let current = tx
         .query_row(
             "SELECT origin_seq,content_sha256 FROM mesh_sync_materialized \
-             WHERE origin_peer_pk=?1 AND content_id=?2",
-            params![origin.as_str(), &frame.envelope.content_id],
+             WHERE stable_node_id=?1 AND auth_epoch=?2 AND content_id=?3",
+            params![stable_node_id, auth_epoch, &frame.envelope.content_id],
             |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)),
         )
         .optional()?;
@@ -1856,7 +2661,9 @@ fn materialize_inbound(
                 tx,
                 &frame.envelope.content_id,
                 origin.as_str(),
+                auth_epoch,
                 origin.as_str(),
+                auth_epoch,
                 current_digest,
                 frame.content_sha256,
                 "ordered_origin_lww",
@@ -1865,23 +2672,33 @@ fn materialize_inbound(
         }
     }
     let mut stmt = tx.prepare(
-        "SELECT origin_peer_pk,content_sha256 FROM mesh_sync_materialized \
-         WHERE content_id=?1 AND origin_peer_pk<>?2 ORDER BY origin_peer_pk",
+        "SELECT origin_peer_pk,auth_epoch,content_sha256 FROM mesh_sync_materialized \
+         WHERE content_id=?1 AND (stable_node_id<>?2 OR auth_epoch<>?3)
+         ORDER BY stable_node_id,auth_epoch",
     )?;
     let others = stmt
-        .query_map(params![&frame.envelope.content_id, origin.as_str()], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })?
+        .query_map(
+            params![&frame.envelope.content_id, stable_node_id, auth_epoch],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, u64>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                ))
+            },
+        )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(stmt);
-    for (other_origin, other_digest) in others {
+    for (other_origin, other_auth_epoch, other_digest) in others {
         let other_digest = digest_from_vec(other_digest, "cross-origin materialized digest")?;
         if other_digest != frame.content_sha256 {
             insert_conflict(
                 tx,
                 &frame.envelope.content_id,
                 &other_origin,
+                other_auth_epoch,
                 origin.as_str(),
+                auth_epoch,
                 other_digest,
                 frame.content_sha256,
                 "cross_origin_typed_conflict",
@@ -1891,13 +2708,20 @@ fn materialize_inbound(
     }
     tx.execute(
         "INSERT INTO mesh_sync_materialized \
-         (origin_peer_pk,content_id,origin_seq,content_sha256,content_kind,content_payload,updated_at) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7) \
-         ON CONFLICT(origin_peer_pk,content_id) DO UPDATE SET origin_seq=excluded.origin_seq, \
+         (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+          content_id,origin_seq,content_sha256,content_kind,content_payload,updated_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) \
+         ON CONFLICT(stable_node_id,auth_epoch,content_id) DO UPDATE SET
+         origin_peer_pk=excluded.origin_peer_pk,membership_epoch=excluded.membership_epoch,
+         fence_state=excluded.fence_state,origin_seq=excluded.origin_seq, \
          content_sha256=excluded.content_sha256,content_kind=excluded.content_kind, \
          content_payload=excluded.content_payload,updated_at=excluded.updated_at",
         params![
             origin.as_str(),
+            stable_node_id,
+            auth_epoch,
+            membership_epoch,
+            fence_state,
             &frame.envelope.content_id,
             i64::try_from(frame.event_seq)?,
             frame.content_sha256.as_slice(),
@@ -1914,25 +2738,45 @@ fn insert_conflict(
     tx: &rusqlite::Transaction<'_>,
     content_id: &str,
     origin_a: &str,
+    auth_epoch_a: u64,
     origin_b: &str,
+    auth_epoch_b: u64,
     digest_a: [u8; 32],
     digest_b: [u8; 32],
     policy: &str,
     observed_at: i64,
 ) -> Result<()> {
-    let (first_origin, first_digest, second_origin, second_digest) = if origin_a <= origin_b {
-        (origin_a, digest_a, origin_b, digest_b)
-    } else {
-        (origin_b, digest_b, origin_a, digest_a)
-    };
+    let (first_origin, first_auth, first_digest, second_origin, second_auth, second_digest) =
+        if (origin_a, auth_epoch_a) <= (origin_b, auth_epoch_b) {
+            (
+                origin_a,
+                auth_epoch_a,
+                digest_a,
+                origin_b,
+                auth_epoch_b,
+                digest_b,
+            )
+        } else {
+            (
+                origin_b,
+                auth_epoch_b,
+                digest_b,
+                origin_a,
+                auth_epoch_a,
+                digest_a,
+            )
+        };
     tx.execute(
         "INSERT OR IGNORE INTO mesh_sync_conflicts \
-         (content_id,incumbent_origin,incoming_origin,incumbent_sha256,incoming_sha256,policy,observed_at) \
-         VALUES (?1,?2,?3,?4,?5,?6,?7)",
+         (content_id,incumbent_origin,incumbent_auth_epoch,incoming_origin,
+          incoming_auth_epoch,incumbent_sha256,incoming_sha256,policy,observed_at) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         params![
             content_id,
             first_origin,
+            first_auth,
             second_origin,
+            second_auth,
             first_digest.as_slice(),
             second_digest.as_slice(),
             policy,
@@ -2024,7 +2868,8 @@ fn load_sync_request_on_conn(
     peer: &PeerPubkey,
 ) -> Result<Option<MeshSyncRequest>> {
     conn.query_row(
-        "SELECT peer_pk,state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
+        "SELECT peer_pk,stable_node_id,auth_epoch,membership_epoch,
+                state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
          FROM mesh_sync_requests WHERE peer_pk=?1",
         [peer.as_str()],
         map_sync_request_row,
@@ -2039,7 +2884,8 @@ fn list_due_sync_requests_on_conn(
     retry_before: i64,
 ) -> Result<Vec<MeshSyncRequest>> {
     let mut statement = conn.prepare(
-        "SELECT peer_pk,state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
+        "SELECT peer_pk,stable_node_id,auth_epoch,membership_epoch,
+                state,requested_at,expires_at,updated_at,last_attempt_at,send_attempts,last_error \
          FROM mesh_sync_requests \
          WHERE state IN ('queued','active','waiting_peer') AND expires_at > ?1 \
            AND (last_attempt_at IS NULL OR last_attempt_at <= ?2) \
@@ -2051,26 +2897,32 @@ fn list_due_sync_requests_on_conn(
 }
 
 fn map_sync_request_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<MeshSyncRequest> {
-    let send_attempts = nonnegative_u64(row.get(6)?, "mesh sync request send_attempts")?;
+    let auth_epoch = positive_u64(row.get(2)?, "mesh sync request auth_epoch")?;
+    let membership_epoch = positive_u64(row.get(3)?, "mesh sync request membership_epoch")?;
+    let send_attempts = nonnegative_u64(row.get(9)?, "mesh sync request send_attempts")?;
     Ok(MeshSyncRequest {
         operation: MESH_SYNC_REQUEST_OPERATION.to_string(),
         peer_pk: row.get(0)?,
-        state: row.get(1)?,
-        requested_at: row.get(2)?,
-        expires_at: row.get(3)?,
-        updated_at: row.get(4)?,
-        last_attempt_at: row.get(5)?,
+        stable_node_id: row.get(1)?,
+        auth_epoch,
+        membership_epoch,
+        state: row.get(4)?,
+        requested_at: row.get(5)?,
+        expires_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        last_attempt_at: row.get(8)?,
         send_attempts,
-        last_error: row.get(7)?,
+        last_error: row.get(10)?,
     })
 }
 
 fn resolve_sync_request_claim_on_conn(
-    conn: &Connection,
+    conn: &mut Connection,
     claim: &MeshSyncRequest,
     now: i64,
     state: &str,
     error: Option<&str>,
+    authorized: Option<AuthorizedDurableMutation<'_>>,
 ) -> Result<bool> {
     ensure!(
         now > 0,
@@ -2083,11 +2935,16 @@ fn resolve_sync_request_claim_on_conn(
     );
     let resolved_at = now.max(claimed_at);
     let error = error.map(|value| value.chars().take(240).collect::<String>());
-    let changed = conn.execute(
+    attach_durable_authority(conn, authorized)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    validate_and_activate_durable_authority(&tx, authorized)?;
+    let changed = tx.execute(
         "UPDATE mesh_sync_requests SET state=?2,updated_at=?3,last_attempt_at=?3, \
          last_error=?4 \
          WHERE peer_pk=?1 AND requested_at=?5 AND state='active' \
-           AND last_attempt_at=?6 AND expires_at > ?3",
+           AND last_attempt_at=?6 AND expires_at > ?3
+           AND fence_state='active' AND stable_node_id=?1
+           AND auth_epoch=?7 AND membership_epoch=?8",
         params![
             claim.peer_pk.as_str(),
             state,
@@ -2095,6 +2952,8 @@ fn resolve_sync_request_claim_on_conn(
             error,
             claim.requested_at,
             claimed_at,
+            claim.auth_epoch,
+            claim.membership_epoch,
         ],
     )?;
     ensure!(
@@ -2102,6 +2961,8 @@ fn resolve_sync_request_claim_on_conn(
         "mesh sync primary-key invariant violated for peer {}",
         claim.peer_pk
     );
+    tx.commit()
+        .context("commit authorized mesh request receipt state")?;
     Ok(changed == 1)
 }
 
@@ -2110,9 +2971,26 @@ fn validate_active_sync_claim(claim: &MeshSyncRequest) -> Result<i64> {
         claim.operation == MESH_SYNC_REQUEST_OPERATION && claim.state == "active",
         "mesh sync progress requires an active typed claim"
     );
+    ensure!(
+        claim.stable_node_id == claim.peer_pk && claim.auth_epoch > 0 && claim.membership_epoch > 0,
+        "mesh sync claim membership fence is invalid"
+    );
     claim
         .last_attempt_at
         .context("active mesh sync claim has no lease timestamp")
+}
+
+fn ensure_claim_matches_effect(
+    claim: &MeshSyncRequest,
+    effect: &MembershipEffectGuard,
+) -> Result<()> {
+    ensure!(
+        claim.stable_node_id == effect.stable_node_id().as_str()
+            && claim.auth_epoch == effect.auth_epoch().get()
+            && claim.membership_epoch == effect.membership_epoch().get(),
+        "mesh sync claim belongs to a stale membership incarnation"
+    );
+    Ok(())
 }
 
 fn json_i64(payload: &[u8], field: &str) -> Result<i64> {
@@ -2189,6 +3067,722 @@ mod tests {
         let db_path = dir.path().join("views.db");
         let conn = crate::memory::store::open(&db_path).unwrap();
         (dir, db_path, conn)
+    }
+
+    fn test_membership_controller(
+        authority_home: &Path,
+    ) -> std::sync::Arc<super::super::membership::MembershipController> {
+        let sessions = std::sync::Arc::new(super::super::membership::LiveSessionRegistry::new());
+        std::sync::Arc::new(super::super::membership::MembershipController::new(
+            super::super::membership::MembershipStore::open(authority_home).unwrap(),
+            sessions,
+        ))
+    }
+
+    fn enrolled_test_grant(
+        controller: &super::super::membership::MembershipController,
+        identity_home: &Path,
+        transport_id: &str,
+        label: &str,
+        now: i64,
+    ) -> MembershipGrant {
+        let identity =
+            super::super::membership::LocalNodeIdentity::load_or_create(identity_home).unwrap();
+        let transport = super::super::membership::TransportIdentity::parse(transport_id).unwrap();
+        let attestation = identity
+            .attest_endpoint(
+                super::super::membership::CarrierKind::Iroh,
+                transport.clone(),
+                super::super::membership::BootId::new(),
+                "durable-v34-test".into(),
+                "test".into(),
+                super::super::membership::AuthEpoch::INITIAL,
+                super::super::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test-invitation".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        controller
+            .store()
+            .confirm_attestation(
+                &attestation,
+                super::super::membership::CarrierKind::Iroh,
+                &transport,
+                "test",
+                label,
+                now,
+            )
+            .unwrap();
+        controller
+            .store()
+            .admit(super::super::membership::CarrierKind::Iroh, &transport, now)
+            .unwrap()
+    }
+
+    fn detached_test_grant(
+        authority_home: &Path,
+        enrolled: &MembershipGrant,
+        now: i64,
+    ) -> MembershipGrant {
+        super::super::membership::MembershipStore::open(authority_home)
+            .unwrap()
+            .admit(
+                super::super::membership::CarrierKind::Iroh,
+                enrolled.transport_identity(),
+                now,
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn revoked_membership_quarantines_transient_state_but_retains_provenance() {
+        let (_dir, db_path, conn) = open_test_db();
+        let stable = StableNodeId::parse("b".repeat(64)).unwrap();
+        conn.execute(
+            "INSERT INTO mesh_sync_outbound
+             (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,updated_at)
+             VALUES (?1,?1,1,1,'active',1)",
+            [stable.as_str()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mesh_sync_vector_frontier
+             (peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,counter)
+             VALUES ('remote',?1,1,1,'active',1)",
+            [stable.as_str()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mesh_sync_materialized
+             (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+              content_id,origin_seq,content_sha256,content_kind,content_payload,updated_at)
+             VALUES (?1,?1,1,1,'active','metadata:test',1,zeroblob(32),'metadata',X'01',1)",
+            [stable.as_str()],
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(quarantine_revoked_membership(&db_path, &stable).unwrap(), 2);
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        for table in ["mesh_sync_outbound", "mesh_sync_vector_frontier"] {
+            assert_eq!(
+                conn.query_row(
+                    &format!("SELECT COUNT(*) FROM {table} WHERE stable_node_id=?1"),
+                    [stable.as_str()],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+                0
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM mesh_sync_materialized WHERE stable_node_id=?1",
+                [stable.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_survivor_cannot_write_and_fresh_generation_preserves_sequence_and_frontier() {
+        let home = tempfile::tempdir().unwrap();
+        let survivor_identity = tempfile::tempdir().unwrap();
+        let revoked_identity = tempfile::tempdir().unwrap();
+        let now = 1_900_000_000;
+        let controller = test_membership_controller(home.path());
+        let survivor = enrolled_test_grant(
+            &controller,
+            survivor_identity.path(),
+            &"ab".repeat(32),
+            "survivor",
+            now,
+        );
+        let revoked = enrolled_test_grant(
+            &controller,
+            revoked_identity.path(),
+            &"cd".repeat(32),
+            "revoked",
+            now,
+        );
+        let db_path = home.path().join("views.db");
+        let sync = DurableMeshSync::new(db_path.clone());
+        let mut conn = crate::memory::store::open(&db_path).unwrap();
+        let peer = MembershipFence::from_grant(&survivor).peer();
+        let local_origin = PeerPubkey::new("local-origin");
+        let old_effect = survivor
+            .begin_effect_kind(now, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        let old_fence = MembershipFence::from_effect(&old_effect);
+        let first = stage_frame(
+            &mut conn,
+            &peer,
+            &local_origin,
+            0x94,
+            0,
+            &canonical_wal(0x94, br#"{"event_count":1}"#),
+            &GossipWalCursor::default(),
+            &GossipPolicy::default(),
+            Some((&old_fence, &old_effect)),
+        )
+        .unwrap();
+        assert_eq!(first.frame.event_seq, 1);
+        old_effect.finish().unwrap();
+
+        let ack_effect = survivor.begin_effect(now).unwrap();
+        sync.acknowledge_outbound_authorized(
+            &ack_effect,
+            &local_origin,
+            &GossipAck {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                origin: local_origin.clone(),
+                origin_seq: first.frame.event_seq,
+                content_sha256: first.frame.content_sha256,
+            },
+        )
+        .unwrap();
+        ack_effect.finish().unwrap();
+
+        let first_inbound = metadata_frame(peer.as_str(), 1, "first");
+        let inbound_effect = survivor.begin_effect(now).unwrap();
+        assert!(matches!(
+            sync.persist_inbound_authorized(
+                &inbound_effect,
+                &first_inbound,
+                &GossipPolicy::default()
+            )
+            .unwrap(),
+            InboundCommit::Committed(_)
+        ));
+        let live_frontier: SharedGossipState = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::wal_sync::GossipState::default(),
+        ));
+        assert!(merge_frontier_after_durable_commit(
+            &live_frontier,
+            &first_inbound,
+            &InboundCommit::Committed(GossipAck {
+                protocol_version: SYNC_PROTOCOL_VERSION,
+                origin: first_inbound.origin.clone(),
+                origin_seq: first_inbound.event_seq,
+                content_sha256: first_inbound.content_sha256,
+            }),
+        ));
+        inbound_effect.finish().unwrap();
+
+        controller
+            .revoke(revoked.stable_node_id().as_str(), "test", now + 1)
+            .unwrap()
+            .unwrap();
+        assert!(sync.request_sync_authorized(&survivor, now + 2).is_err());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM mesh_sync_requests", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+
+        let fresh = controller
+            .store()
+            .admit(
+                super::super::membership::CarrierKind::Iroh,
+                survivor.transport_identity(),
+                now + 2,
+            )
+            .unwrap();
+        assert_eq!(fresh.auth_epoch(), survivor.auth_epoch());
+        assert!(fresh.membership_epoch() > survivor.membership_epoch());
+        let fresh_effect = fresh
+            .begin_effect_kind(now + 2, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        let fresh_fence = MembershipFence::from_effect(&fresh_effect);
+        let second = stage_frame(
+            &mut conn,
+            &peer,
+            &local_origin,
+            0x94,
+            0,
+            &canonical_wal(0x94, br#"{"event_count":2}"#),
+            &GossipWalCursor::default(),
+            &GossipPolicy::default(),
+            Some((&fresh_fence, &fresh_effect)),
+        );
+        let second = second.unwrap();
+        assert_eq!(second.frame.event_seq, 2);
+        fresh_effect.finish().unwrap();
+
+        let second_inbound = metadata_frame(peer.as_str(), 2, "second");
+        let fresh_inbound_effect = fresh.begin_effect(now + 2).unwrap();
+        assert!(matches!(
+            sync.persist_inbound_authorized(
+                &fresh_inbound_effect,
+                &second_inbound,
+                &GossipPolicy::default()
+            )
+            .unwrap(),
+            InboundCommit::Committed(_)
+        ));
+        let fresh_inbound_fence = MembershipFence::from_effect(&fresh_inbound_effect);
+        let frontier = load_vector_frontier_for(&conn, Some(&fresh_inbound_fence)).unwrap();
+        assert_eq!(frontier.get(&local_origin), 2);
+        assert_eq!(frontier.get(&peer), 2);
+        assert_eq!(
+            conn.query_row(
+                "SELECT next_expected_seq FROM mesh_sync_inbound WHERE origin_peer_pk=?1",
+                [peer.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            3
+        );
+        fresh_inbound_effect.finish().unwrap();
+    }
+
+    #[test]
+    fn authorized_commit_holds_authority_lock_until_views_commit() {
+        let home = tempfile::tempdir().unwrap();
+        let identity = tempfile::tempdir().unwrap();
+        let now = 1_900_010_000;
+        let controller = test_membership_controller(home.path());
+        let grant = enrolled_test_grant(
+            &controller,
+            identity.path(),
+            &"11".repeat(32),
+            "commit-wins",
+            now,
+        );
+        let stable = grant.stable_node_id().clone();
+        let db_path = home.path().join("views.db");
+        let sync = DurableMeshSync::new(db_path.clone());
+        let pause = install_authorized_mutation_test_pause(&stable);
+        let worker = {
+            let sync = sync.clone();
+            let grant = grant.clone();
+            std::thread::spawn(move || sync.request_sync_authorized(&grant, now))
+        };
+
+        pause.entered.wait();
+        let authority_write = (|| -> rusqlite::Result<()> {
+            let mut conn = Connection::open(controller.store().path())?;
+            conn.busy_timeout(std::time::Duration::ZERO)?;
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute(
+                "UPDATE authority_meta
+                 SET membership_epoch=membership_epoch
+                 WHERE singleton=1",
+                [],
+            )?;
+            tx.commit()
+        })();
+        let authority_locked = authority_write
+            .as_ref()
+            .err()
+            .and_then(rusqlite::Error::sqlite_error_code)
+            .is_some_and(|code| {
+                matches!(
+                    code,
+                    rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                )
+            });
+
+        pause.release.wait();
+        let queued = worker.join().unwrap().unwrap();
+        assert!(authority_locked);
+        assert_eq!(queued.state, "queued");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM mesh_sync_requests WHERE peer_pk=?1",
+                [stable.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1,
+            "the views commit must linearize before the later revoke"
+        );
+        drop(conn);
+        controller
+            .revoke(stable.as_str(), "commit linearized first", now + 1)
+            .unwrap()
+            .unwrap();
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM mesh_sync_requests WHERE peer_pk=?1",
+                [stable.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0,
+            "the later revoke must quarantine the already-linearized transient row"
+        );
+        drop(conn);
+        assert_eq!(quarantine_revoked_membership(&db_path, &stable).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn revocation_wins_is_read_only_across_single_effect_mutations() {
+        let home = tempfile::tempdir().unwrap();
+        let identity = tempfile::tempdir().unwrap();
+        let now = 1_900_020_000;
+        let controller = test_membership_controller(home.path());
+        let enrolled = enrolled_test_grant(
+            &controller,
+            identity.path(),
+            &"22".repeat(32),
+            "revoke-wins",
+            now,
+        );
+        let detached = detached_test_grant(home.path(), &enrolled, now);
+        let peer = MembershipFence::from_grant(&detached).peer();
+        let db_path = home.path().join("views.db");
+        let sync = DurableMeshSync::new(db_path.clone());
+        sync.request_sync_authorized(&detached, now).unwrap();
+        let claim = sync
+            .claim_due_sync_requests_authorized(now, std::slice::from_ref(&detached))
+            .unwrap()
+            .pop()
+            .unwrap();
+        let stale_effect = detached
+            .begin_effect_kind(now, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        let stale_fence = MembershipFence::from_effect(&stale_effect);
+        controller
+            .revoke(peer.as_str(), "revoke wins", now + 1)
+            .unwrap()
+            .unwrap();
+
+        let before_request = {
+            let conn = crate::memory::store::open(&db_path).unwrap();
+            load_sync_request_on_conn(&conn, &peer).unwrap()
+        };
+        let mut conn = crate::memory::store::open(&db_path).unwrap();
+        assert!(
+            persist_idle_cursor(
+                &mut conn,
+                &peer,
+                &GossipWalCursor::default(),
+                Some((&stale_fence, &stale_effect)),
+            )
+            .is_err()
+        );
+        assert!(
+            stage_frame(
+                &mut conn,
+                &peer,
+                &PeerPubkey::new("local-origin"),
+                0x94,
+                0,
+                &canonical_wal(0x94, br#"{"event_count":1}"#),
+                &GossipWalCursor::default(),
+                &GossipPolicy::default(),
+                Some((&stale_fence, &stale_effect)),
+            )
+            .is_err()
+        );
+        assert!(
+            sync.request_sync_for_fence(&peer, now + 2, Some((&stale_fence, &stale_effect)),)
+                .is_err()
+        );
+        assert!(
+            sync.mark_sync_request_sending_inner(
+                &claim,
+                now + 2,
+                Some((&stale_fence, &stale_effect)),
+            )
+            .is_err()
+        );
+        assert!(
+            sync.mark_sync_request_waiting_inner(
+                &claim,
+                now + 2,
+                "stale",
+                Some((&stale_fence, &stale_effect)),
+            )
+            .is_err()
+        );
+        assert!(
+            sync.mark_sync_request_complete_inner(
+                &claim,
+                now + 2,
+                Some((&stale_fence, &stale_effect)),
+            )
+            .is_err()
+        );
+        let state: SharedGossipState = std::sync::Arc::new(std::sync::Mutex::new(
+            super::super::wal_sync::GossipState::default(),
+        ));
+        assert!(
+            sync.prepare_peer_frame_authorized(
+                &detached,
+                &PeerPubkey::new("local-origin"),
+                home.path(),
+                &GossipPolicy::default(),
+                &state,
+            )
+            .await
+            .is_err()
+        );
+
+        assert_eq!(
+            load_sync_request_on_conn(&conn, &peer).unwrap(),
+            before_request
+        );
+        for table in [
+            "mesh_sync_local_events",
+            "mesh_sync_outbound",
+            "mesh_sync_outbound_pending",
+            "mesh_sync_vector_frontier",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                0,
+                "revocation-first unexpectedly mutated {table}"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_grant_claim_validates_every_authority_before_mutation() {
+        let first_home = tempfile::tempdir().unwrap();
+        let first_identity = tempfile::tempdir().unwrap();
+        let second_home = tempfile::tempdir().unwrap();
+        let second_identity = tempfile::tempdir().unwrap();
+        let now = 1_900_030_000;
+        let first_controller = test_membership_controller(first_home.path());
+        let second_controller = test_membership_controller(second_home.path());
+        let first = enrolled_test_grant(
+            &first_controller,
+            first_identity.path(),
+            &"33".repeat(32),
+            "first-authority",
+            now,
+        );
+        let second = enrolled_test_grant(
+            &second_controller,
+            second_identity.path(),
+            &"44".repeat(32),
+            "second-authority",
+            now,
+        );
+        let db_path = first_home.path().join("views.db");
+        let sync = DurableMeshSync::new(db_path.clone());
+        let first_peer = MembershipFence::from_grant(&first).peer();
+        let second_peer = MembershipFence::from_grant(&second).peer();
+        let first_row = sync.request_sync(&first_peer, now).unwrap();
+        let second_row = sync.request_sync(&second_peer, now).unwrap();
+        assert!(
+            sync.claim_due_sync_requests_authorized(now, &[first.clone(), second])
+                .is_err(),
+            "mixed authority aliases must fail before BEGIN"
+        );
+        assert!(
+            sync.claim_due_sync_requests_authorized(now, &[])
+                .unwrap()
+                .is_empty()
+        );
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        assert_eq!(
+            load_sync_request_on_conn(&conn, &first_peer)
+                .unwrap()
+                .unwrap(),
+            first_row
+        );
+        assert_eq!(
+            load_sync_request_on_conn(&conn, &second_peer)
+                .unwrap()
+                .unwrap(),
+            second_row
+        );
+        drop(conn);
+
+        let stale_home = tempfile::tempdir().unwrap();
+        let survivor_identity = tempfile::tempdir().unwrap();
+        let revoked_identity = tempfile::tempdir().unwrap();
+        let stale_controller = test_membership_controller(stale_home.path());
+        let survivor = enrolled_test_grant(
+            &stale_controller,
+            survivor_identity.path(),
+            &"55".repeat(32),
+            "fresh-survivor",
+            now,
+        );
+        let revoked = enrolled_test_grant(
+            &stale_controller,
+            revoked_identity.path(),
+            &"56".repeat(32),
+            "stale-revoked",
+            now,
+        );
+        let stale_revoked = detached_test_grant(stale_home.path(), &revoked, now);
+        let survivor_peer = MembershipFence::from_grant(&survivor).peer();
+        let revoked_peer = MembershipFence::from_grant(&stale_revoked).peer();
+        let stale_sync = DurableMeshSync::new(stale_home.path().join("views.db"));
+        let survivor_queued = stale_sync.request_sync(&survivor_peer, now).unwrap();
+        stale_sync.request_sync(&revoked_peer, now).unwrap();
+        let stale_effect = stale_revoked
+            .begin_effect_kind(now, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        stale_controller
+            .revoke(revoked_peer.as_str(), "invalidate whole claim set", now + 1)
+            .unwrap()
+            .unwrap();
+        let fresh_survivor = detached_test_grant(stale_home.path(), &survivor, now + 2);
+        let fresh_effect = fresh_survivor
+            .begin_effect_kind(now + 2, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        let effects = vec![fresh_effect, stale_effect];
+        let eligible = HashSet::from([
+            survivor_peer.as_str().to_string(),
+            revoked_peer.as_str().to_string(),
+        ]);
+        assert!(
+            stale_sync
+                .claim_due_sync_requests_inner(now + 2, &eligible, Some(&effects))
+                .is_err()
+        );
+        let stale_db_path = stale_home.path().join("views.db");
+        let conn = crate::memory::store::open(&stale_db_path).unwrap();
+        assert_eq!(
+            load_sync_request_on_conn(&conn, &survivor_peer)
+                .unwrap()
+                .unwrap(),
+            survivor_queued,
+            "the fresh first grant must not restamp before the stale second grant validates"
+        );
+        assert_eq!(
+            load_sync_request_on_conn(&conn, &revoked_peer).unwrap(),
+            None,
+            "the stale grant must not resurrect its quarantined request"
+        );
+    }
+
+    #[test]
+    fn stale_borrowed_effect_cannot_ack_or_materialize_inbound() {
+        let home = tempfile::tempdir().unwrap();
+        let identity = tempfile::tempdir().unwrap();
+        let now = 1_900_040_000;
+        let controller = test_membership_controller(home.path());
+        let enrolled = enrolled_test_grant(
+            &controller,
+            identity.path(),
+            &"66".repeat(32),
+            "borrowed-effect",
+            now,
+        );
+        let detached = detached_test_grant(home.path(), &enrolled, now);
+        let peer = MembershipFence::from_grant(&detached).peer();
+        let local_origin = PeerPubkey::new("local-origin");
+        let db_path = home.path().join("views.db");
+        let sync = DurableMeshSync::new(db_path.clone());
+        let mut conn = crate::memory::store::open(&db_path).unwrap();
+        let stage_effect = detached
+            .begin_effect_kind(now, MembershipEffectKind::DurableCommit)
+            .unwrap();
+        let stage_fence = MembershipFence::from_effect(&stage_effect);
+        let prepared = stage_frame(
+            &mut conn,
+            &peer,
+            &local_origin,
+            0x94,
+            0,
+            &canonical_wal(0x94, br#"{"event_count":1}"#),
+            &GossipWalCursor::default(),
+            &GossipPolicy::default(),
+            Some((&stage_fence, &stage_effect)),
+        )
+        .unwrap();
+        stage_effect.finish().unwrap();
+        let ack_effect = detached.begin_effect(now).unwrap();
+        let inbound_effect = detached.begin_effect(now).unwrap();
+        let inbound = metadata_frame(peer.as_str(), 1, "must-not-materialize");
+        drop(conn);
+
+        controller
+            .revoke(peer.as_str(), "borrowed effect is stale", now + 1)
+            .unwrap()
+            .unwrap();
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        let before_frontier = load_vector_frontier_for(&conn, Some(&stage_fence)).unwrap();
+        let before_request_state = conn
+            .query_row(
+                "SELECT cursor_offset,acked_origin_seq FROM mesh_sync_outbound WHERE peer_pk=?1",
+                [peer.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .unwrap();
+        let before_pending = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mesh_sync_outbound_pending WHERE peer_pk=?1",
+                [peer.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert!(
+            sync.acknowledge_outbound_authorized(
+                &ack_effect,
+                &local_origin,
+                &GossipAck {
+                    protocol_version: SYNC_PROTOCOL_VERSION,
+                    origin: local_origin.clone(),
+                    origin_seq: prepared.frame.event_seq,
+                    content_sha256: prepared.frame.content_sha256,
+                },
+            )
+            .is_err()
+        );
+        assert!(
+            sync.persist_inbound_authorized(&inbound_effect, &inbound, &GossipPolicy::default(),)
+                .is_err()
+        );
+
+        let conn = crate::memory::store::open(&db_path).unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT cursor_offset,acked_origin_seq FROM mesh_sync_outbound WHERE peer_pk=?1",
+                [peer.as_str()],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .optional()
+            .unwrap(),
+            before_request_state
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM mesh_sync_outbound_pending WHERE peer_pk=?1",
+                [peer.as_str()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            before_pending
+        );
+        assert_eq!(
+            load_vector_frontier_for(&conn, Some(&stage_fence)).unwrap(),
+            before_frontier
+        );
+        for table in [
+            "mesh_sync_inbound_receipts",
+            "mesh_sync_inbound",
+            "idx_foreign_events",
+            "mesh_sync_materialized",
+            "mesh_sync_conflicts",
+        ] {
+            assert_eq!(
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap(),
+                0,
+                "stale inbound effect unexpectedly mutated {table}"
+            );
+        }
     }
 
     #[test]
@@ -2521,6 +4115,7 @@ mod tests {
                 offset: next_offset,
             },
             &GossipPolicy::default(),
+            None,
         )
         .unwrap()
     }
@@ -2593,6 +4188,7 @@ mod tests {
                 offset: 55,
             },
             &GossipPolicy::default(),
+            None,
         )
         .unwrap();
         let second = stage_frame(
@@ -2607,6 +4203,7 @@ mod tests {
                 offset: 55,
             },
             &GossipPolicy::default(),
+            None,
         )
         .unwrap();
 
@@ -2681,6 +4278,7 @@ mod tests {
                 offset: 55,
             },
             &GossipPolicy::default(),
+            None,
         );
         let error = error.unwrap_err();
         assert!(error.to_string().contains("cannot admit local origin"));

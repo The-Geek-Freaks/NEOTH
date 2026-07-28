@@ -16,6 +16,8 @@ use tokio::net::TcpStream;
 use super::sidecar::read_sidecar;
 use super::token::read_rpc_token;
 
+const MAX_RPC_RESPONSE_BYTES: usize = 1024 * 1024;
+
 #[derive(Debug, thiserror::Error)]
 pub enum AuditRpcClientError {
     #[error("audit-RPC unavailable: {0}")]
@@ -24,13 +26,69 @@ pub enum AuditRpcClientError {
     Refused(u16),
 }
 
-/// Cheap reachability proxy for the daemon's audit-RPC listener: the sidecar
-/// is present AND the daemon that wrote it is still alive. The daemon writes
-/// the sidecar only AFTER binding the listener and removes it on shutdown, so
-/// sidecar-present + pid-alive ≈ listener-up. Used by the fail-closed
-/// pre-flight; a real connect would be more thorough but heavier.
+/// Authenticated loopback health probe. Sidecar/PID checks prevent bearer-token
+/// disclosure to a recycled port; success additionally requires the live
+/// listener to accept the token and return the exact bounded health response.
 pub fn is_reachable(home: &Path) -> bool {
-    matches!(read_sidecar(home), Ok((_, pid)) if crate::daemon::pidfile::pid_is_alive(pid))
+    let Ok((port, pid)) = read_sidecar(home) else {
+        return false;
+    };
+    if !exact_daemon_owner(home, pid) {
+        return false;
+    }
+    let Ok(token) = read_rpc_token(home) else {
+        return false;
+    };
+    let addr: SocketAddr = (std::net::Ipv4Addr::LOCALHOST, port).into();
+    let Ok(mut stream) =
+        std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(250))
+    else {
+        return false;
+    };
+    let timeout = Some(std::time::Duration::from_millis(250));
+    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
+        return false;
+    }
+    let request = format!(
+        "POST /health HTTP/1.1\r\n\
+         Host: 127.0.0.1\r\n\
+         Authorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: 2\r\n\
+         Connection: close\r\n\
+         \r\n\
+         {{}}"
+    );
+    use std::io::{Read as _, Write as _};
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut response = Vec::with_capacity(256);
+    if stream.take(4096).read_to_end(&mut response).is_err() {
+        return false;
+    }
+    let Ok(response) = std::str::from_utf8(&response) else {
+        return false;
+    };
+    response.starts_with("HTTP/1.1 200 ")
+        && response
+            .split_once("\r\n\r\n")
+            .is_some_and(|(_, body)| body == "{\"ok\":true}")
+}
+
+fn exact_daemon_owner(home: &Path, pid: u32) -> bool {
+    let pidfile = home.join("neothd.pid");
+    if crate::daemon::pidfile::live_daemon_pid(&pidfile)
+        .ok()
+        .flatten()
+        != Some(pid)
+    {
+        return false;
+    }
+    matches!(
+        crate::util::locked_file::try_lock_file_once(&pidfile, "daemon pidfile"),
+        Ok(None)
+    )
 }
 
 /// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.
@@ -85,7 +143,7 @@ pub async fn try_post_audit_frame_with_subtype(
     // whose port the OS recycled to an UNRELATED process — sending the bearer
     // token there would leak it. Only proceed if the daemon that wrote the
     // sidecar is still alive.
-    if !crate::daemon::pidfile::pid_is_alive(pid) {
+    if !exact_daemon_owner(home, pid) {
         return Err(AuditRpcClientError::Unavailable(format!(
             "stale audit-RPC sidecar (daemon pid {pid} not alive)"
         )));
@@ -115,16 +173,7 @@ pub async fn try_post_audit_frame_with_subtype(
         .write_all(req.as_bytes())
         .await
         .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
-    let mut resp = String::new();
-    stream
-        .read_to_string(&mut resp)
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("read: {e}")))?;
-    let status = resp
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(0);
+    let (status, _) = read_rpc_response(&mut stream).await?;
     if status == 200 {
         Ok(())
     } else {
@@ -142,7 +191,7 @@ async fn post_rpc(
 ) -> std::result::Result<(u16, String), AuditRpcClientError> {
     let (port, pid) =
         read_sidecar(home).map_err(|e| AuditRpcClientError::Unavailable(e.to_string()))?;
-    if !crate::daemon::pidfile::pid_is_alive(pid) {
+    if !exact_daemon_owner(home, pid) {
         return Err(AuditRpcClientError::Unavailable(format!(
             "stale audit-RPC sidecar (daemon pid {pid} not alive)"
         )));
@@ -168,17 +217,216 @@ async fn post_rpc(
         .write_all(req.as_bytes())
         .await
         .map_err(|e| AuditRpcClientError::Unavailable(format!("write: {e}")))?;
-    let mut resp = String::new();
-    stream
-        .read_to_string(&mut resp)
-        .await
-        .map_err(|e| AuditRpcClientError::Unavailable(format!("read: {e}")))?;
-    let status = resp
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse::<u16>().ok())
-        .unwrap_or(0);
-    Ok((status, resp))
+    read_rpc_response(&mut stream).await
+}
+
+async fn read_rpc_response(
+    stream: &mut TcpStream,
+) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    let mut bytes = Vec::with_capacity(1024);
+    let mut chunk = [0u8; 4096];
+    loop {
+        let read = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|error| AuditRpcClientError::Unavailable(format!("read: {error}")))?;
+        if read == 0 {
+            break;
+        }
+        if bytes.len().saturating_add(read) > MAX_RPC_RESPONSE_BYTES {
+            return Err(AuditRpcClientError::Unavailable(format!(
+                "RPC response exceeds {MAX_RPC_RESPONSE_BYTES} byte limit"
+            )));
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    parse_rpc_response(bytes)
+}
+
+fn parse_rpc_response(bytes: Vec<u8>) -> std::result::Result<(u16, String), AuditRpcClientError> {
+    let header_offset = bytes
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| AuditRpcClientError::Unavailable("malformed RPC response".into()))?;
+    let body_offset = header_offset + 4;
+    let head = std::str::from_utf8(&bytes[..header_offset]).map_err(|error| {
+        AuditRpcClientError::Unavailable(format!("invalid RPC headers: {error}"))
+    })?;
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().unwrap_or_default();
+    let mut status_parts = status_line.split_whitespace();
+    if status_parts.next() != Some("HTTP/1.1") {
+        return Err(AuditRpcClientError::Unavailable(
+            "RPC response did not use HTTP/1.1".into(),
+        ));
+    }
+    let status = status_parts
+        .next()
+        .filter(|value| value.len() == 3)
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|value| (100..=599).contains(value))
+        .ok_or_else(|| AuditRpcClientError::Unavailable("invalid RPC status code".into()))?;
+
+    let mut content_length = None;
+    for line in lines {
+        let (name, value) = line.split_once(':').ok_or_else(|| {
+            AuditRpcClientError::Unavailable("malformed RPC response header".into())
+        })?;
+        if name.eq_ignore_ascii_case("transfer-encoding") {
+            return Err(AuditRpcClientError::Unavailable(
+                "chunked RPC responses are not supported".into(),
+            ));
+        }
+        if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return Err(AuditRpcClientError::Unavailable(
+                    "duplicate RPC Content-Length".into(),
+                ));
+            }
+            content_length = Some(value.trim().parse::<usize>().map_err(|_| {
+                AuditRpcClientError::Unavailable("invalid RPC Content-Length".into())
+            })?);
+        }
+    }
+    let content_length = content_length
+        .ok_or_else(|| AuditRpcClientError::Unavailable("missing RPC Content-Length".into()))?;
+    if content_length > MAX_RPC_RESPONSE_BYTES.saturating_sub(body_offset)
+        || bytes.len() != body_offset.saturating_add(content_length)
+    {
+        return Err(AuditRpcClientError::Unavailable(
+            "RPC response body length mismatch".into(),
+        ));
+    }
+    let response = String::from_utf8(bytes)
+        .map_err(|error| AuditRpcClientError::Unavailable(format!("invalid RPC body: {error}")))?;
+    Ok((status, response))
+}
+
+#[cfg(feature = "cluster")]
+fn response_json<T: serde::de::DeserializeOwned>(
+    status: u16,
+    response: &str,
+) -> std::result::Result<T, AuditRpcClientError> {
+    if status != 200 {
+        return Err(AuditRpcClientError::Refused(status));
+    }
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
+    serde_json::from_str(body)
+        .map_err(|error| AuditRpcClientError::Unavailable(format!("invalid RPC JSON: {error}")))
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_snapshot(
+    home: &Path,
+) -> std::result::Result<crate::cluster::membership::MembershipSnapshotEnvelope, AuditRpcClientError>
+{
+    let (status, response) = post_rpc(home, "/membership/status", "{}").await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_runtime_health(
+    home: &Path,
+) -> std::result::Result<crate::cluster::membership::MembershipRuntimeHealth, AuditRpcClientError> {
+    let (status, response) = post_rpc(home, "/membership/runtime-health", "{}").await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_revoke(
+    home: &Path,
+    request: &crate::cluster::membership::MembershipRevokeRequest,
+) -> std::result::Result<crate::cluster::membership::RevokeReceipt, AuditRpcClientError> {
+    let body = serde_json::to_string(request)
+        .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/revoke", &body).await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_revocation_status(
+    home: &Path,
+    request_id: &str,
+) -> std::result::Result<
+    Option<crate::cluster::membership::RevocationIntentStatus>,
+    AuditRpcClientError,
+> {
+    let body = serde_json::json!({ "request_id": request_id }).to_string();
+    let (status, response) = post_rpc(home, "/membership/revoke/status", &body).await?;
+    response_json(status, &response)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[cfg(feature = "cluster")]
+pub async fn membership_invite(
+    home: &Path,
+    stable_node_id: &crate::cluster::membership::StableNodeId,
+    signing_public_key: &[u8; 32],
+    carrier: crate::cluster::membership::CarrierKind,
+    transport_identity: &crate::cluster::membership::TransportIdentity,
+    endpoint: &str,
+    label: &str,
+    _now_unix: i64,
+    expires_at_unix: i64,
+) -> std::result::Result<crate::cluster::membership::EnrollmentInvite, AuditRpcClientError> {
+    let body = serde_json::to_string(&crate::cluster::membership::MembershipInviteRequest {
+        stable_node_id: stable_node_id.clone(),
+        signing_public_key_hex: hex::encode(signing_public_key),
+        carrier,
+        transport_identity: transport_identity.clone(),
+        endpoint: endpoint.to_string(),
+        label: label.to_string(),
+        expires_at_unix,
+    })
+    .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/invite", &body).await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_confirm(
+    home: &Path,
+    invite_id: &str,
+    attestation: &crate::cluster::membership::EndpointAttestation,
+    carrier: crate::cluster::membership::CarrierKind,
+    authenticated_transport: &crate::cluster::membership::TransportIdentity,
+    endpoint: &str,
+    _now_unix: i64,
+) -> std::result::Result<crate::cluster::membership::EnrollmentReceipt, AuditRpcClientError> {
+    let body = serde_json::to_string(&crate::cluster::membership::MembershipConfirmRequest {
+        invite_id: invite_id.to_string(),
+        attestation: attestation.clone(),
+        carrier,
+        authenticated_transport: authenticated_transport.clone(),
+        endpoint: endpoint.to_string(),
+    })
+    .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/confirm", &body).await?;
+    response_json(status, &response)
+}
+
+#[cfg(feature = "cluster")]
+pub async fn membership_legacy_pending(
+    home: &Path,
+    carrier: crate::cluster::membership::CarrierKind,
+    transport_identity: &crate::cluster::membership::TransportIdentity,
+    endpoint: &str,
+    label: &str,
+) -> std::result::Result<crate::cluster::membership::StableNodeId, AuditRpcClientError> {
+    let body = serde_json::to_string(
+        &crate::cluster::membership::MembershipLegacyPendingRequest {
+            carrier,
+            transport_identity: transport_identity.clone(),
+            endpoint: endpoint.to_string(),
+            label: label.to_string(),
+        },
+    )
+    .map_err(|error| AuditRpcClientError::Unavailable(error.to_string()))?;
+    let (status, response) = post_rpc(home, "/membership/legacy-pending", &body).await?;
+    response_json(status, &response)
 }
 
 /// GR-RESID-D34 — ask the running daemon to mint a single-use, short-TTL
@@ -192,7 +440,10 @@ pub async fn mint_fullauto_token(home: &Path) -> Option<String> {
         return None;
     }
     // The JSON body follows the blank header/body separator.
-    let body = resp.rsplit("\r\n\r\n").next().unwrap_or("");
+    let body = resp
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
     serde_json::from_str::<serde_json::Value>(body)
         .ok()?
         .get("token")?
@@ -225,7 +476,10 @@ pub async fn mint_jobs_run_token(home: &Path, request_binding_sha256: &str) -> O
     if status != 200 {
         return None;
     }
-    let body = resp.rsplit("\r\n\r\n").next().unwrap_or("");
+    let body = resp
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
     serde_json::from_str::<serde_json::Value>(body)
         .ok()?
         .get("token")?
@@ -249,4 +503,44 @@ pub async fn consume_jobs_run_token(
         post_rpc(home, "/jobs-run-token/consume", &body).await,
         Ok((200, _))
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(headers: &str, body: &str) -> Vec<u8> {
+        format!("HTTP/1.1 200 OK\r\n{headers}\r\n\r\n{body}").into_bytes()
+    }
+
+    #[test]
+    fn rpc_response_requires_one_exact_content_length() {
+        let (status, parsed) =
+            parse_rpc_response(response("Content-Length: 2", "{}")).expect("valid response");
+        assert_eq!(status, 200);
+        assert!(parsed.ends_with("\r\n\r\n{}"));
+
+        for malformed in [
+            response("Content-Type: application/json", "{}"),
+            response("Content-Length: nope", "{}"),
+            response("Content-Length: 2\r\nContent-Length: 2", "{}"),
+            response("Transfer-Encoding: chunked", "{}"),
+            response("Content-Length: 3", "{}"),
+            response("Content-Length: 1", "{}"),
+        ] {
+            assert!(parse_rpc_response(malformed).is_err());
+        }
+    }
+
+    #[test]
+    fn rpc_response_rejects_malformed_status_and_headers() {
+        for malformed in [
+            b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+            b"HTTP/1.1 nope OK\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+            b"HTTP/1.1 200 OK\r\nnot-a-header\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+            b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n{}".to_vec(),
+        ] {
+            assert!(parse_rpc_response(malformed).is_err());
+        }
+    }
 }

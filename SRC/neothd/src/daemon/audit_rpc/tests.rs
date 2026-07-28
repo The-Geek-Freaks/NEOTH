@@ -14,21 +14,36 @@ use tokio::net::TcpStream;
 use crate::n8n_api::auth::AuthCooldown;
 
 async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
+    raw_post_path(addr, "/audit", token, body).await.0
+}
+
+async fn raw_post_path(
+    addr: SocketAddr,
+    path: &str,
+    token: Option<&str>,
+    body: &str,
+) -> (u16, String) {
     let mut s = TcpStream::connect(addr).await.unwrap();
     let auth = token
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
     let req = format!(
-        "POST /audit HTTP/1.1\r\nHost: x\r\n{auth}Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+        "POST {path} HTTP/1.1\r\nHost: x\r\n{auth}Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
         len = body.len()
     );
     s.write_all(req.as_bytes()).await.unwrap();
     let mut resp = String::new();
     s.read_to_string(&mut resp).await.unwrap();
-    resp.split_whitespace()
+    let status = resp
+        .split_whitespace()
         .nth(1)
         .and_then(|x| x.parse().ok())
-        .unwrap_or(0)
+        .unwrap_or(0);
+    let response_body = resp
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.to_string())
+        .unwrap_or_default();
+    (status, response_body)
 }
 
 #[test]
@@ -198,6 +213,9 @@ async fn aborting_listener_aborts_idle_connection_before_wal_drain() {
         writer: writer.clone(),
         cooldown: Arc::clone(&cooldown),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     let mut idle = TcpStream::connect(addr).await.unwrap();
@@ -233,6 +251,9 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
 
@@ -267,6 +288,205 @@ async fn valid_token_appends_allowed_frame_and_emits_accept() {
     );
 }
 
+#[cfg(feature = "cluster")]
+#[tokio::test]
+async fn membership_invite_confirm_revoke_and_status_are_typed_and_authenticated() {
+    use crate::cluster::membership::{
+        BootId, CarrierKind, EnrollmentInvite, EnrollmentReceipt, LocalNodeIdentity,
+        MembershipConfirmRequest, MembershipController, MembershipInviteRequest,
+        MembershipRevokeBinding, MembershipRevokeRequest, MembershipState, MembershipStore,
+        RevocationIntentState, RevocationIntentStatus, RevokeReceipt, TransportIdentity,
+    };
+
+    let home = tempdir().unwrap();
+    let peer_home = tempdir().unwrap();
+    let seg = home.path().join("membership-rpc.wal");
+    let (writer, wal_join) = crate::wal::spawn_for_home(seg, home.path().to_path_buf()).unwrap();
+    let store = MembershipStore::open(home.path()).unwrap();
+    let controller = Arc::new(MembershipController::with_audit_writer(
+        store.clone(),
+        Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+        writer.clone(),
+    ));
+    let state = AuditRpcState {
+        token: "membership-token".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        membership: Some(Arc::clone(&controller)),
+        audit_routes_enabled: false,
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+
+    let identity = LocalNodeIdentity::load_or_create(peer_home.path()).unwrap();
+    let transport = TransportIdentity::parse("ab".repeat(32)).unwrap();
+    let now = crate::time::now_unix_i64();
+    let invite_request = MembershipInviteRequest {
+        stable_node_id: identity.stable_node_id().clone(),
+        signing_public_key_hex: hex::encode(identity.verifying_key().to_bytes()),
+        carrier: CarrierKind::Peeroxide,
+        transport_identity: transport.clone(),
+        endpoint: "127.0.0.1:31337".into(),
+        label: "rpc-peer".into(),
+        expires_at_unix: now + 120,
+    };
+    let invite_body = serde_json::to_string(&invite_request).unwrap();
+    assert_eq!(
+        raw_post_path(addr, "/membership/invite", None, &invite_body)
+            .await
+            .0,
+        401
+    );
+    assert_eq!(
+        rusqlite::Connection::open(store.path())
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM enrollment_invites", [], |row| {
+                row.get::<_, u64>(0)
+            })
+            .unwrap(),
+        0,
+        "unauthenticated invite must not mutate the authority"
+    );
+
+    let (status, body) = raw_post_path(
+        addr,
+        "/membership/invite",
+        Some("membership-token"),
+        &invite_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let invite: EnrollmentInvite = serde_json::from_str(&body).expect("typed invite response");
+    let attestation = identity
+        .attest_endpoint(
+            CarrierKind::Peeroxide,
+            transport.clone(),
+            BootId::new(),
+            "rpc-runtime".into(),
+            "127.0.0.1:31337".into(),
+            invite.auth_epoch,
+            invite.issued_at_membership_epoch,
+            Some(invite.invitation_digest.clone()),
+            now + 60,
+        )
+        .unwrap();
+    let confirm_body = serde_json::to_string(&MembershipConfirmRequest {
+        invite_id: invite.invite_id.clone(),
+        attestation,
+        carrier: CarrierKind::Peeroxide,
+        authenticated_transport: transport,
+        endpoint: "127.0.0.1:31337".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        raw_post_path(addr, "/membership/confirm", Some("wrong"), &confirm_body)
+            .await
+            .0,
+        401
+    );
+    let pending = store.snapshot().unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        pending[0].state,
+        MembershipState::Pending,
+        "unauthenticated confirm must not activate membership"
+    );
+
+    let (status, body) = raw_post_path(
+        addr,
+        "/membership/confirm",
+        Some("membership-token"),
+        &confirm_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let receipt: EnrollmentReceipt =
+        serde_json::from_str(&body).expect("typed enrollment receipt response");
+    assert_eq!(receipt.stable_node_id, *identity.stable_node_id());
+    assert_eq!(
+        receipt.issued_at_membership_epoch,
+        invite.issued_at_membership_epoch
+    );
+    assert_eq!(
+        receipt.committed_membership_epoch,
+        invite.issued_at_membership_epoch
+    );
+    assert_eq!(store.snapshot().unwrap()[0].state, MembershipState::Active);
+
+    let envelope = controller.snapshot().unwrap().into_envelope().unwrap();
+    let member = envelope.snapshot.members.first().unwrap();
+    let request_id = crate::cluster::membership::new_revocation_request_id();
+    let revoke_body = serde_json::to_string(&MembershipRevokeRequest {
+        binding: MembershipRevokeBinding {
+            request_id: request_id.clone(),
+            stable_node_id: member.stable_node_id.clone(),
+            reason: "operator_rpc".into(),
+            source: "operator_rpc_test".into(),
+            snapshot_version: envelope.snapshot_version,
+            snapshot_digest: envelope.snapshot_digest.clone(),
+            authority_epoch: envelope.snapshot.authority_epoch,
+            member_auth_epoch: member.auth_epoch,
+            member_membership_epoch: member.membership_epoch,
+        },
+    })
+    .unwrap();
+    assert_eq!(
+        raw_post_path(addr, "/membership/revoke", None, &revoke_body)
+            .await
+            .0,
+        401
+    );
+    let (status, body) = raw_post_path(
+        addr,
+        "/membership/revoke",
+        Some("membership-token"),
+        &revoke_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let revoke: RevokeReceipt =
+        serde_json::from_str(&body).expect("typed revocation receipt response");
+    assert_eq!(revoke.request_id, request_id);
+    assert_eq!(revoke.intent_state, RevocationIntentState::Completed);
+    assert!(revoke.tombstone_committed);
+
+    let status_body = serde_json::json!({"request_id": request_id}).to_string();
+    let (status, body) = raw_post_path(
+        addr,
+        "/membership/revoke/status",
+        Some("membership-token"),
+        &status_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let persisted: Option<RevocationIntentStatus> =
+        serde_json::from_str(&body).expect("typed revocation status response");
+    let persisted = persisted.expect("completed revocation status");
+    assert_eq!(persisted.state, RevocationIntentState::Completed);
+    assert_eq!(
+        persisted.receipt_id.as_deref(),
+        Some(revoke.receipt_id.as_str())
+    );
+
+    let (status, body) = raw_post_path(
+        addr,
+        "/membership/revoke",
+        Some("membership-token"),
+        &revoke_body,
+    )
+    .await;
+    assert_eq!(status, 200);
+    let retry: RevokeReceipt =
+        serde_json::from_str(&body).expect("typed retry revocation receipt response");
+    assert!(retry.already_revoked);
+    assert_eq!(retry.receipt_id, revoke.receipt_id);
+
+    task.abort();
+    drop(controller);
+    drop(writer);
+    wal_join.await.ok();
+}
+
 #[tokio::test]
 async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
     let segdir = tempdir().unwrap();
@@ -278,6 +498,9 @@ async fn subtype_allowlist_accepts_only_the_exact_extended_identity() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
@@ -324,6 +547,9 @@ async fn wrong_token_is_401_and_writes_no_frame() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
@@ -354,6 +580,9 @@ async fn blocked_event_type_is_422_and_emits_reject() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
     // 0x10 (daemon lifecycle) is NOT forwardable.
@@ -384,9 +613,12 @@ async fn client_round_trips_against_a_live_listener() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
-    // The test process is alive, so the client's pid-liveness check passes.
+    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
     write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
 
     // The CLIENT path: read sidecar+token, connect, POST.
@@ -421,8 +653,12 @@ async fn jobs_run_token_client_is_request_bound_and_single_use() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
+    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
     write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
     let binding = "ab".repeat(32);
     let approval = mint_jobs_run_token(home.path(), &binding)
@@ -473,8 +709,12 @@ async fn jobs_run_token_mint_fails_when_its_mandatory_audit_writer_is_down() {
         writer,
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
+    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
     write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
 
     assert!(
@@ -499,8 +739,12 @@ async fn subtype_client_round_trips_against_a_live_listener() {
         writer: writer.clone(),
         cooldown: Arc::new(AuthCooldown::new()),
         fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
     };
     let (addr, task) = bind_and_serve(state).await.unwrap();
+    let _daemon_owner = crate::daemon::pidfile::acquire(&home.path().join("neothd.pid")).unwrap();
     write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
     let subtype = crate::wal::events::ExtendedSubtype::ProofKeyRotated as u8;
 

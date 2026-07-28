@@ -1073,6 +1073,29 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
     Revoke authority itself is role/quorum-gated against self-elevation and
     last-admin removal. State explicitly that already disclosed plaintext
     cannot be clawed back: revoke removes future access and authority.
+    **M1 evidence 2026-07-28 (this contract remains OPEN):** the runtime now
+    persists one owner-private StableNode signing identity plus the exact
+    Peeroxide Noise and Iroh endpoint identities, admits only signed,
+    expiring carrier attestations into a SQLite membership authority, and
+    binds every grant/effect to StableNodeId plus auth/membership epochs.
+    Revocation is available only through `MembershipController`: it closes
+    the generation gate, persists an immutable UUIDv7 request binding,
+    publishes cancellation, tears down both carriers, drains or classifies
+    every captured lease/external effect, and only then commits the tombstone
+    and audit outbox. Orphaned `Pending` requests recover as durable
+    `Indeterminate`, same-ID retries require the exact original binding, and
+    `partial` carrier evidence is never promoted to `closed`. The shared
+    strict snapshot/status/runtime-health envelopes drive CLI, authenticated
+    RPC, Buddy, GUI and Doctor; GUI/Buddy start fail-closed, recover unresolved
+    requests after restart, reject stale status responses and keep destructive
+    controls disabled while recovery is unresolved. Peeroxide and Iroh
+    revalidate grants at physical effect boundaries; Iroh ingress additionally
+    has bounded pre-auth capacity, phase deadlines, explicit close/audit
+    failures and hermetic saturation/timeout tests. Still required before this
+    box can close: the sole-or-quorum membership authority, persistent
+    non-rollback `revocation_floor`, role/quorum and last-admin rules,
+    complete key-rotation/rekey distribution, tombstone-retention proof and
+    the real two-node partition/restore/mixed-carrier qualification matrix.
   - [ ] **GOLD-R4-13b — Durable master coordinator and result return:** add a
     transactional task outbox, attempts, delivery receipts, result inbox,
     deadlines, cancel, retry, redelegation, dead-letter and crash recovery.
@@ -3381,6 +3404,12 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   linearizable fence ledger binding leader term, commit index and membership
   epoch. A minority/stale leader cannot allocate, renew or commit a fence;
   local replicated WAL/SQLite state alone is not proof of ownership.
+  **M1 evidence 2026-07-28 (this contract remains OPEN):** membership-bound
+  carrier, queue, provider and durable-effect leaves now use generation-aware
+  grants/permits and revoke drains or durably classifies them. This closes the
+  stale membership-generation bypass only. It does not yet supply the required
+  cluster-wide task ownership tuple, leader term/commit index, lease renewal,
+  quorum fence allocator or terminal TaskResult commit fence.
 
 - [ ] **GOLD-NCT-16 — Stable device/node/agent identity, pairing and endpoint
   attestation:** adapt the pure Buzz pairing/SAS/transcript/replay patterns from
@@ -3404,6 +3433,13 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
   substitution, transcript/SAS tampering and replay, and revoke during pairing
   on both Peeroxide and Iroh; CLI, GUI, Buddy and Doctor expose the same typed
   reason and fresh authoritative state.
+  **M1 evidence 2026-07-28 (this contract remains OPEN):** persistent stable
+  identity, signed expiring Peeroxide/Iroh attestations, strict legacy
+  quarantine, typed membership snapshots and real revoke/status recovery are
+  now wired across CLI, RPC, Buddy, GUI and Doctor. Remaining closure work is
+  full pair/rotate/retry parity, role/skill/Channel/account/capability
+  attestation, the complete SAS/transcript/endpoint-substitution adversarial
+  matrix, mobile-device integration and the release-grade multi-process proof.
 
 - [ ] **GOLD-NCT-17 — Distributed BudgetToken and provider-permit binding:**
   integrate `GOLD-LF-P2-19`'s consensus-backed budget authority with route

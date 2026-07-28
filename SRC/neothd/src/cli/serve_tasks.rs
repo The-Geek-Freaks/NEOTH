@@ -3756,18 +3756,27 @@ pub(crate) fn spawn_healthz(
 /// audit frames to this (the WAL-owning) daemon. Returns BOTH the listener task
 /// AND the `SidecarGuard` — the guard MUST be bound for the daemon lifetime in
 /// `run_serve` (its `Drop` removes the sidecar + token), so it is returned, not
-/// dropped here. `(None, None)` when disabled or bind/token-mint fails. Async
-/// (binds the socket). WAL-emitting via the listener's writer clone.
+/// dropped here. Membership-enabled daemons fail startup if this authority
+/// listener cannot be established; audit-only mode preserves the historical
+/// optional-listener behavior. Async (binds the socket). WAL-emitting via the
+/// listener's writer clone.
 pub(crate) async fn spawn_audit_rpc(
     config: &FreedomConfig,
     home: &std::path::Path,
     writer: &WalWriterHandle,
-) -> (
+    #[cfg(feature = "cluster")] membership: std::sync::Arc<
+        crate::cluster::membership::MembershipController,
+    >,
+) -> anyhow::Result<(
     Option<JoinHandle<anyhow::Result<()>>>,
     Option<crate::daemon::audit_rpc::SidecarGuard>,
-) {
-    if !config.audit_rpc.enabled {
-        return (None, None);
+)> {
+    #[cfg(feature = "cluster")]
+    let membership_required = config.cluster.enabled || home.join("cluster-membership.db").exists();
+    #[cfg(not(feature = "cluster"))]
+    let membership_required = false;
+    if !config.audit_rpc.enabled && !membership_required {
+        return Ok((None, None));
     }
     let home = home.to_path_buf();
     // Clear any sidecar+token a PRIOR daemon left behind on a crash (no clean
@@ -3782,6 +3791,9 @@ pub(crate) async fn spawn_audit_rpc(
                 cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
                 // GR-RESID-D34 — FULL-AUTO single-use token store for the GUI bypass.
                 fullauto: std::sync::Arc::new(crate::daemon::audit_rpc::FullAutoTokenStore::new()),
+                #[cfg(feature = "cluster")]
+                membership: Some(membership),
+                audit_routes_enabled: config.audit_rpc.enabled,
             };
             match crate::daemon::audit_rpc::bind_and_serve(state).await {
                 Ok((addr, task)) => {
@@ -3791,23 +3803,36 @@ pub(crate) async fn spawn_audit_rpc(
                         std::process::id(),
                         &token,
                     ) {
+                        task.abort();
+                        crate::daemon::audit_rpc::remove_sidecar(&home);
+                        if membership_required {
+                            return Err(e)
+                                .context("write required membership-RPC discovery sidecar");
+                        }
                         warn!(error = %e, "audit-RPC sidecar write failed; one-shots can't find the port");
+                        return Ok((None, None));
                     }
                     info!(port = addr.port(), "audit-RPC listener up (127.0.0.1)");
-                    (
+                    Ok((
                         Some(task),
                         Some(crate::daemon::audit_rpc::SidecarGuard::new(home.clone())),
-                    )
+                    ))
                 }
                 Err(e) => {
+                    if membership_required {
+                        return Err(e).context("bind required membership-RPC listener");
+                    }
                     warn!(error = %e, "audit-RPC listener failed to bind; one-shot audit forwarding disabled");
-                    (None, None)
+                    Ok((None, None))
                 }
             }
         }
         Err(e) => {
+            if membership_required {
+                return Err(e).context("mint required membership-RPC token");
+            }
             warn!(error = %e, "audit-RPC token mint failed; listener not started");
-            (None, None)
+            Ok((None, None))
         }
     }
 }

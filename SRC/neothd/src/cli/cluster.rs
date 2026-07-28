@@ -11,7 +11,9 @@ use anyhow::{Context as _, Result};
 use clap::{Args, Subcommand};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac as _};
-use sha2::{Digest as _, Sha256};
+#[cfg(test)]
+use sha2::Digest as _;
+use sha2::Sha256;
 use subtle::ConstantTimeEq as _;
 use zeroize::Zeroize as _;
 
@@ -54,8 +56,8 @@ pub enum ClusterAction {
     /// (`idx_foreign_events`): what paired peers replicated to this node.
     /// Read-only over views.db; foreign events never mix into local memory.
     Events {
-        /// Filter to one origin peer public key (hex).
-        #[arg(long, value_name = "PEER_PK")]
+        /// Filter to one stable node identity (64-character lowercase hex).
+        #[arg(long, value_name = "STABLE_NODE_ID")]
         peer: Option<String>,
         /// Max rows (newest first).
         #[arg(long, default_value = "50")]
@@ -106,12 +108,12 @@ pub enum ClusterAction {
     /// surviving peer. This is the auditable input accepted by
     /// `neoth cluster restore`; restore still applies the replication
     /// allowlist, CRC checks, conflict policy, and dry-run gate. One JSON
-    /// object per line:
-    /// `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`.
+    /// object per line, including exact `stable_node_id`, `auth_epoch`,
+    /// `membership_epoch`, and `fence_state` membership provenance.
     #[command(name = "export-foreign")]
     ExportForeign {
-        /// Filter to one origin peer public key (hex).
-        #[arg(long, value_name = "PEER_PK")]
+        /// Filter to one stable node identity (64-character lowercase hex).
+        #[arg(long, value_name = "STABLE_NODE_ID")]
         peer: Option<String>,
         /// Output file (or `-` for stdout).
         #[arg(long, value_name = "FILE")]
@@ -140,20 +142,16 @@ pub enum ClusterAction {
         #[arg(long, value_name = "POLICY")]
         policy: Option<String>,
     },
-    /// SPEC `cluster_auto_discovery` Phase 4: list confirmed peers
-    /// from `~/.neoth/cluster.yaml`.
+    /// List the typed membership-authority snapshot. `cluster.yaml` is public
+    /// transport configuration and is never an authorization source.
     List,
-    /// SL-02: cluster topology view — confirmed peers + per-peer
-    /// last-seen age + a recent/stale/uncontacted status, table or
-    /// `--output json`. Read-only over `~/.neoth/cluster.yaml`, including
-    /// the last persisted heartbeat RTT and stability score. Instantaneous
-    /// daemon-only health/TPS is intentionally outside this one-shot view.
+    /// Cluster topology projection of the typed membership-authority snapshot.
+    /// `cluster.yaml` is not authority.
     Topology,
-    /// SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for
-    /// `--timeout` seconds, print every authenticated announce
-    /// the listener sees. Does NOT write to cluster.yaml — use
-    /// `neoth cluster confirm <pub_key>` after reviewing the
-    /// output.
+    /// Scan signed mDNS discovery attestations for `--timeout` seconds. A
+    /// signature authenticates the announced StableNode identity and exact
+    /// carrier endpoint, but the candidate remains untrusted until an exact
+    /// enrollment invite is confirmed.
     Discover {
         /// How long the scan runs before printing the final
         /// summary. Default 10s — long enough for one
@@ -174,9 +172,10 @@ pub enum ClusterAction {
     /// frames the resource-snapshot cron emits. `--watch` refreshes live.
     #[cfg(feature = "cluster")]
     Swarm(crate::cli::cluster_swarm::ClusterSwarmArgs),
-    /// Confirm a discovered peer + add to the registry. Phase 4
-    /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
-    /// candidates; this command writes them in atomically.
+    /// Record a reviewed legacy candidate as unattested Pending. This never
+    /// activates membership; signed invite confirmation is the only path to
+    /// Active. An explicit `--via mdns` candidate is rejected because mDNS
+    /// discovery is read-only and enrollment requires an exact invite.
     ///
     /// Two modes: positional one-shot (`neoth cluster confirm
     /// <pub_key> --label X --addr Y`) OR `--interactive` (scan
@@ -207,20 +206,33 @@ pub enum ClusterAction {
         /// with `--hostname` to set it.
         #[arg(long)]
         hostname: Option<String>,
-        /// Interactive picker: run a mDNS scan first, render a
-        /// numbered list of discovered peers, prompt operator for a
-        /// selection, then confirm the pick. Skips the positional
-        /// pub_key + --label + --addr requirement (values come from
-        /// the selected announce). Tailscale candidates are excluded
-        /// from the picker — they don't carry a pub_key.
+        /// Legacy review picker: scan signed mDNS candidates, prompt for one,
+        /// then stage only an inert `legacy_unattested` Pending row. This does
+        /// not confirm an invite, does not create Active membership, and does
+        /// not make mDNS an authorization source. Keep `--via manual`; an
+        /// explicit `--via mdns` is rejected. Skips the positional pub_key,
+        /// --label, and --addr inputs because those values come from the
+        /// reviewed announcement.
         #[arg(long, default_value_t = false)]
         interactive: bool,
         /// Scan timeout for `--interactive`. Default 10s.
         #[arg(long, default_value_t = 10)]
         interactive_timeout: u64,
     },
-    /// Remove a confirmed peer by pub_key OR unique prefix.
-    Revoke { pub_key: String },
+    /// Revoke an authority member by StableNode id, unique prefix, or label.
+    Revoke {
+        pub_key: String,
+        /// Canonical UUID request id. Reuse after a lost reply; omitted ids are UUIDv7.
+        #[arg(long, value_name = "UUID")]
+        request_id: Option<String>,
+    },
+    /// Inspect the durable outcome of a membership revocation request.
+    #[command(name = "revoke-status")]
+    RevokeStatus {
+        /// Canonical UUID request id emitted by `cluster revoke`.
+        #[arg(value_name = "UUID")]
+        request_id: String,
+    },
     /// Atomically replace the complete public cluster configuration and ask a
     /// running daemon to reload it. Lists are JSON string arrays so commas and
     /// leading/trailing whitespace survive the CLI/GUI boundary exactly.
@@ -278,20 +290,24 @@ pub enum ClusterAction {
     /// Disable the cluster transport master switch using the same complete,
     /// restart-evidenced transaction as `cluster configure`.
     Disable,
-    /// Restore same-origin peer-backup frames into local recall/memory.
+    /// Restore canonical peer-backup frames into local recall/memory. Canonical
+    /// identity is keyed by `(StableNodeId, AuthEpoch)` and every row must carry
+    /// a positive `membership_epoch` plus `fence_state=active`; missing,
+    /// non-active, and `legacy_unbound` provenance fails closed before work.
+    /// Restore is CLI-only.
     ///
     /// Reads a JSONL export produced by `neoth cluster export-foreign` and
-    /// applies frames whose `origin_peer_pk` matches the local node identity
-    /// back into `idx_episode` / `idx_groundtruth`.  Cross-origin rows are
-    /// silently counted and skipped.
+    /// applies frames whose `stable_node_id` matches the local node identity
+    /// back into `idx_episode` / `idx_groundtruth`. Cross-origin rows are
+    /// counted and skipped.
     ///
     /// Pass `--dry-run` to evaluate conflicts without any writes.
     Restore {
         /// Path to the JSONL export file (produced by `neoth cluster export-foreign`).
         peer_export: String,
-        /// Override the local node pubkey filter.  Use when the passphrase is
-        /// unavailable but you know the 64-char hex pubkey that was used.
-        #[arg(long)]
+        /// Override the local StableNodeId filter. Use only when the persisted
+        /// cluster identity is unavailable but you know its 64-char hex id.
+        #[arg(long, value_name = "STABLE_NODE_ID")]
         peer: Option<String>,
         /// Evaluate conflict matrix and report per-row outcome without
         /// writing anything to `views.db` or the audit log.
@@ -321,7 +337,7 @@ pub fn validate_pub_key_hex(s: &str) -> Result<()> {
 
 pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     match args.action {
-        ClusterAction::Status => run_status(&args.output),
+        ClusterAction::Status => run_status(&args.output).await,
         ClusterAction::Events { peer, limit } => {
             run_foreign_events(peer.as_deref(), limit, &args.output)
         }
@@ -342,8 +358,8 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             force,
         } => run_export_foreign(peer.as_deref(), &out, limit, all, force),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
-        ClusterAction::List => run_list(),
-        ClusterAction::Topology => run_topology(&args.output),
+        ClusterAction::List => run_list(&args.output).await,
+        ClusterAction::Topology => run_topology(&args.output).await,
         ClusterAction::Discover { timeout, force } => run_discover(timeout, force).await,
         #[cfg(feature = "cluster")]
         ClusterAction::Swarm(mut a) => {
@@ -369,10 +385,16 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("missing --label (or pass --interactive)"))?;
                 let addr =
                     addr.ok_or_else(|| anyhow::anyhow!("missing --addr (or pass --interactive)"))?;
-                run_confirm(&pub_key, &label, &addr, &via, hostname.as_deref())
+                run_confirm(&pub_key, &label, &addr, &via, hostname.as_deref()).await
             }
         }
-        ClusterAction::Revoke { pub_key } => run_revoke(&pub_key, &args.output),
+        ClusterAction::Revoke {
+            pub_key,
+            request_id,
+        } => run_revoke(&pub_key, request_id.as_deref(), &args.output).await,
+        ClusterAction::RevokeStatus { request_id } => {
+            run_revoke_status(&request_id, &args.output).await
+        }
         ClusterAction::Configure {
             enabled,
             name,
@@ -430,6 +452,13 @@ pub struct DiscoveredPeer {
 /// present (discover prints a table, confirm --interactive
 /// renders a numbered list).
 async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
+    let home = FreedomConfig::default_neoth_home();
+    let runtime =
+        crate::config::load_runtime_config_pair_from_path_or_default(&home.join("freedom.yaml"))?;
+    let identity =
+        crate::cluster::identity::resolve_cluster_identity(&runtime.config, &runtime.credentials)
+            .context("cluster discovery requires a configured rendezvous identity")?;
+    let rendezvous_key = identity.key;
     let daemon = mdns_sd::ServiceDaemon::new().map_err(|e| anyhow::anyhow!("mdns daemon: {e}"))?;
     let receiver = daemon
         .browse(crate::cluster::mdns::DEFAULT_SERVICE_TYPE)
@@ -451,20 +480,27 @@ async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
                         .iter()
                         .map(|p| (p.key().to_string(), p.val_str().to_string()))
                         .collect();
-                    let label = txt
-                        .get("label")
-                        .cloned()
-                        .unwrap_or_else(|| info.get_fullname().to_string());
-                    let pubkey = txt.get("pubkey").cloned().unwrap_or_default();
                     let port = info.get_port();
-                    let addr_line = info
-                        .get_addresses()
-                        .iter()
-                        .next()
-                        .map(|a| format!("{a}:{port}"))
-                        .unwrap_or_else(|| format!("(no addr):{port}"));
-                    if !pubkey.is_empty() {
-                        seen.insert(pubkey, (label, addr_line));
+                    if let Some(ip) = info.get_addresses().iter().next() {
+                        let addr = std::net::SocketAddr::new(*ip, port);
+                        if let Some(packet) = crate::cluster::mdns::parse_announce_txt(
+                            &txt,
+                            addr,
+                            crate::time::now_unix_i64(),
+                        ) && crate::cluster::mdns::verify_with_cluster_key(
+                            &packet,
+                            &rendezvous_key,
+                        ) {
+                            seen.insert(
+                                packet.attestation.stable_node_id.as_str().to_string(),
+                                (packet.instance_label, packet.addr.to_string()),
+                            );
+                        } else {
+                            tracing::debug!(
+                                service = %info.get_fullname(),
+                                "cluster discover: dropping malformed, unsigned, or wrong-rendezvous announce"
+                            );
+                        }
                     }
                 }
             }
@@ -571,7 +607,7 @@ async fn run_confirm_interactive(timeout_secs: u64, via: &str) -> Result<()> {
     // Interactive picker doesn't collect a hostname (the mDNS announce
     // carries label + addr, not a stable hostname) — re-confirm with
     // `--hostname` to set it. SL-01c.
-    run_confirm(&picked.pub_key_hex, &picked.label, &picked.addr, via, None)
+    run_confirm(&picked.pub_key_hex, &picked.label, &picked.addr, via, None).await
 }
 
 async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
@@ -667,9 +703,9 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
             );
         }
         println!(
-            "\nRun `neoth cluster confirm <pub_key> --label <label> --addr <addr> --via <mdns|tailscale>` \
-             to add a peer (Phase 4 require-consent gate), \
-             or `neoth cluster confirm --interactive` for a number-picker."
+            "\nDiscovery is read-only. Issue an exact enrollment invite and confirm the peer's \
+             signed EndpointAttestation to activate membership. Legacy manual/Tailscale candidates \
+             can only be recorded as unattested Pending."
         );
     }
     Ok(())
@@ -710,29 +746,349 @@ fn print_skip_with_fix(reason: crate::cluster::policy::NoReason, ssid: Option<&s
     }
 }
 
-fn run_list() -> Result<()> {
-    let home = FreedomConfig::default_neoth_home();
-    let reg = crate::cluster::registry::load(&home)?;
-    if reg.peers.is_empty() {
-        println!(
-            "(no confirmed cluster peers — run `neoth cluster discover` for an mDNS scan, \
-             then `neoth cluster confirm <pub_key>` to add a peer)"
-        );
-        return Ok(());
+pub(crate) async fn load_membership_snapshot(
+    home: &Path,
+) -> Result<crate::cluster::membership::MembershipSnapshot> {
+    if live_daemon_owner_pid(home)?.is_some() {
+        return crate::daemon::audit_rpc::membership_snapshot(home)
+            .await
+            .map(|envelope| envelope.snapshot)
+            .map_err(anyhow::Error::from)
+            .context("read membership from daemon authority RPC");
     }
-    println!(
-        "{:<16} {:<24} {:<22} {:<14}",
-        "pub_key", "label", "addr", "via"
+    crate::cluster::membership::MembershipStore::open(home)?.full_snapshot()
+}
+
+pub(crate) async fn load_membership_snapshot_envelope(
+    home: &Path,
+) -> Result<crate::cluster::membership::MembershipSnapshotEnvelope> {
+    let envelope = if live_daemon_owner_pid(home)?.is_some() {
+        crate::daemon::audit_rpc::membership_snapshot(home)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("read membership envelope from daemon authority RPC")?
+    } else {
+        crate::cluster::membership::MembershipStore::open(home)?
+            .full_snapshot()?
+            .into_envelope()?
+    };
+    envelope.validate()?;
+    Ok(envelope)
+}
+
+pub(crate) async fn create_membership_invite(
+    home: &Path,
+    request: crate::cluster::membership::MembershipInviteRequest,
+) -> Result<crate::cluster::membership::EnrollmentInvite> {
+    let now = crate::time::now_unix_i64();
+    let signing_public_key: [u8; 32] = hex::decode(&request.signing_public_key_hex)
+        .context("invite signing key is not hexadecimal")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invite signing key must be 32 bytes"))?;
+    let expires_at = request.expires_at_unix.min(now.saturating_add(300));
+    if live_daemon_owner_pid(home)?.is_some() {
+        return crate::daemon::audit_rpc::membership_invite(
+            home,
+            &request.stable_node_id,
+            &signing_public_key,
+            request.carrier,
+            &request.transport_identity,
+            &request.endpoint,
+            &request.label,
+            now,
+            expires_at,
+        )
+        .await
+        .map_err(anyhow::Error::from)
+        .context("create enrollment invite through daemon authority RPC");
+    }
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    crate::cluster::membership::MembershipController::open(
+        home,
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+    )?
+    .create_invite(
+        &request.stable_node_id,
+        &signing_public_key,
+        request.carrier,
+        &request.transport_identity,
+        &request.endpoint,
+        &request.label,
+        now,
+        expires_at,
+    )
+}
+
+pub(crate) async fn confirm_membership_invite(
+    home: &Path,
+    request: crate::cluster::membership::MembershipConfirmRequest,
+) -> Result<crate::cluster::membership::EnrollmentReceipt> {
+    let now = crate::time::now_unix_i64();
+    if live_daemon_owner_pid(home)?.is_some() {
+        return crate::daemon::audit_rpc::membership_confirm(
+            home,
+            &request.invite_id,
+            &request.attestation,
+            request.carrier,
+            &request.authenticated_transport,
+            &request.endpoint,
+            now,
+        )
+        .await
+        .map_err(anyhow::Error::from)
+        .context("confirm enrollment through daemon authority RPC");
+    }
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    crate::cluster::membership::MembershipController::open(
+        home,
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+    )?
+    .confirm_invite(
+        &request.invite_id,
+        &request.attestation,
+        request.carrier,
+        &request.authenticated_transport,
+        &request.endpoint,
+        now,
+    )
+}
+
+pub(crate) async fn record_legacy_pending_membership(
+    home: &Path,
+    request: crate::cluster::membership::MembershipLegacyPendingRequest,
+) -> Result<crate::cluster::membership::StableNodeId> {
+    if live_daemon_owner_pid(home)?.is_some() {
+        return crate::daemon::audit_rpc::membership_legacy_pending(
+            home,
+            request.carrier,
+            &request.transport_identity,
+            &request.endpoint,
+            &request.label,
+        )
+        .await
+        .map_err(anyhow::Error::from)
+        .context("record legacy pending membership through daemon authority RPC");
+    }
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    crate::cluster::membership::MembershipController::open(
+        home,
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+    )?
+    .record_legacy_pending(
+        request.carrier,
+        &request.transport_identity,
+        &request.endpoint,
+        &request.label,
+        crate::time::now_unix_i64(),
+    )
+}
+
+pub(crate) async fn revoke_membership(
+    home: &Path,
+    identifier: &str,
+    reason: &str,
+) -> Result<Option<crate::cluster::membership::RevokeReceipt>> {
+    revoke_membership_with_request_id(home, identifier, reason, &uuid::Uuid::now_v7().to_string())
+        .await
+}
+
+fn canonical_revocation_request_id(request_id: &str) -> Result<String> {
+    crate::cluster::membership::validate_revocation_request_id(request_id)?;
+    let parsed =
+        uuid::Uuid::parse_str(request_id).context("revocation request id is not a UUID")?;
+    Ok(parsed.to_string())
+}
+
+fn build_revoke_binding_from_envelope(
+    envelope: &crate::cluster::membership::MembershipSnapshotEnvelope,
+    identifier: &str,
+    reason: &str,
+    request_id: &str,
+) -> Result<Option<crate::cluster::membership::MembershipRevokeBinding>> {
+    envelope.validate()?;
+    let identifier = identifier.trim();
+    anyhow::ensure!(!identifier.is_empty(), "membership identifier is empty");
+    let matches = envelope
+        .snapshot
+        .members
+        .iter()
+        .filter(|member| {
+            member.stable_node_id.as_str() == identifier
+                || member.stable_node_id.as_str().starts_with(identifier)
+                || member.label == identifier
+        })
+        .collect::<Vec<_>>();
+    let member = match matches.as_slice() {
+        [] => return Ok(None),
+        [member] => *member,
+        _ => anyhow::bail!("membership identifier `{identifier}` is ambiguous"),
+    };
+    anyhow::ensure!(
+        member.state == crate::cluster::membership::MembershipState::Active && !member.tombstoned,
+        "only an active membership can be revoked"
     );
-    for p in &reg.peers {
-        let key_short = short_key(&p.pub_key_hex);
-        println!(
-            "{:<16} {:<24} {:<22} {:<14}",
-            key_short,
-            p.instance_label,
-            p.addr,
-            p.discovered_via.as_str(),
-        );
+    let binding = crate::cluster::membership::MembershipRevokeBinding {
+        request_id: canonical_revocation_request_id(request_id)?,
+        stable_node_id: member.stable_node_id.clone(),
+        reason: reason.to_string(),
+        source: "operator_cli".to_string(),
+        snapshot_version: envelope.snapshot_version,
+        snapshot_digest: envelope.snapshot_digest.clone(),
+        authority_epoch: envelope.snapshot.authority_epoch,
+        member_auth_epoch: member.auth_epoch,
+        member_membership_epoch: member.membership_epoch,
+    };
+    binding.validate()?;
+    Ok(Some(binding))
+}
+
+fn rebuild_existing_revoke_binding(
+    envelope: &crate::cluster::membership::MembershipSnapshotEnvelope,
+    identifier: &str,
+    reason: &str,
+    status: &crate::cluster::membership::RevocationIntentStatus,
+) -> Result<crate::cluster::membership::MembershipRevokeBinding> {
+    envelope.validate()?;
+    anyhow::ensure!(
+        status.reason == reason && status.source == "operator_cli",
+        "revocation request id was reused with a different reason or source"
+    );
+    let identifier = identifier.trim();
+    anyhow::ensure!(!identifier.is_empty(), "membership identifier is empty");
+    let matches = envelope
+        .snapshot
+        .members
+        .iter()
+        .filter(|member| {
+            member.stable_node_id.as_str() == identifier
+                || member.stable_node_id.as_str().starts_with(identifier)
+                || member.label == identifier
+        })
+        .collect::<Vec<_>>();
+    let member = match matches.as_slice() {
+        [member] => *member,
+        [] => anyhow::bail!(
+            "revocation retry target `{identifier}` is absent; retry with stable node `{}`",
+            status.stable_node_id
+        ),
+        _ => anyhow::bail!("membership identifier `{identifier}` is ambiguous"),
+    };
+    anyhow::ensure!(
+        member.stable_node_id == status.stable_node_id,
+        "revocation request id was reused for a different stable node"
+    );
+    status.immutable_binding()
+}
+
+async fn revoke_membership_with_request_id(
+    home: &Path,
+    identifier: &str,
+    reason: &str,
+    request_id: &str,
+) -> Result<Option<crate::cluster::membership::RevokeReceipt>> {
+    let request_id = canonical_revocation_request_id(request_id)?;
+    if live_daemon_owner_pid(home)?.is_some() {
+        let envelope = load_membership_snapshot_envelope(home).await?;
+        let binding =
+            match crate::daemon::audit_rpc::membership_revocation_status(home, &request_id)
+                .await
+                .map_err(anyhow::Error::from)
+                .context("read existing revocation intent through daemon authority RPC")?
+            {
+                Some(status) => {
+                    rebuild_existing_revoke_binding(&envelope, identifier, reason, &status)?
+                }
+                None => {
+                    let Some(binding) = build_revoke_binding_from_envelope(
+                        &envelope,
+                        identifier,
+                        reason,
+                        &request_id,
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    binding
+                }
+            };
+        return crate::daemon::audit_rpc::membership_revoke(
+            home,
+            &crate::cluster::membership::MembershipRevokeRequest { binding },
+        )
+        .await
+        .map_err(anyhow::Error::from)
+        .context("revoke membership through daemon authority RPC")
+        .map(Some);
+    }
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    let controller = crate::cluster::membership::MembershipController::open(
+        home,
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+    )?;
+    let envelope = controller.snapshot()?.into_envelope()?;
+    let binding = match controller.revocation_status(&request_id)? {
+        Some(status) => rebuild_existing_revoke_binding(&envelope, identifier, reason, &status)?,
+        None => {
+            let Some(binding) =
+                build_revoke_binding_from_envelope(&envelope, identifier, reason, &request_id)?
+            else {
+                return Ok(None);
+            };
+            binding
+        }
+    };
+    controller
+        .revoke_bound(&binding, crate::time::now_unix_i64())
+        .map(Some)
+}
+
+async fn run_list(output: &OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let envelope = load_membership_snapshot_envelope(&home).await?;
+    let snapshot = &envelope.snapshot;
+    let members = &snapshot.members;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&envelope)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&envelope)?),
+        OutputFormat::Table => {
+            if members.is_empty() {
+                println!(
+                    "(no cluster memberships — run `neoth cluster discover`; legacy rows import as Pending)"
+                );
+                return Ok(());
+            }
+            println!(
+                "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} {}",
+                "stable_node", "label", "state", "auth", "member", "carrier", "binding"
+            );
+            for member in members {
+                if member.bindings.is_empty() {
+                    println!(
+                        "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} {}",
+                        short_key(member.stable_node_id.as_str()),
+                        member.label,
+                        member.state.as_str(),
+                        member.auth_epoch.get(),
+                        member.membership_epoch.get(),
+                        "-",
+                        "-"
+                    );
+                }
+                for binding in &member.bindings {
+                    println!(
+                        "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} {} [{}]",
+                        short_key(member.stable_node_id.as_str()),
+                        member.label,
+                        member.state.as_str(),
+                        member.auth_epoch.get(),
+                        member.membership_epoch.get(),
+                        binding.carrier.as_str(),
+                        short_key(binding.transport_identity.as_str()),
+                        binding.assurance
+                    );
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -841,69 +1197,61 @@ pub fn render_topology_table(rows: &[TopologyRow]) -> String {
     out
 }
 
+#[cfg(test)]
 fn topology_now_unix() -> i64 {
     crate::time::now_unix_i64()
 }
 
-fn run_topology(output: &OutputFormat) -> Result<()> {
+async fn run_topology(output: &OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let reg = crate::cluster::registry::load(&home)?;
-    let now = topology_now_unix();
+    let envelope = load_membership_snapshot_envelope(&home).await?;
+    let snapshot = &envelope.snapshot;
+    let members = &snapshot.members;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let peers: Vec<_> = reg
-                .peers
-                .iter()
-                .map(|p| {
-                    let age = if p.last_seen_unix == 0 {
-                        None
-                    } else {
-                        Some(now.saturating_sub(p.last_seen_unix).max(0))
-                    };
-                    serde_json::json!({
-                        "pub_key_short": &p.pub_key_hex[..16.min(p.pub_key_hex.len())],
-                        "pub_key_hex": p.pub_key_hex,
-                        "label": p.instance_label,
-                        "hostname": p.hostname,
-                        "addr": p.addr,
-                        "via": p.discovered_via.as_str(),
-                        "paired_at_unix": p.paired_at_unix,
-                        "last_seen_unix": p.last_seen_unix,
-                        "last_seen_age_secs": age,
-                        "status": topology_status(p.last_seen_unix, now),
-                        "rtt_ms": p.rtt_ms,
-                        "stability_score": p.stability_score,
-                    })
-                })
-                .collect();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "peers": peers,
-                    "local_mode": "single-node",
-                }))?
-            );
+            if matches!(output, OutputFormat::Jsonl) {
+                println!("{}", serde_json::to_string(&envelope)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&envelope)?);
+            }
         }
         OutputFormat::Table => {
-            if reg.peers.is_empty() {
+            if members.is_empty() {
                 println!(
-                    "(no confirmed cluster peers — run `neoth cluster discover` for an mDNS scan, \
-                     then `neoth cluster confirm <pub_key>` to add a peer)"
+                    "(no cluster memberships — run `neoth cluster discover`; legacy rows import as Pending)"
                 );
                 return Ok(());
             }
-            let rows = build_topology_rows(&reg.peers, now);
-            print!("{}", render_topology_table(&rows));
-            println!(
-                "note: RTT and stability are the latest values persisted in cluster.yaml; \
-                 status derives from the persisted last-seen timestamp."
-            );
+            println!("# Cluster topology ({} stable nodes)", members.len());
+            for member in members {
+                println!(
+                    "{} {} state={} auth_epoch={} membership_epoch={} tombstone={}",
+                    short_key(member.stable_node_id.as_str()),
+                    member.label,
+                    member.state.as_str(),
+                    member.auth_epoch.get(),
+                    member.membership_epoch.get(),
+                    member.tombstoned
+                );
+                for binding in &member.bindings {
+                    println!(
+                        "  {} {} endpoint={} assurance={} expires={}",
+                        binding.carrier.as_str(),
+                        binding.transport_identity,
+                        binding.endpoint,
+                        binding.assurance,
+                        binding
+                            .expires_at_unix
+                            .map_or_else(|| "none".to_string(), |expiry| expiry.to_string())
+                    );
+                }
+            }
         }
     }
     Ok(())
 }
 
-fn run_confirm(
+async fn run_confirm(
     pub_key: &str,
     label: &str,
     addr: &str,
@@ -931,42 +1279,29 @@ fn run_confirm(
             "unknown discovered_via `{other}` — use mdns/tailscale/hysteria_relay/manual"
         ),
     };
+    anyhow::ensure!(
+        via_enum != crate::cluster::discovery::DiscoveryVia::Mdns,
+        "mDNS StableNode discovery is candidate-only; request an authority invite and \
+         confirm the exact signed EndpointAttestation instead"
+    );
     let home = FreedomConfig::default_neoth_home();
-    let now = crate::time::now_unix_i64();
-    let hostname_norm = hostname.map(|h| h.trim()).unwrap_or("").to_string();
-    let peer = crate::cluster::registry::PairedPeer {
-        pub_key_hex: pub_key_norm.clone(),
-        instance_label: label.into(),
-        hostname: hostname_norm,
-        addr: addr.into(),
-        discovered_via: via_enum,
-        paired_at_unix: now,
-        last_seen_unix: now,
-        // SL-02b: a freshly-confirmed peer has no RTT yet + a neutral stability.
-        rtt_ms: None,
-        stability_score: crate::cluster::registry::NEUTRAL_STABILITY,
-    };
-    crate::cluster::registry::upsert(&home, peer)?;
-    // Drop a sidecar so the running daemon emits WAL 0xE6
-    // on its next tick. Best-effort — sidecar write failure
-    // doesn't roll back the registry change.
-    let payload = serde_json::json!({
-        "label": label,
-        "addr": addr,
-        "discovered_via": via_enum.as_str(),
-    });
-    if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
+    let _ = hostname;
+    let transport = crate::cluster::membership::TransportIdentity::parse(pub_key_norm.clone())?;
+    let stable = record_legacy_pending_membership(
         &home,
-        crate::cluster::audit_sidecar::ClusterAuditKind::PeerConfirmed,
-        &pub_key_norm,
-        payload,
-    ) {
-        tracing::warn!(error = %e, "cluster confirm sidecar write failed (non-fatal)");
-    }
+        crate::cluster::membership::MembershipLegacyPendingRequest {
+            carrier: crate::cluster::membership::CarrierKind::Peeroxide,
+            transport_identity: transport,
+            endpoint: addr.to_string(),
+            label: label.to_string(),
+        },
+    )
+    .await?;
     let key_short = &pub_key_norm[..16.min(pub_key_norm.len())];
     println!(
-        "confirmed peer `{label}` ({key_short}) via {via_enum_str}",
-        via_enum_str = via_enum.as_str()
+        "recorded pending peer `{label}` ({key_short}) via {via_enum_str}; \
+         stable_node_id={stable}; signed endpoint attestation is required before Active admission",
+        via_enum_str = via_enum.as_str(),
     );
     Ok(())
 }
@@ -974,6 +1309,7 @@ fn run_confirm(
 /// Durably hand a committed revoke to the single WAL writer. A confirmed
 /// mutation is not acknowledged without this sidecar; callers roll the
 /// registry back if the handoff cannot be persisted.
+#[cfg(test)]
 fn emit_revoke_sidecar(
     home: &std::path::Path,
     requested_peer: &str,
@@ -997,6 +1333,7 @@ fn emit_revoke_sidecar(
 /// What a revoke resolved to. Lets `revoke_peer` stay a pure
 /// home-injectable core (tempdir-testable) while `run_revoke` owns the
 /// operator-facing printing.
+#[cfg(test)]
 #[derive(Debug, PartialEq, Eq)]
 enum RevokeOutcome {
     /// Removed by pub_key (full or unique prefix).
@@ -1019,6 +1356,7 @@ enum RevokeOutcome {
 /// arg as a pub_key (full or unique prefix) FIRST so an all-hex
 /// hostname can never shadow a real key; on no key-match, falls back
 /// to resolving the arg as a recorded hostname (SL-01c).
+#[cfg(test)]
 fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
     let Some((peer, matched_by, audit_sidecar)) =
         crate::cluster::registry::remove_for_revoke_committed(home, arg, |peer| {
@@ -1042,6 +1380,7 @@ fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
     }
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 struct ClusterPeerRevokePostStateReceipt {
     registry_path: String,
@@ -1052,6 +1391,7 @@ struct ClusterPeerRevokePostStateReceipt {
     verified: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 struct ClusterPeerRevokeAuditReceipt {
     required: bool,
@@ -1061,6 +1401,7 @@ struct ClusterPeerRevokeAuditReceipt {
     durable_handoff_persisted: bool,
 }
 
+#[cfg(test)]
 #[derive(Clone, Debug, serde::Serialize, PartialEq, Eq)]
 struct ClusterPeerRevokeReceipt {
     operation: &'static str,
@@ -1072,6 +1413,7 @@ struct ClusterPeerRevokeReceipt {
     audit: ClusterPeerRevokeAuditReceipt,
 }
 
+#[cfg(test)]
 fn revoke_post_state(
     home: &std::path::Path,
     canonical_peer: Option<&str>,
@@ -1103,6 +1445,7 @@ fn revoke_post_state(
     })
 }
 
+#[cfg(test)]
 fn build_revoke_receipt(
     home: &std::path::Path,
     requested_peer: &str,
@@ -1137,31 +1480,144 @@ fn build_revoke_receipt(
     })
 }
 
-fn run_revoke(pub_key: &str, output: &OutputFormat) -> Result<()> {
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub(crate) struct MembershipRevokeCommandReceipt {
+    pub operation: String,
+    pub requested_peer: String,
+    pub request_id: String,
+    pub matched: bool,
+    pub receipt: Option<crate::cluster::membership::RevokeReceipt>,
+}
+
+pub(crate) async fn revoke_membership_receipt(
+    home: &Path,
+    identifier: &str,
+) -> Result<MembershipRevokeCommandReceipt> {
+    revoke_membership_receipt_with_request_id(home, identifier, &uuid::Uuid::now_v7().to_string())
+        .await
+}
+
+async fn revoke_membership_receipt_with_request_id(
+    home: &Path,
+    identifier: &str,
+    request_id: &str,
+) -> Result<MembershipRevokeCommandReceipt> {
+    let request_id = canonical_revocation_request_id(request_id)?;
+    let receipt =
+        revoke_membership_with_request_id(home, identifier, "operator_cli", &request_id).await?;
+    Ok(MembershipRevokeCommandReceipt {
+        operation: "cluster.membership.revoke".into(),
+        requested_peer: identifier.to_string(),
+        request_id,
+        matched: receipt.is_some(),
+        receipt,
+    })
+}
+
+pub(crate) type MembershipRevocationStatusCommandReceipt =
+    crate::cluster::membership::MembershipRevocationStatusEnvelope;
+
+pub(crate) async fn membership_runtime_health(
+    home: &Path,
+) -> Result<crate::cluster::membership::MembershipRuntimeHealth> {
+    let health = if live_daemon_owner_pid(home)?.is_some() {
+        crate::daemon::audit_rpc::membership_runtime_health(home)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("read membership runtime health through daemon authority RPC")?
+    } else {
+        let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+        crate::cluster::membership::MembershipController::open(
+            home,
+            std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+        )?
+        .runtime_health()?
+    };
+    health.validate()?;
+    Ok(health)
+}
+
+async fn membership_revocation_status(
+    home: &Path,
+    request_id: &str,
+) -> Result<Option<crate::cluster::membership::RevocationIntentStatus>> {
+    let request_id = canonical_revocation_request_id(request_id)?;
+    if live_daemon_owner_pid(home)?.is_some() {
+        return crate::daemon::audit_rpc::membership_revocation_status(home, &request_id)
+            .await
+            .map_err(anyhow::Error::from)
+            .context("read revocation status through daemon authority RPC");
+    }
+    let _offline_authority_lock = acquire_offline_membership_guard(home)?;
+    crate::cluster::membership::MembershipController::open(
+        home,
+        std::sync::Arc::new(crate::cluster::membership::LiveSessionRegistry::new()),
+    )?
+    .revocation_status(&request_id)
+}
+
+pub(crate) async fn membership_revocation_status_receipt(
+    home: &Path,
+    request_id: &str,
+) -> Result<MembershipRevocationStatusCommandReceipt> {
+    let request_id = canonical_revocation_request_id(request_id)?;
+    let status = membership_revocation_status(home, &request_id).await?;
+    crate::cluster::membership::MembershipRevocationStatusEnvelope::new(request_id, status)
+}
+
+async fn run_revoke(pub_key: &str, request_id: Option<&str>, output: &OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let outcome = revoke_peer(&home, pub_key)?;
-    let receipt = build_revoke_receipt(&home, pub_key, &outcome)?;
+    let request_id = request_id
+        .map(canonical_revocation_request_id)
+        .transpose()?
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    let acknowledgement =
+        revoke_membership_receipt_with_request_id(&home, pub_key, &request_id).await?;
+    let receipt = acknowledgement.receipt.clone();
 
     match output {
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&receipt)?),
-        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&receipt)?),
-        OutputFormat::Table => match outcome {
-            RevokeOutcome::ByKey { key, .. } => println!("revoked peer `{key}`"),
-            RevokeOutcome::ByHostname {
-                label,
-                hostname,
-                key,
-                ..
-            } => {
-                let short = &key[..16.min(key.len())];
-                println!("revoked peer `{label}` (resolved hostname `{hostname}` → {short})");
-            }
-            RevokeOutcome::NoMatch => {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&acknowledgement)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&acknowledgement)?),
+        OutputFormat::Table => match receipt {
+            Some(receipt) => {
+                let action = if receipt.already_revoked {
+                    "already revoked"
+                } else {
+                    "revoked"
+                };
                 println!(
-                    "no peer matched `{}` by pub_key or hostname (no-op)",
-                    pub_key.trim().to_ascii_lowercase()
+                    "{action} stable node `{}` auth_epoch={} membership_epoch={} live_teardown={}",
+                    receipt.stable_node_id,
+                    receipt.auth_epoch.get(),
+                    receipt.membership_epoch.get(),
+                    receipt.live_teardown
                 );
             }
+            None => println!("no stable node matched `{}` (no-op)", pub_key.trim()),
+        },
+    }
+    Ok(())
+}
+
+async fn run_revoke_status(request_id: &str, output: &OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let acknowledgement = membership_revocation_status_receipt(&home, request_id).await?;
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&acknowledgement)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(&acknowledgement)?),
+        OutputFormat::Table => match acknowledgement.status {
+            Some(status) => println!(
+                "request_id={} state={} stable_node={} tombstone_committed={} receipt_id={}",
+                status.request_id,
+                status.state.as_str(),
+                status.stable_node_id,
+                status.tombstone_committed,
+                status.receipt_id.as_deref().unwrap_or("-")
+            ),
+            None => println!(
+                "no revocation intent found for `{}`",
+                acknowledgement.request_id
+            ),
         },
     }
     Ok(())
@@ -1473,6 +1929,14 @@ fn live_daemon_owner_pid(home: &Path) -> Result<Option<u32>> {
             Ok(None)
         }
     }
+}
+
+fn acquire_offline_membership_guard(home: &Path) -> Result<std::fs::File> {
+    crate::util::locked_file::try_lock_file_once(
+        &home.join("neothd.pid"),
+        "offline membership authority",
+    )?
+    .context("daemon acquired the PID-file lock before offline membership mutation")
 }
 
 fn cluster_runtime_applied(
@@ -2166,7 +2630,7 @@ fn status_mode_policy(
     (mode, policy)
 }
 
-fn run_status(output: &OutputFormat) -> Result<()> {
+async fn run_status(output: &OutputFormat) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let runtime_config = crate::config::load_runtime_config_pair_from_path_or_default(
         &FreedomConfig::default_path(),
@@ -2178,7 +2642,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         .clone()
         .unwrap_or_else(|| "(unset)".to_string());
     let node_id =
-        crate::cluster::wal_sync::local_node_pubkey(&home)?.unwrap_or_else(|| operator.clone());
+        crate::cluster::wal_sync::local_stable_node_id(&home)?.unwrap_or_else(|| operator.clone());
 
     // SL-00(1a): cluster identity status (public name + whether a shared
     // passphrase is set). Reads freedom.yaml::cluster.name + credentials
@@ -2238,27 +2702,10 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     // hardcoded `single-node` / `local-only` / `0` placeholder, which
     // lied about peers even after `neoth cluster confirm` had paired
     // them (A-13).
-    // Confirmed-peer count from the on-disk registry. A malformed
-    // `cluster.yaml` surfaces as a hard error (load() never silently
-    // empties) rather than a false "0 peers".
-    let registry = crate::cluster::registry::load(&home)?;
-    let peer_count = registry.peers.len();
-    let now = topology_now_unix();
-    let status_peers: Vec<_> = registry
-        .peers
-        .iter()
-        .map(|peer| {
-            let age =
-                (peer.last_seen_unix > 0).then(|| now.saturating_sub(peer.last_seen_unix).max(0));
-            serde_json::json!({
-                "id": peer.pub_key_hex,
-                "label": peer.instance_label,
-                "last_seen": fmt_last_seen(age),
-                "last_seen_unix": peer.last_seen_unix,
-                "reachable": topology_status(peer.last_seen_unix, now) == "recent",
-            })
-        })
-        .collect();
+    let membership_envelope = load_membership_snapshot_envelope(&home).await?;
+    let membership_snapshot = &membership_envelope.snapshot;
+    let peer_count = membership_snapshot.members.len();
+    let pending_membership_outbox = membership_snapshot.pending_outbox;
     let views_db = home.join("views.db");
     let conflict_count = if views_db.exists() {
         crate::cluster::durable_sync::DurableMeshSync::new(views_db).unresolved_conflict_count()?
@@ -2273,36 +2720,48 @@ fn run_status(output: &OutputFormat) -> Result<()> {
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let body = serde_json::json!({
-                "mode": mode,
-                "policy": policy_name,
-                "peer_count": peer_count,
-                "conflict_count": conflict_count,
-                "operator_id": operator,
-                "node_id": node_id,
-                "cluster_name": identity.name,
-                "cluster_passphrase_set": identity.has_passphrase,
-                "cluster_identity_configured": identity.configured,
-                "cluster_enabled": identity.enabled,
-                "restart_required": !runtime_applied,
-                "transport_active": transport_active,
-                "transport": transport_state,
-                "listen_port": cfg.cluster.listen_port,
-                "mdns_enabled": cfg.cluster.mdns.enabled,
-                "trusted_ssids": cfg.cluster.policy.trusted_ssids,
-                "peers": status_peers,
-                "gossip": {
-                    "replicate_raw_ingress": cfg.cluster.gossip.replicate_raw_ingress,
-                    "replay_budget_days": cfg.cluster.gossip.replay_budget_days,
+            let runtime = crate::cluster::status_wire::ClusterRuntimeStatus {
+                version: crate::cluster::status_wire::CLUSTER_RUNTIME_STATUS_VERSION,
+                mode: mode.to_string(),
+                policy: policy_name.to_string(),
+                conflict_count,
+                operator_id: operator.clone(),
+                node_id: node_id.clone(),
+                cluster_name: identity.name.clone(),
+                cluster_passphrase_set: identity.has_passphrase,
+                cluster_identity_configured: identity.configured,
+                cluster_enabled: identity.enabled,
+                restart_required: !runtime_applied,
+                transport_active,
+                transport: transport_state.to_string(),
+                listen_port: cfg.cluster.listen_port,
+                mdns_enabled: cfg.cluster.mdns.enabled,
+                trusted_ssids: cfg.cluster.policy.trusted_ssids.clone(),
+                gossip: crate::cluster::status_wire::ClusterGossipStatus {
+                    replicate_raw_ingress: cfg.cluster.gossip.replicate_raw_ingress,
+                    replay_budget_days: cfg.cluster.gossip.replay_budget_days,
                 },
-            });
-            println!("{}", serde_json::to_string_pretty(&body)?);
+            };
+            let body = crate::cluster::status_wire::ClusterStatusEnvelope::new(
+                membership_envelope,
+                runtime,
+            )?;
+            if matches!(output, OutputFormat::Jsonl) {
+                println!("{}", serde_json::to_string(&body)?);
+            } else {
+                println!("{}", serde_json::to_string_pretty(&body)?);
+            }
         }
         OutputFormat::Table => {
             println!("# Cluster status");
             println!("  mode             : {mode}");
             println!("  policy           : {policy_name}");
             println!("  peer count       : {peer_count}");
+            println!(
+                "  membership DB    : {}",
+                membership_snapshot.authority_path.display()
+            );
+            println!("  pending outbox   : {pending_membership_outbox}");
             println!("  open conflicts   : {conflict_count}");
             println!("  operator id      : {operator}");
             println!(
@@ -2502,6 +2961,10 @@ fn export_foreign_jsonl_line(row: &crate::cluster::wal_sync::ForeignEventRow) ->
     });
     serde_json::json!({
         "origin_peer_pk": row.origin_peer_pk,
+        "stable_node_id": row.stable_node_id,
+        "auth_epoch": row.auth_epoch,
+        "membership_epoch": row.membership_epoch,
+        "fence_state": row.fence_state,
         "origin_seq": row.origin_seq,
         "event_type": format!("0x{:02X}", row.event_type),
         "payload_b64": payload_b64,
@@ -2563,6 +3026,14 @@ fn run_export_foreign(
 #[derive(Debug, serde::Deserialize)]
 struct ExportRow {
     origin_peer_pk: String,
+    #[serde(default)]
+    stable_node_id: Option<String>,
+    #[serde(default)]
+    auth_epoch: Option<u64>,
+    #[serde(default)]
+    membership_epoch: Option<u64>,
+    #[serde(default)]
+    fence_state: Option<String>,
     origin_seq: u64,
     /// Hex-encoded event type, e.g. `"0x90"` or `"0x9E"`.
     event_type: String,
@@ -2628,7 +3099,7 @@ fn open_audit_log(path: &std::path::Path) -> Result<std::fs::File> {
 
 fn run_restore(
     peer_export: &str,
-    peer_pk_override: Option<&str>,
+    stable_node_id_override: Option<&str>,
     dry_run: bool,
     yes: bool,
 ) -> Result<()> {
@@ -2638,16 +3109,16 @@ fn run_restore(
 
     let home = crate::config::FreedomConfig::default_neoth_home();
 
-    // ── 1. Resolve local node pubkey ──────────────────────────────────────
-    let local_pk: String = match peer_pk_override {
-        Some(pk) => {
-            validate_pub_key_hex(pk)?;
-            pk.to_string()
+    // ── 1. Resolve local stable node identity ─────────────────────────────
+    let local_stable_node_id: String = match stable_node_id_override {
+        Some(stable_node_id) => {
+            validate_pub_key_hex(stable_node_id)?;
+            stable_node_id.to_string()
         }
-        None => crate::cluster::wal_sync::local_node_pubkey(&home)?.ok_or_else(|| {
+        None => crate::cluster::wal_sync::local_stable_node_id(&home)?.ok_or_else(|| {
             anyhow::anyhow!(
-                "Cannot derive local node pubkey — no cluster passphrase configured.\n\
-                 Either run `neoth init` with a cluster passphrase, or pass --peer <pubkey>."
+                "Cannot load local StableNodeId — cluster identity is not initialized.\n\
+                 Start `neoth serve` once to initialize it, or pass --peer <stable-node-id>."
             )
         })?,
     };
@@ -2676,7 +3147,7 @@ fn run_restore(
         }
         eprint!(
             "About to restore same-origin frames from `{peer_export}` into views.db.\n\
-             Local node pubkey: {local_pk}\n\
+             Local StableNodeId: {local_stable_node_id}\n\
              This will UPDATE existing idx_episode / idx_groundtruth rows.\n\
              Proceed? [y/N] "
         );
@@ -2732,12 +3203,18 @@ fn run_restore(
             }
         };
 
-        // Same-origin-only: skip and deduplicate WARN per foreign pk.
-        if export_row.origin_peer_pk != local_pk {
-            if warned_cross_peer.insert(export_row.origin_peer_pk.clone()) {
+        // Same-origin-only: v34+ rows use the stable identity. The fallback
+        // keeps legacy raw-only exports readable; canonical legacy-unbound
+        // rows are rejected below before any local write.
+        let exported_stable_node_id = export_row
+            .stable_node_id
+            .as_deref()
+            .unwrap_or(&export_row.origin_peer_pk);
+        if exported_stable_node_id != local_stable_node_id {
+            if warned_cross_peer.insert(exported_stable_node_id.to_string()) {
                 tracing::warn!(
-                    peer = %export_row.origin_peer_pk,
-                    "restore: cross-peer row (origin_peer_pk != local pubkey); \
+                    peer = %exported_stable_node_id,
+                    "restore: cross-peer row (stable_node_id != local stable node id); \
                      skipping all rows from this peer"
                 );
             }
@@ -2797,6 +3274,20 @@ fn run_restore(
                     envelope_version == crate::cluster::gossip_wire::SYNC_ENVELOPE_VERSION,
                     "unsupported canonical export envelope version {envelope_version}"
                 );
+                let stable_node_id = export_row
+                    .stable_node_id
+                    .as_deref()
+                    .context("canonical export row is missing stable_node_id")?;
+                let auth_epoch = export_row
+                    .auth_epoch
+                    .context("canonical export row is missing auth_epoch")?;
+                let membership_epoch = export_row
+                    .membership_epoch
+                    .context("canonical export row is missing membership_epoch")?;
+                let fence_state = export_row
+                    .fence_state
+                    .as_deref()
+                    .context("canonical export row is missing fence_state")?;
                 let envelope_bytes = base64::engine::general_purpose::STANDARD
                     .decode(envelope_b64)
                     .context("canonical export envelope base64 decode failed")?;
@@ -2805,7 +3296,13 @@ fn run_restore(
                         .context("canonical export envelope JSON decode failed")?;
                 crate::cluster::wal_sync::apply_restore_envelope(
                     &conn,
-                    &export_row.origin_peer_pk,
+                    crate::cluster::wal_sync::CanonicalRestoreSource {
+                        origin_peer_pk: &export_row.origin_peer_pk,
+                        stable_node_id,
+                        auth_epoch,
+                        membership_epoch,
+                        fence_state,
+                    },
                     export_row.origin_seq,
                     &envelope,
                     digest,
@@ -2857,6 +3354,10 @@ fn run_restore(
             let audit_entry = serde_json::json!({
                 "ts": crate::time::now_unix_i64(),
                 "origin_peer_pk": export_row.origin_peer_pk,
+                "stable_node_id": export_row.stable_node_id,
+                "auth_epoch": export_row.auth_epoch,
+                "membership_epoch": export_row.membership_epoch,
+                "fence_state": export_row.fence_state,
                 "origin_seq": export_row.origin_seq,
                 "event_type": format!("0x{:02X}", event_type),
                 "outcome": outcome_tag,
@@ -2935,6 +3436,10 @@ fn run_foreign_events(
                 .map(|r| {
                     serde_json::json!({
                         "origin_peer_pk": r.origin_peer_pk,
+                        "stable_node_id": r.stable_node_id,
+                        "auth_epoch": r.auth_epoch,
+                        "membership_epoch": r.membership_epoch,
+                        "fence_state": r.fence_state,
                         "origin_seq": r.origin_seq,
                         "event_type": format!("0x{:02X}", r.event_type),
                         "payload_bytes": r.payload.len(),
@@ -2950,6 +3455,10 @@ fn run_foreign_events(
                     "{}",
                     serde_json::json!({
                         "origin_peer_pk": r.origin_peer_pk,
+                        "stable_node_id": r.stable_node_id,
+                        "auth_epoch": r.auth_epoch,
+                        "membership_epoch": r.membership_epoch,
+                        "fence_state": r.fence_state,
                         "origin_seq": r.origin_seq,
                         "event_type": format!("0x{:02X}", r.event_type),
                         "payload_bytes": r.payload.len(),
@@ -2964,14 +3473,15 @@ fn run_foreign_events(
                 return Ok(());
             }
             println!(
-                "{:<20} {:>8} {:>6} {:>8} {:>12}",
-                "ORIGIN PEER", "SEQ", "TYPE", "BYTES", "RECEIVED"
+                "{:<20} {:>6} {:>8} {:>6} {:>8} {:>12}",
+                "STABLE NODE", "AUTH", "SEQ", "TYPE", "BYTES", "RECEIVED"
             );
             for r in &rows {
-                let short: String = r.origin_peer_pk.chars().take(16).collect();
+                let short: String = r.stable_node_id.chars().take(16).collect();
                 println!(
-                    "{:<20} {:>8} 0x{:02X} {:>8} {:>12}",
+                    "{:<20} {:>6} {:>8} 0x{:02X} {:>8} {:>12}",
                     format!("{short}..."),
+                    r.auth_epoch,
                     r.origin_seq,
                     r.event_type,
                     r.payload.len(),
@@ -3042,11 +3552,10 @@ fn run_sync_state(peer: Option<&str>, output: &crate::cli::OutputFormat) -> Resu
 fn run_request_sync(peer: &str, output: &crate::cli::OutputFormat) -> Result<()> {
     validate_pub_key_hex(peer)?;
     let home = crate::config::FreedomConfig::default_neoth_home();
-    let registry = crate::cluster::registry::load(&home)?;
-    anyhow::ensure!(
-        registry.peers.iter().any(|known| known.pub_key_hex == peer),
-        "peer `{peer}` is not paired; confirm it before requesting sync"
-    );
+    let membership = crate::cluster::membership::MembershipStore::open(&home)?;
+    let grant = membership
+        .admit_identifier(peer, crate::time::now_unix_i64())
+        .context("peer is not an active membership")?;
     let runtime_config = crate::config::load_runtime_config_pair_from_path_or_default(
         &crate::config::FreedomConfig::default_path(),
     )?;
@@ -3070,10 +3579,7 @@ fn run_request_sync(peer: &str, output: &crate::cli::OutputFormat) -> Result<()>
         "no live authenticated cluster carrier; start or restart NEOTH before requesting sync"
     );
     let sync = crate::cluster::durable_sync::DurableMeshSync::new(home.join("views.db"));
-    let receipt = sync.request_sync(
-        &crate::cluster::PeerPubkey::new(peer.to_string()),
-        crate::time::now_unix_i64(),
-    )?;
+    let receipt = sync.request_sync_authorized(&grant, crate::time::now_unix_i64())?;
     match output {
         crate::cli::OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&receipt)?);
@@ -3231,6 +3737,18 @@ fn run_conflicts(
 mod tests {
     use super::*;
 
+    #[test]
+    fn revocation_request_id_must_be_canonical_uuid() {
+        let request_id = "018f87d5-9e55-7d2e-8b20-3d6f3a0a3f46";
+        assert_eq!(
+            canonical_revocation_request_id(request_id).unwrap(),
+            request_id
+        );
+        assert!(canonical_revocation_request_id(&request_id.to_uppercase()).is_err());
+        assert!(canonical_revocation_request_id("not-a-uuid").is_err());
+        assert!(canonical_revocation_request_id("550e8400-e29b-41d4-a716-446655440000").is_err());
+    }
+
     fn write_test_freedom(home: &Path, config: &FreedomConfig) {
         std::fs::create_dir_all(home).expect("create test home");
         std::fs::write(
@@ -3373,6 +3891,91 @@ mod tests {
         assert_eq!(
             std::fs::read(&credentials_path).expect("read credentials after"),
             credentials_before
+        );
+    }
+
+    #[test]
+    fn completed_revocation_retry_uses_durable_binding_not_active_preflight() {
+        use crate::cluster::membership::{
+            AuthEpoch, MEMBERSHIP_SNAPSHOT_VERSION, MemberSnapshot, MembershipEpoch,
+            MembershipRevokeBinding, MembershipSnapshot, MembershipState, RevocationIntentState,
+            RevocationIntentStatus, StableNodeId,
+        };
+
+        let stable_node_id = StableNodeId::parse("a".repeat(64)).unwrap();
+        let binding = MembershipRevokeBinding {
+            request_id: crate::cluster::membership::new_revocation_request_id(),
+            stable_node_id: stable_node_id.clone(),
+            reason: "operator_cli".into(),
+            source: "operator_cli".into(),
+            snapshot_version: MEMBERSHIP_SNAPSHOT_VERSION,
+            snapshot_digest: "b".repeat(64),
+            authority_epoch: MembershipEpoch::INITIAL,
+            member_auth_epoch: AuthEpoch::INITIAL,
+            member_membership_epoch: MembershipEpoch::INITIAL,
+        };
+        let status = RevocationIntentStatus {
+            operation: "cluster.membership.revoke.status".into(),
+            request_id: binding.request_id.clone(),
+            request_digest: binding.request_digest().unwrap(),
+            stable_node_id: stable_node_id.clone(),
+            reason: binding.reason.clone(),
+            source: binding.source.clone(),
+            state: RevocationIntentState::Completed,
+            snapshot_version: binding.snapshot_version,
+            snapshot_digest: binding.snapshot_digest.clone(),
+            authority_epoch: binding.authority_epoch,
+            member_auth_epoch: binding.member_auth_epoch,
+            member_membership_epoch: binding.member_membership_epoch,
+            external_effects_unclassified: false,
+            tombstone_committed: true,
+            receipt_id: Some(crate::cluster::membership::new_revocation_request_id()),
+            indeterminate_reason: None,
+            created_at_unix: 1_700_000_000,
+            updated_at_unix: 1_700_000_001,
+        };
+        let current = MembershipSnapshot {
+            version: MEMBERSHIP_SNAPSHOT_VERSION,
+            authority_path: std::path::PathBuf::from("cluster-membership.db"),
+            authority_epoch: MembershipEpoch::new(2).unwrap(),
+            revocation_floor: MembershipEpoch::new(2).unwrap(),
+            pending_outbox: 0,
+            members: vec![MemberSnapshot {
+                stable_node_id: stable_node_id.clone(),
+                label: "peer-a".into(),
+                state: MembershipState::Revoked,
+                auth_epoch: AuthEpoch::new(2).unwrap(),
+                membership_epoch: MembershipEpoch::new(2).unwrap(),
+                tombstoned: true,
+                bindings: Vec::new(),
+            }],
+        }
+        .into_envelope()
+        .unwrap();
+
+        assert!(
+            build_revoke_binding_from_envelope(
+                &current,
+                stable_node_id.as_str(),
+                "operator_cli",
+                &binding.request_id,
+            )
+            .is_err(),
+            "normal preflight must reject a revoked target"
+        );
+        assert_eq!(
+            rebuild_existing_revoke_binding(
+                &current,
+                stable_node_id.as_str(),
+                "operator_cli",
+                &status,
+            )
+            .unwrap(),
+            binding
+        );
+        assert!(
+            rebuild_existing_revoke_binding(&current, stable_node_id.as_str(), "changed", &status,)
+                .is_err()
         );
     }
 
@@ -3581,6 +4184,32 @@ mod tests {
         assert_eq!(
             live_daemon_owner_pid(dir.path()).unwrap(),
             Some(std::process::id())
+        );
+    }
+
+    #[test]
+    fn offline_membership_guard_and_daemon_pid_guard_are_mutually_exclusive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let pidfile = dir.path().join("neothd.pid");
+
+        let offline =
+            acquire_offline_membership_guard(dir.path()).expect("acquire offline authority lock");
+        assert!(
+            crate::daemon::pidfile::acquire(&pidfile).is_err(),
+            "daemon must not start while an offline authority mutation holds the exact PID lock"
+        );
+        drop(offline);
+
+        let daemon =
+            crate::daemon::pidfile::acquire(&pidfile).expect("acquire simulated daemon owner");
+        assert!(
+            acquire_offline_membership_guard(dir.path()).is_err(),
+            "offline authority mutation must fail when the daemon owns the exact PID lock"
+        );
+        drop(daemon);
+        assert!(
+            acquire_offline_membership_guard(dir.path()).is_ok(),
+            "offline authority lock must become available after daemon shutdown"
         );
     }
 
@@ -4908,6 +5537,10 @@ mod tests {
         let row = crate::cluster::wal_sync::ForeignEventRow {
             id: 1,
             origin_peer_pk: "deadbeef".into(),
+            stable_node_id: "a".repeat(64),
+            auth_epoch: 3,
+            membership_epoch: 7,
+            fence_state: "active".into(),
             origin_seq: 42,
             event_type: 0x90,
             payload: vec![0xDE, 0xAD, 0xBE, 0xEF],
@@ -4919,6 +5552,10 @@ mod tests {
         let line = export_foreign_jsonl_line(&row);
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["origin_peer_pk"], "deadbeef");
+        assert_eq!(v["stable_node_id"], "a".repeat(64));
+        assert_eq!(v["auth_epoch"], 3);
+        assert_eq!(v["membership_epoch"], 7);
+        assert_eq!(v["fence_state"], "active");
         assert_eq!(v["origin_seq"], 42);
         assert_eq!(v["event_type"], "0x90");
         assert_eq!(v["received_at"], 1_720_000_000_i64);
@@ -4946,6 +5583,10 @@ mod tests {
         let row = crate::cluster::wal_sync::ForeignEventRow {
             id: 1,
             origin_peer_pk: "peer-a".into(),
+            stable_node_id: "b".repeat(64),
+            auth_epoch: 2,
+            membership_epoch: 8,
+            fence_state: "active".into(),
             origin_seq: 7,
             event_type: 0x94,
             payload: vec![1, 2, 3],
@@ -5356,8 +5997,8 @@ mod tests {
         assert!(parse_event_type_hex("0xGG").is_err(), "invalid hex chars");
         assert!(parse_event_type_hex("").is_err(), "empty string");
 
-        // Cross-peer: origin_peer_pk != local_pk must be countable.
-        // We verify that the data-level check is correct by comparing strings.
+        // Cross-peer: exported stable identity != local stable identity must
+        // be countable. We verify the data-level comparison here.
         let local = "aabbccdd".repeat(8); // 64 chars
         let foreign = "11223344".repeat(8);
         assert_ne!(local, foreign);

@@ -637,15 +637,19 @@ pub fn spawn_gossip_tick(
         loop {
             ticker.tick().await;
             let now = now_unix_secs();
-            let connected_peers = peer_streams.connected_peers();
-            let connected_peer_ids: HashSet<String> = connected_peers.iter().cloned().collect();
-            let due_requests = match durable.claim_due_sync_requests(now, &connected_peer_ids) {
-                Ok(requests) => requests,
-                Err(error) => {
-                    tracing::warn!(%error, "mesh request queue claim failed closed");
-                    Vec::new()
-                }
-            };
+            let connected_routes = peer_streams.connected_routes();
+            let connected_grants = connected_routes
+                .iter()
+                .map(|(_, grant, _)| grant.clone())
+                .collect::<Vec<_>>();
+            let due_requests =
+                match durable.claim_due_sync_requests_authorized(now, &connected_grants) {
+                    Ok(requests) => requests,
+                    Err(error) => {
+                        tracing::warn!(%error, "mesh request queue claim failed closed");
+                        Vec::new()
+                    }
+                };
             let requested_claims: HashMap<String, super::durable_sync::MeshSyncRequest> =
                 due_requests
                     .into_iter()
@@ -656,11 +660,11 @@ pub fn spawn_gossip_tick(
             if regular_due {
                 next_regular_tick = tokio::time::Instant::now() + GOSSIP_TICK_INTERVAL;
             }
-            if connected_peers.is_empty()
+            if connected_routes.is_empty()
                 || (!regular_due
-                    && !connected_peers
-                        .iter()
-                        .any(|peer| requested_claims.contains_key(peer)))
+                    && !connected_routes.iter().any(|(_, grant, _)| {
+                        requested_claims.contains_key(grant.stable_node_id().as_str())
+                    }))
             {
                 continue;
             }
@@ -668,15 +672,15 @@ pub fn spawn_gossip_tick(
             let policy = reload_controller.gossip_policy();
             let mut queued = 0usize;
             let mut operator_requested = 0usize;
-            for peer_pk in connected_peers {
+            for (transport, grant, _) in connected_routes {
+                let peer_pk = grant.stable_node_id().as_str().to_string();
                 let request_claim = requested_claims.get(&peer_pk);
                 let requested = request_claim.is_some();
                 if !regular_due && !requested {
                     continue;
                 }
-                let peer = PeerPubkey::new(peer_pk.clone());
                 match durable
-                    .prepare_peer_frame(&peer, &self_id, &wal_dir, &policy, &state)
+                    .prepare_peer_frame_authorized(&grant, &self_id, &wal_dir, &policy, &state)
                     .await
                 {
                     Ok(Some(prepared)) => {
@@ -688,7 +692,11 @@ pub fn spawn_gossip_tick(
                             body: FrameBody::Gossip(Box::new(prepared.frame)),
                         };
                         if let Some(claim) = request_claim {
-                            match durable.mark_sync_request_sending(claim, now_unix_secs()) {
+                            match durable.mark_sync_request_sending_authorized(
+                                &grant,
+                                claim,
+                                now_unix_secs(),
+                            ) {
                                 Ok(true) => {}
                                 Ok(false) => {
                                     tracing::debug!(peer = %peer_pk, "mesh request lease was superseded before transport queue");
@@ -700,25 +708,27 @@ pub fn spawn_gossip_tick(
                                 }
                             }
                         }
-                        match peer_streams.send_to(&peer_pk, wf) {
+                        match peer_streams.send_to(&transport, wf) {
                             Ok(()) => {
                                 queued += 1;
                                 if requested {
                                     operator_requested += 1;
                                 }
-                                if let Err(error) = durable.record_send_attempt(&peer) {
+                                if let Err(error) = durable.record_send_attempt_authorized(&grant) {
                                     tracing::warn!(%error, peer = %peer_pk, "mesh send queued but attempt counter could not be recorded");
                                 }
                             }
                             Err(error) if requested => {
                                 if let Some(claim) = request_claim
-                                    && let Err(persist_error) = durable.mark_sync_request_waiting(
-                                        claim,
-                                        now_unix_secs(),
-                                        &format!(
-                                            "active carrier could not queue the frame: {error}"
-                                        ),
-                                    )
+                                    && let Err(persist_error) = durable
+                                        .mark_sync_request_waiting_authorized(
+                                            &grant,
+                                            claim,
+                                            now_unix_secs(),
+                                            &format!(
+                                                "active carrier could not queue the frame: {error}"
+                                            ),
+                                        )
                                 {
                                     tracing::warn!(%persist_error, peer = %peer_pk, "mesh request send failure could not be persisted");
                                 }
@@ -728,8 +738,11 @@ pub fn spawn_gossip_tick(
                     }
                     Ok(None) => {
                         if let Some(claim) = request_claim
-                            && let Err(error) =
-                                durable.mark_sync_request_complete(claim, now_unix_secs())
+                            && let Err(error) = durable.mark_sync_request_complete_authorized(
+                                &grant,
+                                claim,
+                                now_unix_secs(),
+                            )
                         {
                             tracing::warn!(%error, peer = %peer_pk, "mesh request completion could not be persisted");
                         }
@@ -737,11 +750,13 @@ pub fn spawn_gossip_tick(
                     Err(error) => {
                         tracing::warn!(%error, peer = %peer_pk, "durable mesh prepare failed closed");
                         if let Some(claim) = request_claim
-                            && let Err(persist_error) = durable.mark_sync_request_waiting(
-                                claim,
-                                now_unix_secs(),
-                                &format!("durable mesh prepare failed: {error}"),
-                            )
+                            && let Err(persist_error) = durable
+                                .mark_sync_request_waiting_authorized(
+                                    &grant,
+                                    claim,
+                                    now_unix_secs(),
+                                    &format!("durable mesh prepare failed: {error}"),
+                                )
                         {
                             tracing::warn!(%persist_error, peer = %peer_pk, "mesh request prepare failure could not be persisted");
                         }
@@ -808,9 +823,10 @@ const FOREIGN_EVENT_MAX_AGE_SECS: i64 = 86_400; // 24 hours
 /// Called from the `GossipAcceptance::Accept` arm in
 /// `cluster::hyperswarm::peer_connect_outbound` after
 /// `GossipState::accept_inbound` has passed the band-filter ACL and dedup
-/// gate. The UNIQUE constraint on `(origin_peer_pk, origin_seq)` makes the
-/// INSERT idempotent: a re-gossiped frame silently no-ops (conflict
-/// resolution v0 per the module doc).
+/// gate. The UNIQUE constraint on `(stable_node_id, auth_epoch, origin_seq)`
+/// makes the INSERT idempotent within one authorization generation: a
+/// re-gossiped frame silently no-ops (conflict resolution v0 per the module
+/// doc).
 ///
 /// Consent / pairing guarantee: `accept_inbound` is only reachable from the
 /// authenticated peer session loop in `hyperswarm`, which has already cleared
@@ -874,8 +890,9 @@ pub fn ingest_foreign_event(
     }
     conn.execute(
         "INSERT OR IGNORE INTO idx_foreign_events \
-         (origin_peer_pk, origin_seq, event_type, payload, received_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         (origin_peer_pk,stable_node_id,auth_epoch,membership_epoch,fence_state,
+          origin_seq,event_type,payload,received_at) \
+         VALUES (?1,?1,1,1,'legacy_unbound',?2,?3,?4,?5)",
         rusqlite::params![
             origin_peer_pk,
             origin_seq as i64,
@@ -895,12 +912,16 @@ pub fn ingest_foreign_event(
 /// `open`-per-frame inside a tokio task starves the runtime — panel finding).
 #[derive(Debug)]
 pub struct ForeignPersistJob {
-    pub authenticated_peer: PeerPubkey,
+    pub membership_grant: super::membership::MembershipGrant,
     pub frame: GossipFrame,
     pub policy: GossipPolicy,
-    pub reply: tokio::sync::oneshot::Sender<
-        std::result::Result<super::durable_sync::InboundCommit, String>,
-    >,
+    pub reply: tokio::sync::oneshot::Sender<std::result::Result<AuthorizedInboundCommit, String>>,
+}
+
+#[derive(Debug)]
+pub struct AuthorizedInboundCommit {
+    pub commit: super::durable_sync::InboundCommit,
+    pub effect_guard: super::membership::MembershipEffectGuard,
 }
 
 /// Sender half handed to a transport's accept path. A full/closed channel
@@ -928,15 +949,36 @@ pub fn spawn_foreign_persist_writer(
             }
         };
         while let Some(job) = rx.blocking_recv() {
-            let result = super::durable_sync::persist_inbound_on_conn(
-                &mut conn,
-                &job.authenticated_peer,
-                &job.frame,
-                &job.policy,
-            )
-            .map_err(|error| error.to_string());
+            let result = match job
+                .membership_grant
+                .begin_effect(crate::time::now_unix_i64())
+            {
+                Ok(effect_guard) => {
+                    let persisted = super::durable_sync::persist_inbound_on_conn_authorized(
+                        &mut conn,
+                        &effect_guard,
+                        &job.frame,
+                        &job.policy,
+                    )
+                    .map_err(|error| error.to_string());
+                    match persisted {
+                        Ok(commit) => Ok(AuthorizedInboundCommit {
+                            commit,
+                            effect_guard,
+                        }),
+                        Err(error) => Err(error),
+                    }
+                }
+                Err(error) => Err(format!("membership_revoked: {error}")),
+            };
             if result.is_err() {
-                tracing::warn!(peer = %job.authenticated_peer.as_str(), seq = job.frame.event_seq,
+                tracing::warn!(
+                    stable_node_id = %job.membership_grant.stable_node_id(),
+                    carrier = ?job.membership_grant.carrier(),
+                    transport_identity = %job.membership_grant.transport_identity(),
+                    auth_epoch = job.membership_grant.auth_epoch().get(),
+                    membership_epoch = job.membership_grant.membership_epoch().get(),
+                    seq = job.frame.event_seq,
                     "foreign-persist writer: durable commit failed (ACK withheld)");
             }
             let _ = job.reply.send(result);
@@ -951,6 +993,10 @@ pub fn spawn_foreign_persist_writer(
 pub struct ForeignEventRow {
     pub id: i64,
     pub origin_peer_pk: String,
+    pub stable_node_id: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
+    pub fence_state: String,
     pub origin_seq: u64,
     pub event_type: u8,
     pub payload: Vec<u8>,
@@ -962,9 +1008,9 @@ pub struct ForeignEventRow {
 
 /// Query `idx_foreign_events` with an optional peer filter.
 ///
-/// When `origin_filter` is `Some(pk_hex)` only events from that peer are
-/// returned. Results are ordered by `(origin_peer_pk, received_at DESC)`,
-/// capped at `limit`.
+/// When `origin_filter` is `Some(stable_node_id)` only events from that stable
+/// member are returned. Results are ordered newest-first and capped at
+/// `limit`.
 ///
 /// CLI wire for the orchestrator — example usage:
 /// ```rust,ignore
@@ -981,16 +1027,18 @@ pub fn list_foreign_events(
 ) -> anyhow::Result<Vec<ForeignEventRow>> {
     let sql = match origin_filter {
         Some(_) => {
-            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at, \
-                    envelope_version, content_sha256, content_payload \
+            "SELECT id, origin_peer_pk, stable_node_id, auth_epoch, membership_epoch, fence_state, \
+                    origin_seq, event_type, payload, received_at, envelope_version, \
+                    content_sha256, content_payload \
              FROM idx_foreign_events \
-             WHERE origin_peer_pk = ?1 \
+             WHERE stable_node_id = ?1 \
              ORDER BY received_at DESC \
              LIMIT ?2"
         }
         None => {
-            "SELECT id, origin_peer_pk, origin_seq, event_type, payload, received_at, \
-                    envelope_version, content_sha256, content_payload \
+            "SELECT id, origin_peer_pk, stable_node_id, auth_epoch, membership_epoch, fence_state, \
+                    origin_seq, event_type, payload, received_at, envelope_version, \
+                    content_sha256, content_payload \
              FROM idx_foreign_events \
              ORDER BY received_at DESC \
              LIMIT ?1"
@@ -1019,29 +1067,37 @@ pub fn list_foreign_events(
 
 fn map_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ForeignEventRow> {
     let origin_seq =
-        u64::try_from(r.get::<_, i64>(2)?).map_err(|error| foreign_row_conversion(2, error))?;
+        u64::try_from(r.get::<_, i64>(6)?).map_err(|error| foreign_row_conversion(6, error))?;
     let event_type =
-        u8::try_from(r.get::<_, i64>(3)?).map_err(|error| foreign_row_conversion(3, error))?;
+        u8::try_from(r.get::<_, i64>(7)?).map_err(|error| foreign_row_conversion(7, error))?;
+    let auth_epoch =
+        u64::try_from(r.get::<_, i64>(3)?).map_err(|error| foreign_row_conversion(3, error))?;
+    let membership_epoch =
+        u64::try_from(r.get::<_, i64>(4)?).map_err(|error| foreign_row_conversion(4, error))?;
     let envelope_version =
-        u16::try_from(r.get::<_, i64>(6)?).map_err(|error| foreign_row_conversion(6, error))?;
+        u16::try_from(r.get::<_, i64>(10)?).map_err(|error| foreign_row_conversion(10, error))?;
     let content_sha256 = r
-        .get::<_, Option<Vec<u8>>>(7)?
+        .get::<_, Option<Vec<u8>>>(11)?
         .map(|digest| {
             digest
                 .try_into()
-                .map_err(|_| foreign_row_conversion(7, "content digest is not 32 bytes"))
+                .map_err(|_| foreign_row_conversion(11, "content digest is not 32 bytes"))
         })
         .transpose()?;
     Ok(ForeignEventRow {
         id: r.get(0)?,
         origin_peer_pk: r.get(1)?,
+        stable_node_id: r.get(2)?,
+        auth_epoch,
+        membership_epoch,
+        fence_state: r.get(5)?,
         origin_seq,
         event_type,
-        payload: r.get(4)?,
-        received_at: r.get(5)?,
+        payload: r.get(8)?,
+        received_at: r.get(9)?,
         envelope_version,
         content_sha256,
-        content_payload: r.get(8)?,
+        content_payload: r.get(12)?,
     })
 }
 
@@ -1105,12 +1161,24 @@ impl std::fmt::Display for RestoreSkipReason {
     }
 }
 
+/// Exact membership provenance carried by one canonical exported row.
+#[derive(Clone, Copy, Debug)]
+pub struct CanonicalRestoreSource<'a> {
+    pub origin_peer_pk: &'a str,
+    pub stable_node_id: &'a str,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
+    pub fence_state: &'a str,
+}
+
 /// Restore one canonical v5 mesh envelope without interpreting a peer-local
-/// SQLite id. The durable `(origin, content_id) -> local row` map allocates a
-/// local id once and is the only route used for later updates.
+/// SQLite id. The durable `(stable_node_id, auth_epoch, content_id) -> local
+/// row` map allocates a local id once and is the only route used for later
+/// updates. Legacy/unbound exports fail closed instead of entering an active
+/// authorization generation.
 pub fn apply_restore_envelope(
     conn: &rusqlite::Connection,
-    origin_peer_pk: &str,
+    source: CanonicalRestoreSource<'_>,
     origin_seq: u64,
     envelope: &SyncEnvelope,
     expected_digest: [u8; 32],
@@ -1119,6 +1187,20 @@ pub fn apply_restore_envelope(
     use rusqlite::OptionalExtension as _;
     use sha2::{Digest as _, Sha256};
 
+    let stable_node_id = super::membership::StableNodeId::parse(source.stable_node_id.to_string())
+        .context("canonical restore stable node id is invalid")?;
+    let auth_epoch = super::membership::AuthEpoch::new(source.auth_epoch)
+        .context("canonical restore auth epoch is invalid")?;
+    super::membership::MembershipEpoch::new(source.membership_epoch)
+        .context("canonical restore membership epoch is invalid")?;
+    anyhow::ensure!(
+        source.fence_state == "active",
+        "canonical restore requires an active membership fence"
+    );
+    anyhow::ensure!(
+        !source.origin_peer_pk.trim().is_empty(),
+        "canonical restore origin peer is empty"
+    );
     anyhow::ensure!(
         origin_seq > 0,
         "canonical mesh restore sequence must be positive"
@@ -1245,8 +1327,13 @@ pub fn apply_restore_envelope(
     let mapping = conn
         .query_row(
             "SELECT local_kind,local_row_id,last_origin_seq,content_sha256 \
-             FROM mesh_sync_restore_map WHERE origin_peer_pk=?1 AND content_id=?2",
-            rusqlite::params![origin_peer_pk, envelope.content_id],
+             FROM mesh_sync_restore_map \
+             WHERE stable_node_id=?1 AND auth_epoch=?2 AND content_id=?3",
+            rusqlite::params![
+                stable_node_id.as_str(),
+                i64::try_from(auth_epoch.get())?,
+                envelope.content_id
+            ],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1287,7 +1374,7 @@ pub fn apply_restore_envelope(
         let ground_truth_fields = match &envelope.content {
             SyncContent::GroundTruth(snapshot) => Some(prepare_ground_truth_restore_fields(
                 conn,
-                origin_peer_pk,
+                source,
                 &envelope.content_id,
                 snapshot,
             )?),
@@ -1440,14 +1527,17 @@ pub fn apply_restore_envelope(
         };
         conn.execute(
             "INSERT INTO mesh_sync_restore_map \
-             (origin_peer_pk,content_id,local_kind,local_row_id,last_origin_seq,content_sha256,restored_at) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7) \
-             ON CONFLICT(origin_peer_pk,content_id) DO UPDATE SET \
-             local_kind=excluded.local_kind,local_row_id=excluded.local_row_id, \
-             last_origin_seq=excluded.last_origin_seq,content_sha256=excluded.content_sha256, \
-             restored_at=excluded.restored_at",
+             (origin_peer_pk,stable_node_id,auth_epoch,content_id,local_kind,local_row_id, \
+              last_origin_seq,content_sha256,restored_at) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9) \
+             ON CONFLICT(stable_node_id,auth_epoch,content_id) DO UPDATE SET \
+             origin_peer_pk=excluded.origin_peer_pk,local_kind=excluded.local_kind, \
+             local_row_id=excluded.local_row_id,last_origin_seq=excluded.last_origin_seq, \
+             content_sha256=excluded.content_sha256,restored_at=excluded.restored_at",
             rusqlite::params![
-                origin_peer_pk,
+                source.origin_peer_pk,
+                stable_node_id.as_str(),
+                i64::try_from(auth_epoch.get())?,
                 envelope.content_id,
                 kind,
                 local_row_id,
@@ -1457,12 +1547,7 @@ pub fn apply_restore_envelope(
             ],
         )?;
         if matches!(&envelope.content, SyncContent::Memory(_)) {
-            resolve_restored_memory_evidence(
-                conn,
-                origin_peer_pk,
-                &envelope.content_id,
-                local_row_id,
-            )?;
+            resolve_restored_memory_evidence(conn, source, &envelope.content_id, local_row_id)?;
         }
         Ok(())
     })();
@@ -1481,10 +1566,11 @@ pub fn apply_restore_envelope(
 
 fn prepare_ground_truth_restore_fields(
     conn: &rusqlite::Connection,
-    origin_peer_pk: &str,
+    source_identity: CanonicalRestoreSource<'_>,
     ground_truth_content_id: &str,
     snapshot: &GroundTruthSnapshot,
 ) -> anyhow::Result<(String, String, String)> {
+    let origin_peer_pk = source_identity.origin_peer_pk;
     let source = format!("mesh:{origin_peer_pk}:{}", snapshot.source);
     let source_weight: BTreeMap<String, u32> = snapshot
         .source_weight
@@ -1496,16 +1582,24 @@ fn prepare_ground_truth_restore_fields(
 
     conn.execute(
         "DELETE FROM mesh_sync_restore_evidence \
-         WHERE origin_peer_pk=?1 AND ground_truth_content_id=?2",
-        rusqlite::params![origin_peer_pk, ground_truth_content_id],
+         WHERE stable_node_id=?1 AND auth_epoch=?2 AND ground_truth_content_id=?3",
+        rusqlite::params![
+            source_identity.stable_node_id,
+            i64::try_from(source_identity.auth_epoch)?,
+            ground_truth_content_id
+        ],
     )?;
     let mut local_evidence = Vec::with_capacity(snapshot.evidence_content_ids.len());
     for (position, evidence_content_id) in snapshot.evidence_content_ids.iter().enumerate() {
         let mapping = conn
             .query_row(
                 "SELECT local_kind,local_row_id FROM mesh_sync_restore_map \
-                 WHERE origin_peer_pk=?1 AND content_id=?2",
-                rusqlite::params![origin_peer_pk, evidence_content_id],
+                 WHERE stable_node_id=?1 AND auth_epoch=?2 AND content_id=?3",
+                rusqlite::params![
+                    source_identity.stable_node_id,
+                    i64::try_from(source_identity.auth_epoch)?,
+                    evidence_content_id
+                ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()?;
@@ -1526,10 +1620,13 @@ fn prepare_ground_truth_restore_fields(
         };
         conn.execute(
             "INSERT INTO mesh_sync_restore_evidence \
-             (origin_peer_pk,ground_truth_content_id,evidence_position,evidence_content_id,local_row_id) \
-             VALUES (?1,?2,?3,?4,?5)",
+             (origin_peer_pk,stable_node_id,auth_epoch,ground_truth_content_id, \
+              evidence_position,evidence_content_id,local_row_id) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
             rusqlite::params![
                 origin_peer_pk,
+                source_identity.stable_node_id,
+                i64::try_from(source_identity.auth_epoch)?,
                 ground_truth_content_id,
                 i64::try_from(position)?,
                 evidence_content_id,
@@ -1544,7 +1641,7 @@ fn prepare_ground_truth_restore_fields(
 
 fn resolve_restored_memory_evidence(
     conn: &rusqlite::Connection,
-    origin_peer_pk: &str,
+    source: CanonicalRestoreSource<'_>,
     evidence_content_id: &str,
     local_row_id: i64,
 ) -> anyhow::Result<()> {
@@ -1554,12 +1651,16 @@ fn resolve_restored_memory_evidence(
     );
     let mut statement = conn.prepare(
         "SELECT DISTINCT ground_truth_content_id FROM mesh_sync_restore_evidence \
-         WHERE origin_peer_pk=?1 AND evidence_content_id=?2 \
+         WHERE stable_node_id=?1 AND auth_epoch=?2 AND evidence_content_id=?3 \
          ORDER BY ground_truth_content_id",
     )?;
     let ground_truth_ids = statement
         .query_map(
-            rusqlite::params![origin_peer_pk, evidence_content_id],
+            rusqlite::params![
+                source.stable_node_id,
+                i64::try_from(source.auth_epoch)?,
+                evidence_content_id
+            ],
             |row| row.get::<_, String>(0),
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1568,26 +1669,35 @@ fn resolve_restored_memory_evidence(
         return Ok(());
     }
     conn.execute(
-        "UPDATE mesh_sync_restore_evidence SET local_row_id=?3 \
-         WHERE origin_peer_pk=?1 AND evidence_content_id=?2",
-        rusqlite::params![origin_peer_pk, evidence_content_id, local_row_id],
+        "UPDATE mesh_sync_restore_evidence SET local_row_id=?4 \
+         WHERE stable_node_id=?1 AND auth_epoch=?2 AND evidence_content_id=?3",
+        rusqlite::params![
+            source.stable_node_id,
+            i64::try_from(source.auth_epoch)?,
+            evidence_content_id,
+            local_row_id
+        ],
     )?;
     for ground_truth_content_id in ground_truth_ids {
-        refresh_restored_ground_truth_evidence(conn, origin_peer_pk, &ground_truth_content_id)?;
+        refresh_restored_ground_truth_evidence(conn, source, &ground_truth_content_id)?;
     }
     Ok(())
 }
 
 fn refresh_restored_ground_truth_evidence(
     conn: &rusqlite::Connection,
-    origin_peer_pk: &str,
+    source: CanonicalRestoreSource<'_>,
     ground_truth_content_id: &str,
 ) -> anyhow::Result<()> {
     let (kind, local_ground_truth_id) = conn
         .query_row(
             "SELECT local_kind,local_row_id FROM mesh_sync_restore_map \
-             WHERE origin_peer_pk=?1 AND content_id=?2",
-            rusqlite::params![origin_peer_pk, ground_truth_content_id],
+             WHERE stable_node_id=?1 AND auth_epoch=?2 AND content_id=?3",
+            rusqlite::params![
+                source.stable_node_id,
+                i64::try_from(source.auth_epoch)?,
+                ground_truth_content_id
+            ],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
         )
         .optional()?
@@ -1598,12 +1708,17 @@ fn refresh_restored_ground_truth_evidence(
     );
     let mut statement = conn.prepare(
         "SELECT local_row_id FROM mesh_sync_restore_evidence \
-         WHERE origin_peer_pk=?1 AND ground_truth_content_id=?2 AND local_row_id IS NOT NULL \
+         WHERE stable_node_id=?1 AND auth_epoch=?2 AND ground_truth_content_id=?3 \
+           AND local_row_id IS NOT NULL \
          ORDER BY evidence_position",
     )?;
     let evidence = statement
         .query_map(
-            rusqlite::params![origin_peer_pk, ground_truth_content_id],
+            rusqlite::params![
+                source.stable_node_id,
+                i64::try_from(source.auth_epoch)?,
+                ground_truth_content_id
+            ],
             |row| row.get::<_, i64>(0),
         )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1967,30 +2082,14 @@ fn apply_restore_frame_inner(
     }
 }
 
-/// Derive the stable local node pubkey from the cluster passphrase stored in
-/// `home/credentials.yaml`. Returns `Ok(None)` when no cluster identity is
-/// configured (no passphrase or no cluster name in freedom.yaml). Existing
-/// invalid policy/credential stores are surfaced.
-///
-/// The pubkey is the 64-character lowercase hex encoding of the 32-byte
-/// `ClusterKey` (HMAC of the passphrase). This is the same value stored in
-/// `origin_peer_pk` when this node exports its own foreign events.
-pub fn local_node_pubkey(home: &std::path::Path) -> anyhow::Result<Option<String>> {
-    let (config, credentials) =
-        crate::config::load_optional_runtime_config_pair_from_path(&home.join("freedom.yaml"))?;
-    let Some(identity) = crate::cluster::identity::resolve_cluster_identity(
-        &config.unwrap_or_default(),
-        &credentials,
-    ) else {
-        return Ok(None);
-    };
-    let hex = identity
-        .key
-        .0
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<String>();
-    Ok(Some(hex))
+/// Return the persistent stable node identity. The rendezvous passphrase key is
+/// deliberately excluded: rotating a bootstrap secret must not rename history
+/// or the runtime membership principal.
+pub fn local_stable_node_id(home: &std::path::Path) -> anyhow::Result<Option<String>> {
+    Ok(
+        crate::cluster::membership::LocalNodeIdentity::load_existing(home)?
+            .map(|identity| identity.stable_node_id().as_str().to_string()),
+    )
 }
 
 #[cfg(test)]
@@ -2542,6 +2641,11 @@ mod tests {
             CREATE TABLE IF NOT EXISTS idx_foreign_events (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 origin_peer_pk  TEXT    NOT NULL,
+                stable_node_id  TEXT    NOT NULL,
+                auth_epoch      INTEGER NOT NULL CHECK(auth_epoch > 0),
+                membership_epoch INTEGER NOT NULL CHECK(membership_epoch > 0),
+                fence_state     TEXT    NOT NULL
+                                        CHECK(fence_state IN ('active','legacy_unbound')),
                 origin_seq      INTEGER NOT NULL,
                 event_type      INTEGER NOT NULL,
                 payload         BLOB    NOT NULL,
@@ -2550,10 +2654,10 @@ mod tests {
                 content_sha256  BLOB,
                 content_kind    TEXT,
                 content_payload BLOB,
-                UNIQUE (origin_peer_pk, origin_seq)
+                UNIQUE (stable_node_id, auth_epoch, origin_seq)
             );
             CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
-                ON idx_foreign_events (origin_peer_pk, received_at DESC);
+                ON idx_foreign_events (stable_node_id, auth_epoch, received_at DESC);
             CREATE TABLE IF NOT EXISTS idx_profile_redactions (
                 id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 field            TEXT NOT NULL,
@@ -2567,6 +2671,58 @@ mod tests {
         )
         .unwrap();
         conn
+    }
+
+    const RESTORE_STABLE_NODE_ID: &str =
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn canonical_restore_source(auth_epoch: u64) -> CanonicalRestoreSource<'static> {
+        CanonicalRestoreSource {
+            origin_peer_pk: "origin-a",
+            stable_node_id: RESTORE_STABLE_NODE_ID,
+            auth_epoch,
+            membership_epoch: 9,
+            fence_state: "active",
+        }
+    }
+
+    fn foreign_test_grant(
+        home: &std::path::Path,
+        transport_id: &str,
+    ) -> super::super::membership::MembershipGrant {
+        let now = crate::time::now_unix_i64();
+        let identity = super::super::membership::LocalNodeIdentity::load_or_create(
+            &home.join("test-identity"),
+        )
+        .unwrap();
+        let transport = super::super::membership::TransportIdentity::parse(transport_id).unwrap();
+        let attestation = identity
+            .attest_endpoint(
+                super::super::membership::CarrierKind::Iroh,
+                transport.clone(),
+                super::super::membership::BootId::new(),
+                "foreign-writer-test".into(),
+                "test".into(),
+                super::super::membership::AuthEpoch::INITIAL,
+                super::super::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        let store = super::super::membership::MembershipStore::open(home).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                super::super::membership::CarrierKind::Iroh,
+                &transport,
+                "test",
+                "foreign-writer-test",
+                now,
+            )
+            .unwrap();
+        store
+            .admit(super::super::membership::CarrierKind::Iroh, &transport, now)
+            .unwrap()
     }
 
     #[test]
@@ -2592,7 +2748,8 @@ mod tests {
         let header = crate::wal::HeaderBuilder::new(0x94, inner).build();
         let payload = crate::wal::frame::encode_frame(&header, inner);
         let timestamp = gossip_payload_timestamp_unix(&payload).unwrap();
-        let origin = PeerPubkey::new("aaaa1111");
+        let membership_grant = foreign_test_grant(dir.path(), "aaaa1111");
+        let origin = PeerPubkey::new(membership_grant.stable_node_id().as_str().to_string());
         let mut vector_clock = VectorClock::new();
         assert!(
             vector_clock.tick(&origin),
@@ -2616,37 +2773,48 @@ mod tests {
         };
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(ForeignPersistJob {
-            authenticated_peer: origin.clone(),
+            membership_grant: membership_grant.clone(),
             frame: frame.clone(),
             policy: GossipPolicy::default(),
             reply: reply_tx,
         })
         .await
         .unwrap();
+        let first = reply_rx.await.unwrap().unwrap();
         assert!(matches!(
-            reply_rx.await.unwrap().unwrap(),
+            first.commit,
             crate::cluster::durable_sync::InboundCommit::Committed(_)
         ));
+        first.effect_guard.finish().unwrap();
         // A re-delivered (duplicate) frame must be an idempotent no-op.
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         tx.send(ForeignPersistJob {
-            authenticated_peer: origin,
+            membership_grant: membership_grant.clone(),
             frame,
             policy: GossipPolicy::default(),
             reply: reply_tx,
         })
         .await
         .unwrap();
+        let duplicate = reply_rx.await.unwrap().unwrap();
         assert!(matches!(
-            reply_rx.await.unwrap().unwrap(),
+            duplicate.commit,
             crate::cluster::durable_sync::InboundCommit::Duplicate(_)
         ));
+        duplicate.effect_guard.finish().unwrap();
         drop(tx); // closes the channel → the blocking loop exits
         handle.await.unwrap();
 
         let conn = crate::memory::store::open(&db).unwrap();
-        let rows = list_foreign_events(&conn, Some("aaaa1111"), 10).unwrap();
+        let rows = list_foreign_events(&conn, Some(origin.as_str()), 10).unwrap();
         assert_eq!(rows.len(), 1, "duplicate (pk,seq) collapses to one row");
+        assert_eq!(rows[0].stable_node_id, origin.as_str());
+        assert_eq!(rows[0].auth_epoch, membership_grant.auth_epoch().get());
+        assert_eq!(
+            rows[0].membership_epoch,
+            membership_grant.membership_epoch().get()
+        );
+        assert_eq!(rows[0].fence_state, "active");
         assert_eq!(rows[0].origin_seq, 1);
         assert_eq!(rows[0].event_type, 0x94);
     }
@@ -2678,27 +2846,42 @@ mod tests {
         };
         let first = build("hot", 600_000, 1_699_000_000_000_000_000);
         assert_eq!(
-            apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false,)
-                .unwrap(),
+            apply_restore_envelope(
+                &conn,
+                canonical_restore_source(1),
+                1,
+                &first,
+                first.content_sha256(),
+                false,
+            )
+            .unwrap(),
             RestoreOutcome::Applied
         );
         let local_id: i64 = conn
             .query_row(
-                "SELECT local_row_id FROM mesh_sync_restore_map WHERE origin_peer_pk='origin-a'",
-                [],
+                "SELECT local_row_id FROM mesh_sync_restore_map \
+                 WHERE stable_node_id=?1 AND auth_epoch=1",
+                [RESTORE_STABLE_NODE_ID],
                 |row| row.get(0),
             )
             .unwrap();
         assert_eq!(
-            apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false,)
-                .unwrap(),
+            apply_restore_envelope(
+                &conn,
+                canonical_restore_source(1),
+                1,
+                &first,
+                first.content_sha256(),
+                false,
+            )
+            .unwrap(),
             RestoreOutcome::Skipped(RestoreSkipReason::Idempotent)
         );
         let second = build("warm", 900_000, 1_699_500_000_000_000_000);
         assert_eq!(
             apply_restore_envelope(
                 &conn,
-                "origin-a",
+                canonical_restore_source(1),
                 2,
                 &second,
                 second.content_sha256(),
@@ -2710,8 +2893,9 @@ mod tests {
         let (mapped_id, importance, last_access): (i64, f64, i64) = conn
             .query_row(
                 "SELECT m.local_row_id,e.importance,e.last_access_ts FROM mesh_sync_restore_map m \
-                 JOIN idx_consolidated e ON e.event_id=m.local_row_id WHERE m.origin_peer_pk='origin-a'",
-                [],
+                 JOIN idx_consolidated e ON e.event_id=m.local_row_id \
+                 WHERE m.stable_node_id=?1 AND m.auth_epoch=1",
+                [RESTORE_STABLE_NODE_ID],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
@@ -2729,8 +2913,15 @@ mod tests {
 
         let third = build("cold", 950_000, 1_699_900_000_000_000_000);
         assert_eq!(
-            apply_restore_envelope(&conn, "origin-a", 3, &third, third.content_sha256(), false,)
-                .unwrap(),
+            apply_restore_envelope(
+                &conn,
+                canonical_restore_source(1),
+                3,
+                &third,
+                third.content_sha256(),
+                false,
+            )
+            .unwrap(),
             RestoreOutcome::Applied
         );
         let (cold_id, cold_importance, cold_access): (i64, f64, i64) = conn
@@ -2751,6 +2942,163 @@ mod tests {
             )
             .unwrap();
         assert_eq!(warm_count, 0, "tier transition must remove the warm row");
+    }
+
+    #[test]
+    fn canonical_restore_scopes_auth_generations_but_not_carrier_provenance() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let text = "generation-scoped canonical memory".to_string();
+        let stable_id = format!(
+            "memory:{}",
+            restore_hex_digest(&Sha256::digest(text.as_bytes()))
+        );
+        let build = |importance_micros| SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: stable_id.clone(),
+            updated_at_unix: 1_700_000_000,
+            content: SyncContent::Memory(crate::cluster::gossip_wire::MemorySnapshot {
+                stable_id: stable_id.clone(),
+                text: text.clone(),
+                text_hash: "generation-scope-hash".into(),
+                tier: "hot".into(),
+                ts_ns: 1_700_000_000_000_000_000,
+                importance_micros,
+                last_access_ts: 1_700_000_000_000_000_000,
+                access_count: 1,
+            }),
+        };
+        let first = build(400_000);
+        let peeroxide = CanonicalRestoreSource {
+            origin_peer_pk: "peeroxide-carrier",
+            ..canonical_restore_source(1)
+        };
+        let iroh = CanonicalRestoreSource {
+            origin_peer_pk: "iroh-carrier",
+            ..canonical_restore_source(1)
+        };
+
+        assert_eq!(
+            apply_restore_envelope(&conn, peeroxide, 1, &first, first.content_sha256(), false,)
+                .unwrap(),
+            RestoreOutcome::Applied
+        );
+        assert_eq!(
+            apply_restore_envelope(&conn, iroh, 1, &first, first.content_sha256(), false).unwrap(),
+            RestoreOutcome::Skipped(RestoreSkipReason::Idempotent),
+            "carrier provenance must not fork one stable/auth generation"
+        );
+        assert_eq!(
+            apply_restore_envelope(
+                &conn,
+                canonical_restore_source(2),
+                1,
+                &first,
+                first.content_sha256(),
+                false,
+            )
+            .unwrap(),
+            RestoreOutcome::Applied,
+            "a new auth generation needs an independent durable mapping"
+        );
+
+        let mappings: Vec<(i64, i64)> = conn
+            .prepare(
+                "SELECT auth_epoch,local_row_id FROM mesh_sync_restore_map \
+                 WHERE stable_node_id=?1 ORDER BY auth_epoch",
+            )
+            .unwrap()
+            .query_map([RESTORE_STABLE_NODE_ID], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(mappings.len(), 2);
+        assert_eq!(mappings[0].0, 1);
+        assert_eq!(mappings[1].0, 2);
+        assert_ne!(
+            mappings[0].1, mappings[1].1,
+            "auth generations must not share receiver-local row ids"
+        );
+
+        let updated = build(900_000);
+        assert_eq!(
+            apply_restore_envelope(
+                &conn,
+                peeroxide,
+                2,
+                &updated,
+                updated.content_sha256(),
+                false,
+            )
+            .unwrap(),
+            RestoreOutcome::Applied
+        );
+        let importance_for = |local_id: i64| {
+            conn.query_row(
+                "SELECT importance FROM idx_episode WHERE event_id=?1",
+                [local_id],
+                |row| row.get::<_, f64>(0),
+            )
+            .unwrap()
+        };
+        assert!((importance_for(mappings[0].1) - 0.9).abs() < f64::EPSILON);
+        assert!(
+            (importance_for(mappings[1].1) - 0.4).abs() < f64::EPSILON,
+            "an older generation replay must not mutate another auth generation"
+        );
+    }
+
+    #[test]
+    fn canonical_restore_rejects_legacy_unbound_membership_provenance() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let text = "legacy canonical restore must stay quarantined".to_string();
+        let stable_id = format!(
+            "memory:{}",
+            restore_hex_digest(&Sha256::digest(text.as_bytes()))
+        );
+        let envelope = SyncEnvelope {
+            version: SYNC_ENVELOPE_VERSION,
+            content_id: stable_id.clone(),
+            updated_at_unix: 1_700_000_000,
+            content: SyncContent::Memory(crate::cluster::gossip_wire::MemorySnapshot {
+                stable_id,
+                text,
+                text_hash: "legacy-unbound-hash".into(),
+                tier: "hot".into(),
+                ts_ns: 1_700_000_000_000_000_000,
+                importance_micros: 500_000,
+                last_access_ts: 1_700_000_000_000_000_000,
+                access_count: 1,
+            }),
+        };
+        let source = CanonicalRestoreSource {
+            fence_state: "legacy_unbound",
+            ..canonical_restore_source(1)
+        };
+
+        let error = apply_restore_envelope(
+            &conn,
+            source,
+            1,
+            &envelope,
+            envelope.content_sha256(),
+            false,
+        )
+        .expect_err("legacy-unbound canonical history must fail closed");
+        assert!(error.to_string().contains("active membership fence"));
+        let mappings: i64 = conn
+            .query_row("SELECT COUNT(*) FROM mesh_sync_restore_map", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(mappings, 0);
     }
 
     #[test]
@@ -2795,12 +3143,20 @@ mod tests {
             }),
         };
         let first = build(None, 800_000);
-        apply_restore_envelope(&conn, "origin-a", 1, &first, first.content_sha256(), false)
-            .unwrap();
+        apply_restore_envelope(
+            &conn,
+            canonical_restore_source(1),
+            1,
+            &first,
+            first.content_sha256(),
+            false,
+        )
+        .unwrap();
         let local_id: i64 = conn
             .query_row(
-                "SELECT local_row_id FROM mesh_sync_restore_map WHERE origin_peer_pk='origin-a'",
-                [],
+                "SELECT local_row_id FROM mesh_sync_restore_map \
+                 WHERE stable_node_id=?1 AND auth_epoch=1",
+                [RESTORE_STABLE_NODE_ID],
                 |row| row.get(0),
             )
             .unwrap();
@@ -2833,7 +3189,7 @@ mod tests {
         };
         apply_restore_envelope(
             &conn,
-            "origin-a",
+            canonical_restore_source(1),
             2,
             &evidence,
             evidence.content_sha256(),
@@ -2843,15 +3199,15 @@ mod tests {
         let evidence_local_id: i64 = conn
             .query_row(
                 "SELECT local_row_id FROM mesh_sync_restore_map \
-                 WHERE origin_peer_pk='origin-a' AND content_id=?1",
-                [&evidence.content_id],
+                 WHERE stable_node_id=?1 AND auth_epoch=1 AND content_id=?2",
+                rusqlite::params![RESTORE_STABLE_NODE_ID, &evidence.content_id],
                 |row| row.get(0),
             )
             .unwrap();
         let second = build(Some(1_701_000_000), 700_000);
         apply_restore_envelope(
             &conn,
-            "origin-a",
+            canonical_restore_source(1),
             3,
             &second,
             second.content_sha256(),
@@ -3057,6 +3413,10 @@ mod tests {
 
         // Row fields are round-tripped correctly.
         let row = for_a.iter().find(|r| r.origin_seq == 1).unwrap();
+        assert_eq!(row.stable_node_id, pk_a);
+        assert_eq!(row.auth_epoch, 1);
+        assert_eq!(row.membership_epoch, 1);
+        assert_eq!(row.fence_state, "legacy_unbound");
         assert_eq!(row.event_type, 0x90u8);
         assert_eq!(row.payload, b"pa1");
     }

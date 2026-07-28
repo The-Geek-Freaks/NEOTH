@@ -859,6 +859,18 @@ export component MainWindow inherits Window {
     in property <string>          bc-refreshed-at: "";
     in property <bool>            bc-status-valid: false;
     in property <string>          bc-status-error: "";
+    in property <string>          bc-cluster-summary: "";
+    in property <string>          bc-cluster-pending-id: "";
+    in property <string>          bc-cluster-revocable-id: "";
+    in property <string>          bc-cluster-revocable-state: "";
+    in property <int>             bc-cluster-snapshot-version: 0;
+    in property <string>          bc-cluster-snapshot-digest: "";
+    in property <bool>            bc-cluster-status-valid: false;
+    in property <string>          bc-cluster-status-error: "";
+    in property <string>          bc-cluster-revocation-request-id: "";
+    in property <string>          bc-cluster-revocation-state: "checking";
+    in property <string>          bc-cluster-revocation-detail: "Checking the authoritative durable revocation state.";
+    in property <bool>            bc-cluster-revocation-unresolved: true;
     callback bc-sovereign-enable-cli();
     callback bc-sovereign-disable();
     callback bc-selfact-toggle(bool);
@@ -892,10 +904,14 @@ export component MainWindow inherits Window {
     in property <int>             mesh-foreign-total: 0;
     in property <string>          mesh-foreign-bytes: "";
     in property <int>             mesh-foreign-peers: 0;
+    in property <bool>            mesh-foreign-valid: true;
+    in property <string>          mesh-foreign-error: "";
     in property <[MeshConflictRow]> mesh-conflicts: [];
     in property <int>             mesh-conflict-count: 0;
     in property <bool>            mesh-conflicts-valid: true;
     in property <string>          mesh-conflicts-error: "";
+    in property <bool>            mesh-status-valid: false;
+    in property <string>          mesh-status-error: "";
     in property <string>          mesh-refreshed-at: "";
     callback mesh-refresh-clicked();
     callback mesh-auto-refresh-toggled(bool);
@@ -906,7 +922,7 @@ export component MainWindow inherits Window {
     callback mesh-peer-sync-clicked(string);
     callback mesh-conflict-resolve-clicked(string, string);
     callback mesh-peer-copy-id(string);
-    callback mesh-peer-revoke(string);
+    callback mesh-peer-revoke(string, int, string);
 
     // Theme toggle — the sidebar flips Theme.dark live; Rust persists the choice.
     callback theme-toggle-clicked();
@@ -1106,6 +1122,11 @@ export component MainWindow inherits Window {
     in-out property <string> mesh-peer-ctx-id: "";
     in-out property <length> mesh-peer-ctx-x: 0px;
     in-out property <length> mesh-peer-ctx-y: 0px;
+    // Immutable copy of the exact authority snapshot the operator confirmed.
+    in-out property <bool> mesh-revoke-confirm-open: false;
+    in-out property <string> mesh-revoke-confirm-id: "";
+    in-out property <int> mesh-revoke-confirm-version: 0;
+    in-out property <string> mesh-revoke-confirm-digest: "";
 
     // L37 — channel sidebar context menu.
     in-out property <bool>   channel-ctx-open: false;
@@ -1204,6 +1225,8 @@ export component MainWindow inherits Window {
     in property <string> hw-load-readout: "";
     // GOLD-PROG-05 — cluster peer topology, forwarded to SettingsView.
     in property <[ClusterPeerRow]> cluster-peers: [];
+    in property <bool> cluster-topology-valid: false;
+    in property <string> cluster-topology-error: "";
     // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
     in property <string> council-cap: "";
     in property <string> council-daily-usd: "";
@@ -3387,6 +3410,8 @@ export component MainWindow inherits Window {
             hw-models: root.hw-models;
             hw-load-readout: root.hw-load-readout;
             cluster-peers: root.cluster-peers;
+            cluster-topology-valid: root.cluster-topology-valid;
+            cluster-topology-error: root.cluster-topology-error;
             council-cap: root.council-cap;
             council-daily-usd: root.council-daily-usd;
             council-depth-warning: root.council-depth-warning;
@@ -4234,12 +4259,36 @@ export component MainWindow inherits Window {
                     bc-refreshed-at: root.bc-refreshed-at;
                     bc-status-valid: root.bc-status-valid;
                     bc-status-error: root.bc-status-error;
+                    bc-cluster-summary: root.bc-cluster-summary;
+                    bc-cluster-pending-id: root.bc-cluster-pending-id;
+                    bc-cluster-revocable-id: root.bc-cluster-revocable-id;
+                    bc-cluster-revocable-state: root.bc-cluster-revocable-state;
+                    bc-cluster-snapshot-version: root.bc-cluster-snapshot-version;
+                    bc-cluster-snapshot-digest: root.bc-cluster-snapshot-digest;
+                    bc-cluster-status-valid: root.bc-cluster-status-valid;
+                    bc-cluster-status-error: root.bc-cluster-status-error;
+                    bc-cluster-revocation-request-id: root.bc-cluster-revocation-request-id;
+                    bc-cluster-revocation-state: root.bc-cluster-revocation-state;
+                    bc-cluster-revocation-detail: root.bc-cluster-revocation-detail;
+                    bc-cluster-revocation-unresolved: root.bc-cluster-revocation-unresolved;
                     bc-sovereign-enable-cli => { root.bc-sovereign-enable-cli(); }
                     bc-sovereign-disable => { root.bc-sovereign-disable(); }
                     bc-selfact-toggle(v) => { root.bc-selfact-toggle(v); }
                     bc-smart-approve-toggle(v) => { root.bc-smart-approve-toggle(v); }
                     bc-proactive-toggle(v) => { root.bc-proactive-toggle(v); }
                     bc-refresh-clicked => { root.bc-refresh-clicked(); }
+                    bc-cluster-continue-pairing => { root.nav-active = "mesh"; }
+                    bc-cluster-revoke(id) => {
+                        if (root.bc-cluster-status-valid
+                            && !root.bc-cluster-revocation-unresolved
+                            && root.bc-cluster-snapshot-version > 0
+                            && root.bc-cluster-snapshot-digest != "") {
+                            root.mesh-revoke-confirm-id = id;
+                            root.mesh-revoke-confirm-version = root.bc-cluster-snapshot-version;
+                            root.mesh-revoke-confirm-digest = root.bc-cluster-snapshot-digest;
+                            root.mesh-revoke-confirm-open = true;
+                        }
+                    }
                 }
 
                 // Wave 4b — Companion / Smartphone Pairing.
@@ -4270,10 +4319,14 @@ export component MainWindow inherits Window {
                     mesh-foreign-total: root.mesh-foreign-total;
                     mesh-foreign-bytes: root.mesh-foreign-bytes;
                     mesh-foreign-peers: root.mesh-foreign-peers;
+                    mesh-foreign-valid: root.mesh-foreign-valid;
+                    mesh-foreign-error: root.mesh-foreign-error;
                     mesh-conflicts: root.mesh-conflicts;
                     mesh-conflict-count: root.mesh-conflict-count;
                     mesh-conflicts-valid: root.mesh-conflicts-valid;
                     mesh-conflicts-error: root.mesh-conflicts-error;
+                    mesh-status-valid: root.mesh-status-valid;
+                    mesh-status-error: root.mesh-status-error;
                     mesh-refreshed-at: root.mesh-refreshed-at;
                     // Wave 5 — fleet dashboard: gossip stream + per-peer actions.
                     gossip-events: root.mesh-gossip-events;
@@ -4420,15 +4473,65 @@ export component MainWindow inherits Window {
         items: [
             { label: "Force Sync", glyph: "⟳", danger: false },
             { label: "Copy ID",    glyph: "⧉", danger: false },
-            { label: "Remove Peer", glyph: "✕", danger: true },
+            {
+                label: root.bc-cluster-revocation-unresolved
+                    ? "Revoke blocked — resolve prior request"
+                    : root.bc-cluster-status-valid
+                    ? "Revoke Membership"
+                    : "Revoke unavailable — refresh",
+                glyph: "✕",
+                danger: true
+            },
         ];
         picked(i) => {
             root.mesh-peer-ctx-open = false;
             if (i == 0) { root.mesh-peer-sync-clicked(root.mesh-peer-ctx-id); }
             if (i == 1) { root.mesh-peer-copy-id(root.mesh-peer-ctx-id); }
-            if (i == 2) { root.mesh-peer-revoke(root.mesh-peer-ctx-id); }
+            if (i == 2
+                && root.bc-cluster-status-valid
+                && !root.bc-cluster-revocation-unresolved
+                && root.bc-cluster-snapshot-version > 0
+                && root.bc-cluster-snapshot-digest != "") {
+                root.mesh-revoke-confirm-id = root.mesh-peer-ctx-id;
+                root.mesh-revoke-confirm-version = root.bc-cluster-snapshot-version;
+                root.mesh-revoke-confirm-digest = root.bc-cluster-snapshot-digest;
+                root.mesh-revoke-confirm-open = true;
+            }
         }
         dismissed => { root.mesh-peer-ctx-open = false; }
+    }
+
+    // Membership revocation binds confirmation to one stable node and one exact
+    // typed authority snapshot. Refreshes cannot retarget an already-open gate.
+    if root.mesh-revoke-confirm-open: ConfirmDialog {
+        width: root.width;
+        height: root.height;
+        title: "Revoke cluster membership?";
+        body: "Permanently revokes stable node " + root.mesh-revoke-confirm-id
+            + " at snapshot v\{root.mesh-revoke-confirm-version} ("
+            + root.mesh-revoke-confirm-digest
+            + "). Live carrier sessions close and the membership fence advances.";
+        confirm-label: "Revoke membership";
+        danger: true;
+        confirmed => {
+            root.mesh-revoke-confirm-open = false;
+            if (!root.bc-cluster-revocation-unresolved) {
+                root.mesh-peer-revoke(
+                    root.mesh-revoke-confirm-id,
+                    root.mesh-revoke-confirm-version,
+                    root.mesh-revoke-confirm-digest
+                );
+            }
+            root.mesh-revoke-confirm-id = "";
+            root.mesh-revoke-confirm-version = 0;
+            root.mesh-revoke-confirm-digest = "";
+        }
+        cancelled => {
+            root.mesh-revoke-confirm-open = false;
+            root.mesh-revoke-confirm-id = "";
+            root.mesh-revoke-confirm-version = 0;
+            root.mesh-revoke-confirm-digest = "";
+        }
     }
 
     // L37 — channel sidebar context menu (Remove Channel / Copy Name).

@@ -179,6 +179,52 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 
 GOLD-ADAPT-GUI-BUDDY — GUI Buddy-Config tab: read aggregator + two safe toggles. `status` reads six buddy-config fields from freedom.yaml; `self-activation --enable/--disable` toggles `self_activation.enabled`; `proactive --enable/--disable` toggles `proactive.enabled`. Sovereign and Smart-Approve are surfaced here but mutate only through their canonical `autonomy sovereign` and `security set` policy paths
 
+### `neoth buddy cluster`
+
+Membership pairing and revocation through the same daemon/offline authority controller used by `neoth cluster`
+
+#### `neoth buddy cluster confirm`
+
+Confirm an invite with the peer's signed EndpointAttestation JSON
+
+- `--invite-id <INVITE_ID>`
+- `--attestation <ATTESTATION>`
+- `--carrier <CARRIER>`
+- `--transport-identity <TRANSPORT_IDENTITY>`
+- `--endpoint <ENDPOINT>`
+
+#### `neoth buddy cluster invite`
+
+Issue a short-lived, carrier-bound one-time enrollment invite
+
+- `--stable-node-id <STABLE_NODE_ID>`
+- `--signing-public-key <SIGNING_PUBLIC_KEY>`
+- `--carrier <CARRIER>`
+- `--transport-identity <TRANSPORT_IDENTITY>`
+- `--endpoint <ENDPOINT>`
+- `--label <LABEL>`
+- `--ttl-secs <TTL_SECS>`
+
+#### `neoth buddy cluster revoke`
+
+Permanently revoke the current membership incarnation
+
+- `<STABLE_NODE_ID>`
+
+#### `neoth buddy cluster revoke-status`
+
+Read one durable UUIDv7 revocation request and its recovery state
+
+- `<REQUEST_ID>`
+
+#### `neoth buddy cluster revoke-unresolved`
+
+List authoritative durable Pending and Indeterminate revocation requests
+
+#### `neoth buddy cluster status`
+
+Summarize the versioned membership-authority snapshot
+
 ### `neoth buddy proactive`
 
 Toggle `proactive.enabled` in freedom.yaml
@@ -384,14 +430,14 @@ Atomically replace the complete public cluster configuration and ask a running d
 
 ### `neoth cluster confirm`
 
-Confirm a discovered peer + add to the registry. Phase 4 of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface candidates; this command writes them in atomically
+Record a reviewed legacy candidate as unattested Pending. This never activates membership; signed invite confirmation is the only path to Active. An explicit `--via mdns` candidate is rejected because mDNS discovery is read-only and enrollment requires an exact invite
 
 - `<PUB_KEY>` — 64-char lowercase-hex of the peer's pub key. Strict validation: must be exactly 64 chars of [0-9a-f]. Required unless `--interactive` is passed
 - `--label <LABEL>` — Operator-readable label. Required unless `--interactive`. In interactive mode the label is taken from the discovered peer's announce TXT record
 - `--addr <ADDR>` — Reachable socket address. Required unless `--interactive`. In interactive mode the addr is taken from the discovered peer's announce. Phase 6 gossip overrides
 - `--via <VIA>` — Transport that surfaced the peer. Defaults to "manual" (operator typed the pub_key in directly)
 - `--hostname <HOSTNAME>` — SL-01c: optional network hostname to record for the peer so you can later reference it by a memorable name (`neoth cluster revoke <hostname>`) instead of the 64-char pub_key. Not collected in `--interactive` mode — re-confirm with `--hostname` to set it
-- `--interactive` — Interactive picker: run a mDNS scan first, render a numbered list of discovered peers, prompt operator for a selection, then confirm the pick. Skips the positional pub_key + --label + --addr requirement (values come from the selected announce). Tailscale candidates are excluded from the picker — they don't carry a pub_key
+- `--interactive` — Legacy review picker: scan signed mDNS candidates, prompt for one, then stage only an inert `legacy_unattested` Pending row. This does not confirm an invite, does not create Active membership, and does not make mDNS an authorization source. Keep `--via manual`; an explicit `--via mdns` is rejected. Skips the positional pub_key, --label, and --addr inputs because those values come from the reviewed announcement
 - `--interactive-timeout <INTERACTIVE_TIMEOUT>` — Scan timeout for `--interactive`. Default 10s
 
 ### `neoth cluster conflicts`
@@ -415,7 +461,7 @@ Disable the cluster transport master switch using the same complete, restart-evi
 
 ### `neoth cluster discover`
 
-SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for `--timeout` seconds, print every authenticated announce the listener sees. Does NOT write to cluster.yaml — use `neoth cluster confirm <pub_key>` after reviewing the output
+Scan signed mDNS discovery attestations for `--timeout` seconds. A signature authenticates the announced StableNode identity and exact carrier endpoint, but the candidate remains untrusted until an exact enrollment invite is confirmed
 
 - `--timeout <TIMEOUT>` — How long the scan runs before printing the final summary. Default 10s — long enough for one announce cycle from typical-cadence peers
 - `--force` — Scan even when the operator's announce policy resolves to No (mdns disabled, untrusted SSID, or SSID unknown). Without this flag the discover surface prints the policy verdict + suggested fix and exits without browsing — the safe-by-default path mirrors the Q2-ratified announce gate
@@ -428,14 +474,14 @@ Enable the cluster transport master switch using the same complete, restart-evid
 
 GOLD-G02-CLUSTER-01 — list ingested foreign gossip events (`idx_foreign_events`): what paired peers replicated to this node. Read-only over views.db; foreign events never mix into local memory
 
-- `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
+- `--peer <STABLE_NODE_ID>` — Filter to one stable node identity (64-character lowercase hex)
 - `--limit <LIMIT>` — Max rows (newest first)
 
 ### `neoth cluster export-foreign`
 
-DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL file so an operator can pull a failed node's replicated data off a surviving peer. This is the auditable input accepted by `neoth cluster restore`; restore still applies the replication allowlist, CRC checks, conflict policy, and dry-run gate. One JSON object per line: `{origin_peer_pk, origin_seq, event_type, payload_b64, received_at}`
+DES-13 — export this node's backup-at-rest for a crashed peer: dump the raw foreign gossip frames (`idx_foreign_events`) to a JSONL file so an operator can pull a failed node's replicated data off a surviving peer. This is the auditable input accepted by `neoth cluster restore`; restore still applies the replication allowlist, CRC checks, conflict policy, and dry-run gate. One JSON object per line, including exact `stable_node_id`, `auth_epoch`, `membership_epoch`, and `fence_state` membership provenance
 
-- `--peer <PEER_PK>` — Filter to one origin peer public key (hex)
+- `--peer <STABLE_NODE_ID>` — Filter to one stable node identity (64-character lowercase hex)
 - `--out <FILE>` — Output file (or `-` for stdout)
 - `--limit <LIMIT>` — Max rows exported (newest first). Ignored when `--all` is set
 - `--all` — Export the full table (lift the `--limit` bound)
@@ -449,7 +495,7 @@ Inspect the bounded, durable node-global causal frontier. Counters are provenanc
 
 ### `neoth cluster list`
 
-SPEC `cluster_auto_discovery` Phase 4: list confirmed peers from `~/.neoth/cluster.yaml`
+List the typed membership-authority snapshot. `cluster.yaml` is public transport configuration and is never an authorization source
 
 ### `neoth cluster plan`
 
@@ -466,18 +512,25 @@ Ask the running daemon to accelerate durable WAL catch-up for one paired peer. T
 
 ### `neoth cluster restore`
 
-Restore same-origin peer-backup frames into local recall/memory
+Restore canonical peer-backup frames into local recall/memory. Canonical identity is keyed by `(StableNodeId, AuthEpoch)` and every row must carry a positive `membership_epoch` plus `fence_state=active`; missing, non-active, and `legacy_unbound` provenance fails closed before work. Restore is CLI-only
 
 - `<PEER_EXPORT>` — Path to the JSONL export file (produced by `neoth cluster export-foreign`)
-- `--peer <PEER>` — Override the local node pubkey filter.  Use when the passphrase is unavailable but you know the 64-char hex pubkey that was used
+- `--peer <STABLE_NODE_ID>` — Override the local StableNodeId filter. Use only when the persisted cluster identity is unavailable but you know its 64-char hex id
 - `--dry-run` — Evaluate conflict matrix and report per-row outcome without writing anything to `views.db` or the audit log
 - `--yes` — Skip the TTY consent prompt
 
 ### `neoth cluster revoke`
 
-Remove a confirmed peer by pub_key OR unique prefix
+Revoke an authority member by StableNode id, unique prefix, or label
 
 - `<PUB_KEY>`
+- `--request-id <UUID>` — Canonical UUID request id. Reuse after a lost reply; omitted ids are UUIDv7
+
+### `neoth cluster revoke-status`
+
+Inspect the durable outcome of a membership revocation request
+
+- `<UUID>` — Canonical UUID request id emitted by `cluster revoke`
 
 ### `neoth cluster status`
 
@@ -498,7 +551,7 @@ Inspect durable per-peer mesh cursors, pending exact replays, ACK high water mar
 
 ### `neoth cluster topology`
 
-SL-02: cluster topology view — confirmed peers + per-peer last-seen age + a recent/stale/uncontacted status, table or `--output json`. Read-only over `~/.neoth/cluster.yaml`, including the last persisted heartbeat RTT and stability score. Instantaneous daemon-only health/TPS is intentionally outside this one-shot view
+Cluster topology projection of the typed membership-authority snapshot. `cluster.yaml` is not authority
 
 ## `neoth code`
 

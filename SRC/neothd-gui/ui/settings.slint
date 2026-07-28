@@ -750,6 +750,8 @@ export component SettingsView inherits Rectangle {
     // GOLD-PROG-05 — cluster peer topology rows (Cluster tab), from
     // `neoth cluster topology --output json`.
     in property <[ClusterPeerRow]> cluster-peers: [];
+    in property <bool> cluster-topology-valid: false;
+    in property <string> cluster-topology-error: "";
 
     // KF-08 — Council budget meter (Config tab), from `neoth council budget
     // --output json`: the per-message cap + last debate's live usage.
@@ -4018,24 +4020,33 @@ export component SettingsView inherits Rectangle {
                         }
                     }
                 }
-                // GOLD-PROG-05 (SL-02) — cluster peer topology. Confirmed peers
-                // from `neoth cluster topology --output json`; live RTT/stability
-                // populate only while the daemon runs. Empty until a peer pairs.
+                // GOLD-PROG-05 (SL-02) — typed membership topology from
+                // `neoth cluster topology --output json`.
                 Card {
                     shimmer: false;  // design-taste B8: 20 cards on one dense surface = gradient noise
                     VerticalBox {
                         padding: Theme.space-base;
                         spacing: Theme.space-tight;
                         Text {
-                            text: "CLUSTER PEERS";
+                            text: "MEMBERSHIP TOPOLOGY";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-medium;
                             letter-spacing: Theme.letter-spacing-tight;
                             color: Theme.accent-green;
                         }
-                        if root.cluster-peers.length == 0: Text {
-                            text: "No confirmed peers — run `neoth cluster discover`, then `neoth cluster confirm <pub_key>`.";
+                        if root.cluster-topology-error != "": Text {
+                            text: "Topology unavailable: " + root.cluster-topology-error
+                                + " Last known peer rows are retained.";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.consent;
+                            wrap: word-wrap;
+                            accessible-role: text;
+                            accessible-label: self.text;
+                        }
+                        if root.cluster-topology-valid && root.cluster-peers.length == 0: Text {
+                            text: "No cluster memberships — run `neoth cluster discover`, then complete the signed invite ceremony.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
@@ -4062,7 +4073,10 @@ export component SettingsView inherits Rectangle {
                                 }
                             }
                             Text {
-                                text: peer.addr + "  ·  rtt " + peer.rtt-ms + "  ·  " + peer.stability + " stable  ·  " + peer.last-seen;
+                                text: peer.rtt-ms == "---"
+                                    ? peer.addr + "  ·  authority snapshot"
+                                    : peer.addr + "  ·  rtt " + peer.rtt-ms + "  ·  "
+                                        + peer.stability + " stable  ·  " + peer.last-seen;
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;

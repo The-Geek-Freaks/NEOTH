@@ -34,7 +34,9 @@ pub mod iroh_transport;
 /// SPEC: `PLAN/SPEC_cluster_auto_discovery_2026-05-22.md`.
 pub mod discovery;
 pub mod identity;
+pub mod membership;
 pub mod peer_auth;
+pub mod status_wire;
 
 /// SL-00(1c) process-wide local-load gauge — feeds the outbound heartbeat real
 /// `inflight`/`tokens_per_sec` numbers (no faked metrics).
@@ -73,16 +75,13 @@ pub mod foreign_indexer;
 #[cfg(feature = "cluster")]
 pub mod swarm;
 
-/// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
-/// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
-/// Phase 6 gossip refreshes `last_seen_unix` on each authenticated
-/// announce.
+/// Legacy discovery observations. This is never a membership authority;
+/// Active membership lives exclusively in `cluster-membership.db`.
 pub mod registry;
 
-/// Phase 2 mDNS announcer + listener — `_neoth._udp.local.`
-/// service, cross-platform via `mdns-sd` crate. Identity surface
-/// (`MdnsIdentity`) carries the pre-signed authenticator so this
-/// module doesn't touch secret-key material itself.
+/// Signed StableNode mDNS discovery over `_neoth._udp.local.`. The
+/// passphrase proof is rendezvous-only; candidates remain untrusted until an
+/// exact invite and EndpointAttestation confirmation.
 pub mod mdns;
 
 /// Phase 3 Tailscale magic-DNS peer enumeration via

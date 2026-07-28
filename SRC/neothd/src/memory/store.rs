@@ -77,7 +77,9 @@ use rusqlite::Connection;
 /// v33: add the durable operator-requested mesh-sync queue. One coalesced row
 ///      per paired peer lets the CLI/GUI request an accelerated catch-up while
 ///      the daemon remains the only process that owns either live transport.
-pub const SCHEMA_VERSION: i64 = 33;
+/// v34: fence live mesh state to one exact stable/auth/membership incarnation;
+///      migrated v33 rows remain terminal `legacy_unbound` quarantine state.
+pub const SCHEMA_VERSION: i64 = 34;
 
 /// `<NEOTH_HOME>/views.db`, falling back to `~/.neoth/views.db`.
 ///
@@ -1062,6 +1064,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS idx_foreign_events (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             origin_peer_pk  TEXT    NOT NULL,
+            stable_node_id  TEXT    NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch      INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK(membership_epoch > 0),
+            fence_state     TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                 CHECK(fence_state IN ('active','legacy_unbound')),
             origin_seq      INTEGER NOT NULL,
             event_type      INTEGER NOT NULL,
             payload         BLOB    NOT NULL,
@@ -1070,13 +1077,18 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             content_sha256  BLOB CHECK (content_sha256 IS NULL OR (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32)),
             content_kind    TEXT,
             content_payload BLOB,
-            UNIQUE (origin_peer_pk, origin_seq)
+            UNIQUE (stable_node_id, auth_epoch, origin_seq)
         );
         CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
-            ON idx_foreign_events (origin_peer_pk, received_at DESC);
+            ON idx_foreign_events (stable_node_id, auth_epoch, received_at DESC);
 
         CREATE TABLE IF NOT EXISTS mesh_sync_local_events (
             peer_pk         TEXT NOT NULL,
+            stable_node_id   TEXT,
+            auth_epoch       INTEGER,
+            membership_epoch INTEGER,
+            fence_state      TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                  CHECK (fence_state IN ('active', 'legacy_unbound')),
             origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
             content_sha256  BLOB NOT NULL
                                   CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
@@ -1087,6 +1099,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_outbound (
             peer_pk              TEXT PRIMARY KEY,
+            stable_node_id        TEXT,
+            auth_epoch            INTEGER,
+            membership_epoch      INTEGER,
+            fence_state           TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                      CHECK (fence_state IN ('active', 'legacy_unbound')),
             cursor_segment       TEXT,
             cursor_offset        INTEGER NOT NULL DEFAULT 0 CHECK (cursor_offset >= 0),
             acked_origin_seq     INTEGER NOT NULL DEFAULT 0 CHECK (acked_origin_seq >= 0),
@@ -1097,6 +1114,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_outbound_pending (
             peer_pk             TEXT PRIMARY KEY,
+            stable_node_id       TEXT,
+            auth_epoch           INTEGER,
+            membership_epoch     INTEGER,
+            fence_state          TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                    CHECK (fence_state IN ('active', 'legacy_unbound')),
             origin_seq         INTEGER NOT NULL CHECK (origin_seq > 0),
             content_sha256     BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
             wire_frame         BLOB NOT NULL,
@@ -1108,6 +1130,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS mesh_sync_requests (
             peer_pk       TEXT PRIMARY KEY
                                CHECK (length(peer_pk) = 64 AND peer_pk NOT GLOB '*[^0-9a-f]*'),
+            stable_node_id TEXT,
+            auth_epoch INTEGER,
+            membership_epoch INTEGER,
+            fence_state TEXT NOT NULL DEFAULT 'legacy_unbound'
+                              CHECK (fence_state IN ('active', 'legacy_unbound')),
             requested_at  INTEGER NOT NULL CHECK (requested_at > 0),
             expires_at    INTEGER NOT NULL CHECK (expires_at > requested_at),
             state         TEXT NOT NULL
@@ -1126,6 +1153,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         END;
         CREATE TABLE IF NOT EXISTS mesh_sync_inbound (
             origin_peer_pk       TEXT PRIMARY KEY,
+            stable_node_id        TEXT,
+            auth_epoch            INTEGER,
+            membership_epoch      INTEGER,
+            fence_state           TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                      CHECK (fence_state IN ('active', 'legacy_unbound')),
             next_expected_seq    INTEGER NOT NULL DEFAULT 1 CHECK (next_expected_seq > 0),
             last_content_sha256  BLOB,
             updated_at           INTEGER NOT NULL,
@@ -1134,6 +1166,11 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_inbound_receipts (
             origin_peer_pk TEXT NOT NULL,
+            stable_node_id  TEXT,
+            auth_epoch      INTEGER,
+            membership_epoch INTEGER,
+            fence_state     TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                CHECK (fence_state IN ('active', 'legacy_unbound')),
             origin_seq     INTEGER NOT NULL CHECK (origin_seq > 0),
             content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
             frame_sha256   BLOB CHECK (frame_sha256 IS NULL OR (typeof(frame_sha256) = 'blob' AND length(frame_sha256) = 32)),
@@ -1142,33 +1179,53 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (origin_peer_pk, origin_seq)
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_vector_frontier (
-            peer_pk TEXT PRIMARY KEY CHECK (length(peer_pk) > 0),
-            counter INTEGER NOT NULL CHECK (counter > 0)
+            peer_pk TEXT NOT NULL CHECK (length(peer_pk) > 0),
+            stable_node_id TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch INTEGER NOT NULL DEFAULT 1 CHECK (auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK (membership_epoch > 0),
+            fence_state TEXT NOT NULL DEFAULT 'legacy_unbound'
+                              CHECK (fence_state IN ('active', 'legacy_unbound')),
+            counter INTEGER NOT NULL CHECK (counter > 0),
+            PRIMARY KEY (stable_node_id, auth_epoch, membership_epoch, peer_pk)
         );
         CREATE TRIGGER IF NOT EXISTS mesh_sync_vector_frontier_cap
         BEFORE INSERT ON mesh_sync_vector_frontier
         WHEN NOT EXISTS (
-                SELECT 1 FROM mesh_sync_vector_frontier WHERE peer_pk = NEW.peer_pk
+                SELECT 1 FROM mesh_sync_vector_frontier
+                WHERE stable_node_id=NEW.stable_node_id
+                  AND auth_epoch=NEW.auth_epoch
+                  AND membership_epoch=NEW.membership_epoch
+                  AND peer_pk=NEW.peer_pk
              )
-             AND (SELECT COUNT(*) FROM mesh_sync_vector_frontier) >= 256
+             AND (SELECT COUNT(*) FROM mesh_sync_vector_frontier
+                  WHERE stable_node_id=NEW.stable_node_id
+                    AND auth_epoch=NEW.auth_epoch
+                    AND membership_epoch=NEW.membership_epoch) >= 256
         BEGIN
             SELECT RAISE(ABORT, 'mesh vector frontier exceeds 256 peers');
         END;
         CREATE TABLE IF NOT EXISTS mesh_sync_materialized (
             origin_peer_pk  TEXT NOT NULL,
+            stable_node_id  TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch      INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK(membership_epoch > 0),
+            fence_state     TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                 CHECK(fence_state IN ('active','legacy_unbound')),
             content_id      TEXT NOT NULL,
             origin_seq      INTEGER NOT NULL CHECK (origin_seq > 0),
             content_sha256  BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
             content_kind    TEXT NOT NULL CHECK (content_kind IN ('memory', 'ground_truth', 'metadata', 'raw_private')),
             content_payload BLOB NOT NULL,
             updated_at      INTEGER NOT NULL,
-            PRIMARY KEY (origin_peer_pk, content_id)
+            PRIMARY KEY (stable_node_id, auth_epoch, content_id)
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_conflicts (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             content_id      TEXT NOT NULL,
             incumbent_origin TEXT NOT NULL,
+            incumbent_auth_epoch INTEGER NOT NULL DEFAULT 1 CHECK(incumbent_auth_epoch > 0),
             incoming_origin TEXT NOT NULL,
+            incoming_auth_epoch INTEGER NOT NULL DEFAULT 1 CHECK(incoming_auth_epoch > 0),
             incumbent_sha256 BLOB NOT NULL CHECK (length(incumbent_sha256) = 32),
             incoming_sha256 BLOB NOT NULL CHECK (length(incoming_sha256) = 32),
             policy          TEXT NOT NULL CHECK (policy IN ('ordered_origin_lww', 'cross_origin_typed_conflict')),
@@ -1178,30 +1235,35 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             CHECK ((resolved_at IS NULL AND preferred_origin IS NULL) OR
                    (resolved_at IS NOT NULL AND preferred_origin IS NOT NULL AND
                     length(preferred_origin) > 0)),
-            UNIQUE (content_id, incumbent_origin, incoming_origin, incumbent_sha256, incoming_sha256)
+            UNIQUE (content_id, incumbent_origin, incumbent_auth_epoch, incoming_origin,
+                    incoming_auth_epoch, incumbent_sha256, incoming_sha256)
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_restore_map (
             origin_peer_pk TEXT NOT NULL,
+            stable_node_id TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch     INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
             content_id     TEXT NOT NULL,
             local_kind     TEXT NOT NULL CHECK (local_kind IN ('memory', 'ground_truth')),
             local_row_id   INTEGER NOT NULL CHECK (local_row_id > 0),
             last_origin_seq INTEGER NOT NULL CHECK (last_origin_seq > 0),
             content_sha256 BLOB NOT NULL CHECK (typeof(content_sha256) = 'blob' AND length(content_sha256) = 32),
             restored_at    INTEGER NOT NULL,
-            PRIMARY KEY (origin_peer_pk, content_id),
+            PRIMARY KEY (stable_node_id, auth_epoch, content_id),
             UNIQUE (local_kind, local_row_id)
         );
         CREATE TABLE IF NOT EXISTS mesh_sync_restore_evidence (
             origin_peer_pk         TEXT NOT NULL,
+            stable_node_id         TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch             INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
             ground_truth_content_id TEXT NOT NULL,
             evidence_position      INTEGER NOT NULL CHECK (evidence_position >= 0),
             evidence_content_id    TEXT NOT NULL,
             local_row_id           INTEGER CHECK (local_row_id IS NULL OR local_row_id > 0),
-            PRIMARY KEY (origin_peer_pk, ground_truth_content_id, evidence_position),
-            UNIQUE (origin_peer_pk, ground_truth_content_id, evidence_content_id)
+            PRIMARY KEY (stable_node_id, auth_epoch, ground_truth_content_id, evidence_position),
+            UNIQUE (stable_node_id, auth_epoch, ground_truth_content_id, evidence_content_id)
         );
         CREATE INDEX IF NOT EXISTS mesh_sync_restore_evidence_content
-            ON mesh_sync_restore_evidence (origin_peer_pk, evidence_content_id);
+            ON mesh_sync_restore_evidence (stable_node_id, auth_epoch, evidence_content_id);
 
         CREATE TRIGGER IF NOT EXISTS mesh_foreign_content_insert_guard
         BEFORE INSERT ON idx_foreign_events

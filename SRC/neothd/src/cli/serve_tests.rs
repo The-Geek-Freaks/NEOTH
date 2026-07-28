@@ -10,6 +10,27 @@ use std::io::Write;
 use tempfile::tempdir;
 use tokio::fs::read;
 
+#[cfg(feature = "cluster")]
+#[test]
+fn membership_outbox_replay_is_wired_before_any_carrier_supervisor_start() {
+    let source = include_str!("serve.rs");
+    let replay = source
+        .find("startup_membership.drain_outbox")
+        .expect("daemon membership startup replay");
+    let blocking_worker = source[..replay]
+        .rfind("tokio::task::spawn_blocking")
+        .expect("membership replay blocking worker");
+    let carrier_start = source
+        .find("spawn_runtime_supervisor")
+        .expect("cluster carrier supervisor start");
+    assert!(
+        blocking_worker < replay && replay < carrier_start,
+        "membership projection/audit replay must complete before any carrier can start"
+    );
+    let between = &source[replay..carrier_start];
+    assert!(between.contains("replay membership outbox before carrier startup"));
+}
+
 // Sets NEOTH_CONSENT_BYPASS (process-global) — hold the crate-wide
 // env lock across the run_serve().await so it can't race another env
 // test. The awaited serve path never re-locks it (bounded hold).

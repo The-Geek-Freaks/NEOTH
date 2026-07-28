@@ -2983,221 +2983,112 @@ impl OmiConfigureAck {
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-#[allow(dead_code)] // Keep the complete status wire shape fail-closed as it evolves.
-pub struct ClusterStatusAck {
-    pub mode: String,
-    pub policy: String,
-    pub peer_count: usize,
-    pub conflict_count: usize,
-    pub operator_id: String,
-    pub node_id: String,
-    pub cluster_name: Option<String>,
-    pub cluster_passphrase_set: bool,
-    pub cluster_identity_configured: bool,
-    pub cluster_enabled: bool,
-    pub restart_required: bool,
-    pub transport_active: bool,
-    pub transport: String,
-    pub listen_port: u16,
-    pub mdns_enabled: bool,
-    pub trusted_ssids: Vec<String>,
-    pub peers: Vec<ClusterPeerAck>,
-    pub gossip: ClusterGossipAck,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ClusterPeerAck {
-    pub id: String,
-    pub label: String,
-    pub last_seen: String,
-    pub last_seen_unix: i64,
-    pub reachable: bool,
-}
-
-impl ClusterStatusAck {
-    pub fn verify(&self) -> Result<(), String> {
-        if self.peer_count != self.peers.len() {
-            return Err(format!(
-                "cluster status reports {} peers but returned {} peer rows",
-                self.peer_count,
-                self.peers.len()
-            ));
-        }
-        let mut peer_ids = std::collections::HashSet::with_capacity(self.peers.len());
-        for peer in &self.peers {
-            if peer.id.trim().is_empty()
-                || peer.label.trim().is_empty()
-                || peer.last_seen.trim().is_empty()
-            {
-                return Err("cluster status returned an incomplete peer identity".into());
-            }
-            if !peer_ids.insert(peer.id.as_str()) {
-                return Err(format!(
-                    "cluster status returned duplicate peer `{}`",
-                    peer.id
-                ));
-            }
-            if peer.reachable && peer.last_seen_unix <= 0 {
-                return Err(format!(
-                    "cluster status marked peer `{}` reachable without a durable last-seen time",
-                    peer.id
-                ));
-            }
-        }
-        Ok(())
-    }
-}
+pub type ClusterStatusAck = neothd::cluster::status_wire::ClusterStatusEnvelope;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClusterPeerRevokeAck {
     pub operation: String,
     pub requested_peer: String,
-    pub canonical_peer: Option<String>,
-    pub removed: bool,
-    pub noop: bool,
-    pub post_state: ClusterPeerRevokePostStateAck,
-    pub audit: ClusterPeerRevokeAuditAck,
+    pub matched: bool,
+    pub receipt: Option<ClusterMembershipRevokeReceiptAck>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterPeerRevokePostStateAck {
-    pub registry_path: String,
-    pub registry_file_present: bool,
-    pub registry_sha256: Option<String>,
-    pub peer_count: usize,
-    pub canonical_peer_absent: bool,
-    pub verified: bool,
+pub struct ClusterMembershipRevokeReceiptAck {
+    pub operation: String,
+    pub request_id: String,
+    pub intent_state: neothd::cluster::membership::RevocationIntentState,
+    pub indeterminate_reason: Option<String>,
+    pub receipt_id: String,
+    pub stable_node_id: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
+    pub authority_path: String,
+    pub post_state_digest: String,
+    pub tombstone_committed: bool,
+    pub already_revoked: bool,
+    pub live_teardown: String,
+    pub audit_pending: bool,
+    pub pending_outbox: u64,
+    pub per_carrier_teardown: std::collections::BTreeMap<String, ClusterCarrierTeardownReceiptAck>,
+    #[serde(default)]
+    pub outbox_error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ClusterPeerRevokeAuditAck {
-    pub required: bool,
-    pub state: String,
-    pub event_type: Option<String>,
-    pub sidecar_path: Option<String>,
-    pub durable_handoff_persisted: bool,
+pub struct ClusterCarrierTeardownReceiptAck {
+    pub closed_sessions: usize,
+    pub routes_evicted: usize,
+    pub queued_effects_dropped: usize,
+    pub status: String,
 }
 
 impl ClusterPeerRevokeAck {
     pub fn verify(&self, expected_peer: &str, expected_home: &Path) -> Result<(), String> {
-        require_action(&self.operation, "cluster.peer.revoke")?;
+        require_action(&self.operation, "cluster.membership.revoke")?;
         require_id(&self.requested_peer, expected_peer)?;
-        if self.removed == self.noop
-            || !self.post_state.verified
-            || !self.post_state.canonical_peer_absent
-        {
-            return Err("cluster revoke acknowledgement has inconsistent mutation state".into());
+        if !is_sha256(expected_peer) || !self.matched {
+            return Err("cluster revoke did not match the confirmed stable node id".into());
         }
-        let registry_path = expected_home.join("cluster.yaml");
-        require_exact_path(&self.post_state.registry_path, &registry_path)?;
-        match (
-            self.post_state.registry_file_present,
-            self.post_state.registry_sha256.as_deref(),
+        let receipt = self
+            .receipt
+            .as_ref()
+            .ok_or_else(|| "cluster revoke omitted its authority receipt".to_string())?;
+        require_action(&receipt.operation, "cluster.membership.revoke")?;
+        require_exact_path(
+            &receipt.authority_path,
+            &expected_home.join("cluster-membership.db"),
+        )?;
+        if receipt.receipt_id.trim().is_empty()
+            || neothd::cluster::membership::validate_revocation_request_id(&receipt.request_id)
+                .is_err()
+            || receipt.stable_node_id != expected_peer
+            || receipt.auth_epoch == 0
+            || receipt.membership_epoch == 0
+            || !is_sha256(&receipt.post_state_digest)
+            || !receipt.tombstone_committed
+            || (receipt.audit_pending && receipt.pending_outbox == 0)
+            || receipt.outbox_error.as_ref().is_some_and(|error| {
+                error.trim().is_empty()
+                    || error.trim() != error
+                    || error.chars().any(char::is_control)
+                    || receipt.pending_outbox == 0
+            })
+        {
+            return Err("cluster revoke returned an invalid authority receipt".into());
+        }
+        if receipt.intent_state == neothd::cluster::membership::RevocationIntentState::Indeterminate
+        {
+            let reason = receipt.indeterminate_reason.as_deref().ok_or_else(|| {
+                "indeterminate cluster revoke omitted provider/effect evidence".to_string()
+            })?;
+            if reason.trim().is_empty() || reason.trim() != reason {
+                return Err("cluster revoke returned invalid indeterminate evidence".into());
+            }
+        } else if receipt.intent_state
+            != neothd::cluster::membership::RevocationIntentState::Completed
+            || receipt.indeterminate_reason.is_some()
+        {
+            return Err("cluster revoke returned a non-terminal intent state".into());
+        }
+        if !matches!(
+            receipt.live_teardown.as_str(),
+            "not_running" | "closed" | "pending" | "partial" | "complete"
         ) {
-            (true, Some(hash)) if is_sha256(hash) => {
-                require_regular_file_sha256(&registry_path, hash, "cluster registry")?;
-            }
-            (false, None) if self.noop => match std::fs::symlink_metadata(&registry_path) {
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Ok(_) => {
-                    return Err(
-                        "cluster revoke receipt claims the registry is absent, but it exists"
-                            .into(),
-                    );
-                }
-                Err(error) => {
-                    return Err(format!(
-                        "could not verify absent cluster registry `{}`: {error}",
-                        registry_path.display()
-                    ));
-                }
-            },
-            _ => return Err("cluster revoke acknowledgement has invalid registry evidence".into()),
+            return Err("cluster revoke returned invalid live teardown state".into());
         }
-        if self.removed {
-            let canonical = self
-                .canonical_peer
-                .as_deref()
-                .ok_or_else(|| "cluster revoke omitted the canonical peer".to_string())?;
-            if canonical.len() != 64
-                || !canonical
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        for (carrier, teardown) in &receipt.per_carrier_teardown {
+            if !matches!(carrier.as_str(), "peeroxide" | "iroh")
+                || !matches!(
+                    teardown.status.as_str(),
+                    "not_running" | "no_live_sessions" | "closed" | "pending" | "partial"
+                )
             {
-                return Err("cluster revoke returned an invalid canonical peer key".into());
+                return Err("cluster revoke returned invalid carrier teardown state".into());
             }
-            let requested_key = expected_peer.trim().to_ascii_lowercase();
-            if !requested_key.is_empty()
-                && requested_key
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                && !canonical.starts_with(&requested_key)
-            {
-                return Err(
-                    "cluster revoke canonical peer does not match the requested key prefix".into(),
-                );
-            }
-            if !self.audit.required
-                || self.audit.state != "sidecar_committed_for_wal_ingest"
-                || self.audit.event_type.as_deref() != Some("CLUSTER_PEER_REVOKED")
-                || !self.audit.durable_handoff_persisted
-            {
-                return Err(
-                    "cluster revoke acknowledgement has invalid audit handoff evidence".into(),
-                );
-            }
-            let sidecar = self
-                .audit
-                .sidecar_path
-                .as_deref()
-                .ok_or_else(|| "cluster revoke omitted its audit sidecar path".to_string())?;
-            let sidecar = Path::new(sidecar);
-            let parent = sidecar
-                .parent()
-                .ok_or_else(|| "cluster revoke audit sidecar has no parent".to_string())?;
-            require_exact_path(
-                parent.to_string_lossy().as_ref(),
-                &expected_home.join("pending_audit"),
-            )?;
-            if !sidecar
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(valid_cluster_revoke_sidecar_name)
-            {
-                return Err("cluster revoke audit sidecar name is invalid".into());
-            }
-        } else if self.canonical_peer.is_some()
-            || self.audit.required
-            || self.audit.state != "not_required_noop"
-            || self.audit.event_type.is_some()
-            || self.audit.sidecar_path.is_some()
-            || self.audit.durable_handoff_persisted
-        {
-            return Err("cluster revoke no-op acknowledgement claims mutation evidence".into());
-        }
-        Ok(())
-    }
-
-    pub fn verify_readback(&self, status: &ClusterStatusAck) -> Result<(), String> {
-        status.verify()?;
-        if status.peer_count != self.post_state.peer_count {
-            return Err(format!(
-                "cluster revoke readback returned {} peers, receipt committed {}",
-                status.peer_count, self.post_state.peer_count
-            ));
-        }
-        if let Some(canonical) = self.canonical_peer.as_deref()
-            && status.peers.iter().any(|peer| peer.id == canonical)
-        {
-            return Err(format!(
-                "cluster revoke readback still contains peer `{canonical}`"
-            ));
         }
         Ok(())
     }
@@ -3281,6 +3172,9 @@ impl ClusterConflictResolveAck {
 pub struct ClusterRequestSyncAck {
     pub operation: String,
     pub peer_pk: String,
+    pub stable_node_id: String,
+    pub auth_epoch: u64,
+    pub membership_epoch: u64,
     pub state: String,
     pub requested_at: i64,
     pub expires_at: i64,
@@ -3298,11 +3192,14 @@ impl ClusterRequestSyncAck {
                 self.operation
             ));
         }
-        if self.peer_pk != expected_peer {
+        if self.peer_pk != expected_peer || self.stable_node_id != self.peer_pk {
             return Err(format!(
                 "mesh sync receipt peer `{}` does not match requested peer `{expected_peer}`",
                 self.peer_pk
             ));
+        }
+        if self.auth_epoch == 0 || self.membership_epoch == 0 {
+            return Err("mesh sync receipt has an invalid membership fence".into());
         }
         if self.state != "queued" {
             return Err(format!(
@@ -3785,29 +3682,6 @@ fn valid_memory_forget_segment_name(name: &str) -> bool {
         return false;
     };
     valid_uuid_v7(writer_id) && sequence == "000001"
-}
-
-fn valid_cluster_revoke_sidecar_name(name: &str) -> bool {
-    let Some(stem) = name
-        .strip_prefix("cluster_peer_revoked_")
-        .and_then(|value| value.strip_suffix(".json"))
-    else {
-        return false;
-    };
-    let mut parts = stem.split('_');
-    let (Some(seconds), Some(nanos), Some(writer_id), None) =
-        (parts.next(), parts.next(), parts.next(), parts.next())
-    else {
-        return false;
-    };
-    !seconds.is_empty()
-        && seconds.bytes().all(|byte| byte.is_ascii_digit())
-        && nanos.len() == 38
-        && nanos.bytes().all(|byte| byte.is_ascii_digit())
-        && writer_id.len() == 32
-        && writer_id
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn require_regular_file_sha256(path: &Path, expected: &str, label: &str) -> Result<(), String> {
@@ -6545,75 +6419,50 @@ mod tests {
         assert!(serde_json::from_value::<MemoryForgetAck>(unknown_forget).is_err());
 
         let canonical = "cd".repeat(32);
-        let registry_path = home.path().join("cluster.yaml");
-        let registry_bytes = b"peers: []\n";
-        std::fs::write(&registry_path, registry_bytes).unwrap();
-        let registry_sha256 = hex::encode(sha2::Sha256::digest(registry_bytes));
-        let sidecar_name = format!(
-            "cluster_peer_revoked_1700000000_{:038}_{}.json",
-            1,
-            "ab".repeat(16)
-        );
         let revoke_value = serde_json::json!({
-            "operation": "cluster.peer.revoke",
-            "requested_peer": "cdcd",
-            "canonical_peer": canonical.clone(),
-            "removed": true,
-            "noop": false,
-            "post_state": {
-                "registry_path": registry_path.clone(),
-                "registry_file_present": true,
-                "registry_sha256": registry_sha256,
-                "peer_count": 1,
-                "canonical_peer_absent": true,
-                "verified": true
-            },
-            "audit": {
-                "required": true,
-                "state": "sidecar_committed_for_wal_ingest",
-                "event_type": "CLUSTER_PEER_REVOKED",
-                "sidecar_path": home.path().join("pending_audit").join(sidecar_name),
-                "durable_handoff_persisted": true
+            "operation": "cluster.membership.revoke",
+            "requested_peer": canonical.clone(),
+            "matched": true,
+            "receipt": {
+                "operation": "cluster.membership.revoke",
+                "request_id": "018f47f0-4b5a-7cc2-a421-526e6f7dbe31",
+                "intent_state": "completed",
+                "indeterminate_reason": null,
+                "receipt_id": "019f-receipt",
+                "stable_node_id": canonical.clone(),
+                "auth_epoch": 2,
+                "membership_epoch": 2,
+                "authority_path": home.path().join("cluster-membership.db"),
+                "post_state_digest": "ef".repeat(32),
+                "tombstone_committed": true,
+                "already_revoked": false,
+                "live_teardown": "not_running",
+                "audit_pending": true,
+                "pending_outbox": 3,
+                "per_carrier_teardown": {}
             }
         });
-        let revoke: ClusterPeerRevokeAck = serde_json::from_value(revoke_value).unwrap();
-        revoke.verify("cdcd", home.path()).unwrap();
-        std::fs::write(&registry_path, b"tampered registry").unwrap();
-        assert!(revoke.verify("cdcd", home.path()).is_err());
-        std::fs::write(&registry_path, registry_bytes).unwrap();
-
-        let status_value = serde_json::json!({
-            "mode": "cluster",
-            "policy": "trusted-only",
-            "peer_count": 1,
-            "conflict_count": 0,
-            "operator_id": "operator",
-            "node_id": "node",
-            "cluster_name": "test",
-            "cluster_passphrase_set": true,
-            "cluster_identity_configured": true,
-            "cluster_enabled": true,
-            "restart_required": false,
-            "transport_active": true,
-            "transport": "active",
-            "listen_port": 4242,
-            "mdns_enabled": true,
-            "trusted_ssids": [],
-            "peers": [{
-                "id": "ef".repeat(32),
-                "label": "survivor",
-                "last_seen": "now",
-                "last_seen_unix": 1_700_000_000_i64,
-                "reachable": true
-            }],
-            "gossip": {"replicate_raw_ingress": false, "replay_budget_days": 7}
-        });
-        let status: ClusterStatusAck = serde_json::from_value(status_value.clone()).unwrap();
-        revoke.verify_readback(&status).unwrap();
-        let mut stale = status_value;
-        stale["peers"][0]["id"] = serde_json::json!(canonical);
-        let stale: ClusterStatusAck = serde_json::from_value(stale).unwrap();
-        assert!(revoke.verify_readback(&stale).is_err());
+        let revoke: ClusterPeerRevokeAck = serde_json::from_value(revoke_value.clone()).unwrap();
+        revoke.verify(&canonical, home.path()).unwrap();
+        assert!(revoke.verify(&"ab".repeat(32), home.path()).is_err());
+        let mut missing_authority = revoke_value.clone();
+        missing_authority["receipt"]
+            .as_object_mut()
+            .unwrap()
+            .remove("authority_path");
+        assert!(
+            serde_json::from_value::<ClusterPeerRevokeAck>(missing_authority).is_err(),
+            "receipt authority path is required"
+        );
+        let mut missing_post_digest = revoke_value;
+        missing_post_digest["receipt"]
+            .as_object_mut()
+            .unwrap()
+            .remove("post_state_digest");
+        assert!(
+            serde_json::from_value::<ClusterPeerRevokeAck>(missing_post_digest).is_err(),
+            "receipt post-state digest is required"
+        );
     }
 
     #[test]
@@ -6629,7 +6478,25 @@ mod tests {
         let revoke = &source[revoke_start..revoke_end];
         assert!(revoke.contains("run_neothd_json_action::<gui_action::ClusterPeerRevokeAck>"));
         assert!(revoke.contains("ack.verify(&peer, &expected_home)?"));
-        assert!(revoke.contains("ack.verify_readback(&readback)?"));
+        assert!(revoke.contains("panel_logic::MemberSingleflight::default()"));
+        assert!(revoke.contains("preflight.bind_revoke_confirmation("));
+        assert_eq!(
+            revoke.matches("fetch_buddy_cluster_status()?").count(),
+            2,
+            "revoke needs exact preflight and fresh authoritative post-state reads"
+        );
+        assert!(revoke.contains("panel_logic::verify_buddy_revoke_post_state("));
+        assert!(revoke.contains("&receipt.authority_path"));
+        assert!(revoke.contains("&receipt.post_state_digest"));
+        assert!(revoke.contains("refresh_mesh(weak.clone())"));
+        let post_state = revoke
+            .find("panel_logic::verify_buddy_revoke_post_state(")
+            .unwrap();
+        let success = revoke.find("fresh authority snapshot verified").unwrap();
+        assert!(
+            post_state < success,
+            "no success copy may be built before fresh authority verification"
+        );
 
         let forget_start = source
             .find("GUI-overhaul feature parity — Memory \"forget a topic\", permanent")
@@ -6650,6 +6517,29 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn mesh_revoke_dialog_copies_and_executes_one_exact_snapshot_binding() {
+        let ui = include_str!("../ui/main.slint");
+        assert!(ui.contains("mesh-revoke-confirm-id = id;"));
+        assert!(ui.contains("mesh-revoke-confirm-version = root.bc-cluster-snapshot-version;"));
+        assert!(ui.contains("mesh-revoke-confirm-digest = root.bc-cluster-snapshot-digest;"));
+        assert_eq!(
+            ui.matches("root.mesh-peer-revoke(").count(),
+            1,
+            "only the confirmed dialog may execute the Rust revoke callback"
+        );
+        let dialog = ui
+            .split("Membership revocation binds confirmation")
+            .nth(1)
+            .expect("membership revoke confirm dialog");
+        let callback = dialog.find("root.mesh-peer-revoke(").unwrap();
+        let clear = dialog.find("root.mesh-revoke-confirm-id = \"\";").unwrap();
+        assert!(
+            callback < clear,
+            "callback must receive the copied binding before it is cleared"
+        );
     }
 
     #[test]
@@ -7356,7 +7246,7 @@ mod tests {
     fn cluster_request_sync_receipt_binds_operation_peer_state_and_queue_progress() {
         let peer = "ab".repeat(32);
         let raw = format!(
-            r#"{{"operation":"cluster.request-sync","peer_pk":"{peer}","state":"queued","requested_at":1700000000,"expires_at":1700000030,"updated_at":1700000000,"last_attempt_at":null,"send_attempts":0,"last_error":null}}"#
+            r#"{{"operation":"cluster.request-sync","peer_pk":"{peer}","stable_node_id":"{peer}","auth_epoch":1,"membership_epoch":2,"state":"queued","requested_at":1700000000,"expires_at":1700000030,"updated_at":1700000000,"last_attempt_at":null,"send_attempts":0,"last_error":null}}"#
         );
         let ack: ClusterRequestSyncAck = serde_json::from_str(&raw).unwrap();
         ack.verify(&peer).unwrap();
@@ -7415,29 +7305,84 @@ mod tests {
 
     #[test]
     fn cluster_read_receipts_reject_inconsistent_peer_and_conflict_rows() {
-        let status_raw = r#"{
-            "mode":"cluster","policy":"trusted","peer_count":1,"conflict_count":1,
-            "operator_id":"operator","node_id":"node","cluster_name":"studio",
-            "cluster_passphrase_set":true,"cluster_identity_configured":true,
-            "cluster_enabled":true,"restart_required":false,"transport_active":true,
-            "transport":"peeroxide","listen_port":49738,"mdns_enabled":true,
-            "trusted_ssids":[],
-            "peers":[{"id":"peer-a","label":"A","last_seen":"1s ago","last_seen_unix":1,"reachable":true}],
-            "gossip":{"replicate_raw_ingress":false,"replay_budget_days":14}
-        }"#;
-        let status: ClusterStatusAck = serde_json::from_str(status_raw).unwrap();
-        status.verify().unwrap();
-        let wrong_count: ClusterStatusAck =
-            serde_json::from_str(&status_raw.replacen("\"peer_count\":1", "\"peer_count\":2", 1))
-                .unwrap();
-        assert!(wrong_count.verify().is_err());
-        let impossible_reachable: ClusterStatusAck = serde_json::from_str(&status_raw.replacen(
-            "\"last_seen_unix\":1",
-            "\"last_seen_unix\":0",
+        let peer = "ab".repeat(32);
+        let snapshot: neothd::cluster::membership::MembershipSnapshot =
+            serde_json::from_value(serde_json::json!({
+                "version": 1,
+                "authority_path": "cluster-membership.db",
+                "authority_epoch": 1,
+                "revocation_floor": 1,
+                "pending_outbox": 0,
+                "members": [{
+                    "stable_node_id": peer,
+                    "label": "A",
+                    "state": "active",
+                    "auth_epoch": 1,
+                    "membership_epoch": 1,
+                    "tombstoned": false,
+                    "bindings": [{
+                        "carrier": "peeroxide",
+                        "transport_identity": "peeroxide:test",
+                        "endpoint": "127.0.0.1:4242",
+                        "assurance": "signed_attestation",
+                        "auth_epoch": 1,
+                        "membership_epoch": 1,
+                        "expires_at_unix": null
+                    }]
+                }]
+            }))
+            .unwrap();
+        let membership = snapshot.into_envelope().unwrap();
+        let runtime = neothd::cluster::status_wire::ClusterRuntimeStatus {
+            version: neothd::cluster::status_wire::CLUSTER_RUNTIME_STATUS_VERSION,
+            mode: "cluster".into(),
+            policy: "announce-trusted-wifi-only".into(),
+            conflict_count: 1,
+            operator_id: "operator".into(),
+            node_id: "node".into(),
+            cluster_name: Some("studio".into()),
+            cluster_passphrase_set: true,
+            cluster_identity_configured: true,
+            cluster_enabled: true,
+            restart_required: false,
+            transport_active: true,
+            transport: "peeroxide".into(),
+            listen_port: 49738,
+            mdns_enabled: true,
+            trusted_ssids: Vec::new(),
+            gossip: neothd::cluster::status_wire::ClusterGossipStatus {
+                replicate_raw_ingress: false,
+                replay_budget_days: 14,
+            },
+        };
+        let status_raw = serde_json::to_string(
+            &neothd::cluster::status_wire::ClusterStatusEnvelope::new(membership, runtime).unwrap(),
+        )
+        .unwrap();
+        let status: ClusterStatusAck = serde_json::from_str(&status_raw).unwrap();
+        status.validate().unwrap();
+        let active_legacy: ClusterStatusAck = serde_json::from_str(&status_raw.replacen(
+            "signed_attestation",
+            "legacy_unattested",
             1,
         ))
         .unwrap();
-        assert!(impossible_reachable.verify().is_err());
+        assert!(
+            active_legacy.validate().is_err(),
+            "active membership cannot use a legacy-unattested binding"
+        );
+        let future_runtime: ClusterStatusAck =
+            serde_json::from_str(&status_raw.replacen("\"version\":1", "\"version\":2", 1))
+                .unwrap();
+        assert!(future_runtime.validate().is_err());
+        assert!(
+            serde_json::from_str::<ClusterStatusAck>(&status_raw.replacen(
+                "\"operation\":\"cluster.status\"",
+                "\"operation\":\"cluster.status\",\"extra\":1",
+                1
+            ))
+            .is_err()
+        );
 
         let conflicts_raw = r#"{
             "unresolved_count":1,"include_resolved":false,

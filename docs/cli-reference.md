@@ -378,7 +378,12 @@ the authenticated full-duplex companion before a Cron call can spend.
 
 ```bash
 neoth cluster discover
-neoth cluster confirm <peer>
+neoth buddy cluster invite --stable-node-id <stable-node-id> \
+  --signing-public-key <ed25519-public-key> --carrier <peeroxide|iroh> \
+  --transport-identity <carrier-id> --endpoint <endpoint> --label <label>
+neoth buddy cluster confirm --invite-id <invite-id> \
+  --attestation <endpoint-attestation-json> --carrier <peeroxide|iroh> \
+  --transport-identity <carrier-id> --endpoint <endpoint>
 neoth cluster configure --enabled false --transport peeroxide \
   --peers-json '[]' --mdns-enabled true \
   --announce-on-untrusted-wifi false --trusted-ssids-json '[]' \
@@ -396,16 +401,18 @@ neoth hardware
 
 | Command | Purpose |
 | :-- | :-- |
-| `cluster discover` | Find candidate nodes. |
-| `cluster confirm <peer>` | Approve a peer. |
+| `cluster discover` | Find candidate-only mDNS v2 records: HMAC filters the rendezvous domain and a signed `EndpointAttestation` authenticates the advertised stable identity/binding, but discovery grants no membership. |
+| `cluster confirm <peer>` | Legacy manual/Tailscale intake only; records an unattested `Pending` candidate. Signed mDNS candidates use authority invite/attestation confirmation. |
+| `buddy cluster invite` / `buddy cluster confirm` | Issue the one-time authority invite, then activate only the peer's exact carrier-bound signed `EndpointAttestation`. JSON keeps the invite's `issued_at_membership_epoch`, the attestation's `proof_membership_epoch`, and the receipt's `committed_membership_epoch` separate. |
+| `cluster revoke <stable-node-id>` / `buddy cluster revoke` | Commit a durable membership tombstone/outbox and tear down live carrier state. |
 | `cluster configure` | Atomically replace the complete cluster configuration and return an exact receipt (`neoth --output json cluster configure …` for machine-readable output). |
 | `cluster status` | Show mesh health, live gossip posture and unresolved conflict count. |
 | `cluster topology` | Show connected surfaces/nodes. |
 | `cluster sync-state` | Inspect per-peer ACK cursors, pending replay, and contiguous inbound sequence. |
 | `cluster conflicts` | Inspect typed same-content divergence with both origins and digests. |
 | `cluster conflicts resolve` | Persist a preferred-origin decision while retaining forensic history. |
-| `cluster export-foreign` | Export original WAL frames plus canonical v5 content envelopes. |
-| `cluster restore` | Restore canonical memory/ground-truth through durable local-ID mapping. |
+| `cluster export-foreign` | Export original WAL frames plus canonical v5 content envelopes with exact `stable_node_id`, `auth_epoch`, `membership_epoch`, and `fence_state` provenance. |
+| `cluster restore` | Restore canonical memory/ground-truth through durable local-ID mapping scoped to `(stable_node_id, auth_epoch)`; legacy canonical rows without an authority fence fail closed. |
 | `local resources` | Show GPU/CPU/RAM/model usage. |
 
 `cluster configure` is a **complete-snapshot** command, not a field patch. Every
@@ -417,6 +424,21 @@ first setup. For CLI automation, pass peer and SSID lists as JSON arrays and
 pipe a new shared secret through `--passphrase-stdin`; never place the secret
 on the command line. Enabling is rejected unless the resulting snapshot has a
 non-empty cluster name and an existing or newly supplied shared passphrase.
+That passphrase derives the rendezvous `ClusterKey`; its HMAC proves
+shared-secret possession only and never grants node or task authority.
+
+Stable node identity is persisted separately in
+`~/.neoth/cluster-node-identity.json`. The admission source is
+`~/.neoth/cluster-membership.db`, whose active, unexpired, epoch-current exact
+carrier bindings issue runtime membership grants. Legacy `cluster.yaml` rows
+are imported once as unattested `Pending` candidates. Use `cluster status`,
+`list`, or `topology` to inspect the authority snapshot.
+
+Revocation commits a versioned tombstone and durable
+membership/audit/teardown outbox before it is acknowledged. A live daemon
+tears down Peeroxide and Iroh sessions and routes immediately; any undelivered
+outbox work is replayed before carrier startup. This blocks future admission
+and effects but cannot retract plaintext disclosed before revocation.
 
 The success receipt distinguishes **saved** from **active**. Enabled lifecycle
 changes, and changes while a running daemon owns the prior state, return

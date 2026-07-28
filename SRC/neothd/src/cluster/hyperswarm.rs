@@ -338,7 +338,13 @@ pub async fn spawn_discovery_with_wal(
     dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
-    let config = peeroxide::SwarmConfig::with_public_bootstrap();
+    // Transport identity is node identity, not rendezvous-key identity.
+    // Persist before any DHT actor starts; cluster-passphrase rotation must
+    // never mint a new Noise key and silently evade a tombstone.
+    let local_identity = super::membership::LocalNodeIdentity::load_or_create(&neoth_home)
+        .context("load stable cluster node identity")?;
+    let mut config = peeroxide::SwarmConfig::with_public_bootstrap();
+    config.key_pair = Some(local_identity.peeroxide_key_pair());
     let (swarm_task, handle, mut conn_rx) = match peeroxide::spawn(config).await {
         Ok(parts) => parts,
         Err(error) => {
@@ -559,7 +565,6 @@ async fn handle_peeroxide_connection(
 
     // SL-02b: start the handshake round-trip clock — the elapsed time from our
     // Hello write to the peer's validated Hello is recorded as this peer's RTT.
-    let handshake_start = tokio::time::Instant::now();
 
     // ── Step 1: send our Hello ──
     let our_hello = WireFrame {
@@ -728,7 +733,33 @@ async fn handle_peeroxide_connection(
         }
     };
 
+    // Shared-passphrase proof only gets a peer this far. Authorization comes
+    // exclusively from exact, carrier-qualified membership authority.
+    let membership_store = super::membership::MembershipStore::open(&neoth_home)
+        .context("open cluster membership authority")?
+        .with_effect_registry(peer_streams.effect_registry());
+    let authenticated_transport = super::membership::TransportIdentity::peeroxide(&peer_noise_pk);
+    let membership_grant = match membership_store.admit(
+        super::membership::CarrierKind::Peeroxide,
+        &authenticated_transport,
+        now_unix_secs() as i64,
+    ) {
+        Ok(grant) => grant,
+        Err(error) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                &peer_id,
+                "membership authority rejected authenticated transport",
+            );
+            return Err(error).context("peeroxide membership admission rejected");
+        }
+    };
+    let registration_effect = membership_grant
+        .begin_effect(now_unix_secs() as i64)
+        .context("begin peeroxide route-registration generation")?;
+
     info!(
+        stable_node_id = %membership_grant.stable_node_id(),
         peer_id = %peer_id,
         capability_count = peer_capabilities.len(),
         "hyperswarm: handshake complete"
@@ -739,25 +770,6 @@ async fn handle_peeroxide_connection(
         &remote_pk_hex,
         &cluster_name,
     );
-
-    // SL-02b: record the handshake RTT + bump this peer's stability (a
-    // successful connection is a stability hit). Best-effort, once per
-    // connection — NOT per heartbeat (a per-heartbeat cluster.yaml write would
-    // be heavy I/O). No-op for an unpaired peer; surfaces in
-    // `neoth cluster topology`. Per-heartbeat fidelity + a miss-on-disconnect
-    // signal are a throttled-write follow-on slice.
-    let handshake_rtt_ms = handshake_start.elapsed().as_millis() as u64;
-    // COR-16/A-43: best-effort, but a write failure (disk full, perms,
-    // serde) must not vanish — log it so a peer's RTT/stability silently
-    // freezing in `neoth cluster topology` is diagnosable.
-    if let Err(e) =
-        crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms)
-    {
-        tracing::warn!(error = %e, peer = %remote_pk_hex, "cluster registry refresh_rtt failed (non-fatal)");
-    }
-    if let Err(e) = crate::cluster::registry::refresh_stability(&neoth_home, &remote_pk_hex, true) {
-        tracing::warn!(error = %e, peer = %remote_pk_hex, "cluster registry refresh_stability failed (non-fatal)");
-    }
 
     // ── Step 3: bidirectional session loop (SL-00(1c)) ──
     //
@@ -783,20 +795,31 @@ async fn handle_peeroxide_connection(
 
     // SL-00(1c): register this peer's outbound channel; the Drop guard removes
     // it on EVERY exit path (clean disconnect, error, supersede).
-    let mut outbound_rx = peer_streams.register(&remote_pk_hex);
+    let (session_generation, mut outbound_rx, mut membership_cancel) =
+        peer_streams.register_authorized_session(&remote_pk_hex, &membership_grant);
     struct UnregisterGuard {
         reg: Arc<PeerStreamRegistry>,
         key: String,
+        generation: u64,
     }
     impl Drop for UnregisterGuard {
         fn drop(&mut self) {
-            self.reg.unregister(&self.key);
+            self.reg.unregister_generation(&self.key, self.generation);
         }
     }
     let _unreg = UnregisterGuard {
         reg: Arc::clone(&peer_streams),
         key: remote_pk_hex.clone(),
+        generation: session_generation,
     };
+    // The route-registration lease becomes the lifetime lease for the exact
+    // authenticated transport generation. Revoke therefore waits for the
+    // SecretStream task itself to exit; a short route-map teardown timeout can
+    // never be mistaken for the generation's final cancellation ACK.
+    let mut session_effect = registration_effect;
+    session_effect
+        .validate(now_unix_secs() as i64)
+        .context("membership changed while registering peeroxide route")?;
 
     // Outbound heartbeat: our advertised capabilities mirror the Hello (empty
     // for now — capability discovery from bound providers is a follow-up).
@@ -814,6 +837,12 @@ async fn handle_peeroxide_connection(
     let mut last_heartbeat = tokio::time::Instant::now();
 
     loop {
+        // Reconnect and every loop turn re-read authority. This closes stale
+        // sessions after revoke even if their passphrase proof remains valid.
+        membership_grant
+            .revalidate(now_unix_secs() as i64)
+            .context("peeroxide membership revoked during session")?;
+
         // ── (a) Send our heartbeat — once immediately, then every interval.
         // Driven here (between reads) rather than from a cancellable timer so a
         // read is never interrupted. Pacing is bounded by the peer's own
@@ -829,7 +858,28 @@ async fn handle_peeroxide_connection(
             out_seq = out_seq.wrapping_add(1);
             match heartbeat::encode_frame(&hb) {
                 Ok(b) => {
-                    if let Err(e) = stream.write(&b).await {
+                    let mut heartbeat_permit = session_effect
+                        .begin_external(now_unix_secs() as i64)
+                        .context("heartbeat lost membership admission before write")?;
+                    heartbeat_permit.mark_transport_may_have_started();
+                    let write = tokio::select! {
+                        biased;
+                        _ = heartbeat_permit.cancelled() => {
+                            heartbeat_permit.persist_indeterminate_if_cancelled(
+                                "peeroxide_heartbeat_write_locally_aborted_without_remote_ack",
+                                now_unix_secs() as i64,
+                            )?;
+                            anyhow::bail!(
+                                "peeroxide membership generation cancelled before heartbeat write"
+                            );
+                        }
+                        result = stream.write(&b) => result,
+                    };
+                    if let Err(e) = write {
+                        heartbeat_permit.persist_indeterminate_if_cancelled(
+                            "peeroxide_heartbeat_write_failed_during_membership_revocation",
+                            now_unix_secs() as i64,
+                        )?;
                         emit_peer_disconnected_wal(
                             wal_writer.as_deref(),
                             &peer_id,
@@ -838,6 +888,15 @@ async fn handle_peeroxide_connection(
                         );
                         return Err(anyhow::anyhow!("write heartbeat: {e}"));
                     }
+                    if let Err(error) = heartbeat_permit.validate(now_unix_secs() as i64) {
+                        heartbeat_permit.persist_indeterminate_if_cancelled(
+                            "peeroxide_heartbeat_completed_without_remote_ack",
+                            now_unix_secs() as i64,
+                        )?;
+                        return Err(error)
+                            .context("membership changed before heartbeat classification");
+                    }
+                    drop(heartbeat_permit);
                     if !sent_first_heartbeat {
                         sent_first_heartbeat = true;
                         if let FrameBody::Heartbeat(ref body) = hb.body {
@@ -860,9 +919,36 @@ async fn handle_peeroxide_connection(
         // on the next loop turn, bounded by the read cadence above.
         while outbound_alive {
             match outbound_rx.try_recv() {
-                Ok(frame) => match heartbeat::encode_frame(&frame) {
+                Ok(mut frame) => match membership_grant
+                    .revalidate(now_unix_secs() as i64)
+                    .and_then(|()| heartbeat::encode_frame(&frame))
+                {
                     Ok(b) => {
-                        if let Err(e) = stream.write(&b).await {
+                        let guard = frame
+                            .effect_guard_mut()
+                            .context("outbound frame omitted its membership effect lease")?;
+                        let mut permit = guard
+                            .begin_external(now_unix_secs() as i64)
+                            .context("outbound frame lost membership admission before write")?;
+                        permit.mark_transport_may_have_started();
+                        let write = tokio::select! {
+                            biased;
+                            _ = permit.cancelled() => {
+                                permit.persist_indeterminate_if_cancelled(
+                                    "peeroxide_frame_write_locally_aborted_without_remote_ack",
+                                    now_unix_secs() as i64,
+                                )?;
+                                anyhow::bail!(
+                                    "peeroxide membership generation cancelled before outbound write"
+                                );
+                            }
+                            result = stream.write(&b) => result,
+                        };
+                        if let Err(e) = write {
+                            permit.persist_indeterminate_if_cancelled(
+                                "peeroxide_frame_write_failed_during_membership_revocation",
+                                now_unix_secs() as i64,
+                            )?;
                             emit_peer_disconnected_wal(
                                 wal_writer.as_deref(),
                                 &peer_id,
@@ -870,6 +956,15 @@ async fn handle_peeroxide_connection(
                                 Some(&e.to_string()),
                             );
                             return Err(anyhow::anyhow!("write outbound frame: {e}"));
+                        }
+                        if let Err(error) = permit.validate(now_unix_secs() as i64) {
+                            permit.persist_indeterminate_if_cancelled(
+                                "peeroxide_frame_write_completed_without_remote_ack",
+                                now_unix_secs() as i64,
+                            )?;
+                            return Err(error).context(
+                                "membership changed before outbound write classification",
+                            );
                         }
                     }
                     Err(e) => {
@@ -887,7 +982,25 @@ async fn handle_peeroxide_connection(
         }
 
         // ── (c) Read exactly ONE inbound frame to completion (never cancelled).
-        let bytes = match stream.read().await {
+        // Revocation is the sole safe cancellation case: the task exits and
+        // drops the complete SecretStream, so a partially-read Noise frame is
+        // never reused. Ordinary timers still never cancel reads.
+        let read = tokio::select! {
+            biased;
+            _ = session_effect.cancelled() => {
+                anyhow::bail!("peeroxide membership generation cancelled during live session");
+            }
+            changed = membership_cancel.changed() => {
+                let reason = if changed.is_ok() && *membership_cancel.borrow() {
+                    "peeroxide membership revoked during live session"
+                } else {
+                    "peeroxide membership session owner stopped"
+                };
+                anyhow::bail!(reason);
+            }
+            result = stream.read() => result,
+        };
+        let bytes = match read {
             Ok(Some(b)) => b,
             Ok(None) => {
                 info!(peer_id = %peer_id, "hyperswarm: peer disconnected cleanly");
@@ -916,6 +1029,9 @@ async fn handle_peeroxide_connection(
                 return Err(e).context("decode peer frame");
             }
         };
+        membership_grant
+            .revalidate(now_unix_secs() as i64)
+            .context("membership revoked before inbound effect")?;
 
         // ── SL-01: intercept task frames BEFORE the sync handler (which has no
         // provider / lease / autonomy access). TaskDelegate runs the accept
@@ -933,6 +1049,7 @@ async fn handle_peeroxide_connection(
                     wal_writer.clone(),
                     &peer_streams,
                     dispatch_tx.as_ref(),
+                    &membership_grant,
                 )
                 .await;
             }
@@ -954,10 +1071,14 @@ async fn handle_peeroxide_connection(
         if frame.kind == FrameKind::GossipAck {
             if let FrameBody::GossipAck(ack) = frame.body {
                 let durable = durable_mesh.clone();
-                let authenticated_peer = PeerPubkey::new(remote_pk_hex.clone());
                 let local_origin = PeerPubkey::new(own_peer_id.clone());
+                let authorized = membership_grant.clone();
                 tokio::task::spawn_blocking(move || {
-                    durable.acknowledge_outbound(&authenticated_peer, &local_origin, &ack)
+                    let effect = authorized.begin_effect(now_unix_secs() as i64)?;
+                    let result =
+                        durable.acknowledge_outbound_authorized(&effect, &local_origin, &ack)?;
+                    effect.finish()?;
+                    Ok::<_, anyhow::Error>(result)
                 })
                 .await
                 .context("durable mesh ACK task panicked")??;
@@ -969,18 +1090,31 @@ async fn handle_peeroxide_connection(
         // the inbound high-water mark. Only its post-COMMIT result can emit ACK.
         if frame.kind == FrameKind::Gossip {
             if let FrameBody::Gossip(gframe) = frame.body {
+                let authenticated_peer =
+                    PeerPubkey::new(membership_grant.stable_node_id().as_str().to_string());
+                if gframe.origin != authenticated_peer {
+                    tracing::warn!(
+                        claimed = %gframe.origin.as_str(),
+                        authenticated = %authenticated_peer.as_str(),
+                        "cluster: durable gossip origin does not match active stable member"
+                    );
+                    continue;
+                }
                 let payload_et =
                     crate::cluster::wal_sync::gossip_payload_event_meta(&gframe.payload)
                         .map(|(event_type, _)| event_type);
                 let durable = durable_mesh.clone();
-                let authenticated_peer = PeerPubkey::new(remote_pk_hex.clone());
                 let frame_for_commit = gframe.clone();
                 let policy = reload_controller.gossip_policy();
-                let committed = tokio::task::spawn_blocking(move || {
-                    durable.persist_inbound(&authenticated_peer, &frame_for_commit, &policy)
+                let authorized = membership_grant.clone();
+                let (committed, mut effect_guard) = tokio::task::spawn_blocking(move || {
+                    let effect = authorized.begin_effect(now_unix_secs() as i64)?;
+                    let committed =
+                        durable.persist_inbound_authorized(&effect, &frame_for_commit, &policy);
+                    Ok::<_, anyhow::Error>((committed, effect))
                 })
                 .await
-                .context("durable inbound mesh task panicked")?;
+                .context("durable inbound mesh task panicked")??;
                 match committed {
                     Ok(commit @ super::durable_sync::InboundCommit::Committed(_))
                     | Ok(commit @ super::durable_sync::InboundCommit::Duplicate(_))
@@ -1000,6 +1134,12 @@ async fn handle_peeroxide_connection(
                             .expect("committed/duplicate inbound has an ACK")
                             .clone();
                         emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
+                        let mut ack_permit = effect_guard
+                            .begin_external(now_unix_secs() as i64)
+                            .context(
+                                "membership changed after durable gossip commit; ACK withheld",
+                            )?;
+                        ack_permit.mark_transport_may_have_started();
                         let ack_frame = WireFrame {
                             kind: FrameKind::GossipAck,
                             sequence: out_seq,
@@ -1010,21 +1150,50 @@ async fn handle_peeroxide_connection(
                         out_seq = out_seq.wrapping_add(1);
                         let encoded = heartbeat::encode_frame(&ack_frame)
                             .context("encode durable gossip ACK")?;
-                        stream
-                            .write(&encoded)
-                            .await
-                            .context("write durable gossip ACK")?;
+                        let ack_write = tokio::select! {
+                            biased;
+                            _ = ack_permit.cancelled() => {
+                                ack_permit.persist_indeterminate_if_cancelled(
+                                    "peeroxide_gossip_ack_locally_aborted_without_remote_ack",
+                                    now_unix_secs() as i64,
+                                )?;
+                                anyhow::bail!(
+                                    "peeroxide membership generation cancelled before durable gossip ACK"
+                                );
+                            }
+                            result = stream.write(&encoded) => result,
+                        };
+                        if let Err(error) = ack_write {
+                            ack_permit.persist_indeterminate_if_cancelled(
+                                "peeroxide_gossip_ack_write_failed_during_membership_revocation",
+                                now_unix_secs() as i64,
+                            )?;
+                            return Err(error).context("write durable gossip ACK");
+                        }
+                        if let Err(error) = ack_permit.validate(now_unix_secs() as i64) {
+                            ack_permit.persist_indeterminate_if_cancelled(
+                                "peeroxide_gossip_ack_write_completed_without_remote_ack",
+                                now_unix_secs() as i64,
+                            )?;
+                            return Err(error)
+                                .context("membership changed before gossip ACK classification");
+                        }
+                        drop(ack_permit);
+                        effect_guard.finish()?;
                     }
                     Ok(super::durable_sync::InboundCommit::Gap { expected, received }) => {
                         let dropped = GossipAcceptance::DroppedGap { expected, received };
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
+                        effect_guard.finish()?;
                     }
                     Ok(super::durable_sync::InboundCommit::Dropped(dropped)) => {
                         emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
+                        effect_guard.finish()?;
                     }
                     Err(error) => {
                         tracing::warn!(%error, origin = %gframe.origin.as_str(), seq = gframe.event_seq,
                             "cluster: durable inbound commit failed — ACK withheld");
+                        effect_guard.finish()?;
                     }
                 }
             }
@@ -1350,6 +1519,7 @@ async fn handle_task_delegate(
     wal_writer: ClusterWalWriter,
     peer_streams: &PeerStreamRegistry,
     dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+    membership_grant: &super::membership::MembershipGrant,
 ) {
     let task_id = body.task_id.clone();
 
@@ -1389,9 +1559,9 @@ async fn handle_task_delegate(
         return;
     }
 
-    // Checkpoint 1: the peer is operator-paired (registry membership of the
-    // AUTHENTICATED Noise key, never a payload field). One disk read.
-    let is_paired = crate::cluster::registry::is_paired(neoth_home, remote_pk_hex);
+    // Checkpoint 1: re-read dedicated authority. `cluster.yaml` is not an
+    // authorization source and a passphrase holder is not necessarily active.
+    let is_paired = membership_grant.revalidate(now_unix_secs() as i64).is_ok();
 
     // Checkpoint 2: a fresh lease read — but ONLY when it can change the
     // outcome (a `Confirm` level, i.e. Standard). At an `Allow` level
@@ -1413,10 +1583,35 @@ async fn handle_task_delegate(
             // Dispatch off-loop to the executor. Bounded channel ⇒ a busy
             // executor (one inference already running) means try_send fails and
             // we reply busy rather than queueing unboundedly.
-            let job = ClusterTaskJob {
-                task_id: task_id.clone(),
-                prompt: body.prompt,
-                reply_peer_pk: remote_pk_hex.to_string(),
+            let job = match ClusterTaskJob::authorized(
+                task_id.clone(),
+                body.prompt,
+                remote_pk_hex.to_string(),
+                membership_grant.clone(),
+            ) {
+                Ok(job) => job,
+                Err(error) => {
+                    warn!(
+                        task_id = %task_id,
+                        stable_node_id = %membership_grant.stable_node_id(),
+                        %error,
+                        "cluster: membership generation revoked before task queue registration"
+                    );
+                    reply_task_rejected(
+                        peer_streams,
+                        remote_pk_hex,
+                        own_peer_id,
+                        &task_id,
+                        "membership_revoked",
+                    );
+                    emit_task_rejected_wal(
+                        wal_writer.as_deref(),
+                        &task_id,
+                        remote_pk_hex,
+                        "membership_revoked",
+                    );
+                    return;
+                }
             };
             match dispatch_tx {
                 Some(tx) => match tx.try_send(job) {

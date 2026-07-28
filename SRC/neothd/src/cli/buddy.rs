@@ -35,8 +35,15 @@
 //! server. Per-server values are not surfaced here (would require loading the
 //! MCP config; deferred until that surface stabilises).
 
+#[cfg(feature = "cluster")]
+use std::path::PathBuf;
+
 use anyhow::{Context, Result};
+#[cfg(feature = "cluster")]
+use clap::ValueEnum;
 use clap::{Args, Subcommand};
+#[cfg(feature = "cluster")]
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::cli::OutputFormat;
@@ -101,17 +108,256 @@ pub enum BuddyAction {
         #[arg(long, conflicts_with = "enable")]
         disable: bool,
     },
+
+    /// Membership pairing and revocation through the same daemon/offline
+    /// authority controller used by `neoth cluster`.
+    #[cfg(feature = "cluster")]
+    Cluster {
+        #[command(subcommand)]
+        action: BuddyClusterAction,
+    },
+}
+
+#[cfg(feature = "cluster")]
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum BuddyClusterCarrier {
+    Peeroxide,
+    Iroh,
+}
+
+#[cfg(feature = "cluster")]
+impl From<BuddyClusterCarrier> for crate::cluster::membership::CarrierKind {
+    fn from(value: BuddyClusterCarrier) -> Self {
+        match value {
+            BuddyClusterCarrier::Peeroxide => Self::Peeroxide,
+            BuddyClusterCarrier::Iroh => Self::Iroh,
+        }
+    }
+}
+
+#[cfg(feature = "cluster")]
+#[derive(Subcommand, Debug, Clone)]
+pub enum BuddyClusterAction {
+    /// Summarize the versioned membership-authority snapshot.
+    Status,
+    /// Issue a short-lived, carrier-bound one-time enrollment invite.
+    Invite {
+        #[arg(long)]
+        stable_node_id: String,
+        #[arg(long)]
+        signing_public_key: String,
+        #[arg(long, value_enum)]
+        carrier: BuddyClusterCarrier,
+        #[arg(long)]
+        transport_identity: String,
+        #[arg(long)]
+        endpoint: String,
+        #[arg(long)]
+        label: String,
+        #[arg(long, default_value_t = 300)]
+        ttl_secs: u64,
+    },
+    /// Confirm an invite with the peer's signed EndpointAttestation JSON.
+    Confirm {
+        #[arg(long)]
+        invite_id: String,
+        #[arg(long)]
+        attestation: PathBuf,
+        #[arg(long, value_enum)]
+        carrier: BuddyClusterCarrier,
+        #[arg(long)]
+        transport_identity: String,
+        #[arg(long)]
+        endpoint: String,
+    },
+    /// Permanently revoke the current membership incarnation.
+    Revoke { stable_node_id: String },
+    /// Read one durable UUIDv7 revocation request and its recovery state.
+    RevokeStatus { request_id: String },
+    /// List authoritative durable Pending and Indeterminate revocation requests.
+    RevokeUnresolved,
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
-pub fn run_buddy(args: BuddyArgs) -> Result<()> {
+pub async fn run_buddy(args: BuddyArgs) -> Result<()> {
     match args.action {
         BuddyAction::Status => run_status(args.output),
         BuddyAction::SelfActivation { enable, disable } => {
             run_self_activation(enable, disable, args.output)
         }
         BuddyAction::Proactive { enable, disable } => run_proactive(enable, disable, args.output),
+        #[cfg(feature = "cluster")]
+        BuddyAction::Cluster { action } => run_cluster(action, args.output).await,
+    }
+}
+
+#[cfg(feature = "cluster")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct BuddyClusterSummary {
+    active: usize,
+    pending: usize,
+    revoked: usize,
+    live: usize,
+    pending_outbox: u64,
+}
+
+#[cfg(feature = "cluster")]
+fn summarize_buddy_cluster(
+    envelope: &crate::cluster::membership::MembershipSnapshotEnvelope,
+    now: i64,
+) -> Result<BuddyClusterSummary> {
+    envelope.validate()?;
+    let snapshot = &envelope.snapshot;
+    let active = snapshot
+        .members
+        .iter()
+        .filter(|member| member.state == crate::cluster::membership::MembershipState::Active)
+        .count();
+    let pending = snapshot
+        .members
+        .iter()
+        .filter(|member| member.state == crate::cluster::membership::MembershipState::Pending)
+        .count();
+    let revoked = snapshot
+        .members
+        .iter()
+        .filter(|member| member.state == crate::cluster::membership::MembershipState::Revoked)
+        .count();
+    let live = snapshot
+        .members
+        .iter()
+        .filter(|member| {
+            member.state == crate::cluster::membership::MembershipState::Active
+                && member
+                    .bindings
+                    .iter()
+                    .any(|binding| binding.expires_at_unix.is_none_or(|expiry| expiry > now))
+        })
+        .count();
+    Ok(BuddyClusterSummary {
+        active,
+        pending,
+        revoked,
+        live,
+        pending_outbox: snapshot.pending_outbox,
+    })
+}
+
+#[cfg(feature = "cluster")]
+fn render_typed<T: Serialize>(value: &T, output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        OutputFormat::Jsonl => println!("{}", serde_json::to_string(value)?),
+        OutputFormat::Table => println!("{}", serde_json::to_string_pretty(value)?),
+    }
+    Ok(())
+}
+
+#[cfg(feature = "cluster")]
+async fn run_cluster(action: BuddyClusterAction, output: OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    match action {
+        BuddyClusterAction::Status => {
+            let envelope = crate::cli::cluster::load_membership_snapshot_envelope(&home).await?;
+            let summary = summarize_buddy_cluster(&envelope, crate::time::now_unix_i64())?;
+            match output {
+                OutputFormat::Table => {
+                    println!(
+                        "membership v{}: active={} pending={} revoked={} live={} outbox={}",
+                        envelope.snapshot_version,
+                        summary.active,
+                        summary.pending,
+                        summary.revoked,
+                        summary.live,
+                        summary.pending_outbox
+                    );
+                    if let Some(health) = crate::cluster::membership::inspect_authority_read_only(
+                        &home,
+                        crate::time::now_unix_i64(),
+                    )? {
+                        println!(
+                            "revocations: pending={} indeterminate={}",
+                            health.pending_revocations, health.indeterminate_revocations
+                        );
+                    }
+                    Ok(())
+                }
+                _ => render_typed(&envelope, output),
+            }
+        }
+        BuddyClusterAction::Invite {
+            stable_node_id,
+            signing_public_key,
+            carrier,
+            transport_identity,
+            endpoint,
+            label,
+            ttl_secs,
+        } => {
+            anyhow::ensure!(
+                (1..=300).contains(&ttl_secs),
+                "invite TTL must be between 1 and 300 seconds"
+            );
+            let now = crate::time::now_unix_i64();
+            let request = crate::cluster::membership::MembershipInviteRequest {
+                stable_node_id: crate::cluster::membership::StableNodeId::parse(stable_node_id)?,
+                signing_public_key_hex: signing_public_key,
+                carrier: carrier.into(),
+                transport_identity: crate::cluster::membership::TransportIdentity::parse(
+                    transport_identity,
+                )?,
+                endpoint,
+                label,
+                expires_at_unix: now.saturating_add(i64::try_from(ttl_secs)?),
+            };
+            let receipt = crate::cli::cluster::create_membership_invite(&home, request).await?;
+            render_typed(
+                &json!({"progress":"invite_issued","receipt":receipt}),
+                output,
+            )
+        }
+        BuddyClusterAction::Confirm {
+            invite_id,
+            attestation,
+            carrier,
+            transport_identity,
+            endpoint,
+        } => {
+            let bytes = std::fs::read(&attestation)
+                .with_context(|| format!("read endpoint attestation {}", attestation.display()))?;
+            let attestation = serde_json::from_slice(&bytes)
+                .with_context(|| format!("parse endpoint attestation {}", attestation.display()))?;
+            let request = crate::cluster::membership::MembershipConfirmRequest {
+                invite_id,
+                attestation,
+                carrier: carrier.into(),
+                authenticated_transport: crate::cluster::membership::TransportIdentity::parse(
+                    transport_identity,
+                )?,
+                endpoint,
+            };
+            let receipt = crate::cli::cluster::confirm_membership_invite(&home, request).await?;
+            render_typed(
+                &json!({"progress":"membership_active","receipt":receipt}),
+                output,
+            )
+        }
+        BuddyClusterAction::Revoke { stable_node_id } => {
+            let receipt =
+                crate::cli::cluster::revoke_membership_receipt(&home, &stable_node_id).await?;
+            render_typed(&receipt, output)
+        }
+        BuddyClusterAction::RevokeStatus { request_id } => {
+            let status =
+                crate::cli::cluster::membership_revocation_status_receipt(&home, &request_id)
+                    .await?;
+            render_typed(&status, output)
+        }
+        BuddyClusterAction::RevokeUnresolved => {
+            let health = crate::cli::cluster::membership_runtime_health(&home).await?;
+            render_typed(&health, output)
+        }
     }
 }
 
@@ -470,5 +716,112 @@ mod tests {
             !reloaded.proactive.enabled,
             "proactive.enabled must be false after disable toggle"
         );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn buddy_cluster_summary_derives_from_shared_validated_envelope() {
+        let snapshot = crate::cluster::membership::MembershipSnapshot {
+            version: crate::cluster::membership::MEMBERSHIP_SNAPSHOT_VERSION,
+            authority_path: PathBuf::from("authority.db"),
+            authority_epoch: crate::cluster::membership::MembershipEpoch::new(4).unwrap(),
+            revocation_floor: crate::cluster::membership::MembershipEpoch::new(3).unwrap(),
+            pending_outbox: 2,
+            members: Vec::new(),
+        };
+        let envelope = snapshot.clone().into_envelope().unwrap();
+        let summary = summarize_buddy_cluster(&envelope, 1_700_000_000).unwrap();
+        assert_eq!(envelope.snapshot, snapshot);
+        assert_eq!(
+            envelope.operation,
+            crate::cluster::membership::MEMBERSHIP_SNAPSHOT_OPERATION
+        );
+        assert_eq!(summary.pending_outbox, snapshot.pending_outbox);
+        assert_eq!(
+            serde_json::to_value(&envelope).unwrap()["snapshot_digest"],
+            snapshot.canonical_digest().unwrap()
+        );
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn buddy_cluster_is_only_a_thin_shared_controller_orchestrator() {
+        let source = include_str!("buddy.rs");
+        let cluster = source
+            .split("async fn run_cluster")
+            .nth(1)
+            .expect("Buddy cluster action block")
+            .split("// ── status")
+            .next()
+            .expect("end of Buddy cluster action block");
+        for forbidden in [
+            "MembershipStore::",
+            "rusqlite::",
+            "cluster-membership.db",
+            "MembershipController::",
+        ] {
+            assert!(
+                !cluster.contains(forbidden),
+                "Buddy must not create an alternate membership store path: {forbidden}"
+            );
+        }
+        for shared in [
+            "load_membership_snapshot_envelope",
+            "create_membership_invite",
+            "confirm_membership_invite",
+            "revoke_membership_receipt",
+            "membership_revocation_status_receipt",
+            "membership_runtime_health",
+        ] {
+            assert!(
+                cluster.contains(shared),
+                "Buddy action does not delegate to shared cluster path: {shared}"
+            );
+        }
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn buddy_revoke_uses_the_exact_cluster_receipt_schema() {
+        let shared = crate::cli::cluster::MembershipRevokeCommandReceipt {
+            operation: "cluster.membership.revoke".into(),
+            requested_peer: "a".repeat(64),
+            request_id: crate::cluster::membership::new_revocation_request_id(),
+            matched: false,
+            receipt: None,
+        };
+        let cluster_bytes = serde_json::to_vec(&shared).unwrap();
+        let buddy_bytes = serde_json::to_vec(&shared).unwrap();
+        assert_eq!(buddy_bytes, cluster_bytes);
+    }
+
+    #[cfg(feature = "cluster")]
+    #[test]
+    fn buddy_revoke_status_uses_the_exact_shared_core_envelope() {
+        let request_id = crate::cluster::membership::new_revocation_request_id();
+        let shared = crate::cluster::membership::MembershipRevocationStatusEnvelope::new(
+            request_id.clone(),
+            None,
+        )
+        .unwrap();
+        let buddy: crate::cli::cluster::MembershipRevocationStatusCommandReceipt = shared.clone();
+        assert_eq!(buddy.operation, "cluster.membership.revoke_status");
+        assert_eq!(buddy.request_id, request_id);
+        assert!(!buddy.found);
+        assert_eq!(
+            serde_json::to_vec(&buddy).unwrap(),
+            serde_json::to_vec(&shared).unwrap()
+        );
+
+        let health = crate::cluster::membership::MembershipRuntimeHealth {
+            wire_version: crate::cluster::membership::MEMBERSHIP_RUNTIME_HEALTH_WIRE_VERSION,
+            live_generations: Vec::new(),
+            invalid_live_generations: Vec::new(),
+            unresolved_revocations: Vec::new(),
+        };
+        health.validate().unwrap();
+        let buddy_health: crate::cluster::membership::MembershipRuntimeHealth =
+            serde_json::from_slice(&serde_json::to_vec(&health).unwrap()).unwrap();
+        assert_eq!(buddy_health, health);
     }
 }

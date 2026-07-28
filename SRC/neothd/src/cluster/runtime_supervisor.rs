@@ -332,6 +332,8 @@ struct RuntimeDeps {
     writer: WalWriterHandle,
     reload_controller: Arc<crate::config::reload::ReloadController>,
     shared_provider: Option<Arc<dyn Provider>>,
+    live_sessions: Arc<crate::cluster::membership::LiveSessionRegistry>,
+    boot_id: crate::cluster::membership::BootId,
     ack_in_flight: Arc<std::sync::atomic::AtomicBool>,
     ack_permitted: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -384,7 +386,7 @@ impl LiveClusterRuntime {
         // The fixed mDNS listen port describes the peeroxide listener. Iroh is
         // dial-by-endpoint-id and must not publish a misleading UDP endpoint.
         let mdns = if spec.transport == ClusterTransport::Peeroxide {
-            spawn_mdns(spec, identity, &deps.home)
+            spawn_mdns(spec, identity, deps)
         } else {
             None
         };
@@ -487,7 +489,14 @@ impl CarrierRuntime {
             crate::cluster::PeerLoadRegistry::new(),
         ));
         let cluster_wal = Some(Arc::new(deps.writer.clone()));
-        let peer_streams = Arc::new(crate::cluster::peer_streams::PeerStreamRegistry::new());
+        let peer_streams = Arc::new(
+            crate::cluster::peer_streams::PeerStreamRegistry::with_effect_registry(
+                deps.live_sessions.effect_registry(),
+            ),
+        );
+        let live_adapter: Arc<dyn crate::cluster::membership::LiveCarrierSessions> =
+            peer_streams.clone();
+        deps.live_sessions.register(live_adapter);
         let gossip_state = Arc::new(std::sync::Mutex::new(
             crate::cluster::wal_sync::GossipState::new(),
         ));
@@ -533,7 +542,13 @@ impl CarrierRuntime {
                 return Err(error).context("start configured peeroxide cluster transport");
             }
         };
-        let own_peer_id = crate::cluster::PeerPubkey::new(swarm.own_peer_id().to_string());
+        let own_peer_id = crate::cluster::PeerPubkey::new(
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(&deps.home)
+                .context("load local stable node identity")?
+                .stable_node_id()
+                .as_str()
+                .to_string(),
+        );
         let gossip = crate::cluster::wal_sync::spawn_gossip_tick(
             peer_streams,
             deps.segment_path.clone(),
@@ -564,6 +579,9 @@ impl CarrierRuntime {
             crate::cluster::wal_sync::spawn_foreign_persist_writer(deps.home.join("views.db"));
         let endpoint_secret = load_or_create_iroh_endpoint_secret(&deps.home, &identity.key)
             .context("load persistent iroh endpoint identity")?;
+        let membership_store = crate::cluster::membership::MembershipStore::open(&deps.home)
+            .context("open iroh membership authority")?
+            .with_effect_registry(deps.live_sessions.effect_registry());
         let transport = match crate::cluster::iroh_transport::IrohTransport::bind_with_secret(
             crate::cluster::iroh_transport::gossip_handler(
                 Arc::clone(&gossip_state),
@@ -574,6 +592,7 @@ impl CarrierRuntime {
             Arc::new(identity.key.clone()),
             cluster_wal.clone(),
             endpoint_secret,
+            membership_store,
         )
         .await
         {
@@ -585,13 +604,22 @@ impl CarrierRuntime {
                 return Err(error).context("start configured iroh cluster transport");
             }
         };
+        let live_adapter: Arc<dyn crate::cluster::membership::LiveCarrierSessions> =
+            transport.clone();
+        deps.live_sessions.register(live_adapter);
         let mut seeded_peers = 0usize;
         for peer in &spec.peers {
             if transport.add_peer_id(peer) {
                 seeded_peers += 1;
             }
         }
-        let self_id = crate::cluster::PeerPubkey::new(transport.node_id());
+        let self_id = crate::cluster::PeerPubkey::new(
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(&deps.home)
+                .context("load local stable node identity")?
+                .stable_node_id()
+                .as_str()
+                .to_string(),
+        );
         let gossip = crate::cluster::iroh_transport::spawn_gossip_broadcast(
             Arc::clone(&transport),
             deps.segment_path.clone(),
@@ -675,7 +703,7 @@ impl Drop for CarrierRuntime {
 fn spawn_mdns(
     spec: &RuntimeSpec,
     identity: &RuntimeIdentitySpec,
-    home: &std::path::Path,
+    deps: &RuntimeDeps,
 ) -> Option<mdns_sd::ServiceDaemon> {
     match crate::cluster::policy::gate_discover(
         spec.mdns.enabled,
@@ -692,13 +720,56 @@ fn spawn_mdns(
         warn!("cluster runtime: mDNS skipped because no non-loopback local IP exists");
         return None;
     };
-    let node_label = crate::cluster::mdns::node_label(home);
-    let mdns_identity = crate::cluster::mdns::build_announce_identity(
+    let node_label = crate::cluster::mdns::node_label(&deps.home);
+    let local_identity = match crate::cluster::membership::LocalNodeIdentity::load_or_create(
+        &deps.home,
+    ) {
+        Ok(identity) => identity,
+        Err(error) => {
+            warn!(%error, "cluster runtime: mDNS skipped because StableNode identity is unavailable");
+            return None;
+        }
+    };
+    let (auth_epoch, membership_epoch, invitation_digest) =
+        match crate::cluster::membership::MembershipStore::open(&deps.home).and_then(|store| {
+            let snapshot = store.full_snapshot()?;
+            let own = snapshot
+                .members
+                .iter()
+                .find(|member| member.stable_node_id == *local_identity.stable_node_id());
+            Ok((
+                own.map_or(crate::cluster::membership::AuthEpoch::INITIAL, |member| {
+                    member.auth_epoch
+                }),
+                own.map_or(snapshot.authority_epoch, |member| member.membership_epoch),
+                store.latest_invitation_digest(local_identity.stable_node_id())?,
+            ))
+        }) {
+            Ok(epochs) => epochs,
+            Err(error) => {
+                warn!(%error, "cluster runtime: mDNS skipped because membership authority is unavailable");
+                return None;
+            }
+        };
+    let mdns_identity = match crate::cluster::mdns::build_announce_identity(
         &identity.key,
+        &local_identity,
         &node_label,
         ip,
         spec.listen_port,
-    );
+        deps.boot_id.clone(),
+        auth_epoch,
+        membership_epoch,
+        invitation_digest,
+        crate::time::now_unix_i64()
+            + 3 * crate::cluster::mdns::DEFAULT_ANNOUNCE_INTERVAL_SECS as i64,
+    ) {
+        Ok(identity) => identity,
+        Err(error) => {
+            warn!(%error, "cluster runtime: mDNS skipped because signed discovery attestation could not be built");
+            return None;
+        }
+    };
     match crate::cluster::mdns::spawn_announcer(&mdns_identity) {
         Ok(daemon) => {
             info!(label = %node_label, %ip, port = spec.listen_port, "cluster runtime: mDNS generation active");
@@ -726,16 +797,17 @@ const IROH_ENDPOINT_IDENTITY_NAME: &str = ".cluster-iroh-endpoint.json";
 #[cfg(feature = "cluster-iroh")]
 const IROH_ENDPOINT_IDENTITY_LOCK_NAME: &str = ".cluster-iroh-endpoint.lock";
 #[cfg(feature = "cluster-iroh")]
-const IROH_ENDPOINT_IDENTITY_VERSION: u8 = 1;
-#[cfg(feature = "cluster-iroh")]
-const IROH_ENDPOINT_BINDING_INFO: &[u8] = b"neoth-cluster-iroh-endpoint-binding-v1";
+const IROH_ENDPOINT_IDENTITY_VERSION: u8 = 2;
 
 #[cfg(feature = "cluster-iroh")]
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 struct PersistentIrohEndpointIdentity {
     version: u8,
-    generation_binding: [u8; 32],
+    /// v1 compatibility only. Cluster-key rotation no longer rotates carrier
+    /// identity; retaining this optional field allows an in-place safe import.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    generation_binding: Option<[u8; 32]>,
     secret_key: [u8; 32],
 }
 
@@ -749,34 +821,10 @@ impl Drop for PersistentIrohEndpointIdentity {
 }
 
 #[cfg(feature = "cluster-iroh")]
-fn iroh_endpoint_generation_binding(
-    home: &std::path::Path,
-    cluster_key: &ClusterKey,
-) -> Result<[u8; 32]> {
-    use hkdf::Hkdf;
-    use sha2::Sha256;
-    use zeroize::Zeroizing;
-
-    let master_subkey = crate::wal::master_key::writer_segment_key_at(home)
-        .ok_or_else(|| anyhow::anyhow!("create/load protected NEOTH master key"))?;
-    let hkdf = Hkdf::<Sha256>::new(None, master_subkey.expose());
-    let mut binding_key = Zeroizing::new([0_u8; 32]);
-    hkdf.expand(IROH_ENDPOINT_BINDING_INFO, &mut *binding_key)
-        .map_err(|_| anyhow::anyhow!("derive iroh endpoint binding key"))?;
-    let mut input = Zeroizing::new(Vec::with_capacity(
-        IROH_ENDPOINT_BINDING_INFO.len() + cluster_key.0.len(),
-    ));
-    input.extend_from_slice(IROH_ENDPOINT_BINDING_INFO);
-    input.extend_from_slice(&cluster_key.0);
-    Ok(crate::util::hmac::sha256(&*binding_key, input.as_slice()))
-}
-
-#[cfg(feature = "cluster-iroh")]
 fn load_or_create_iroh_endpoint_secret(
     home: &std::path::Path,
-    cluster_key: &ClusterKey,
+    _cluster_key: &ClusterKey,
 ) -> Result<iroh::SecretKey> {
-    use subtle::ConstantTimeEq as _;
     use zeroize::Zeroizing;
 
     let path = home.join(IROH_ENDPOINT_IDENTITY_NAME);
@@ -784,21 +832,33 @@ fn load_or_create_iroh_endpoint_secret(
         &home.join(IROH_ENDPOINT_IDENTITY_LOCK_NAME),
         "iroh endpoint identity",
     )?;
-    let generation_binding = Zeroizing::new(iroh_endpoint_generation_binding(home, cluster_key)?);
     match std::fs::read(&path) {
         Ok(body) => {
             let body = Zeroizing::new(body);
             let record: PersistentIrohEndpointIdentity = serde_json::from_slice(body.as_slice())
                 .with_context(|| format!("parse iroh endpoint identity {}", path.display()))?;
             anyhow::ensure!(
-                record.version == IROH_ENDPOINT_IDENTITY_VERSION,
+                matches!(record.version, 1 | IROH_ENDPOINT_IDENTITY_VERSION),
                 "unsupported iroh endpoint identity version {} at {}",
                 record.version,
                 path.display()
             );
-            if bool::from(record.generation_binding.ct_eq(&*generation_binding)) {
-                return Ok(iroh::SecretKey::from_bytes(&record.secret_key));
+            if record.version == 1 {
+                let migrated = PersistentIrohEndpointIdentity {
+                    version: IROH_ENDPOINT_IDENTITY_VERSION,
+                    generation_binding: None,
+                    secret_key: record.secret_key,
+                };
+                let migrated_body = Zeroizing::new(
+                    serde_json::to_vec(&migrated)
+                        .context("serialize migrated iroh endpoint identity")?,
+                );
+                crate::util::atomic_write::atomic_write_private(&path, migrated_body.as_slice())
+                    .with_context(|| {
+                        format!("migrate private iroh endpoint identity {}", path.display())
+                    })?;
             }
+            return Ok(iroh::SecretKey::from_bytes(&record.secret_key));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
@@ -811,7 +871,7 @@ fn load_or_create_iroh_endpoint_secret(
     getrandom::getrandom(&mut *secret_key).context("mint iroh endpoint secret from OS RNG")?;
     let record = PersistentIrohEndpointIdentity {
         version: IROH_ENDPOINT_IDENTITY_VERSION,
-        generation_binding: *generation_binding,
+        generation_binding: None,
         secret_key: *secret_key,
     };
     let body =
@@ -1024,6 +1084,7 @@ pub(crate) async fn spawn_runtime_supervisor(
     writer: WalWriterHandle,
     reload_controller: Arc<crate::config::reload::ReloadController>,
     shared_provider: Option<Arc<dyn Provider>>,
+    live_sessions: Arc<crate::cluster::membership::LiveSessionRegistry>,
 ) -> Result<ClusterRuntimeSupervisorHandle> {
     let mut generation = reload_controller.subscribe_generation();
     let (mut initial_config, mut initial_credentials, mut initial_observed) =
@@ -1038,6 +1099,8 @@ pub(crate) async fn spawn_runtime_supervisor(
         writer,
         reload_controller,
         shared_provider,
+        live_sessions,
+        boot_id: crate::cluster::membership::BootId::new(),
         ack_in_flight: Arc::clone(&ack_in_flight),
         ack_permitted: Arc::clone(&ack_permitted),
     });
@@ -1596,7 +1659,7 @@ mod tests {
 
     #[cfg(feature = "cluster-iroh")]
     #[test]
-    fn iroh_endpoint_identity_is_stable_per_key_generation_and_rotates_on_key_change() {
+    fn iroh_endpoint_identity_survives_cluster_key_rotation() {
         let home = tempfile::tempdir().unwrap();
         let generation_a = ClusterKey([b'a'; 32]);
         let generation_b = ClusterKey([b'b'; 32]);
@@ -1606,7 +1669,7 @@ mod tests {
         let rotated = load_or_create_iroh_endpoint_secret(home.path(), &generation_b).unwrap();
 
         assert_eq!(first.public(), same.public());
-        assert_ne!(first.public(), rotated.public());
+        assert_eq!(first.public(), rotated.public());
         let record = home.path().join(IROH_ENDPOINT_IDENTITY_NAME);
         assert!(record.exists());
         #[cfg(windows)]

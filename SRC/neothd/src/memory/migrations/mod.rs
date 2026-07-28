@@ -259,7 +259,203 @@ pub const MIGRATIONS: &[Migration] = &[
         description: "GOLD-R4 GUI parity: add durable operator-requested mesh-sync queue",
         run: migration_v32_to_v33,
     },
+    Migration {
+        from: 33,
+        to: 34,
+        description: "M1 membership-fence durable mesh state and quarantine v33 rows",
+        run: migration_v33_to_v34,
+    },
 ];
+
+fn migration_v33_to_v34(conn: &Connection) -> Result<()> {
+    for table in [
+        "mesh_sync_local_events",
+        "mesh_sync_outbound",
+        "mesh_sync_outbound_pending",
+        "mesh_sync_requests",
+        "mesh_sync_inbound",
+        "mesh_sync_inbound_receipts",
+    ] {
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN stable_node_id TEXT"),
+            [],
+        )
+        .with_context(|| format!("v34 add stable_node_id to {table}"))?;
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN auth_epoch INTEGER"),
+            [],
+        )
+        .with_context(|| format!("v34 add auth_epoch to {table}"))?;
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN membership_epoch INTEGER"),
+            [],
+        )
+        .with_context(|| format!("v34 add membership_epoch to {table}"))?;
+        conn.execute(
+            &format!(
+                "ALTER TABLE {table} ADD COLUMN fence_state TEXT NOT NULL DEFAULT 'legacy_unbound'"
+            ),
+            [],
+        )
+        .with_context(|| format!("v34 quarantine legacy rows in {table}"))?;
+    }
+    conn.execute_batch(
+        r#"
+        ALTER TABLE mesh_sync_vector_frontier
+            RENAME TO mesh_sync_vector_frontier_v33_legacy_unbound;
+        DROP TRIGGER IF EXISTS mesh_sync_vector_frontier_cap;
+        CREATE TABLE mesh_sync_vector_frontier (
+            peer_pk TEXT NOT NULL CHECK (length(peer_pk) > 0),
+            stable_node_id TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch INTEGER NOT NULL DEFAULT 1 CHECK (auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK (membership_epoch > 0),
+            fence_state TEXT NOT NULL DEFAULT 'legacy_unbound'
+                              CHECK (fence_state IN ('active', 'legacy_unbound')),
+            counter INTEGER NOT NULL CHECK (counter > 0),
+            PRIMARY KEY (stable_node_id, auth_epoch, membership_epoch, peer_pk)
+        );
+        CREATE TRIGGER mesh_sync_vector_frontier_cap
+        BEFORE INSERT ON mesh_sync_vector_frontier
+        WHEN NOT EXISTS (
+                SELECT 1 FROM mesh_sync_vector_frontier
+                WHERE stable_node_id=NEW.stable_node_id
+                  AND auth_epoch=NEW.auth_epoch
+                  AND membership_epoch=NEW.membership_epoch
+                  AND peer_pk=NEW.peer_pk
+             )
+             AND (SELECT COUNT(*) FROM mesh_sync_vector_frontier
+                  WHERE stable_node_id=NEW.stable_node_id
+                    AND auth_epoch=NEW.auth_epoch
+                    AND membership_epoch=NEW.membership_epoch) >= 256
+        BEGIN
+            SELECT RAISE(ABORT, 'mesh vector frontier exceeds 256 peers');
+        END;
+        "#,
+    )
+    .context("v34 quarantine legacy frontier and create fenced frontier")?;
+    conn.execute_batch(
+        r#"
+        DROP TRIGGER IF EXISTS mesh_foreign_content_insert_guard;
+        DROP TRIGGER IF EXISTS mesh_foreign_content_update_guard;
+        DROP INDEX IF EXISTS idx_foreign_events_peer;
+        ALTER TABLE idx_foreign_events
+            RENAME TO idx_foreign_events_v33_legacy_unbound;
+        CREATE TABLE idx_foreign_events (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            origin_peer_pk   TEXT NOT NULL,
+            stable_node_id   TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch       INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK(membership_epoch > 0),
+            fence_state      TEXT NOT NULL DEFAULT 'legacy_unbound' CHECK(fence_state IN ('active','legacy_unbound')),
+            origin_seq       INTEGER NOT NULL,
+            event_type       INTEGER NOT NULL,
+            payload          BLOB NOT NULL,
+            received_at      INTEGER NOT NULL,
+            envelope_version INTEGER NOT NULL DEFAULT 0,
+            content_sha256   BLOB CHECK(content_sha256 IS NULL OR length(content_sha256)=32),
+            content_kind     TEXT,
+            content_payload  BLOB,
+            UNIQUE(stable_node_id,auth_epoch,origin_seq)
+        );
+        CREATE INDEX idx_foreign_events_peer
+            ON idx_foreign_events(stable_node_id,auth_epoch,received_at DESC);
+
+        ALTER TABLE mesh_sync_materialized
+            RENAME TO mesh_sync_materialized_v33_legacy_unbound;
+        CREATE TABLE mesh_sync_materialized (
+            origin_peer_pk   TEXT NOT NULL,
+            stable_node_id   TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch       INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK(membership_epoch > 0),
+            fence_state      TEXT NOT NULL DEFAULT 'legacy_unbound' CHECK(fence_state IN ('active','legacy_unbound')),
+            content_id       TEXT NOT NULL,
+            origin_seq       INTEGER NOT NULL CHECK(origin_seq > 0),
+            content_sha256   BLOB NOT NULL CHECK(length(content_sha256)=32),
+            content_kind     TEXT NOT NULL CHECK(content_kind IN ('memory','ground_truth','metadata','raw_private')),
+            content_payload  BLOB NOT NULL,
+            updated_at       INTEGER NOT NULL,
+            PRIMARY KEY(stable_node_id,auth_epoch,content_id)
+        );
+
+        ALTER TABLE mesh_sync_conflicts
+            RENAME TO mesh_sync_conflicts_v33_legacy_unbound;
+        CREATE TABLE mesh_sync_conflicts (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            content_id           TEXT NOT NULL,
+            incumbent_origin     TEXT NOT NULL,
+            incumbent_auth_epoch INTEGER NOT NULL DEFAULT 1 CHECK(incumbent_auth_epoch > 0),
+            incoming_origin      TEXT NOT NULL,
+            incoming_auth_epoch  INTEGER NOT NULL DEFAULT 1 CHECK(incoming_auth_epoch > 0),
+            incumbent_sha256     BLOB NOT NULL CHECK(length(incumbent_sha256)=32),
+            incoming_sha256      BLOB NOT NULL CHECK(length(incoming_sha256)=32),
+            policy               TEXT NOT NULL CHECK(policy IN ('ordered_origin_lww','cross_origin_typed_conflict')),
+            observed_at          INTEGER NOT NULL,
+            resolved_at          INTEGER CHECK(resolved_at IS NULL OR resolved_at > 0),
+            preferred_origin     TEXT,
+            CHECK((resolved_at IS NULL AND preferred_origin IS NULL) OR
+                  (resolved_at IS NOT NULL AND preferred_origin IS NOT NULL AND length(preferred_origin)>0)),
+            UNIQUE(content_id,incumbent_origin,incumbent_auth_epoch,incoming_origin,
+                   incoming_auth_epoch,incumbent_sha256,incoming_sha256)
+        );
+
+        ALTER TABLE mesh_sync_restore_map
+            RENAME TO mesh_sync_restore_map_v33_legacy_unbound;
+        CREATE TABLE mesh_sync_restore_map (
+            origin_peer_pk   TEXT NOT NULL,
+            stable_node_id   TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch       INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            content_id       TEXT NOT NULL,
+            local_kind       TEXT NOT NULL CHECK(local_kind IN ('memory','ground_truth')),
+            local_row_id     INTEGER NOT NULL CHECK(local_row_id > 0),
+            last_origin_seq  INTEGER NOT NULL CHECK(last_origin_seq > 0),
+            content_sha256   BLOB NOT NULL CHECK(length(content_sha256)=32),
+            restored_at      INTEGER NOT NULL,
+            PRIMARY KEY(stable_node_id,auth_epoch,content_id),
+            UNIQUE(local_kind,local_row_id)
+        );
+        DROP INDEX IF EXISTS mesh_sync_restore_evidence_content;
+        ALTER TABLE mesh_sync_restore_evidence
+            RENAME TO mesh_sync_restore_evidence_v33_legacy_unbound;
+        CREATE TABLE mesh_sync_restore_evidence (
+            origin_peer_pk          TEXT NOT NULL,
+            stable_node_id          TEXT NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+            auth_epoch              INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+            ground_truth_content_id TEXT NOT NULL,
+            evidence_position       INTEGER NOT NULL CHECK(evidence_position >= 0),
+            evidence_content_id     TEXT NOT NULL,
+            local_row_id            INTEGER CHECK(local_row_id IS NULL OR local_row_id > 0),
+            PRIMARY KEY(stable_node_id,auth_epoch,ground_truth_content_id,evidence_position),
+            UNIQUE(stable_node_id,auth_epoch,ground_truth_content_id,evidence_content_id)
+        );
+        CREATE INDEX mesh_sync_restore_evidence_content
+            ON mesh_sync_restore_evidence(stable_node_id,auth_epoch,evidence_content_id);
+
+        CREATE TRIGGER mesh_foreign_content_insert_guard
+        BEFORE INSERT ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version=0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version=1 AND length(NEW.content_sha256)=32 AND
+             NEW.content_kind IN ('memory','ground_truth','metadata','raw_private') AND
+             typeof(NEW.content_payload)='blob')
+        )
+        BEGIN SELECT RAISE(ABORT,'incomplete canonical foreign content'); END;
+        CREATE TRIGGER mesh_foreign_content_update_guard
+        BEFORE UPDATE OF envelope_version,content_sha256,content_kind,content_payload
+        ON idx_foreign_events
+        WHEN NOT (
+            (NEW.envelope_version=0 AND NEW.content_sha256 IS NULL AND
+             NEW.content_kind IS NULL AND NEW.content_payload IS NULL) OR
+            (NEW.envelope_version=1 AND length(NEW.content_sha256)=32 AND
+             NEW.content_kind IN ('memory','ground_truth','metadata','raw_private') AND
+             typeof(NEW.content_payload)='blob')
+        )
+        BEGIN SELECT RAISE(ABORT,'incomplete canonical foreign content'); END;
+        "#,
+    )
+    .context("v34 archive epoch-unbound canonical mesh history")?;
+    Ok(())
+}
 
 /// v32 -> v33: coalesced cross-process control queue for an explicit
 /// operator-requested mesh catch-up. Transport handles remain daemon-owned;
@@ -2346,6 +2542,197 @@ mod tests {
             [format!("{:064x}", 1_u64)],
         )
         .expect("coalescing an existing peer must remain allowed at the cap");
+    }
+
+    #[test]
+    fn migration_v33_to_v34_quarantines_transient_mesh_state() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE mesh_sync_local_events (peer_pk TEXT, origin_seq INTEGER);
+            CREATE TABLE mesh_sync_outbound (peer_pk TEXT, cursor_offset INTEGER);
+            CREATE TABLE mesh_sync_outbound_pending (peer_pk TEXT, origin_seq INTEGER);
+            CREATE TABLE mesh_sync_requests (peer_pk TEXT, state TEXT);
+            CREATE TABLE mesh_sync_inbound (origin_peer_pk TEXT, next_expected_seq INTEGER);
+            CREATE TABLE mesh_sync_inbound_receipts (origin_peer_pk TEXT, origin_seq INTEGER);
+            CREATE TABLE mesh_sync_vector_frontier (
+                peer_pk TEXT PRIMARY KEY,
+                counter INTEGER NOT NULL
+            );
+            CREATE TABLE idx_foreign_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                origin_peer_pk TEXT NOT NULL,
+                origin_seq INTEGER NOT NULL,
+                event_type INTEGER NOT NULL,
+                payload BLOB NOT NULL,
+                received_at INTEGER NOT NULL,
+                envelope_version INTEGER NOT NULL DEFAULT 0,
+                content_sha256 BLOB,
+                content_kind TEXT,
+                content_payload BLOB,
+                UNIQUE(origin_peer_pk,origin_seq)
+            );
+            CREATE INDEX idx_foreign_events_peer
+                ON idx_foreign_events(origin_peer_pk,received_at DESC);
+            CREATE TABLE mesh_sync_materialized (
+                origin_peer_pk TEXT,
+                content_id TEXT,
+                origin_seq INTEGER,
+                content_sha256 BLOB,
+                content_kind TEXT,
+                content_payload BLOB,
+                updated_at INTEGER
+            );
+            CREATE TABLE mesh_sync_conflicts (
+                id INTEGER PRIMARY KEY,
+                content_id TEXT,
+                incumbent_origin TEXT,
+                incoming_origin TEXT,
+                incumbent_sha256 BLOB,
+                incoming_sha256 BLOB,
+                policy TEXT,
+                observed_at INTEGER,
+                resolved_at INTEGER,
+                preferred_origin TEXT
+            );
+            CREATE TABLE mesh_sync_restore_map (
+                origin_peer_pk TEXT,
+                content_id TEXT,
+                local_kind TEXT,
+                local_row_id INTEGER,
+                last_origin_seq INTEGER,
+                content_sha256 BLOB,
+                restored_at INTEGER
+            );
+            CREATE TABLE mesh_sync_restore_evidence (
+                origin_peer_pk TEXT,
+                ground_truth_content_id TEXT,
+                evidence_position INTEGER,
+                evidence_content_id TEXT,
+                local_row_id INTEGER
+            );
+            CREATE INDEX mesh_sync_restore_evidence_content
+                ON mesh_sync_restore_evidence(origin_peer_pk,evidence_content_id);
+            CREATE TRIGGER mesh_sync_vector_frontier_cap
+            BEFORE INSERT ON mesh_sync_vector_frontier
+            BEGIN SELECT 1; END;
+            INSERT INTO mesh_sync_local_events VALUES ('legacy-peer',1);
+            INSERT INTO mesh_sync_outbound VALUES ('legacy-peer',9);
+            INSERT INTO mesh_sync_outbound_pending VALUES ('legacy-peer',1);
+            INSERT INTO mesh_sync_requests VALUES ('legacy-peer','queued');
+            INSERT INTO mesh_sync_inbound VALUES ('legacy-peer',2);
+            INSERT INTO mesh_sync_inbound_receipts VALUES ('legacy-peer',1);
+            INSERT INTO mesh_sync_vector_frontier VALUES ('legacy-peer',7);
+            "#,
+        )
+        .unwrap();
+
+        migration_v33_to_v34(&conn).unwrap();
+
+        for table in [
+            "mesh_sync_local_events",
+            "mesh_sync_outbound",
+            "mesh_sync_outbound_pending",
+            "mesh_sync_requests",
+            "mesh_sync_inbound",
+            "mesh_sync_inbound_receipts",
+        ] {
+            let quarantined: String = conn
+                .query_row(
+                    &format!("SELECT fence_state FROM {table} LIMIT 1"),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(quarantined, "legacy_unbound", "{table}");
+        }
+        let legacy_frontier: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mesh_sync_vector_frontier_v33_legacy_unbound",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let active_frontier: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM mesh_sync_vector_frontier",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_frontier, 1);
+        assert_eq!(active_frontier, 0);
+        for archive in [
+            "idx_foreign_events_v33_legacy_unbound",
+            "mesh_sync_materialized_v33_legacy_unbound",
+            "mesh_sync_conflicts_v33_legacy_unbound",
+            "mesh_sync_restore_map_v33_legacy_unbound",
+            "mesh_sync_restore_evidence_v33_legacy_unbound",
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                    [archive],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(exists, "{archive}");
+        }
+        let canonical_identity_columns: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('idx_foreign_events')
+                 WHERE name IN ('stable_node_id','auth_epoch','membership_epoch','fence_state')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(canonical_identity_columns, 4);
+
+        let fresh_home = tempfile::tempdir().unwrap();
+        let fresh = crate::memory::store::open(&fresh_home.path().join("views.db")).unwrap();
+        for table in [
+            "mesh_sync_local_events",
+            "mesh_sync_outbound",
+            "mesh_sync_outbound_pending",
+            "mesh_sync_requests",
+            "mesh_sync_inbound",
+            "mesh_sync_inbound_receipts",
+            "mesh_sync_vector_frontier",
+            "idx_foreign_events",
+            "mesh_sync_materialized",
+            "mesh_sync_conflicts",
+            "mesh_sync_restore_map",
+            "mesh_sync_restore_evidence",
+        ] {
+            let describe_fence = |database: &Connection| {
+                let mut statement = database
+                    .prepare(
+                        "SELECT name,type,\"notnull\",COALESCE(dflt_value,''),pk
+                         FROM pragma_table_info(?1)
+                         WHERE name IN ('stable_node_id','auth_epoch','membership_epoch','fence_state')
+                         ORDER BY cid",
+                    )
+                    .unwrap();
+                statement
+                    .query_map([table], |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, i64>(4)?,
+                        ))
+                    })
+                    .unwrap()
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .unwrap()
+            };
+            assert_eq!(
+                describe_fence(&conn),
+                describe_fence(&fresh),
+                "fresh and migrated v34 fence columns differ for {table}"
+            );
+        }
     }
 
     /// BS-7 sibling: starting at v4 must climb cleanly to current (skipping the

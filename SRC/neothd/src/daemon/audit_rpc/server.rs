@@ -121,6 +121,11 @@ pub struct AuditRpcState {
     /// request-bound jobs-run mint/consume calls hit their respective slots in
     /// one daemon-owned store across separate connection tasks.
     pub fullauto: Arc<super::fullauto_token::FullAutoTokenStore>,
+    /// Cluster authority is daemon-owned while `neoth serve` holds the PID
+    /// lock. `None` keeps the audit-only listener usable in focused tests.
+    #[cfg(feature = "cluster")]
+    pub membership: Option<Arc<crate::cluster::membership::MembershipController>>,
+    pub audit_routes_enabled: bool,
 }
 
 /// Bind `127.0.0.1:0`, return the OS-assigned address + the accept-loop handle.
@@ -195,43 +200,66 @@ async fn read_request(stream: &mut TcpStream) -> Option<Parsed> {
         }
         buf.extend_from_slice(&chunk[..n]);
         if let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
-            header_end = Some(pos + 4);
+            let end = pos + 4;
+            if end > MAX_REQUEST_BYTES {
+                return None;
+            }
+            header_end = Some(end);
             break;
+        }
+        if buf.len() >= MAX_REQUEST_BYTES {
+            return None;
         }
     }
     let header_end = header_end?;
-    let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
-    let mut lines = head.lines();
-    let request_line = lines.next().unwrap_or("");
+    let head = std::str::from_utf8(&buf[..header_end - 4]).ok()?;
+    let mut lines = head.split("\r\n");
+    let request_line = lines.next()?;
     let mut rl = request_line.split_whitespace();
-    let method = rl.next().unwrap_or("").to_string();
-    let path = rl.next().unwrap_or("").to_string();
+    let method = rl.next()?.to_string();
+    let path = rl.next()?.to_string();
+    if rl.next()? != "HTTP/1.1" || rl.next().is_some() {
+        return None;
+    }
 
     let mut bearer = None;
-    let mut content_length = 0usize;
+    let mut content_length = None;
     for line in lines {
-        let lower = line.to_ascii_lowercase();
-        if lower.starts_with("authorization:") {
-            // Value is everything after the first colon (case-preserving).
-            let val = line.split_once(':').map(|(_, v)| v).unwrap_or("").trim();
+        let (name, value) = line.split_once(':')?;
+        if name.eq_ignore_ascii_case("authorization") {
+            if bearer.is_some() {
+                return None;
+            }
+            let val = value.trim();
             bearer = extract_bearer_token(val).map(|t| t.to_string());
-        } else if let Some(rest) = lower.strip_prefix("content-length:") {
-            content_length = rest.trim().parse::<usize>().unwrap_or(0);
+        } else if name.eq_ignore_ascii_case("content-length") {
+            if content_length.is_some() {
+                return None;
+            }
+            content_length = Some(value.trim().parse::<usize>().ok()?);
+        } else if name.eq_ignore_ascii_case("transfer-encoding") {
+            return None;
         }
     }
+    let content_length = content_length?;
     if content_length > MAX_BODY_BYTES {
         return None;
     }
     // Body bytes already buffered after the header terminator.
     let mut body: Vec<u8> = buf[header_end..].to_vec();
-    while body.len() < content_length && body.len() < MAX_BODY_BYTES {
+    while body.len() < content_length {
         let n = stream.read(&mut chunk).await.ok()?;
         if n == 0 {
-            break;
+            return None;
         }
         body.extend_from_slice(&chunk[..n]);
+        if body.len() > content_length {
+            return None;
+        }
     }
-    body.truncate(content_length);
+    if body.len() != content_length {
+        return None;
+    }
     Some(Parsed {
         method,
         path,
@@ -265,16 +293,29 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
 
     // Only POST to a known endpoint (/audit or one of the approval-token verbs).
     let req_path = req.path.split('?').next().unwrap_or("").to_string();
-    if req.method != "POST"
-        || !matches!(
-            req_path.as_str(),
-            "/audit"
-                | "/fullauto-token/mint"
-                | "/fullauto-token/consume"
-                | "/jobs-run-token/mint"
-                | "/jobs-run-token/consume"
-        )
-    {
+    #[cfg(feature = "cluster")]
+    let membership_route = matches!(
+        req_path.as_str(),
+        "/membership/list"
+            | "/membership/status"
+            | "/membership/runtime-health"
+            | "/membership/revoke"
+            | "/membership/revoke/status"
+            | "/membership/invite"
+            | "/membership/confirm"
+            | "/membership/legacy-pending"
+    );
+    #[cfg(not(feature = "cluster"))]
+    let membership_route = false;
+    let audit_route = matches!(
+        req_path.as_str(),
+        "/audit"
+            | "/fullauto-token/mint"
+            | "/fullauto-token/consume"
+            | "/jobs-run-token/mint"
+            | "/jobs-run-token/consume"
+    );
+    if req.method != "POST" || (!membership_route && !(state.audit_routes_enabled && audit_route)) {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
             .await;
@@ -305,6 +346,45 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
         return Ok(());
     }
     state.cooldown.record_success(&source);
+
+    if req_path == "/health" {
+        let _ = stream
+            .write_all(http_response_json(200, "{\"ok\":true}").as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
+    #[cfg(feature = "cluster")]
+    if req_path.starts_with("/membership/") {
+        let Some(controller) = state.membership.as_ref().cloned() else {
+            let _ = stream
+                .write_all(http_response(503, "membership authority unavailable").as_bytes())
+                .await;
+            let _ = stream.shutdown().await;
+            return Ok(());
+        };
+        let membership_path = req_path.clone();
+        let membership_body = req.body;
+        let result = tokio::task::spawn_blocking(move || {
+            process_membership_request(&controller, &membership_path, &membership_body)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("membership worker failed: {error}"))
+        .and_then(|result| result);
+        let (status, body) = match result {
+            Ok(value) => (200, serde_json::to_string(&value)?),
+            Err(error) => (
+                422,
+                serde_json::json!({ "error": format!("{error:#}") }).to_string(),
+            ),
+        };
+        let _ = stream
+            .write_all(http_response_json(status, &body).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
 
     // GR-RESID-D34 — FULL-AUTO single-use token endpoints (auth already passed).
     if req_path == "/fullauto-token/mint" {
@@ -492,6 +572,86 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
     }
     let _ = stream.shutdown().await;
     Ok(())
+}
+
+#[cfg(feature = "cluster")]
+fn process_membership_request(
+    controller: &crate::cluster::membership::MembershipController,
+    path: &str,
+    body: &[u8],
+) -> Result<serde_json::Value> {
+    match path {
+        "/membership/list" => Ok(serde_json::to_value(controller.snapshot()?)?),
+        "/membership/status" => Ok(serde_json::to_value(
+            controller.snapshot()?.into_envelope()?,
+        )?),
+        "/membership/runtime-health" => Ok(serde_json::to_value(controller.runtime_health()?)?),
+        "/membership/revoke" => {
+            let request: crate::cluster::membership::MembershipRevokeRequest =
+                serde_json::from_slice(body).context("invalid membership revoke body")?;
+            request.binding.validate()?;
+            Ok(serde_json::to_value(controller.revoke_bound(
+                &request.binding,
+                crate::time::now_unix_i64(),
+            )?)?)
+        }
+        "/membership/revoke/status" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct RevocationStatusRequest {
+                request_id: String,
+            }
+            let request: RevocationStatusRequest =
+                serde_json::from_slice(body).context("invalid membership revoke status body")?;
+            crate::cluster::membership::validate_revocation_request_id(&request.request_id)?;
+            Ok(serde_json::to_value(
+                controller.revocation_status(&request.request_id)?,
+            )?)
+        }
+        "/membership/invite" => {
+            let request: crate::cluster::membership::MembershipInviteRequest =
+                serde_json::from_slice(body).context("invalid membership invite body")?;
+            let key: [u8; 32] = hex::decode(&request.signing_public_key_hex)
+                .context("invite signing key is not hexadecimal")?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("invite signing key must be 32 bytes"))?;
+            let now_unix = crate::time::now_unix_i64();
+            Ok(serde_json::to_value(controller.create_invite(
+                &request.stable_node_id,
+                &key,
+                request.carrier,
+                &request.transport_identity,
+                &request.endpoint,
+                &request.label,
+                now_unix,
+                request.expires_at_unix.min(now_unix.saturating_add(300)),
+            )?)?)
+        }
+        "/membership/confirm" => {
+            let request: crate::cluster::membership::MembershipConfirmRequest =
+                serde_json::from_slice(body).context("invalid membership confirm body")?;
+            Ok(serde_json::to_value(controller.confirm_invite(
+                &request.invite_id,
+                &request.attestation,
+                request.carrier,
+                &request.authenticated_transport,
+                &request.endpoint,
+                crate::time::now_unix_i64(),
+            )?)?)
+        }
+        "/membership/legacy-pending" => {
+            let request: crate::cluster::membership::MembershipLegacyPendingRequest =
+                serde_json::from_slice(body).context("invalid legacy membership body")?;
+            Ok(serde_json::to_value(controller.record_legacy_pending(
+                request.carrier,
+                &request.transport_identity,
+                &request.endpoint,
+                &request.label,
+                crate::time::now_unix_i64(),
+            )?)?)
+        }
+        _ => unreachable!("membership route allowlisted"),
+    }
 }
 
 async fn emit_accept(state: &AuditRpcState, forwarded_event_type: u8, forwarded_event_subtype: u8) {

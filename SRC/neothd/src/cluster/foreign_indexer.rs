@@ -516,6 +516,11 @@ mod tests {
             CREATE TABLE IF NOT EXISTS idx_foreign_events (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 origin_peer_pk  TEXT    NOT NULL,
+                stable_node_id  TEXT    NOT NULL DEFAULT '0000000000000000000000000000000000000000000000000000000000000000',
+                auth_epoch      INTEGER NOT NULL DEFAULT 1 CHECK(auth_epoch > 0),
+                membership_epoch INTEGER NOT NULL DEFAULT 1 CHECK(membership_epoch > 0),
+                fence_state     TEXT NOT NULL DEFAULT 'legacy_unbound'
+                                     CHECK(fence_state IN ('active','legacy_unbound')),
                 origin_seq      INTEGER NOT NULL,
                 event_type      INTEGER NOT NULL,
                 payload         BLOB    NOT NULL,
@@ -524,10 +529,10 @@ mod tests {
                 content_sha256  BLOB,
                 content_kind    TEXT,
                 content_payload BLOB,
-                UNIQUE (origin_peer_pk, origin_seq)
+                UNIQUE (stable_node_id, auth_epoch, origin_seq)
             );
             CREATE INDEX IF NOT EXISTS idx_foreign_events_peer
-                ON idx_foreign_events (origin_peer_pk, received_at DESC);
+                ON idx_foreign_events (stable_node_id, auth_epoch, received_at DESC);
 
             CREATE TABLE IF NOT EXISTS idx_episode (
                 event_id   INTEGER PRIMARY KEY,

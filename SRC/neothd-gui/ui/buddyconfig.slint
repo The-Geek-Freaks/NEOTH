@@ -150,6 +150,20 @@ export component BuddyConfigView inherits Rectangle {
     /// snapshot while this is non-empty; mutation controls stay disabled.
     in property <string> bc-status-error: "";
 
+    /// Versioned membership snapshot rendered from `buddy cluster status`.
+    in property <string> bc-cluster-summary: "";
+    in property <string> bc-cluster-pending-id: "";
+    in property <string> bc-cluster-revocable-id: "";
+    in property <string> bc-cluster-revocable-state: "";
+    in property <int> bc-cluster-snapshot-version: 0;
+    in property <string> bc-cluster-snapshot-digest: "";
+    in property <bool> bc-cluster-status-valid: false;
+    in property <string> bc-cluster-status-error: "";
+    in property <string> bc-cluster-revocation-request-id: "";
+    in property <string> bc-cluster-revocation-state: "checking";
+    in property <string> bc-cluster-revocation-detail: "Checking the authoritative durable revocation state.";
+    in property <bool> bc-cluster-revocation-unresolved: true;
+
     // ── Callbacks (fired by UI, mapped to daemon commands by integrator) ──────
 
     /// Open the real TTY-only Sovereign activation ceremony.
@@ -169,6 +183,8 @@ export component BuddyConfigView inherits Rectangle {
 
     /// Refresh requested.
     callback bc-refresh-clicked();
+    callback bc-cluster-continue-pairing();
+    callback bc-cluster-revoke(string);
 
     // ── Layout ────────────────────────────────────────────────────────────────
     background: Theme.bg-base;
@@ -258,7 +274,139 @@ export component BuddyConfigView inherits Rectangle {
                     alignment: start;
                     // ScrollView needs a concrete inner height; cards self-size
                     // so we give the inner layout a generous min-height.
-                    min-height: 1100px;
+                    min-height: 1320px;
+
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            alignment: start;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                height: 18px;
+                                Kicker { label: "CLUSTER MEMBERSHIP"; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Led {
+                                    state: root.bc-cluster-status-error != "" ? "error"
+                                        : !root.bc-cluster-status-valid ? "connecting"
+                                        : "live";
+                                    dot-size: 7px;
+                                }
+                            }
+
+                            Text {
+                                text: root.bc-cluster-summary == ""
+                                    ? "No membership snapshot loaded."
+                                    : root.bc-cluster-summary;
+                                color: Theme.text-secondary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            if root.bc-cluster-status-error != "": Text {
+                                text: root.bc-cluster-status-error + " Last known membership state is retained.";
+                                color: Theme.accent-pink;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            Note {
+                                body: "Discovery shows authenticated candidates only. Activation requires a signed, carrier-bound, one-time authority invite and exact EndpointAttestation confirmation; no direct-add shortcut exists.";
+                            }
+
+                            if root.bc-cluster-revocable-id != "": Text {
+                                text: "Selected " + root.bc-cluster-revocable-state + " node: "
+                                    + root.bc-cluster-revocable-id;
+                                color: Theme.text-tertiary;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                overflow: elide;
+                            }
+
+                            if root.bc-cluster-snapshot-digest != "": Text {
+                                text: "Snapshot v\{root.bc-cluster-snapshot-version} · "
+                                    + root.bc-cluster-snapshot-digest;
+                                color: Theme.text-disabled;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-2xs;
+                                overflow: elide;
+                            }
+
+                            Text {
+                                text: "Revocation is permanent for the current authorization incarnation, closes live carrier sessions, and advances the membership fence.";
+                                color: Theme.consent;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-xs;
+                                wrap: word-wrap;
+                            }
+
+                            if root.bc-cluster-revocation-state != "": Rectangle {
+                                min-height: 76px;
+                                border-radius: Theme.radius-md;
+                                border-width: 1px;
+                                border-color: root.bc-cluster-revocation-unresolved
+                                    ? Theme.accent-pink : Theme.border-subtle;
+                                background: root.bc-cluster-revocation-unresolved
+                                    ? Theme.consent-tint : Theme.surface-2;
+                                VerticalLayout {
+                                    padding: 10px;
+                                    spacing: 4px;
+                                    Text {
+                                        text: "REVOCATION · " + root.bc-cluster-revocation-state;
+                                        color: root.bc-cluster-revocation-unresolved
+                                            ? Theme.accent-pink : Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        font-weight: Theme.weight-bold;
+                                    }
+                                    Text {
+                                        text: root.bc-cluster-revocation-request-id;
+                                        color: Theme.text-tertiary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-2xs;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: root.bc-cluster-revocation-detail;
+                                        color: Theme.text-secondary;
+                                        font-family: Theme.font-mono;
+                                        font-size: Theme.font-size-xs;
+                                        wrap: word-wrap;
+                                    }
+                                }
+                            }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: end;
+                                NeothButton {
+                                    label: "Continue pairing";
+                                    size: "sm";
+                                    enabled: root.bc-cluster-status-valid
+                                        && !root.bc-cluster-revocation-unresolved
+                                        && root.bc-cluster-pending-id != "";
+                                    clicked => { root.bc-cluster-continue-pairing(); }
+                                }
+                                NeothButton {
+                                    label: "Revoke membership";
+                                    size: "sm";
+                                    danger: true;
+                                    enabled: root.bc-cluster-status-valid
+                                        && !root.bc-cluster-revocation-unresolved
+                                        && root.bc-cluster-revocable-id != ""
+                                        && root.bc-cluster-snapshot-version > 0
+                                        && root.bc-cluster-snapshot-digest != "";
+                                    clicked => {
+                                        root.bc-cluster-revoke(root.bc-cluster-revocable-id);
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // ────────────────────────────────────────────────────────
                     // SOVEREIGN card — pink-consent accent (highest-trust mode)

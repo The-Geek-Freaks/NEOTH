@@ -51,12 +51,73 @@ const CLUSTER_DELEGATED_SYSTEM: &str = "You are executing one isolated task dele
 /// An accepted delegated task handed from the session-loop gate to the
 /// executor. The requester is the AUTHENTICATED Noise pubkey hex
 /// (`reply_peer_pk`) — never a payload field.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ClusterTaskJob {
     pub task_id: String,
     pub prompt: String,
     /// Authenticated peer Noise pubkey hex to reply to.
     pub reply_peer_pk: String,
+    /// Non-constructible authority proof captured at carrier admission.
+    pub membership_grant: super::membership::MembershipGrant,
+    queued_effect: Option<super::membership::MembershipEffectGuard>,
+}
+
+impl ClusterTaskJob {
+    pub fn authorized(
+        task_id: String,
+        prompt: String,
+        reply_peer_pk: String,
+        membership_grant: super::membership::MembershipGrant,
+    ) -> anyhow::Result<Self> {
+        let queued_effect = membership_grant.begin_effect_kind(
+            (now_unix_ms() / 1_000) as i64,
+            super::membership::MembershipEffectKind::QueuedProvider,
+        )?;
+        Ok(Self {
+            task_id,
+            prompt,
+            reply_peer_pk,
+            membership_grant,
+            queued_effect: Some(queued_effect),
+        })
+    }
+}
+
+struct TaskExecutionResult {
+    body: TaskResultBody,
+    delivery_guard: Option<super::membership::MembershipEffectGuard>,
+    suppress_delivery: bool,
+}
+
+impl TaskExecutionResult {
+    fn guarded(
+        body: TaskResultBody,
+        delivery_guard: super::membership::MembershipEffectGuard,
+    ) -> Self {
+        Self {
+            body,
+            delivery_guard: Some(delivery_guard),
+            suppress_delivery: false,
+        }
+    }
+
+    fn suppressed(body: TaskResultBody) -> Self {
+        Self {
+            body,
+            delivery_guard: None,
+            suppress_delivery: true,
+        }
+    }
+}
+
+impl From<TaskResultBody> for TaskExecutionResult {
+    fn from(body: TaskResultBody) -> Self {
+        Self {
+            body,
+            delivery_guard: None,
+            suppress_delivery: false,
+        }
+    }
 }
 
 /// Runtime inputs needed to assemble a delegated request at the execution
@@ -172,8 +233,8 @@ pub fn spawn_cluster_executor(
             // below and awaits cancellation, so an active AuthorizedProvider
             // cannot retain its WAL sender for TASK_INFERENCE_TIMEOUT seconds.
             let mut inference = tokio::task::JoinSet::new();
-            inference.spawn(run_one_task(provider_clone, job, task_context));
-            let result_body = tokio::select! {
+            inference.spawn(run_one_task_execution(provider_clone, job, task_context));
+            let mut execution = tokio::select! {
                 biased;
                 _ = &mut shutdown_rx => {
                     inference.shutdown().await;
@@ -194,7 +255,7 @@ pub fn spawn_cluster_executor(
                             },
                             result: None,
                             provider_name: None,
-                        }
+                        }.into()
                     }
                     None => {
                         tracing::error!(
@@ -208,16 +269,33 @@ pub fn spawn_cluster_executor(
                             },
                             result: None,
                             provider_name: None,
-                        }
+                        }.into()
                     }
                 },
             };
+            if execution.suppress_delivery {
+                tracing::debug!(
+                    task_id = %task_id,
+                    "cluster executor: suppressing result after membership cancellation"
+                );
+                continue;
+            }
+            if let Some(guard) = execution.delivery_guard.as_ref()
+                && let Err(error) = guard.validate((now_unix_ms() / 1_000) as i64)
+            {
+                tracing::warn!(
+                    task_id = %task_id,
+                    %error,
+                    "cluster executor: suppressing result for a revoked membership generation"
+                );
+                continue;
+            }
             let frame = WireFrame {
                 kind: FrameKind::TaskResult,
                 sequence: seq,
                 sent_unix_ms: now_unix_ms(),
                 peer_id: executor_peer_id.clone(),
-                body: FrameBody::TaskResult(result_body),
+                body: FrameBody::TaskResult(execution.body),
             };
             match peer_streams.send_to(&reply_peer_pk, frame) {
                 Ok(()) => {
@@ -236,6 +314,15 @@ pub fn spawn_cluster_executor(
                         "cluster executor: could not deliver TaskResult (peer gone)"
                     );
                 }
+            }
+            if let Some(guard) = execution.delivery_guard.take()
+                && let Err(error) = guard.finish()
+            {
+                tracing::error!(
+                    task_id = %task_id,
+                    %error,
+                    "cluster executor: delivered result failed final membership validation"
+                );
             }
         }
         tracing::info!("cluster executor: shutdown complete");
@@ -340,11 +427,25 @@ fn assemble_cluster_request(
 /// Run a single delegated task and build its `TaskResultBody`. Takes OWNED args
 /// so it can run in an isolated sub-task (panic isolation). Transport-free —
 /// returns the body to ship back.
-async fn run_one_task(
+async fn run_one_task_execution(
     provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
-    job: ClusterTaskJob,
+    mut job: ClusterTaskJob,
     execution_context: ClusterExecutionContext,
-) -> TaskResultBody {
+) -> TaskExecutionResult {
+    let mut effect_guard = match job.queued_effect.take() {
+        Some(guard) => guard,
+        None => {
+            return TaskResultBody {
+                task_id: job.task_id,
+                status: TaskResultStatus::Failed {
+                    error: "membership_effect_missing".to_string(),
+                },
+                result: None,
+                provider_name: None,
+            }
+            .into();
+        }
+    };
     let Some(provider) = provider else {
         // Honest failure (not theater): the master learns this node has no
         // provider + re-routes, instead of getting a fake OK.
@@ -355,7 +456,8 @@ async fn run_one_task(
             },
             result: None,
             provider_name: None,
-        };
+        }
+        .into();
     };
     let provider_name = provider.name().to_string();
     let provider = provider.with_audit_context(
@@ -386,7 +488,8 @@ async fn run_one_task(
                 },
                 result: None,
                 provider_name: Some(provider_name),
-            };
+            }
+            .into();
         }
     };
 
@@ -412,12 +515,79 @@ async fn run_one_task(
             },
             result: None,
             provider_name: Some(provider_name),
-        };
+        }
+        .into();
     }
 
-    // Bound the inference wall-clock so a malicious master can't pin the single
-    // executor / GPU indefinitely with a slow prompt.
-    match tokio::time::timeout(TASK_INFERENCE_TIMEOUT, provider.complete(req)).await {
+    // The external permit is the final process-local linearization point.
+    // Revoke-first makes this fail before provider bytes can leave. Dispatch-
+    // first makes revoke wait until we durably classify the provider outcome.
+    let mut external_permit = match effect_guard.begin_external((now_unix_ms() / 1_000) as i64) {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(
+                task_id = %job.task_id,
+                stable_node_id = %job.membership_grant.stable_node_id(),
+                %error,
+                "cluster executor: membership revoked before provider dispatch"
+            );
+            return TaskResultBody {
+                task_id: job.task_id,
+                status: TaskResultStatus::Failed {
+                    error: "membership_revoked".to_string(),
+                },
+                result: None,
+                provider_name: Some(provider_name),
+            }
+            .into();
+        }
+    };
+    // No current provider adapter exposes an upstream abort acknowledgement.
+    // From this point onward a local future drop is conservatively remote-
+    // indeterminate if membership revocation wins.
+    external_permit.mark_transport_may_have_started();
+    let provider_call = tokio::time::timeout(TASK_INFERENCE_TIMEOUT, provider.complete(req));
+    tokio::pin!(provider_call);
+    let provider_outcome = tokio::select! {
+        biased;
+        _ = external_permit.cancelled() => {
+            tracing::warn!(
+                task_id = %job.task_id,
+                stable_node_id = %job.membership_grant.stable_node_id(),
+                "cluster executor: provider future locally aborted by membership revoke"
+            );
+            if let Err(error) = external_permit.persist_indeterminate_if_cancelled(
+                "provider_transport_may_have_started_local_abort_without_upstream_ack",
+                (now_unix_ms() / 1_000) as i64,
+            ) {
+                tracing::error!(
+                    task_id = %job.task_id,
+                    %error,
+                    "cluster executor: could not persist indeterminate provider outcome"
+                );
+                drop(external_permit);
+                std::mem::forget(effect_guard);
+                return TaskExecutionResult::suppressed(TaskResultBody {
+                    task_id: job.task_id,
+                    status: TaskResultStatus::Failed {
+                        error: "membership_revocation_classification_failed".to_string(),
+                    },
+                    result: None,
+                    provider_name: Some(provider_name),
+                });
+            }
+            return TaskExecutionResult::suppressed(TaskResultBody {
+                task_id: job.task_id,
+                status: TaskResultStatus::Failed {
+                    error: "provider_outcome_indeterminate_after_membership_revoke".to_string(),
+                },
+                result: None,
+                provider_name: Some(provider_name),
+            });
+        }
+        outcome = &mut provider_call => outcome,
+    };
+    let result = match provider_outcome {
         Ok(Ok(completion)) if completion.identity.is_bound() => {
             let result = truncate_to_bytes(&completion.text, MAX_TASK_RESULT_BYTES);
             TaskResultBody {
@@ -452,7 +622,55 @@ async fn run_one_task(
             result: None,
             provider_name: Some(provider_name),
         },
+    };
+    if let Err(error) = external_permit.validate((now_unix_ms() / 1_000) as i64) {
+        tracing::error!(
+            task_id = %job.task_id,
+            %error,
+            "cluster executor: membership effect barrier validation failed"
+        );
+        if let Err(persist_error) = external_permit.persist_indeterminate_if_cancelled(
+            "provider_transport_may_have_started_membership_changed_before_delivery",
+            (now_unix_ms() / 1_000) as i64,
+        ) {
+            tracing::error!(
+                task_id = %job.task_id,
+                %persist_error,
+                "cluster executor: could not persist indeterminate provider outcome"
+            );
+            drop(external_permit);
+            std::mem::forget(effect_guard);
+            return TaskExecutionResult::suppressed(TaskResultBody {
+                task_id: job.task_id,
+                status: TaskResultStatus::Failed {
+                    error: "membership_revocation_classification_failed".to_string(),
+                },
+                result: None,
+                provider_name: result.provider_name,
+            });
+        }
+        return TaskExecutionResult::suppressed(TaskResultBody {
+            task_id: job.task_id,
+            status: TaskResultStatus::Failed {
+                error: "provider_outcome_indeterminate_after_membership_revoke".to_string(),
+            },
+            result: None,
+            provider_name: result.provider_name,
+        });
     }
+    drop(external_permit);
+    TaskExecutionResult::guarded(result, effect_guard)
+}
+
+#[cfg(test)]
+async fn run_one_task(
+    provider: Option<Arc<crate::providers::cost_authorization::AuthorizedProvider>>,
+    job: ClusterTaskJob,
+    execution_context: ClusterExecutionContext,
+) -> TaskResultBody {
+    run_one_task_execution(provider, job, execution_context)
+        .await
+        .body
 }
 
 /// Truncate `s` to at most `max` bytes WITHOUT splitting a UTF-8 char. Appends
@@ -503,12 +721,49 @@ mod tests {
         )
     }
 
-    fn job(prompt: &str) -> ClusterTaskJob {
-        ClusterTaskJob {
-            task_id: "t-1".into(),
-            prompt: prompt.into(),
-            reply_peer_pk: "aa".into(),
-        }
+    fn job(home: &std::path::Path, prompt: &str) -> ClusterTaskJob {
+        let now = (now_unix_ms() / 1_000) as i64;
+        let identity = crate::cluster::membership::LocalNodeIdentity::load_or_create(home).unwrap();
+        let transport = crate::cluster::membership::TransportIdentity::peeroxide(
+            &identity.peeroxide_key_pair().public_key,
+        );
+        let attestation = identity
+            .attest_endpoint(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                crate::cluster::membership::BootId::new(),
+                "executor-test".into(),
+                "test".into(),
+                crate::cluster::membership::AuthEpoch::INITIAL,
+                crate::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        let store = crate::cluster::membership::MembershipStore::open(home).unwrap();
+        store
+            .confirm_attestation(
+                &attestation,
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "executor-test",
+                now,
+            )
+            .unwrap();
+        ClusterTaskJob::authorized(
+            "t-1".into(),
+            prompt.into(),
+            "aa".into(),
+            store
+                .admit(
+                    crate::cluster::membership::CarrierKind::Peeroxide,
+                    &transport,
+                    now,
+                )
+                .unwrap(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -516,7 +771,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let body = run_one_task(
             None,
-            job("hi"),
+            job(home.path(), "hi"),
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         )
         .await;
@@ -553,6 +808,235 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn revoke_after_queue_before_dispatch_makes_zero_provider_calls() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingProvider(Arc<AtomicUsize>);
+
+        #[async_trait]
+        impl Provider for CountingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                anyhow::bail!("must not be called after membership revoke")
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let queued = job(home.path(), "queued before revoke");
+        let stable = queued.membership_grant.stable_node_id().clone();
+        crate::cluster::membership::MembershipStore::open(home.path())
+            .unwrap()
+            .revoke(
+                stable.as_str(),
+                "operator",
+                (now_unix_ms() / 1_000) as i64,
+                "closed",
+            )
+            .unwrap()
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+            Arc::new(CountingProvider(Arc::clone(&calls))),
+            crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            "cluster.test.membership",
+        );
+        let result = run_one_task(
+            Some(Arc::new(provider)),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(matches!(
+            result.status,
+            TaskResultStatus::Failed { ref error } if error == "membership_revoked"
+        ));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn revoke_classifies_locally_aborted_provider_as_indeterminate() {
+        use crate::providers::Completion;
+        use async_trait::async_trait;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        struct DropProbe(Arc<AtomicBool>);
+
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+
+        struct BlockingProvider {
+            calls: Arc<AtomicUsize>,
+            started: Arc<tokio::sync::Notify>,
+            dropped: Arc<AtomicBool>,
+        }
+
+        #[async_trait]
+        impl Provider for BlockingProvider {
+            fn name(&self) -> &'static str {
+                "local_qwen"
+            }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("qwen3")
+            }
+
+            async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                let _drop_probe = DropProbe(Arc::clone(&self.dropped));
+                self.started.notify_one();
+                std::future::pending().await
+            }
+        }
+
+        let home = tempfile::tempdir().unwrap();
+        let now = (now_unix_ms() / 1_000) as i64;
+        let live_sessions = Arc::new(crate::cluster::membership::LiveSessionRegistry::new());
+        let controller = crate::cluster::membership::MembershipController::open(
+            home.path(),
+            Arc::clone(&live_sessions),
+        )
+        .unwrap();
+        let identity =
+            crate::cluster::membership::LocalNodeIdentity::load_or_create(home.path()).unwrap();
+        let transport = crate::cluster::membership::TransportIdentity::peeroxide(
+            &identity.peeroxide_key_pair().public_key,
+        );
+        let attestation = identity
+            .attest_endpoint(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                transport.clone(),
+                crate::cluster::membership::BootId::new(),
+                "executor-cancel-test".into(),
+                "test".into(),
+                crate::cluster::membership::AuthEpoch::INITIAL,
+                crate::cluster::membership::MembershipEpoch::new(2).unwrap(),
+                Some("test".into()),
+                now + 3_600,
+            )
+            .unwrap();
+        controller
+            .store()
+            .confirm_attestation(
+                &attestation,
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                "test",
+                "executor-cancel-test",
+                now,
+            )
+            .unwrap();
+        let grant = controller
+            .store()
+            .admit(
+                crate::cluster::membership::CarrierKind::Peeroxide,
+                &transport,
+                now,
+            )
+            .unwrap();
+        let stable = grant.stable_node_id().clone();
+        let queued =
+            ClusterTaskJob::authorized("cancel-me".into(), "block".into(), "aa".into(), grant)
+                .unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(AtomicBool::new(false));
+        let provider = Arc::new(
+            crate::providers::cost_authorization::AuthorizedProvider::from_arc(
+                Arc::new(BlockingProvider {
+                    calls: Arc::clone(&calls),
+                    started: Arc::clone(&started),
+                    dropped: Arc::clone(&dropped),
+                }),
+                crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                    crate::permissions::AutonomyLevel::Full,
+                ),
+                None,
+                "cluster.test.inflight_membership_cancel",
+            ),
+        );
+        let mut execution = tokio::spawn(run_one_task_execution(
+            Some(provider),
+            queued,
+            execution_context(home.path(), crate::config::FreedomConfig::default()),
+        ));
+        let started_wait = started.notified();
+        tokio::pin!(started_wait);
+        tokio::select! {
+            _ = &mut started_wait => {}
+            early = &mut execution => {
+                let early = early.unwrap();
+                panic!(
+                    "executor exited before provider start: status={:?}, suppress_delivery={}",
+                    early.body.status,
+                    early.suppress_delivery
+                );
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                panic!("provider did not start within 5 seconds");
+            }
+        }
+        assert!(
+            live_sessions
+                .effect_registry()
+                .snapshot()
+                .iter()
+                .any(|effect| {
+                    effect.stable_node_id == stable && effect.kind == "external_permit"
+                }),
+            "provider start must transition the captured membership effect"
+        );
+
+        let revoke_controller = controller.clone();
+        let revoke_stable = stable.clone();
+        let revoke = tokio::task::spawn_blocking(move || {
+            revoke_controller.revoke(revoke_stable.as_str(), "operator", now + 1)
+        });
+        let receipt = tokio::time::timeout(std::time::Duration::from_secs(10), revoke)
+            .await
+            .expect("revoke did not acknowledge provider cancellation within 10 seconds")
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), execution)
+            .await
+            .expect("executor did not return after membership cancellation")
+            .unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "revocation must wait until the locally aborted provider future is dropped"
+        );
+        assert!(result.suppress_delivery, "no post-revoke result is emitted");
+        assert_eq!(receipt.live_teardown, "complete");
+        assert_eq!(
+            receipt.intent_state,
+            crate::cluster::membership::RevocationIntentState::Indeterminate
+        );
+        assert_eq!(
+            receipt.indeterminate_reason.as_deref(),
+            Some("provider_transport_may_have_started_local_abort_without_upstream_ack")
+        );
+        assert!(
+            live_sessions.effect_registry().snapshot().is_empty(),
+            "revoke ACK requires every captured generation effect to quiesce"
+        );
+    }
+
+    #[tokio::test]
     async fn provider_error_is_redacted_failure() {
         use crate::providers::Completion;
         use async_trait::async_trait;
@@ -570,6 +1054,7 @@ mod tests {
                 anyhow::bail!("upstream rejected key sk-ant-api03-AAAABBBBCCCCDDDDEEEE1234")
             }
         }
+
         let p = Some(Arc::new(
             crate::providers::cost_authorization::AuthorizedProvider::from_arc(
                 Arc::new(ErrProvider),
@@ -583,7 +1068,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let body = run_one_task(
             p,
-            job("hi"),
+            job(home.path(), "hi"),
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         )
         .await;
@@ -644,7 +1129,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let body = run_one_task(
             p,
-            job("ping"),
+            job(home.path(), "ping"),
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         )
         .await;
@@ -712,7 +1197,7 @@ mod tests {
 
         let denied = run_one_task(
             Some(Arc::clone(&provider)),
-            job("private delegated text"),
+            job(home.path(), "private delegated text"),
             execution_context(home.path(), config.clone()),
         )
         .await;
@@ -736,7 +1221,7 @@ mod tests {
         .unwrap();
         let allowed = run_one_task(
             Some(provider),
-            job("private delegated text"),
+            job(home.path(), "private delegated text"),
             execution_context(home.path(), config),
         )
         .await;
@@ -800,7 +1285,7 @@ mod tests {
         crate::consent::revoke(home.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
         let denied = run_one_task(
             Some(provider),
-            job("delegated text"),
+            job(home.path(), "delegated text"),
             execution_context(home.path(), config),
         )
         .await;
@@ -921,7 +1406,12 @@ mod tests {
             "fully rendered cluster request must fit the exact model-aware cap"
         );
 
-        let body = run_one_task(Some(Arc::clone(&provider)), job("delegated work"), context).await;
+        let body = run_one_task(
+            Some(Arc::clone(&provider)),
+            job(home.path(), "delegated work"),
+            context,
+        )
+        .await;
         assert!(matches!(body.status, TaskResultStatus::Completed));
         let actual = seen.lock().unwrap().take().expect("provider saw request");
         assert_eq!(actual.prompt, expected.request.prompt);
@@ -1017,7 +1507,10 @@ mod tests {
             execution_context(home.path(), crate::config::FreedomConfig::default()),
         );
         let dispatch = executor.dispatch_sender();
-        dispatch.send(job("block forever")).await.unwrap();
+        dispatch
+            .send(job(home.path(), "block forever"))
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(3), started_rx)
             .await
             .expect("provider call never started")

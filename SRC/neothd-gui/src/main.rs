@@ -31,6 +31,10 @@ static FREEDOM_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 // still current.
 static CLUSTER_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+// Buddy and Mesh render one shared membership authority snapshot. Older probes
+// and pre-mutation reads must never replace a newer receipt-verified readback.
+static MEMBERSHIP_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 // OMI status reads are asynchronous. A read started before an accepted
 // mutation must never publish its now-stale snapshot after the mutation's
 // receipt-backed readback. Mutations also share one in-process guard below so
@@ -3854,7 +3858,18 @@ fn main() -> Result<()> {
                     }
                 }
                 apply_hardware(&w, hardware);
-                apply_topology(&w, topology);
+                match topology {
+                    Ok(rows) => {
+                        apply_topology(&w, rows);
+                        w.set_cluster_topology_valid(true);
+                        w.set_cluster_topology_error("".into());
+                    }
+                    Err(error) => {
+                        // Invalid exits or envelopes retain every LKG peer row.
+                        w.set_cluster_topology_valid(false);
+                        w.set_cluster_topology_error(error.into());
+                    }
+                }
                 apply_usage_meter(&w, usage);
                 apply_council_budget(&w, council_budget);
                 apply_profile_presets(&w, profile_presets);
@@ -6760,10 +6775,18 @@ fn main() -> Result<()> {
     {
         let weak_bc = window.as_weak();
         window.on_bc_refresh_clicked(move || {
+            if let Some(window) = weak_bc.upgrade() {
+                if window.get_bc_cluster_revocation_state().as_str() != "submitting" {
+                    window.set_bc_cluster_revocation_request_id("".into());
+                    window.set_bc_cluster_revocation_state("checking".into());
+                    window.set_bc_cluster_revocation_detail(
+                        "Refreshing the authoritative durable revocation state.".into(),
+                    );
+                    window.set_bc_cluster_revocation_unresolved(true);
+                }
+            }
             let weak = weak_bc.clone();
-            std::thread::spawn(move || {
-                refresh_buddyconfig(weak);
-            });
+            std::thread::spawn(move || refresh_buddyconfig(weak));
         });
 
         // Self-activation toggle — real daemon command.
@@ -7837,52 +7860,227 @@ fn main() -> Result<()> {
             }
         });
 
-        // L73 — mesh peer context menu: revoke (remove) a peer.
+        // L73 — mesh peer context menu: revoke. The shared Buddy/Mesh callback
+        // receives the immutable binding copied by the Slint confirm gate.
         let weak_mesh_revoke = window.as_weak();
-        window.on_mesh_peer_revoke(move |peer_id| {
+        let mesh_revoke_singleflight = panel_logic::MemberSingleflight::default();
+        window.on_mesh_peer_revoke(move |peer_id, snapshot_version, snapshot_digest| {
             let weak = weak_mesh_revoke.clone();
             let peer = peer_id.to_string();
+            let snapshot_digest = snapshot_digest.to_string();
+            if weak
+                .upgrade()
+                .is_some_and(|window| window.get_bc_cluster_revocation_unresolved())
+            {
+                push_toast(
+                    &weak,
+                    "warning",
+                    "Membership revoke blocked",
+                    "Resolve or refresh the visible durable revocation request before another destructive membership action.",
+                );
+                return;
+            }
+            let snapshot_version = match u16::try_from(snapshot_version) {
+                Ok(version) if version > 0 => version,
+                _ => {
+                    push_toast(
+                        &weak,
+                        "error",
+                        "Revoke confirmation expired",
+                        "Refresh membership state and confirm the stable node again.",
+                    );
+                    return;
+                }
+            };
+            let _flight = match mesh_revoke_singleflight.begin(&peer) {
+                Ok(Some(flight)) => flight,
+                Ok(None) => {
+                    push_toast(
+                        &weak,
+                        "info",
+                        "Membership revoke already running",
+                        &format!("Wait for the current revoke of stable node {peer}."),
+                    );
+                    return;
+                }
+                Err(error) => {
+                    push_toast(&weak, "error", "Membership revoke unavailable", &error);
+                    return;
+                }
+            };
+            let request_id = neothd::cluster::membership::new_revocation_request_id();
+            if let Some(window) = weak.upgrade() {
+                window.set_bc_cluster_revocation_request_id(request_id.clone().into());
+                window.set_bc_cluster_revocation_state("submitting".into());
+                window.set_bc_cluster_revocation_detail(
+                    "Submitting an exact-generation UUIDv7 revocation request; destructive membership controls are disabled until its durable state is read."
+                        .into(),
+                );
+                window.set_bc_cluster_revocation_unresolved(true);
+            }
             std::thread::spawn(move || {
                 let expected_home = default_neoth_home();
-                let result = run_neothd_json_action::<gui_action::ClusterPeerRevokeAck>(
-                    &["cluster", "revoke", peer.as_str()],
-                    "Cluster peer revoke",
-                )
-                .and_then(|ack| {
-                    ack.verify(&peer, &expected_home)?;
-                    let readback = run_neothd_json_action::<gui_action::ClusterStatusAck>(
-                        &["cluster", "status"],
-                        "Cluster revoke readback",
+                let expected_authority = expected_home.join("cluster-membership.db");
+                let result: Result<_, String> = (|| {
+                    // Re-read before mutation. A refresh or concurrent authority
+                    // change after the dialog opened invalidates the ceremony.
+                    let preflight = fetch_buddy_cluster_status()?;
+                    let binding = preflight.bind_revoke_confirmation(
+                        &peer,
+                        snapshot_version,
+                        &snapshot_digest,
+                        &expected_authority,
                     )?;
-                    ack.verify_readback(&readback)?;
-                    Ok(ack)
-                });
+                    let ack = run_neothd_json_action::<gui_action::ClusterPeerRevokeAck>(
+                        &[
+                            "cluster",
+                            "revoke",
+                            peer.as_str(),
+                            "--request-id",
+                            request_id.as_str(),
+                        ],
+                        "Cluster membership revoke",
+                    )?;
+                    ack.verify(&peer, &expected_home)?;
+                    let receipt = ack
+                        .receipt
+                        .ok_or_else(|| "cluster revoke omitted its authority receipt".to_string())?;
+                    if receipt.request_id != request_id {
+                        return Err(
+                            "cluster revoke receipt does not match the submitted request id"
+                                .to_string(),
+                        );
+                    }
+                    // Success requires a new authority read, not receipt trust.
+                    let fresh = fetch_buddy_cluster_status()?;
+                    panel_logic::verify_buddy_revoke_post_state(
+                        &binding,
+                        &receipt.stable_node_id,
+                        receipt.auth_epoch,
+                        receipt.membership_epoch,
+                        &receipt.authority_path,
+                        &receipt.post_state_digest,
+                        &fresh,
+                        &expected_authority,
+                    )?;
+                    Ok((receipt, fresh))
+                })();
+                let mutation_succeeded = result.is_ok();
+                let mut durable_status = fetch_buddy_revocation_status(&request_id);
+                if mutation_succeeded
+                    && durable_status
+                        .as_ref()
+                        .is_ok_and(|acknowledgement| !acknowledgement.found)
+                {
+                    durable_status = Err(
+                        "successful revocation receipt has no durable request status".into(),
+                    );
+                }
+                let durable_health = fetch_buddy_revocation_health();
+                let global_health_unresolved = durable_health
+                    .as_ref()
+                    .map_or(true, |health| !health.unresolved_revocations.is_empty());
+                let (status_unresolved, status_explanation) = match &durable_status {
+                    Ok(acknowledgement) => {
+                        match buddy_revocation_status_presentation(acknowledgement) {
+                            Ok((state, detail, unresolved)) => (
+                                unresolved,
+                                format!(
+                                    " Durable request state: {state}. {detail}"
+                                ),
+                            ),
+                            Err(error) => (true, format!(" Durable status invalid: {error}")),
+                        }
+                    }
+                    Err(error) => (
+                        true,
+                        format!(" Durable status unavailable: {error}"),
+                    ),
+                };
+                publish_buddy_revocation_status(
+                    weak.clone(),
+                    request_id.clone(),
+                    durable_status.clone(),
+                );
+                publish_buddy_revocation_health(weak.clone(), durable_health);
                 match result {
-                    Ok(ack) => {
-                        let body = if ack.removed {
-                            let canonical = ack.canonical_peer.as_deref().unwrap_or(peer.as_str());
-                            format!(
-                                "Removed peer {canonical}; registry and audit handoff verified."
-                            )
+                    Ok((receipt, fresh)) => {
+                        let follow_up_pending =
+                            receipt.pending_outbox > 0
+                                || receipt.outbox_error.is_some()
+                                || status_unresolved
+                                || global_health_unresolved
+                                || receipt.intent_state
+                                    == neothd::cluster::membership::RevocationIntentState::Indeterminate
+                                || matches!(
+                                    receipt.live_teardown.as_str(),
+                                    "pending" | "partial"
+                                );
+                        let audit_state = if receipt.audit_pending {
+                            "audit pending"
                         } else {
-                            format!("Peer {peer} was already absent; registry readback verified.")
+                            "audit durable"
                         };
+                        let follow_up = receipt
+                            .outbox_error
+                            .as_deref()
+                            .map(|error| format!(" Follow-up error: {error}."))
+                            .unwrap_or_default();
+                        let indeterminate = receipt
+                            .indeterminate_reason
+                            .as_deref()
+                            .map(|reason| {
+                                format!(
+                                    " External effect outcome is indeterminate: {reason}. Reconcile request {}.",
+                                    receipt.request_id
+                                )
+                            })
+                            .unwrap_or_default();
+                        let body = format!(
+                            "{} stable node {}; request {}; fresh authority snapshot verified, tombstone committed, {audit_state}, live teardown {}, pending outbox={}.{}{}{}",
+                            if receipt.already_revoked {
+                                "Already revoked"
+                            } else {
+                                "Revoked"
+                            },
+                            receipt.stable_node_id,
+                            receipt.request_id,
+                            receipt.live_teardown,
+                            receipt.pending_outbox,
+                            follow_up,
+                            indeterminate,
+                            status_explanation
+                        );
+                        let membership_revision = next_membership_ui_revision();
+                        publish_buddy_cluster_result(
+                            weak.clone(),
+                            membership_revision,
+                            Ok(fresh),
+                        );
                         push_toast(
                             &weak,
-                            "success",
-                            if ack.removed {
-                                "Mesh peer removed"
+                            if follow_up_pending { "warning" } else { "success" },
+                            if follow_up_pending {
+                                "Membership revoked; follow-up pending"
                             } else {
-                                "Mesh peer already absent"
+                                "Mesh membership revoked"
                             },
                             &body,
                         );
                         refresh_mesh(weak.clone());
                     }
                     Err(error) => {
-                        push_toast(&weak, "error", "Revoke failed", &error);
+                        push_toast(
+                            &weak,
+                            "error",
+                            "Membership revoke outcome needs recovery",
+                            &format!(
+                                "{error} Request id: {request_id}.{status_explanation} The durable state is shown in Buddy Configuration; use Refresh to retry the authoritative Buddy health read."
+                            ),
+                        );
                     }
                 }
+                drop(_flight);
             });
         });
 
@@ -14567,37 +14765,39 @@ fn refresh_cluster_config_status(weak: slint::Weak<MainWindow>) {
             };
             match result {
                 Ok(status) => {
-                    if let Err(error) = status.verify() {
+                    if let Err(error) = status.validate() {
                         window.set_cfg_cluster_apply_status(
                             format!("Cluster readiness returned inconsistent state: {error}")
                                 .into(),
                         );
                         return;
                     }
-                    window.set_cfg_cluster_passphrase_set(status.cluster_passphrase_set);
-                    window
-                        .set_cfg_cluster_replicate_raw_ingress(status.gossip.replicate_raw_ingress);
-                    window.set_cfg_cluster_replay_days_text(
-                        status.gossip.replay_budget_days.to_string().into(),
+                    let runtime = status.runtime;
+                    window.set_cfg_cluster_passphrase_set(runtime.cluster_passphrase_set);
+                    window.set_cfg_cluster_replicate_raw_ingress(
+                        runtime.gossip.replicate_raw_ingress,
                     );
-                    let readiness = if status.transport_active {
+                    window.set_cfg_cluster_replay_days_text(
+                        runtime.gossip.replay_budget_days.to_string().into(),
+                    );
+                    let readiness = if runtime.transport_active {
                         format!(
                             "Runtime verified: {} Raw sync: {}; replay: {} days.",
-                            status.transport,
-                            if status.gossip.replicate_raw_ingress {
+                            runtime.transport,
+                            if runtime.gossip.replicate_raw_ingress {
                                 "on"
                             } else {
                                 "off"
                             },
-                            status.gossip.replay_budget_days
+                            runtime.gossip.replay_budget_days
                         )
-                    } else if status.restart_required {
+                    } else if runtime.restart_required {
                         format!(
                             "{} Restart required for carrier lifecycle; gossip policy reloads live.",
-                            status.transport
+                            runtime.transport
                         )
                     } else {
-                        status.transport
+                        runtime.transport
                     };
                     window.set_cfg_cluster_apply_status(readiness.into());
                 }
@@ -14620,10 +14820,8 @@ fn neothd_json_command(args: &[&str]) -> std::result::Result<std::process::Comma
     Ok(command)
 }
 
-/// The Buddy status command is read-only but still requires a successful
-/// subprocess exit before its status snapshot may be parsed.
-fn validate_buddy_exit(
-    action: &str,
+fn validate_neothd_probe_exit(
+    subject: &str,
     success: bool,
     stderr: &[u8],
     code: Option<i32>,
@@ -14640,7 +14838,18 @@ fn validate_buddy_exit(
     let exit = code
         .map(|code| code.to_string())
         .unwrap_or_else(|| "?".to_string());
-    Err(format!("Buddy {action} failed (exit {exit}): {diagnostic}"))
+    Err(format!("{subject} failed (exit {exit}): {diagnostic}"))
+}
+
+/// The Buddy status command is read-only but still requires a successful
+/// subprocess exit before its status snapshot may be parsed.
+fn validate_buddy_exit(
+    action: &str,
+    success: bool,
+    stderr: &[u8],
+    code: Option<i32>,
+) -> std::result::Result<(), String> {
+    validate_neothd_probe_exit(&format!("Buddy {action}"), success, stderr, code)
 }
 
 fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, String> {
@@ -14658,6 +14867,279 @@ fn fetch_buddy_status() -> std::result::Result<panel_logic::BuddyStatusSnap, Str
         output.status.code(),
     )?;
     panel_logic::parse_buddy_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn fetch_buddy_cluster_status() -> std::result::Result<panel_logic::BuddyClusterStatusSnap, String>
+{
+    let binary = which_neothd().ok_or_else(|| {
+        "NEOTH CLI not found. Reinstall or repair PATH, then refresh.".to_string()
+    })?;
+    let output = spawn_neothd_plain(&binary)
+        .args(["--output", "json", "buddy", "cluster", "status"])
+        .output()
+        .map_err(|error| format!("could not start Buddy cluster status probe: {error}"))?;
+    validate_buddy_exit(
+        "cluster status",
+        output.status.success(),
+        &output.stderr,
+        output.status.code(),
+    )?;
+    panel_logic::parse_buddy_cluster_status(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn fetch_buddy_revocation_status(
+    request_id: &str,
+) -> std::result::Result<neothd::cluster::membership::MembershipRevocationStatusEnvelope, String> {
+    neothd::cluster::membership::validate_revocation_request_id(request_id)
+        .map_err(|error| format!("invalid revocation request id: {error:#}"))?;
+    let acknowledgement =
+        run_neothd_json_action::<neothd::cluster::membership::MembershipRevocationStatusEnvelope>(
+            &["buddy", "cluster", "revoke-status", request_id],
+            "Buddy cluster revocation status",
+        )?;
+    acknowledgement
+        .validate()
+        .map_err(|error| format!("invalid durable revocation status: {error:#}"))?;
+    if acknowledgement.request_id != request_id {
+        return Err("durable revocation status is bound to a different request".into());
+    }
+    Ok(acknowledgement)
+}
+
+fn fetch_buddy_revocation_health()
+-> std::result::Result<neothd::cluster::membership::MembershipRuntimeHealth, String> {
+    let health = run_neothd_json_action::<neothd::cluster::membership::MembershipRuntimeHealth>(
+        &["buddy", "cluster", "revoke-unresolved"],
+        "Buddy unresolved revocations",
+    )?;
+    health
+        .validate()
+        .map_err(|error| format!("invalid membership runtime health: {error:#}"))?;
+    Ok(health)
+}
+
+fn buddy_revocation_status_presentation(
+    acknowledgement: &neothd::cluster::membership::MembershipRevocationStatusEnvelope,
+) -> std::result::Result<(String, String, bool), String> {
+    acknowledgement
+        .validate()
+        .map_err(|error| format!("invalid durable revocation status: {error:#}"))?;
+    let Some(status) = acknowledgement.status.as_ref() else {
+        return Ok((
+            "not_found".into(),
+            "No durable revocation intent exists for this UUIDv7 request.".into(),
+            false,
+        ));
+    };
+    let state = status.state.as_str().to_string();
+    let detail = match status.state {
+        neothd::cluster::membership::RevocationIntentState::Pending => format!(
+            "Durable Pending intent; admission is closed while cancellation and external-effect classification finish. Tombstone committed={}.",
+            status.tombstone_committed
+        ),
+        neothd::cluster::membership::RevocationIntentState::Indeterminate => format!(
+            "Remote effect outcome requires reconciliation: {} Tombstone committed={}; receipt={}.",
+            status.indeterminate_reason.as_deref().unwrap_or("unknown"),
+            status.tombstone_committed,
+            status.receipt_id.as_deref().unwrap_or("-")
+        ),
+        neothd::cluster::membership::RevocationIntentState::Completed => format!(
+            "Revocation completed durably; tombstone committed and receipt {} recorded.",
+            status.receipt_id.as_deref().unwrap_or("-")
+        ),
+        neothd::cluster::membership::RevocationIntentState::NotFound => {
+            "Authority recorded that the requested membership target was not found.".into()
+        }
+    };
+    Ok((
+        state,
+        detail,
+        matches!(
+            status.state,
+            neothd::cluster::membership::RevocationIntentState::Pending
+                | neothd::cluster::membership::RevocationIntentState::Indeterminate
+        ),
+    ))
+}
+
+fn buddy_revocation_health_presentation(
+    health: &neothd::cluster::membership::MembershipRuntimeHealth,
+) -> std::result::Result<Option<(String, String, String, bool)>, String> {
+    health
+        .validate()
+        .map_err(|error| format!("invalid membership runtime health: {error:#}"))?;
+    let Some(status) = health.unresolved_revocations.first() else {
+        return Ok(None);
+    };
+    let acknowledgement = neothd::cluster::membership::MembershipRevocationStatusEnvelope::new(
+        status.request_id.clone(),
+        Some(status.clone()),
+    )
+    .map_err(|error| format!("invalid unresolved revocation status: {error:#}"))?;
+    let (state, mut detail, unresolved) = buddy_revocation_status_presentation(&acknowledgement)?;
+    if health.unresolved_revocations.len() > 1 {
+        detail = format!(
+            "{} unresolved durable revocation requests exist; showing the oldest. {detail}",
+            health.unresolved_revocations.len()
+        );
+    }
+    Ok(Some((status.request_id.clone(), state, detail, unresolved)))
+}
+
+fn publish_buddy_revocation_status(
+    weak: slint::Weak<MainWindow>,
+    request_id: String,
+    result: std::result::Result<
+        neothd::cluster::membership::MembershipRevocationStatusEnvelope,
+        String,
+    >,
+) {
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let current_request_id = window.get_bc_cluster_revocation_request_id().to_string();
+        if !current_request_id.is_empty() && current_request_id != request_id {
+            tracing::debug!(
+                current_request_id = %current_request_id,
+                stale_request_id = %request_id,
+                "discarding stale Buddy revocation status"
+            );
+            return;
+        }
+        window.set_bc_cluster_revocation_request_id(request_id.into());
+        match result.and_then(|status| {
+            let presentation = buddy_revocation_status_presentation(&status)?;
+            Ok((status, presentation))
+        }) {
+            Ok((_status, (state, detail, unresolved))) => {
+                window.set_bc_cluster_revocation_state(state.into());
+                window.set_bc_cluster_revocation_detail(detail.into());
+                window.set_bc_cluster_revocation_unresolved(unresolved);
+            }
+            Err(error) => {
+                window.set_bc_cluster_revocation_state("status_unavailable".into());
+                window.set_bc_cluster_revocation_detail(
+                    format!(
+                        "{error} Destructive membership controls remain disabled; use Refresh to retry the authoritative Buddy health read."
+                    )
+                    .into(),
+                );
+                window.set_bc_cluster_revocation_unresolved(true);
+            }
+        }
+    });
+}
+
+fn publish_buddy_revocation_health(
+    weak: slint::Weak<MainWindow>,
+    result: std::result::Result<neothd::cluster::membership::MembershipRuntimeHealth, String>,
+) {
+    let _ = slint::invoke_from_event_loop(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let current_request_id = window.get_bc_cluster_revocation_request_id().to_string();
+        let current_state = window.get_bc_cluster_revocation_state().to_string();
+        let presentation = result.and_then(|health| buddy_revocation_health_presentation(&health));
+        let authoritative_unresolved = match &presentation {
+            Ok(Some(_)) => Some(true),
+            Ok(None) => Some(false),
+            Err(_) => None,
+        };
+        if !buddy_revocation_health_may_replace(
+            &current_request_id,
+            &current_state,
+            authoritative_unresolved,
+        ) {
+            return;
+        }
+        match presentation {
+            Ok(Some((request_id, state, detail, unresolved))) => {
+                window.set_bc_cluster_revocation_request_id(request_id.into());
+                window.set_bc_cluster_revocation_state(state.into());
+                window.set_bc_cluster_revocation_detail(detail.into());
+                window.set_bc_cluster_revocation_unresolved(unresolved);
+            }
+            Ok(None) => {
+                window.set_bc_cluster_revocation_state("none".into());
+                window.set_bc_cluster_revocation_detail(
+                    "No unresolved durable revocation requests.".into(),
+                );
+                window.set_bc_cluster_revocation_unresolved(false);
+            }
+            Err(error) => {
+                window.set_bc_cluster_revocation_state("status_unavailable".into());
+                window.set_bc_cluster_revocation_detail(
+                    format!(
+                        "{error} Destructive membership controls remain disabled; use Refresh to retry the authoritative Buddy health read."
+                    )
+                    .into(),
+                );
+                window.set_bc_cluster_revocation_unresolved(true);
+            }
+        }
+    });
+}
+
+fn buddy_revocation_health_may_replace(
+    current_request_id: &str,
+    current_state: &str,
+    authoritative_unresolved: Option<bool>,
+) -> bool {
+    if current_state == "submitting" {
+        return false;
+    }
+    match authoritative_unresolved {
+        Some(true) => true,
+        Some(false) => current_request_id.is_empty(),
+        None => true,
+    }
+}
+
+fn next_membership_ui_revision() -> u64 {
+    MEMBERSHIP_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .wrapping_add(1)
+}
+
+fn apply_buddy_cluster_result(
+    window: &MainWindow,
+    result: std::result::Result<panel_logic::BuddyClusterStatusSnap, String>,
+) {
+    match result {
+        Ok(snapshot) => {
+            window.set_bc_cluster_summary(snapshot.summary.into());
+            window.set_bc_cluster_pending_id(snapshot.pending_id.into());
+            window.set_bc_cluster_revocable_id(snapshot.revocable_id.into());
+            window.set_bc_cluster_revocable_state(snapshot.revocable_state.into());
+            window.set_bc_cluster_snapshot_version(i32::from(snapshot.snapshot_version));
+            window.set_bc_cluster_snapshot_digest(snapshot.snapshot_digest.into());
+            window.set_bc_cluster_status_valid(true);
+            window.set_bc_cluster_status_error("".into());
+        }
+        Err(error) => {
+            // Preserve every last-known-good membership value and binding.
+            window.set_bc_cluster_status_valid(false);
+            window.set_bc_cluster_status_error(error.into());
+        }
+    }
+}
+
+fn publish_buddy_cluster_result(
+    weak: slint::Weak<MainWindow>,
+    revision: u64,
+    result: std::result::Result<panel_logic::BuddyClusterStatusSnap, String>,
+) {
+    let _ = slint::invoke_from_event_loop(move || {
+        if MEMBERSHIP_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+            return;
+        }
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        apply_buddy_cluster_result(&window, result);
+    });
 }
 
 /// Central Buddy driver — the ONE place a GUI event becomes an orb reaction.
@@ -14864,25 +15346,21 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
     window.set_hw_load_readout(snap.load_readout.into());
 }
 
-/// SL-02 — fetch the cluster peer topology via `neoth cluster topology --output
-/// json`. Empty on missing binary / failure. PARSE is the unit-tested
-/// `panel_logic::parse_cluster_topology`; this is the thin subprocess shell.
-fn fetch_topology_snapshot() -> Vec<panel_logic::ClusterPeerRow> {
-    let Some(bin) = which_neothd() else {
-        return Vec::new();
-    };
-    match spawn_neothd_plain(&bin)
-        .arg("cluster")
-        .arg("topology")
-        .arg("--output")
-        .arg("json")
+/// SL-02 — fetch the shared, versioned membership snapshot rendered by
+/// `neoth cluster topology --output json`. Invalid exits, DTOs, versions and
+/// digests are explicit errors so callers can retain their last-known-good rows.
+fn fetch_topology_snapshot() -> std::result::Result<Vec<panel_logic::ClusterPeerRow>, String> {
+    let mut command = neothd_json_command(&["cluster", "topology"])?;
+    let output = command
         .output()
-    {
-        Ok(o) if o.status.success() => {
-            panel_logic::parse_cluster_topology(&String::from_utf8_lossy(&o.stdout))
-        }
-        _ => Vec::new(),
-    }
+        .map_err(|error| format!("could not start cluster topology probe: {error}"))?;
+    validate_neothd_probe_exit(
+        "Cluster topology",
+        output.status.success(),
+        &output.stderr,
+        output.status.code(),
+    )?;
+    panel_logic::parse_cluster_topology_envelope(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// SL-02 — push the parsed peer rows onto the Cluster-tab topology panel.
@@ -17577,9 +18055,7 @@ mod chat_subprocess_tests {
             "main chat and Buddy overlay must each bind their own completion marker"
         );
         let compact = source.split_whitespace().collect::<String>();
-        assert!(
-            compact.contains("cmd.arg(\"chat\").arg(\"--stream\").arg(\"--\").arg(&body_clone);")
-        );
+        assert!(compact.contains("cmd.arg(\"--\").arg(&body);"));
         assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
     }
 
@@ -18491,6 +18967,11 @@ fn apply_wiki(weak: slint::Weak<MainWindow>, rows: Vec<panel_logic::WikiRowData>
 fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
     let result = fetch_buddy_status();
+    let membership_revision = next_membership_ui_revision();
+    let cluster_result = fetch_buddy_cluster_status();
+    let membership_weak = weak.clone();
+    let revocation_result = fetch_buddy_revocation_health();
+    let revocation_weak = weak.clone();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
         match result {
@@ -18520,6 +19001,8 @@ fn refresh_buddyconfig(weak: slint::Weak<MainWindow>) {
             }
         }
     });
+    publish_buddy_cluster_result(membership_weak, membership_revision, cluster_result);
+    publish_buddy_revocation_health(revocation_weak, revocation_result);
 }
 
 // ── Wave 4b — Companion probe ────────────────────────────────────────────────
@@ -18537,8 +19020,13 @@ fn refresh_companion(weak: slint::Weak<MainWindow>) {
 // ── Wave 4b — Mesh & Cluster probe ───────────────────────────────────────────
 fn refresh_mesh(weak: slint::Weak<MainWindow>) {
     use slint::VecModel;
-    let out = run_neothd_probe(&["cluster", "status", "--output", "json"]);
-    let snap = panel_logic::parse_mesh_status(&out);
+    let status_result = run_neothd_json_action::<gui_action::ClusterStatusAck>(
+        &["cluster", "status"],
+        "Cluster status",
+    )
+    .and_then(panel_logic::mesh_status_from_ack);
+    let membership_revision = next_membership_ui_revision();
+    let membership_result = fetch_buddy_cluster_status();
     let conflict_result = run_neothd_json_action::<gui_action::ClusterConflictListAck>(
         &["cluster", "conflicts"],
         "Cluster conflicts",
@@ -18565,62 +19053,78 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
         "Mesh sync state",
     )
     .and_then(panel_logic::mesh_sync_rows);
+    let status_conflict_count = status_result
+        .as_ref()
+        .ok()
+        .map(|snapshot| snapshot.conflict_count);
     let ts = panel_logic::now_hhmm();
     let _ = slint::invoke_from_event_loop(move || {
         let Some(w) = weak.upgrade() else { return };
-        w.set_mesh_node_id(snap.node_id.as_str().into());
-        w.set_mesh_listen_port(snap.listen_port.as_str().into());
-        w.set_mesh_mdns_enabled(snap.mdns_enabled);
-        w.set_mesh_trusted_ssids(snap.trusted_ssids.as_str().into());
-        // Composite fleet health: reachable peers WITH a fresh gossip snapshot
-        // (< 60s). No snapshot ⇒ NOT healthy (a reachable-but-silent peer, e.g.
-        // TCP up but no heartbeat yet, must not count). Computed here because the
-        // per-row `staleness_secs` defaults to 0 for display and can't tell
-        // "no data" from "0s ago". Counted before `peers` is moved into the model.
-        let healthy_peers = snap
-            .peers
-            .iter()
-            .filter(|p| {
-                p.reachable
-                    && swarm_nodes
-                        .iter()
-                        .find(|n| n.node_id == p.id || n.node_id.starts_with(&p.id))
-                        .map(|n| n.age_secs < 60)
-                        .unwrap_or(false)
-            })
-            .count() as i32;
-        let peer_rows: Vec<MeshPeerRow> = snap
-            .peers
-            .into_iter()
-            .map(|p| {
-                // Join gossip resource snapshots onto the peer list by node
-                // id prefix (status ids may be truncated for display).
-                let res = swarm_nodes
-                    .iter()
-                    .find(|n| n.node_id == p.id || n.node_id.starts_with(&p.id));
-                MeshPeerRow {
-                    id: p.id.into(),
-                    last_seen: p.last_seen.into(), // Slint kebab→snake: last-seen → last_seen
-                    reachable: p.reachable,
-                    cpu_pct: res.map(|n| n.cpu_frac).unwrap_or(0.0),
-                    ram_pct: res.map(|n| n.ram_frac).unwrap_or(0.0),
-                    vram_pct: res.map(|n| n.vram_frac).unwrap_or(0.0),
-                    role: "".into(), // roles land with the gossip payload extension
-                    version: "".into(), // ditto — neoth_version is not gossiped yet
-                    staleness_secs: res.map(|n| n.age_secs).unwrap_or(0),
-                }
-            })
-            .collect();
         let gossip_model: Vec<slint::SharedString> =
             gossip_lines.iter().map(|l| l.as_str().into()).collect();
         w.set_mesh_gossip_events(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
             gossip_model,
         ))));
-        w.set_mesh_healthy_peer_count(healthy_peers);
-        w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
-            peer_rows,
-        ))));
-        w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
+        match status_result {
+            Ok(snap) => {
+                w.set_mesh_node_id(snap.node_id.as_str().into());
+                w.set_mesh_listen_port(snap.listen_port.as_str().into());
+                w.set_mesh_mdns_enabled(snap.mdns_enabled);
+                w.set_mesh_trusted_ssids(snap.trusted_ssids.as_str().into());
+                // Reachable alone is insufficient: require a fresh gossip
+                // resource snapshot before counting a peer healthy.
+                let healthy_peers = snap
+                    .peers
+                    .iter()
+                    .filter(|peer| {
+                        peer.reachable
+                            && swarm_nodes
+                                .iter()
+                                .find(|node| {
+                                    node.node_id == peer.id || node.node_id.starts_with(&peer.id)
+                                })
+                                .map(|node| node.age_secs < 60)
+                                .unwrap_or(false)
+                    })
+                    .count() as i32;
+                let peer_rows: Vec<MeshPeerRow> = snap
+                    .peers
+                    .into_iter()
+                    .map(|peer| {
+                        let resource = swarm_nodes.iter().find(|node| {
+                            node.node_id == peer.id || node.node_id.starts_with(&peer.id)
+                        });
+                        MeshPeerRow {
+                            id: peer.id.into(),
+                            last_seen: peer.last_seen.into(),
+                            reachable: peer.reachable,
+                            cpu_pct: resource.map(|node| node.cpu_frac).unwrap_or(0.0),
+                            ram_pct: resource.map(|node| node.ram_frac).unwrap_or(0.0),
+                            vram_pct: resource.map(|node| node.vram_frac).unwrap_or(0.0),
+                            role: "".into(),
+                            version: "".into(),
+                            staleness_secs: resource.map(|node| node.age_secs).unwrap_or(0),
+                        }
+                    })
+                    .collect();
+                w.set_mesh_healthy_peer_count(healthy_peers);
+                w.set_mesh_peers(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                    peer_rows,
+                ))));
+                w.set_mesh_gossip_note(snap.gossip_note.as_str().into());
+                w.set_mesh_status_valid(true);
+                w.set_mesh_status_error("".into());
+            }
+            Err(error) => {
+                // Invalid JSON and nonzero exits retain the complete LKG fleet.
+                w.set_mesh_status_valid(false);
+                w.set_mesh_status_error(error.into());
+            }
+        }
+        if MEMBERSHIP_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) == membership_revision
+        {
+            apply_buddy_cluster_result(&w, membership_result);
+        }
         match conflict_result {
             Ok(conflicts) => {
                 let conflict_rows: Vec<MeshConflictRow> = conflicts
@@ -18657,31 +19161,49 @@ fn refresh_mesh(weak: slint::Weak<MainWindow>) {
                 // Keep the status count visible, but never render an empty list
                 // as proof that no conflicts exist when the detail probe failed.
                 w.set_mesh_conflicts_valid(false);
-                w.set_mesh_conflict_count(snap.conflict_count as i32);
+                if let Some(conflict_count) = status_conflict_count {
+                    w.set_mesh_conflict_count(conflict_count as i32);
+                }
                 w.set_mesh_conflicts_error(error.into());
             }
         }
-        // DES-13 — backup-at-rest per-peer rows + totals.
-        let foreign_rows: Vec<MeshForeignRow> = backup
-            .peers
-            .iter()
-            .map(|p| MeshForeignRow {
-                peer: p.peer.chars().take(24).collect::<String>().into(),
-                count: p.count.to_string().into(),
-                bytes: panel_logic::format_backup_bytes(p.bytes).into(),
-                latest: panel_logic::format_epoch_utc(p.latest_at).into(),
-            })
-            .collect();
-        w.set_mesh_foreign_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
-            foreign_rows,
-        ))));
-        w.set_mesh_foreign_total(backup.total_events as i32);
-        w.set_mesh_foreign_peers(backup.peers.len() as i32);
-        w.set_mesh_foreign_bytes(
-            panel_logic::format_backup_bytes(backup.total_bytes)
-                .as_str()
-                .into(),
-        );
+        // Backup rows are canonical restore candidates only after every row's
+        // immutable membership provenance validates. Invalid refreshes retain
+        // the complete LKG rows/totals and expose the exact fail-closed error.
+        match backup {
+            Ok(backup) => {
+                let foreign_rows: Vec<MeshForeignRow> = backup
+                    .peers
+                    .iter()
+                    .map(|generation| MeshForeignRow {
+                        peer: generation.origin_peer_pk.as_str().into(),
+                        stable_node_id: generation.stable_node_id.as_str().into(),
+                        auth_epoch: generation.auth_epoch.to_string().into(),
+                        membership_epoch: generation.membership_epoch.to_string().into(),
+                        fence_state: generation.fence_state.as_str().into(),
+                        count: generation.count.to_string().into(),
+                        bytes: panel_logic::format_backup_bytes(generation.bytes).into(),
+                        latest: panel_logic::format_epoch_utc(generation.latest_at).into(),
+                    })
+                    .collect();
+                w.set_mesh_foreign_rows(slint::ModelRc::new(std::rc::Rc::new(VecModel::from(
+                    foreign_rows,
+                ))));
+                w.set_mesh_foreign_total(backup.total_events as i32);
+                w.set_mesh_foreign_peers(backup.peers.len() as i32);
+                w.set_mesh_foreign_bytes(
+                    panel_logic::format_backup_bytes(backup.total_bytes)
+                        .as_str()
+                        .into(),
+                );
+                w.set_mesh_foreign_valid(true);
+                w.set_mesh_foreign_error("".into());
+            }
+            Err(error) => {
+                w.set_mesh_foreign_valid(false);
+                w.set_mesh_foreign_error(error.into());
+            }
+        }
         // F2 — durable sync-state table. Retain the last verified rows when
         // the CLI or schema fails; invalid is never rendered as empty.
         match sync_result {
@@ -23154,7 +23676,10 @@ mod deep_link_tests {
 /// Buddy dock and six-field status wiring must not drift back to decorative UI.
 #[cfg(test)]
 mod buddy_wiring_tests {
-    use super::validate_buddy_exit;
+    use super::{
+        buddy_revocation_health_may_replace, buddy_revocation_health_presentation,
+        buddy_revocation_status_presentation, validate_buddy_exit,
+    };
 
     #[test]
     fn buddy_click_reuses_the_companion_overlay_transition() {
@@ -23238,6 +23763,216 @@ mod buddy_wiring_tests {
                 "failed refresh must preserve last-known-good `{value_setter}`"
             );
         }
+    }
+
+    #[test]
+    fn failed_cluster_refresh_keeps_last_known_membership_values() {
+        let source = include_str!("main.rs");
+        let apply = source
+            .split("fn apply_buddy_cluster_result")
+            .nth(1)
+            .expect("Buddy cluster result helper")
+            .split("fn publish_buddy_cluster_result")
+            .next()
+            .expect("end of Buddy cluster result helper");
+        let failed = apply
+            .split("Err(error) => {")
+            .nth(1)
+            .expect("explicit Buddy cluster refresh failure arm")
+            .split("            }")
+            .next()
+            .expect("end of Buddy cluster refresh failure arm");
+        assert!(failed.contains("set_bc_cluster_status_valid(false)"));
+        assert!(failed.contains("set_bc_cluster_status_error(error.into())"));
+        for retained in [
+            "set_bc_cluster_summary",
+            "set_bc_cluster_pending_id",
+            "set_bc_cluster_revocable_id",
+            "set_bc_cluster_revocable_state",
+            "set_bc_cluster_snapshot_version",
+            "set_bc_cluster_snapshot_digest",
+        ] {
+            assert!(
+                !failed.contains(retained),
+                "failed cluster refresh overwrote last-known-good state: {retained}"
+            );
+        }
+    }
+
+    #[test]
+    fn buddy_cluster_copy_and_actions_match_membership_contract() {
+        let ui = include_str!("../ui/buddyconfig.slint");
+        let mesh = include_str!("../ui/mesh.slint");
+        for expected in [
+            "Continue pairing",
+            "Revoke membership",
+            "Discovery shows authenticated candidates only",
+            "signed, carrier-bound, one-time authority invite",
+            "Revocation is permanent",
+        ] {
+            assert!(
+                ui.contains(expected),
+                "missing Buddy membership copy: {expected}"
+            );
+        }
+        assert!(!ui.contains("cluster add"));
+        assert!(!mesh.contains("cluster add"));
+        let shell = include_str!("../ui/main.slint");
+        assert!(shell.contains("bc-cluster-revoke(id) => {"));
+        assert!(shell.contains("root.mesh-revoke-confirm-id = id"));
+        assert!(
+            shell.contains("root.mesh-revoke-confirm-version = root.bc-cluster-snapshot-version")
+        );
+        assert!(
+            shell.contains("root.mesh-revoke-confirm-digest = root.bc-cluster-snapshot-digest")
+        );
+        assert_eq!(shell.matches("root.mesh-peer-revoke(").count(), 1);
+    }
+
+    #[test]
+    fn buddy_revocation_status_uses_shared_schema_and_blocks_unresolved_actions() {
+        use neothd::cluster::membership::{
+            AuthEpoch, MEMBERSHIP_RUNTIME_HEALTH_WIRE_VERSION, MEMBERSHIP_SNAPSHOT_VERSION,
+            MembershipEpoch, MembershipRevocationStatusEnvelope, MembershipRevokeBinding,
+            MembershipRuntimeHealth, RevocationIntentState, RevocationIntentStatus, StableNodeId,
+            new_revocation_request_id,
+        };
+
+        let request_id = new_revocation_request_id();
+        let binding = MembershipRevokeBinding {
+            request_id: request_id.clone(),
+            stable_node_id: StableNodeId::parse("a".repeat(64)).unwrap(),
+            reason: "operator_gui".into(),
+            source: "operator_gui".into(),
+            snapshot_version: MEMBERSHIP_SNAPSHOT_VERSION,
+            snapshot_digest: "b".repeat(64),
+            authority_epoch: MembershipEpoch::INITIAL,
+            member_auth_epoch: AuthEpoch::INITIAL,
+            member_membership_epoch: MembershipEpoch::INITIAL,
+        };
+        let pending = RevocationIntentStatus {
+            operation: "cluster.membership.revoke.status".into(),
+            request_id: request_id.clone(),
+            request_digest: binding.request_digest().unwrap(),
+            stable_node_id: binding.stable_node_id,
+            reason: binding.reason,
+            source: binding.source,
+            state: RevocationIntentState::Pending,
+            snapshot_version: binding.snapshot_version,
+            snapshot_digest: binding.snapshot_digest,
+            authority_epoch: binding.authority_epoch,
+            member_auth_epoch: binding.member_auth_epoch,
+            member_membership_epoch: binding.member_membership_epoch,
+            external_effects_unclassified: true,
+            tombstone_committed: false,
+            receipt_id: None,
+            indeterminate_reason: None,
+            created_at_unix: 1_700_000_000,
+            updated_at_unix: 1_700_000_000,
+        };
+        let envelope =
+            MembershipRevocationStatusEnvelope::new(request_id.clone(), Some(pending.clone()))
+                .unwrap();
+        let (state, detail, unresolved) = buddy_revocation_status_presentation(&envelope).unwrap();
+        assert_eq!(state, "pending");
+        assert!(detail.contains("admission is closed"));
+        assert!(unresolved);
+        let runtime_health = MembershipRuntimeHealth {
+            wire_version: MEMBERSHIP_RUNTIME_HEALTH_WIRE_VERSION,
+            live_generations: Vec::new(),
+            invalid_live_generations: Vec::new(),
+            unresolved_revocations: vec![pending],
+        };
+        let discovered = buddy_revocation_health_presentation(&runtime_health)
+            .unwrap()
+            .unwrap();
+        assert_eq!(discovered.0, request_id);
+        assert_eq!(discovered.1, "pending");
+        assert!(discovered.3);
+        assert!(
+            buddy_revocation_health_presentation(&MembershipRuntimeHealth {
+                wire_version: MEMBERSHIP_RUNTIME_HEALTH_WIRE_VERSION,
+                live_generations: Vec::new(),
+                invalid_live_generations: Vec::new(),
+                unresolved_revocations: Vec::new(),
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert!(buddy_revocation_health_may_replace(
+            "terminal-request-a",
+            "completed",
+            Some(true),
+        ));
+        assert!(!buddy_revocation_health_may_replace(
+            "pending-request-b",
+            "pending",
+            Some(false),
+        ));
+        assert!(!buddy_revocation_health_may_replace(
+            "submitting-request-b",
+            "submitting",
+            Some(true),
+        ));
+
+        let source = include_str!("main.rs");
+        let ui = include_str!("../ui/buddyconfig.slint");
+        let shell = include_str!("../ui/main.slint");
+        assert!(source.contains("[\"buddy\", \"cluster\", \"revoke-status\", request_id]"));
+        assert!(source.contains("[\"buddy\", \"cluster\", \"revoke-unresolved\"]"));
+        assert!(source.contains("fetch_buddy_revocation_health()"));
+        assert!(source.contains("publish_buddy_revocation_health"));
+        assert!(source.contains("set_bc_cluster_revocation_unresolved(true)"));
+        assert!(source.contains("current_request_id != request_id"));
+        assert!(ui.contains("bc-cluster-revocation-detail"));
+        assert!(ui.contains("bc-cluster-revocation-state: \"checking\""));
+        assert!(ui.contains("bc-cluster-revocation-unresolved: true"));
+        assert!(shell.contains("bc-cluster-revocation-unresolved: true"));
+        assert!(ui.matches("!root.bc-cluster-revocation-unresolved").count() >= 2);
+        assert!(
+            shell
+                .matches("!root.bc-cluster-revocation-unresolved")
+                .count()
+                >= 3
+        );
+        assert!(shell.contains("Revoke blocked — resolve prior request"));
+    }
+
+    #[test]
+    fn topology_runtime_uses_strict_envelope_and_preserves_lkg_on_failure() {
+        let source = include_str!("main.rs");
+        let settings = include_str!("../ui/settings.slint");
+        let shell = include_str!("../ui/main.slint");
+        let fetch = source
+            .split("fn fetch_topology_snapshot")
+            .nth(1)
+            .expect("topology fetch helper")
+            .split("fn apply_topology")
+            .next()
+            .expect("end of topology fetch helper");
+        assert!(fetch.contains("validate_neothd_probe_exit("));
+        assert!(fetch.contains("parse_cluster_topology_envelope("));
+
+        let startup = source
+            .split("match topology {")
+            .nth(1)
+            .expect("topology startup result match")
+            .split("apply_usage_meter")
+            .next()
+            .expect("end of topology startup result match");
+        let failed = startup
+            .split("Err(error) => {")
+            .nth(1)
+            .expect("topology failure arm");
+        assert!(failed.contains("set_cluster_topology_valid(false)"));
+        assert!(failed.contains("set_cluster_topology_error(error.into())"));
+        assert!(!failed.contains("apply_topology"));
+        assert!(!failed.contains("set_cluster_peers"));
+        assert!(settings.contains("cluster-topology-valid"));
+        assert!(settings.contains("cluster-topology-error"));
+        assert!(settings.contains("Last known peer rows are retained"));
+        assert!(shell.contains("cluster-topology-valid: root.cluster-topology-valid"));
+        assert!(shell.contains("cluster-topology-error: root.cluster-topology-error"));
     }
 
     #[test]
