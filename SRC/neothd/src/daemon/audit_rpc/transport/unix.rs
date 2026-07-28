@@ -1,5 +1,5 @@
 use std::io::{Read as _, Write as _};
-use std::os::fd::{AsRawFd as _, FromRawFd as _, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd as _, RawFd};
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{
     DirBuilderExt as _, FileTypeExt as _, MetadataExt as _, PermissionsExt as _,
