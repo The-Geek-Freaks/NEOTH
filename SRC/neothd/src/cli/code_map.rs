@@ -398,7 +398,7 @@ fn run_persist(
     let mut conn = crate::code_map::persist::open(&db_path)
         .with_context(|| format!("open code_map db at {}", db_path.display()))?;
     let (stats, edges_inserted, cycles) =
-        persist_validated_snapshot(&mut conn, &map, std::fs::read)?;
+        persist_validated_snapshot(&mut conn, &map, |path| std::fs::read(path))?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {

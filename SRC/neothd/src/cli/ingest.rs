@@ -74,7 +74,10 @@ pub struct IngestArgs {
 
 pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     let neoth_home = FreedomConfig::default_neoth_home();
-    let effective_config = FreedomConfig::load_from_default_path()?;
+    // Ingest is a zero-friction local surface: a clean machine receives the
+    // safe built-in defaults, while a present but malformed operator config
+    // still fails closed through the strict load-or-default contract.
+    let effective_config = FreedomConfig::load_from_default_path_or_default()?;
     run_ingest_with_context(args, &effective_config, &neoth_home).await
 }
 

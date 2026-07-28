@@ -474,18 +474,37 @@ fn resolve_verified_neoth_executable() -> Result<PathBuf, ExtractionError> {
         reason: format!("resolve isolated PDF worker executable: {error}"),
     })?;
     let expected_name = if cfg!(windows) { "neoth.exe" } else { "neoth" };
+    let sibling = current.with_file_name(expected_name);
     let candidate = if executable_name_is_neoth(&current) {
+        current.clone()
+    } else if sibling.is_file() {
+        sibling.clone()
+    } else if cfg!(debug_assertions)
+        && current
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|name| name == "deps")
+    {
+        // Cargo integration tests execute from target/<profile>/deps while
+        // binary targets live one directory above. Restrict this development
+        // fallback to that exact layout; installed/release binaries continue
+        // to require the current or adjacent signed distribution executable.
         current
+            .parent()
+            .and_then(Path::parent)
+            .map(|profile_dir| profile_dir.join(expected_name))
+            .unwrap_or(sibling)
     } else {
-        current.with_file_name(expected_name)
+        sibling
     };
     let canonical = candidate
         .canonicalize()
         .map_err(|error| ExtractionError::Backend {
             backend: "pdf",
             reason: format!(
-                "verified sibling `{expected_name}` is unavailable for isolated PDF parsing: \
-                 {error}"
+                "verified sibling `{expected_name}` is unavailable for isolated PDF parsing \
+                 (current executable {}): {error}",
+                current.display()
             ),
         })?;
     let metadata = canonical

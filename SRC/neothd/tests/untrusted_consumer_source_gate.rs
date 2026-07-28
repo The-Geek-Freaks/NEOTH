@@ -168,9 +168,10 @@ fn goal_judge_requires_typed_model_output_and_an_exact_verdict() {
     assert!(
         LOOP_ENGINE.contains("goal_outcome != GoalOutcome::BudgetExhausted && verifier_approved")
     );
-    assert!(
-        LOOP_ENGINE.contains("round_stop_approved(outcome.goal_outcome, judgement.is_approved())")
-    );
+    let compact_loop_engine = LOOP_ENGINE.split_whitespace().collect::<String>();
+    assert!(compact_loop_engine.contains(
+        "round_stop_approved(outcome.goal_outcome,judgement.is_approved(),minimum_rounds_met,)"
+    ));
     assert!(LOOP_ENGINE.contains("if !goal_met_this_round"));
     assert!(
         LOOP_ENGINE.contains("if goal_met_this_round && stop_approved {"),

@@ -143,7 +143,7 @@ impl MediaExtractor for DoclingExtractor {
         ));
         let mut caller_wait = DoclingCallerWaitGuard::armed();
         let joined = supervisor.await;
-        caller_wait.complete();
+        caller_wait.mark_complete();
         let output = joined.map_err(|error| ExtractionError::Backend {
             backend: "docling",
             reason: format!("Docling supervisor task failed: {error}"),
@@ -201,7 +201,7 @@ impl DoclingCallerWaitGuard {
         Self { completed: false }
     }
 
-    fn complete(&mut self) {
+    fn mark_complete(&mut self) {
         self.completed = true;
     }
 }

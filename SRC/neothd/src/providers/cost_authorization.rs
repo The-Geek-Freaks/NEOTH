@@ -5159,7 +5159,7 @@ mod tests {
             (
                 "cluster/executor.rs",
                 1,
-                "6a2e81422487632ea092f8d14a93bcde16c6601ee05ac4a02c04e7e0991cafd0",
+                "17d636f3c6e0a513d653f9566b69fbee6203ebb586b218bef5394dd09451927c",
             ),
             (
                 "coding/cerebellum_provider.rs",
@@ -5234,7 +5234,7 @@ mod tests {
             (
                 "mcp/goal_judge.rs",
                 1,
-                "2b1d0df4343c2314a50b0dd7e789c7a75093404f9eb70ed39bc4d4cf9ff5fcbc",
+                "4ce0b460cb469820624602a02fd5d70e1442eb3d94548b1307f99fb61fdf25c8",
             ),
             (
                 "memory/entities.rs",

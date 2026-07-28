@@ -21220,12 +21220,14 @@ mod chat_subprocess_tests {
     #[test]
     fn gui_chat_terminates_clap_flag_scanning_before_user_text() {
         let source = include_str!("main.rs");
-        let launch = source
-            .split("let mut child = cmd")
-            .nth(1)
-            .and_then(|tail| tail.split(".stdout(std::process::Stdio::piped())").next())
-            .expect("chat child command construction");
-        assert!(launch.contains(".arg(\"--\")\n                    .arg(&body)"));
+        let compact = source.split_whitespace().collect::<String>();
+        assert_eq!(
+            compact
+                .matches("cmd.arg(\"--\").arg(body.as_str())")
+                .count(),
+            2,
+            "main chat and Buddy must terminate flag scanning before user text"
+        );
         assert_eq!(
             source
                 .matches("cmd.arg(\"--gui-launch-envelope-stdin\")")
@@ -21234,8 +21236,6 @@ mod chat_subprocess_tests {
             "main chat and Buddy must both use the private launch envelope"
         );
         assert!(!source.contains(concat!("NEOTH_STREAM_", "CONTROL_TOKEN")));
-        let compact = source.split_whitespace().collect::<String>();
-        assert!(compact.contains("cmd.arg(\"--\").arg(&body);"));
         assert!(compact.contains(".arg(\"loop\").arg(\"run\").arg(\"--\").arg(&prompt)"));
     }
 

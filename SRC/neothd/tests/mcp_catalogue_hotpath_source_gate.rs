@@ -62,11 +62,19 @@ fn catalogue_prompt_assembly_is_bound_to_the_exact_mcp_route() {
     assert!(channel_catalogue.contains("slot.insert(&mutchannel_budget_items,catalogue)"));
 
     let chat_route = CHAT
-        .find("let chat_route = resolve_chat_turn_route(")
-        .expect("CLI exact route");
+        .find("let TurnRouteResolution {")
+        .expect("CLI typed route resolution");
     let chat_assemble = CHAT
         .find("assemble_catalogue_for_prompt(")
         .expect("CLI catalogue await");
+    let chat_route_region = CHAT
+        .get(chat_route..chat_assemble)
+        .expect("CLI typed route must precede catalogue assembly");
+    assert!(
+        chat_route_region.contains("route: chat_route")
+            && chat_route_region.contains("= resolve_chat_turn_route("),
+        "CLI must bind the exact typed route before catalogue assembly"
+    );
     let chat_finalize = CHAT[chat_assemble..]
         .find("finalize_provider_request(")
         .map(|offset| chat_assemble + offset)

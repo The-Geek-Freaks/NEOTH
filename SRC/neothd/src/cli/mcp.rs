@@ -382,14 +382,17 @@ fn upsert_codegraph_server(
         .iter_mut()
         .find(|server| server.id == desired.id)
     {
-        Some(existing) if &*existing == desired => CodegraphRegistrationOutcome::AlreadyCurrent,
-        Some(existing) if repair_legacy_codegraph_allowlist(existing) => {
-            CodegraphRegistrationOutcome::RepairedLegacy
+        Some(existing) => {
+            if &*existing == desired {
+                CodegraphRegistrationOutcome::AlreadyCurrent
+            } else if repair_legacy_codegraph_allowlist(existing) {
+                CodegraphRegistrationOutcome::RepairedLegacy
+            } else if is_ready_codegraph_registration(existing) {
+                CodegraphRegistrationOutcome::AlreadyCurrent
+            } else {
+                CodegraphRegistrationOutcome::Conflict
+            }
         }
-        Some(existing) if is_ready_codegraph_registration(existing) => {
-            CodegraphRegistrationOutcome::AlreadyCurrent
-        }
-        Some(_) => CodegraphRegistrationOutcome::Conflict,
         None => {
             servers.servers.push(desired.clone());
             CodegraphRegistrationOutcome::Created
