@@ -853,6 +853,20 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> cfg-cluster-apply-in-flight: false;
     in-out property <string> cfg-cluster-apply-status: "";
 
+    // GOLD-LF-P2-23 — authoritative Dream cron readback. The Enable/Disable
+    // button is a command surface, never optimistic local state: Rust changes
+    // the visible state only after typed CLI receipt + fresh status agree.
+    in property <bool> dream-cron-enabled: false;
+    in property <bool> dream-cron-config-present: false;
+    in property <bool> dream-cron-status-verified: false;
+    in property <bool> dream-cron-operation-in-flight: false;
+    in property <string> dream-cron-scheduler-state: "unverified";
+    in property <string> dream-cron-autonomy: "unknown";
+    in property <string> dream-cron-schedule: "";
+    in property <string> dream-cron-status-error: "Dream status has not been verified yet.";
+    callback dream-cron-set-clicked(bool);
+    callback dream-cron-refresh-clicked();
+
     // Auto-update config (research P0).
     in-out property <bool>   cfg-autoupdate-enabled: false;
     in-out property <bool>   cfg-autoupdate-apply: false;
@@ -4913,6 +4927,72 @@ export component SettingsView inherits Rectangle {
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
                         wrap: word-wrap;
+                    }
+                }
+
+                // ── DREAM CRON (GOLD-LF-P2-23) ───────────────────────
+                Expander {
+                    title: "DREAM CRON";
+                    hint: root.dream-cron-status-verified
+                        ? root.dream-cron-scheduler-state : "unverified";
+                    Text {
+                        text: root.dream-cron-operation-in-flight
+                            ? "Applying the requested state, requesting daemon reload, and verifying readback…"
+                            : !root.dream-cron-status-verified
+                            ? "Last verified Dream state is stale: " + root.dream-cron-status-error
+                            : !root.dream-cron-config-present
+                            ? "Setup is not complete. Finish onboarding before changing Dream cron."
+                            : root.dream-cron-enabled
+                                && (root.dream-cron-autonomy == "strict" || root.dream-cron-autonomy == "custom")
+                            ? "Configured ON, but autonomy `" + root.dream-cron-autonomy + "` blocks unattended scheduling. NEOTH does not change autonomy automatically."
+                            : root.dream-cron-enabled
+                            ? "Configured ON · runtime state: " + root.dream-cron-scheduler-state
+                            : "Configured OFF — the healthy, non-coercive default.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: root.dream-cron-status-verified
+                            && root.dream-cron-scheduler-state != "blocked_by_autonomy"
+                            ? Theme.text-muted : Theme.accent-amber;
+                        wrap: word-wrap;
+                    }
+                    NeothButton {
+                        label: !root.dream-cron-status-verified
+                            ? "Verify Dream state first"
+                            : root.dream-cron-enabled
+                            ? "Disable daily Dream"
+                            : "Enable daily Dream";
+                        primary: !root.dream-cron-enabled;
+                        enabled: root.dream-cron-config-present
+                            && root.dream-cron-status-verified
+                            && !root.dream-cron-operation-in-flight;
+                        clicked => {
+                            // Command-only control: never mutate the displayed
+                            // verified state locally. Rust publishes the new
+                            // state only after CLI receipt + status readback.
+                            root.dream-cron-set-clicked(!root.dream-cron-enabled);
+                        }
+                    }
+                    Text {
+                        text: "Manual `neoth dream now` stays available in every mode. Strict and Custom remain fail-closed even when cron is configured ON.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    if root.dream-cron-status-verified: Text {
+                        text: "Schedule: " + root.dream-cron-schedule
+                            + " · autonomy: " + root.dream-cron-autonomy;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    NeothButton {
+                        label: "Refresh verified state";
+                        size: "sm";
+                        primary: false;
+                        enabled: !root.dream-cron-operation-in-flight;
+                        clicked => { root.dream-cron-refresh-clicked(); }
                     }
                 }
 

@@ -48,6 +48,13 @@ static OMI_DRAFT_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 static OMI_STATUS_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+// Dream cron reads and mutations share one serialized GUI operation edge. A
+// revision prevents a late startup read from replacing a newer receipt-backed
+// mutation result.
+static DREAM_CRON_UI_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DREAM_CRON_OPERATION_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 // Multiple background-job refreshes can overlap (manual refresh, route entry,
 // and the automatic refresh after a successful spawn). Only the newest request
 // may publish its list or clear the loading state.
@@ -1675,8 +1682,33 @@ fn main() -> Result<()> {
             )),
         ),
     };
-    let initialization_error = readiness_error.or(config_presence_error);
+    // P2-23 preload is deliberately read-only and compatibility-aware. It
+    // protects legacy true settings on wizard re-entry while canonical false
+    // still wins over any legacy true alias. Malformed explicit values block
+    // Finish instead of being coerced to false.
+    let (initial_dream_cron_enabled, dream_preload_error) = if config_present {
+        match read_dream_cron_enabled_for_gui(&freedom_path) {
+            Ok(enabled) => (enabled, None),
+            Err(error) => (
+                false,
+                Some(format!(
+                    "could not read Dream cron setting from {}: {error}",
+                    freedom_path.display()
+                )),
+            ),
+        }
+    } else {
+        (false, None)
+    };
+    let initialization_error = readiness_error
+        .or(config_presence_error)
+        .or_else(|| dream_preload_error.clone());
     let initialization_state_valid = initialization_error.is_none();
+    window.set_wizard_dream_cron_enabled(initial_dream_cron_enabled);
+    window.set_dream_cron_config_present(config_present);
+    if let Some(error) = dream_preload_error {
+        window.set_dream_cron_status_error(error.into());
+    }
     // GOLD-R4-03 — an absent preference is the one and only state that shows
     // the GUI-vs-CLI chooser. Opening the GUI after a prior CLI choice is an
     // explicit switch back to GUI, so update the canonical CLI-owned contract
@@ -7571,6 +7603,23 @@ fn main() -> Result<()> {
         });
     }
 
+    // ── GOLD-LF-P2-23 — Dream cron onboarding/day-two control ────────────────
+    {
+        let weak_set = window.as_weak();
+        window.on_dream_cron_set(move |enabled| {
+            start_dream_cron_mutation(weak_set.clone(), enabled);
+        });
+
+        let weak_refresh = window.as_weak();
+        window.on_dream_cron_refresh(move || {
+            start_dream_cron_refresh(weak_refresh.clone(), true);
+        });
+
+        // Canonical CLI readback replaces the preload as soon as the event loop
+        // starts. Missing config is a valid verified manual-only state.
+        start_dream_cron_refresh(window.as_weak(), false);
+    }
+
     // ── Wave 4b — Dreaming panel callbacks ───────────────────────────────────
     {
         let weak_dr = window.as_weak();
@@ -12376,6 +12425,7 @@ fn main() -> Result<()> {
                 autonomy: w.get_autonomy_choice().to_string(),
                 license_accepted: w.get_license_accepted(),
                 enable_telegram: w.get_enable_telegram(),
+                dream_cron_enabled: w.get_wizard_dream_cron_enabled(),
                 provider_key: w.get_provider_key().to_string(),
                 telegram_token: w.get_telegram_token().to_string(),
                 cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
@@ -12426,9 +12476,22 @@ fn main() -> Result<()> {
                     // with the base config written by write_freedom_yaml.
                     let fp = neoth_dir.join("freedom.yaml");
                     let rd = neoth_dir.join(".reload-requested");
+                    // `finish()` already wrote the merged config. Invalidate
+                    // any startup status sample from before that write whether
+                    // the following Dream transaction succeeds or fails.
+                    DREAM_CRON_UI_REVISION.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+                    let mut dream_readback = None;
                     match commit_gui_finish_with(
                         report.message(),
-                        || write_zf05_fields(&fp, &rd, &state),
+                        || {
+                            write_zf05_fields(&fp, &rd, &state)?;
+                            // Use the exact CLI transaction exposed to day-two
+                            // Settings: canonical key mutation, reload request,
+                            // typed receipt, then authoritative status readback.
+                            dream_readback =
+                                Some(persist_wizard_dream_cron(state.dream_cron_enabled)?);
+                            Ok(())
+                        },
                         || complete_gui_initialization(&bin, &neoth_dir, &transaction),
                     ) {
                         GuiFinishOutcome::Completed {
@@ -12441,11 +12504,45 @@ fn main() -> Result<()> {
                                 marker_path = %marker_path.display(),
                                 "wizard finished"
                             );
-                            w.set_step(WizardStep::Done);
+                            let status = if let Some(readback) = dream_readback.take() {
+                                apply_dream_cron_status(&w, readback);
+                                // The verified Rust completion path is the
+                                // sole owner of the post-onboarding transition.
+                                w.set_step(WizardStep::Chat);
+                                status
+                            } else {
+                                let detail = "Setup completed, but no verified Dream cron readback was retained.";
+                                w.set_dream_cron_status_verified(false);
+                                w.set_dream_cron_status_error(detail.into());
+                                format!("{status}\n{detail}")
+                            };
+                            w.set_dream_cron_operation_in_flight(false);
                             w.set_status_line(status.into());
                         }
                         GuiFinishOutcome::Failed { error, status } => {
                             tracing::error!(error = %error, "GUI completion commit failed");
+                            let status = if let Some(readback) = dream_readback.take() {
+                                let configured = if readback.cron_enabled {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                };
+                                let scheduler_state = readback.scheduler_state.clone();
+                                let autonomy = readback.autonomy.clone();
+                                apply_dream_cron_status(&w, readback);
+                                format!(
+                                    "{status}\nDream cron was already committed and verified as {configured} \
+                                     ({scheduler_state}, autonomy {autonomy}); only setup completion remains incomplete."
+                                )
+                            } else {
+                                let detail = format!(
+                                    "Setup completion failed before a verified Dream cron readback was retained: {error}"
+                                );
+                                w.set_dream_cron_status_verified(false);
+                                w.set_dream_cron_status_error(detail.clone().into());
+                                format!("{status}\n{detail}")
+                            };
+                            w.set_dream_cron_operation_in_flight(false);
                             w.set_status_line(status.into());
                         }
                     }
@@ -13692,6 +13789,9 @@ struct WizardSnapshot {
     autonomy: String,
     license_accepted: bool,
     enable_telegram: bool,
+    /// Explicit GUI onboarding opt-in for the unattended daily Dream pass.
+    /// False is intentional; presets never coerce it on.
+    dream_cron_enabled: bool,
     provider_key: String,
     telegram_token: String,
     /// Q4 ratification: operator's choice on the cluster step.
@@ -13738,6 +13838,7 @@ impl Default for WizardSnapshot {
             autonomy: String::new(),
             license_accepted: false,
             enable_telegram: false,
+            dream_cron_enabled: false,
             provider_key: String::new(),
             telegram_token: String::new(),
             cluster_discovery_disabled: false,
@@ -15008,6 +15109,42 @@ fn read_nested_bool_in_freedom(path: &Path, dotted_key: &str, default: bool) -> 
     leaf.and_then(|v| v.as_bool()).unwrap_or(default)
 }
 
+/// Read the complete public compatibility surface for Dream cron without
+/// silently converting a malformed explicit value to `false`.
+///
+/// Canonical keys win even when their value is `false`:
+/// `dream.cron_enabled` > `dream.enabled` > `dreaming.cron_enabled` >
+/// `dreaming.enabled` > the non-coercive default `false`.
+fn read_dream_cron_enabled_for_gui(path: &Path) -> Result<bool> {
+    let body = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let root: serde_yaml::Value =
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
+    let root = root
+        .as_mapping()
+        .context("freedom.yaml is not a YAML mapping")?;
+
+    for (section, field) in [
+        ("dream", "cron_enabled"),
+        ("dream", "enabled"),
+        ("dreaming", "cron_enabled"),
+        ("dreaming", "enabled"),
+    ] {
+        let Some(section_value) = root.get(serde_yaml::Value::from(section)) else {
+            continue;
+        };
+        let section_map = section_value
+            .as_mapping()
+            .with_context(|| format!("freedom.yaml field `{section}` is not a mapping"))?;
+        let Some(value) = section_map.get(serde_yaml::Value::from(field)) else {
+            continue;
+        };
+        return value
+            .as_bool()
+            .with_context(|| format!("freedom.yaml field `{section}.{field}` is not a boolean"));
+    }
+    Ok(false)
+}
+
 /// DES-09 helper — read a nested string from freedom.yaml.
 /// Returns `default` on missing file / key / malformed YAML.
 fn read_nested_str_in_freedom(path: &Path, dotted_key: &str, default: &str) -> String {
@@ -15706,6 +15843,215 @@ where
 {
     let mut command = neothd_json_command(args)?;
     gui_action::run_json(&mut command, action)
+}
+
+fn fetch_dream_cron_status() -> std::result::Result<gui_action::DreamStatusAck, String> {
+    let status = run_neothd_json_action::<gui_action::DreamStatusAck>(
+        &["dream", "status"],
+        "Read Dream cron status",
+    )?;
+    status.verify()?;
+    Ok(status)
+}
+
+fn mutate_dream_cron_with<Mutate, Readback>(
+    enabled: bool,
+    mutate: Mutate,
+    readback: Readback,
+) -> std::result::Result<(gui_action::DreamCronAck, gui_action::DreamStatusAck), String>
+where
+    Mutate: FnOnce(bool) -> std::result::Result<gui_action::DreamCronAck, String>,
+    Readback: FnOnce() -> std::result::Result<gui_action::DreamStatusAck, String>,
+{
+    let receipt = mutate(enabled)?;
+    receipt.verify(enabled)?;
+    let status = readback()?;
+    status.verify()?;
+    if !status.config_present
+        || status.cron_enabled != enabled
+        || status.config_path != receipt.config_path
+        || status.autonomy != receipt.autonomy
+        || status.autonomy_allows_scheduler != receipt.autonomy_allows_scheduler
+    {
+        return Err(
+            "Dream cron mutation was acknowledged, but canonical readback did not match it"
+                .to_string(),
+        );
+    }
+    Ok((receipt, status))
+}
+
+fn mutate_dream_cron(
+    enabled: bool,
+) -> std::result::Result<(gui_action::DreamCronAck, gui_action::DreamStatusAck), String> {
+    // Serialize with every other GUI freedom.yaml writer. The CLI owns the
+    // cross-process atomic mutation and canonical legacy-key normalization.
+    let _guard = FREEDOM_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    mutate_dream_cron_with(
+        enabled,
+        |desired| {
+            let action = if desired { "enable" } else { "disable" };
+            run_neothd_json_action::<gui_action::DreamCronAck>(
+                &["dream", "cron", action],
+                "Change Dream cron",
+            )
+        },
+        fetch_dream_cron_status,
+    )
+}
+
+fn persist_wizard_dream_cron(enabled: bool) -> Result<gui_action::DreamStatusAck> {
+    let (_, status) = mutate_dream_cron(enabled)
+        .map_err(anyhow::Error::msg)
+        .context("persist and verify the GUI Dream cron choice")?;
+    Ok(status)
+}
+
+fn apply_dream_cron_status(window: &MainWindow, status: gui_action::DreamStatusAck) {
+    window.set_dream_cron_enabled(status.cron_enabled);
+    window.set_dream_cron_config_present(status.config_present);
+    window.set_dream_cron_status_verified(true);
+    window.set_dream_cron_status_error("".into());
+    window.set_dream_cron_scheduler_state(status.scheduler_state.into());
+    window.set_dream_cron_autonomy(status.autonomy.into());
+    window.set_dream_cron_schedule(format!("{} {}", status.cron_at, status.timezone).into());
+}
+
+fn start_dream_cron_refresh(weak: slint::Weak<MainWindow>, announce: bool) {
+    if DREAM_CRON_OPERATION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        if announce {
+            push_toast(
+                &weak,
+                "info",
+                "Dream status read in progress",
+                "Wait for the current verified readback to finish.",
+            );
+        }
+        return;
+    }
+    let revision = DREAM_CRON_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .wrapping_add(1);
+    if let Some(window) = weak.upgrade() {
+        window.set_dream_cron_operation_in_flight(true);
+        if announce {
+            window.set_status_line("Refreshing verified Dream cron state…".into());
+        }
+    }
+    std::thread::spawn(move || {
+        let result = fetch_dream_cron_status();
+        DREAM_CRON_OPERATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+        let _ = slint::invoke_from_event_loop(move || {
+            if DREAM_CRON_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.set_dream_cron_operation_in_flight(false);
+            match result {
+                Ok(status) => {
+                    apply_dream_cron_status(&window, status);
+                    if announce {
+                        window.set_status_line("Dream cron state refreshed and verified.".into());
+                    }
+                }
+                Err(error) => {
+                    window.set_dream_cron_status_verified(false);
+                    window.set_dream_cron_status_error(error.clone().into());
+                    window.set_status_line(format!("Dream cron status failed: {error}").into());
+                }
+            }
+        });
+    });
+}
+
+fn start_dream_cron_mutation(weak: slint::Weak<MainWindow>, enabled: bool) {
+    if DREAM_CRON_OPERATION_ACTIVE.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        push_toast(
+            &weak,
+            "info",
+            "Dream operation in progress",
+            "Wait for the current verified Dream operation to finish.",
+        );
+        return;
+    }
+    let revision = DREAM_CRON_UI_REVISION
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        .wrapping_add(1);
+    if let Some(window) = weak.upgrade() {
+        window.set_dream_cron_operation_in_flight(true);
+        window.set_dream_cron_status_verified(false);
+        window.set_dream_cron_status_error(
+            "A Dream cron change is awaiting persistence, reload, and readback.".into(),
+        );
+        window.set_status_line("Applying and verifying Dream cron state…".into());
+    }
+    std::thread::spawn(move || {
+        let result = mutate_dream_cron(enabled);
+        DREAM_CRON_OPERATION_ACTIVE.store(false, std::sync::atomic::Ordering::Release);
+        let _ = slint::invoke_from_event_loop(move || {
+            if DREAM_CRON_UI_REVISION.load(std::sync::atomic::Ordering::Acquire) != revision {
+                return;
+            }
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            window.set_dream_cron_operation_in_flight(false);
+            match result {
+                Ok((_receipt, status)) => {
+                    let blocked = status.cron_enabled && !status.autonomy_allows_scheduler;
+                    let autonomy = status.autonomy.clone();
+                    apply_dream_cron_status(&window, status);
+                    // A day-two mutation becomes the next wizard re-entry
+                    // draft. Read-only refreshes never touch that draft, so a
+                    // late startup probe cannot undo an onboarding click.
+                    window.set_wizard_dream_cron_enabled(enabled);
+                    if blocked {
+                        window.set_status_line(
+                            format!(
+                                "Dream cron is configured ON and reload was requested, but autonomy `{autonomy}` keeps unattended scheduling blocked."
+                            )
+                            .into(),
+                        );
+                        push_toast(
+                            &weak,
+                            "info",
+                            "Dream cron saved but blocked",
+                            "Strict and Custom do not permit unattended scheduling.",
+                        );
+                    } else {
+                        window.set_status_line(
+                            format!(
+                                "Dream cron {} was persisted, reload requested, and read back.",
+                                if enabled { "enable" } else { "disable" }
+                            )
+                            .into(),
+                        );
+                        push_toast(
+                            &weak,
+                            "success",
+                            "Dream cron",
+                            "Saved, reload requested, and verified.",
+                        );
+                    }
+                }
+                Err(error) => {
+                    window.set_dream_cron_status_verified(false);
+                    window.set_dream_cron_status_error(error.clone().into());
+                    window.set_status_line(format!("Dream cron change failed: {error}").into());
+                    push_toast(
+                        &weak,
+                        "warn",
+                        "Dream cron change failed",
+                        "No unverified state was published; refresh and retry.",
+                    );
+                }
+            }
+        });
+    });
 }
 
 fn run_neothd_json_action_with_private_stdin<T>(
@@ -27203,5 +27549,284 @@ mod gui_bug_regression_tests {
             !actions.contains("fetch_omi_snapshot()"),
             "runtime action callbacks must not publish a default-on-error snapshot"
         );
+    }
+}
+
+#[cfg(test)]
+mod dream_cron_gui_tests {
+    use std::cell::RefCell;
+
+    use super::{
+        WizardSnapshot, gui_action, mutate_dream_cron_with, read_dream_cron_enabled_for_gui,
+    };
+    use tempfile::TempDir;
+
+    fn receipt(enabled: bool, autonomy: &str, allows: bool) -> gui_action::DreamCronAck {
+        gui_action::DreamCronAck {
+            ok: true,
+            action: if enabled { "enable" } else { "disable" }.to_string(),
+            changed: true,
+            cron_enabled: enabled,
+            config_path: "freedom.yaml".to_string(),
+            reload_requested: true,
+            reload_sentinel: ".reload-requested".to_string(),
+            autonomy: autonomy.to_string(),
+            autonomy_allows_scheduler: allows,
+        }
+    }
+
+    fn status(enabled: bool, autonomy: &str, allows: bool) -> gui_action::DreamStatusAck {
+        gui_action::DreamStatusAck {
+            contract_version: 1,
+            config_path: "freedom.yaml".to_string(),
+            config_present: true,
+            manual_available: true,
+            cron_enabled: enabled,
+            cron_at: "03:00".to_string(),
+            timezone: "Europe/Berlin".to_string(),
+            autonomy: autonomy.to_string(),
+            autonomy_allows_scheduler: allows,
+            scheduler_state: "reload_pending".to_string(),
+            daemon_running: false,
+            daemon_pid: None,
+            reload_pending: true,
+        }
+    }
+
+    #[test]
+    fn wizard_dream_cron_is_non_coercive_by_default() {
+        assert!(!WizardSnapshot::default().dream_cron_enabled);
+        let ui = include_str!("../ui/main.slint");
+        assert!(ui.contains("wizard-dream-cron-enabled: false"));
+        assert!(ui.contains("Optional and OFF by default"));
+    }
+
+    #[test]
+    fn reentry_reads_every_supported_dream_alias() {
+        for yaml in [
+            "dream:\n  cron_enabled: true\n",
+            "dream:\n  enabled: true\n",
+            "dreaming:\n  cron_enabled: true\n",
+            "dreaming:\n  enabled: true\n",
+        ] {
+            let dir = TempDir::new().unwrap();
+            let path = dir.path().join("freedom.yaml");
+            std::fs::write(&path, yaml).unwrap();
+            assert!(
+                read_dream_cron_enabled_for_gui(&path).unwrap(),
+                "legacy true must survive GUI re-entry for {yaml:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_false_overrides_every_legacy_true_alias() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "dream:\n  cron_enabled: false\n  enabled: true\n\
+             dreaming:\n  cron_enabled: true\n  enabled: true\n",
+        )
+        .unwrap();
+        assert!(!read_dream_cron_enabled_for_gui(&path).unwrap());
+    }
+
+    #[test]
+    fn malformed_explicit_dream_value_is_not_coerced_to_false() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "dream:\n  cron_enabled: \"yes\"\n").unwrap();
+        let error = read_dream_cron_enabled_for_gui(&path)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("is not a boolean"));
+    }
+
+    #[test]
+    fn mutation_requires_reload_receipt_then_matching_readback() {
+        let order = RefCell::new(Vec::new());
+        let (ack, readback) = mutate_dream_cron_with(
+            true,
+            |enabled| {
+                order.borrow_mut().push("mutate");
+                Ok(receipt(enabled, "custom", false))
+            },
+            || {
+                order.borrow_mut().push("readback");
+                Ok(status(true, "custom", false))
+            },
+        )
+        .unwrap();
+        assert_eq!(&*order.borrow(), &["mutate", "readback"]);
+        assert!(ack.reload_requested);
+        assert!(readback.cron_enabled);
+        assert!(!readback.autonomy_allows_scheduler);
+    }
+
+    #[test]
+    fn mutation_rejects_acknowledged_but_mismatched_readback() {
+        let error = mutate_dream_cron_with(
+            true,
+            |enabled| Ok(receipt(enabled, "standard", true)),
+            || Ok(status(false, "standard", true)),
+        )
+        .unwrap_err();
+        assert!(error.contains("readback did not match"));
+    }
+
+    #[test]
+    fn slint_callbacks_reach_the_canonical_cli_transaction() {
+        let main = include_str!("main.rs");
+        let shell = include_str!("../ui/main.slint");
+        let settings = include_str!("../ui/settings.slint");
+        assert!(
+            shell.contains("dream-cron-set-clicked(enabled) => { root.dream-cron-set(enabled); }")
+        );
+        assert!(main.contains("window.on_dream_cron_set"));
+        assert!(main.contains(r#"&["dream", "cron", action]"#));
+        assert!(main.contains(r#"&["dream", "status"]"#));
+        assert!(main.contains("persist_wizard_dream_cron(state.dream_cron_enabled)"));
+        assert!(settings.contains("Strict and Custom remain fail-closed"));
+        assert!(settings.contains("root.dream-cron-status-error"));
+    }
+
+    #[test]
+    fn settings_dream_control_is_command_only_and_never_flips_verified_state() {
+        let settings = include_str!("../ui/settings.slint");
+        let start = settings.find("// ── DREAM CRON").unwrap();
+        let end = settings[start..].find("// ── PRESETS").unwrap() + start;
+        let dream = &settings[start..end];
+        assert!(!dream.contains("NeothCheckBox"));
+        assert!(dream.contains("root.dream-cron-set-clicked(!root.dream-cron-enabled)"));
+        assert!(!dream.contains("root.dream-cron-enabled ="));
+    }
+
+    #[test]
+    fn only_verified_readback_publishes_visible_dream_state() {
+        let source = include_str!("main.rs");
+        let production_end = source.find("mod dream_cron_gui_tests").unwrap();
+        let production = &source[..production_end];
+        assert_eq!(production.matches("set_dream_cron_enabled(").count(), 1);
+        let apply_start = production.find("fn apply_dream_cron_status(").unwrap();
+        let apply_end = production[apply_start..]
+            .find("fn start_dream_cron_refresh(")
+            .unwrap()
+            + apply_start;
+        assert!(production[apply_start..apply_end].contains("set_dream_cron_enabled"));
+    }
+
+    #[test]
+    fn refresh_mutation_error_and_concurrency_keep_readback_authoritative() {
+        let source = include_str!("main.rs");
+        let refresh_start = source.find("fn start_dream_cron_refresh(").unwrap();
+        let mutation_start = source.find("fn start_dream_cron_mutation(").unwrap();
+        let refresh = &source[refresh_start..mutation_start];
+        assert!(refresh.contains("DREAM_CRON_OPERATION_ACTIVE.swap"));
+        assert!(
+            refresh.find("DREAM_CRON_UI_REVISION.load").unwrap()
+                < refresh.find("apply_dream_cron_status").unwrap()
+        );
+        assert!(refresh.contains("Ok(status)"));
+
+        let mutation_end = source[mutation_start..]
+            .find("fn run_neothd_json_action_with_private_stdin")
+            .unwrap()
+            + mutation_start;
+        let mutation = &source[mutation_start..mutation_end];
+        let error_start = mutation.find("Err(error)").unwrap();
+        assert!(mutation[..error_start].contains("apply_dream_cron_status"));
+        assert!(!mutation[error_start..].contains("set_dream_cron_enabled"));
+        assert!(mutation[error_start..].contains("set_dream_cron_status_verified(false)"));
+    }
+
+    #[test]
+    fn finish_failure_publishes_retained_readback_or_explicitly_marks_unverified() {
+        let source = include_str!("main.rs");
+        let start = source.find("let mut dream_readback = None;").unwrap();
+        let end = source[start..]
+            .find("// ── Companion overlay wiring")
+            .unwrap()
+            + start;
+        let finish = &source[start..end];
+        assert!(finish.matches("dream_readback.take()").count() >= 2);
+        assert!(finish.contains("Dream cron was already committed and verified"));
+        assert!(finish.contains("only setup completion remains incomplete"));
+        assert!(finish.contains("failed before a verified Dream cron readback was retained"));
+        assert!(finish.contains("set_dream_cron_status_verified(false)"));
+        assert!(finish.contains("apply_dream_cron_status(&w, readback)"));
+    }
+
+    #[test]
+    fn finish_navigation_is_owned_by_verified_rust_completion() {
+        let ui = include_str!("../ui/main.slint");
+        let button_start = ui.find("label: \"Finish\";").unwrap();
+        let button_end = ui[button_start..].find("// ── Settings").unwrap() + button_start;
+        let finish_button = &ui[button_start..button_end];
+        assert!(finish_button.contains("root.finish-clicked();"));
+        assert!(!finish_button.contains("root.step = WizardStep.chat"));
+        assert_eq!(ui.matches("root.finish-clicked();").count(), 1);
+
+        let source = include_str!("main.rs");
+        let handler_start = source.find("window.on_finish_clicked(move || {").unwrap();
+        let handler_end = source[handler_start..]
+            .find("// ── Companion overlay wiring")
+            .unwrap()
+            + handler_start;
+        let handler = &source[handler_start..handler_end];
+        assert_eq!(
+            handler.matches("set_step(").count(),
+            1,
+            "guards and every failure path must stay on the retryable wizard screen"
+        );
+
+        let completed_start = handler.find("GuiFinishOutcome::Completed {").unwrap();
+        let failed_start = handler[completed_start..]
+            .find("GuiFinishOutcome::Failed { error, status }")
+            .unwrap()
+            + completed_start;
+        let completed = &handler[completed_start..failed_start];
+        let verified_start = completed
+            .find("if let Some(readback) = dream_readback.take()")
+            .unwrap();
+        let unverified_start =
+            completed[verified_start..].find("} else {").unwrap() + verified_start;
+        assert!(
+            completed[verified_start..unverified_start]
+                .contains("apply_dream_cron_status(&w, readback)")
+        );
+        assert!(
+            completed[verified_start..unverified_start].contains("w.set_step(WizardStep::Chat)")
+        );
+        assert!(!completed[..verified_start].contains("set_step("));
+        assert!(!completed[unverified_start..].contains("set_step("));
+
+        let failed_end = handler[failed_start..]
+            .find("\n                    }\n                }\n                Err(e)")
+            .unwrap()
+            + failed_start;
+        assert!(!handler[failed_start..failed_end].contains("set_step("));
+    }
+
+    #[test]
+    fn late_status_refresh_cannot_overwrite_the_onboarding_draft() {
+        let source = include_str!("main.rs");
+        let start = source.find("fn apply_dream_cron_status(").unwrap();
+        let end = source[start..]
+            .find("fn start_dream_cron_refresh(")
+            .unwrap()
+            + start;
+        assert!(!source[start..end].contains("set_wizard_dream_cron_enabled"));
+        assert!(source.contains("window.set_wizard_dream_cron_enabled(enabled)"));
+    }
+
+    #[test]
+    fn cli_gui_and_doctor_share_the_fail_closed_wording_and_authority() {
+        let cli = include_str!("../../neothd/src/cli/dream.rs");
+        let doctor = include_str!("../../neothd/src/cli/doctor/checks/config.rs");
+        assert!(cli.contains("crate::cron::scheduler::autonomy_allows_scheduler"));
+        assert!(doctor.contains("crate::cron::scheduler::autonomy_allows_scheduler"));
+        assert!(doctor.contains("Strict and Custom remain fail-closed"));
+        assert!(doctor.contains("NEOTH will not change autonomy automatically"));
     }
 }

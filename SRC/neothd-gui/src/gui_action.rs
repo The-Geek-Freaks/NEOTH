@@ -4390,6 +4390,127 @@ impl DreamNowAck {
     }
 }
 
+/// Canonical readback from `neoth dream status --output json`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DreamStatusAck {
+    pub contract_version: u8,
+    pub config_path: String,
+    pub config_present: bool,
+    pub manual_available: bool,
+    pub cron_enabled: bool,
+    pub cron_at: String,
+    pub timezone: String,
+    pub autonomy: String,
+    pub autonomy_allows_scheduler: bool,
+    pub scheduler_state: String,
+    pub daemon_running: bool,
+    pub daemon_pid: Option<u32>,
+    pub reload_pending: bool,
+}
+
+impl DreamStatusAck {
+    pub fn verify(&self) -> Result<(), String> {
+        if self.contract_version != 1 {
+            return Err(format!(
+                "unsupported Dream status contract version {}",
+                self.contract_version
+            ));
+        }
+        if self.config_path.trim().is_empty()
+            || self.cron_at.trim().is_empty()
+            || self.timezone.trim().is_empty()
+        {
+            return Err("Dream status is missing config or schedule identity".to_string());
+        }
+        if !self.manual_available {
+            return Err("Dream status denied the always-available manual path".to_string());
+        }
+        let expected_allows = dream_autonomy_allows_scheduler(&self.autonomy)?;
+        if self.autonomy_allows_scheduler != expected_allows {
+            return Err(format!(
+                "Dream status autonomy `{}` contradicts scheduler eligibility",
+                self.autonomy
+            ));
+        }
+        if self.daemon_running != self.daemon_pid.is_some() {
+            return Err("Dream status daemon flag and pid disagree".to_string());
+        }
+        let expected_state = if self.reload_pending {
+            "reload_pending"
+        } else if !self.cron_enabled {
+            "manual_only"
+        } else if !self.autonomy_allows_scheduler {
+            "blocked_by_autonomy"
+        } else if !self.daemon_running {
+            "waiting_for_daemon"
+        } else {
+            "configured_on_disk"
+        };
+        if self.scheduler_state != expected_state {
+            return Err(format!(
+                "Dream status reported `{}` but the verified fields require `{expected_state}`",
+                self.scheduler_state
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Mutation receipt from `neoth dream cron enable|disable --output json`.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct DreamCronAck {
+    pub ok: bool,
+    pub action: String,
+    pub changed: bool,
+    pub cron_enabled: bool,
+    pub config_path: String,
+    pub reload_requested: bool,
+    pub reload_sentinel: String,
+    pub autonomy: String,
+    pub autonomy_allows_scheduler: bool,
+}
+
+impl DreamCronAck {
+    pub fn verify(&self, expected_enabled: bool) -> Result<(), String> {
+        let expected_action = if expected_enabled {
+            "enable"
+        } else {
+            "disable"
+        };
+        if !self.ok
+            || self.action != expected_action
+            || self.cron_enabled != expected_enabled
+            || !self.reload_requested
+            || self.config_path.trim().is_empty()
+            || self.reload_sentinel.trim().is_empty()
+        {
+            return Err(format!(
+                "Dream cron acknowledgement does not prove `{expected_action}` persistence and reload"
+            ));
+        }
+        let expected_allows = dream_autonomy_allows_scheduler(&self.autonomy)?;
+        if self.autonomy_allows_scheduler != expected_allows {
+            return Err(format!(
+                "Dream cron acknowledgement autonomy `{}` contradicts scheduler eligibility",
+                self.autonomy
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn dream_autonomy_allows_scheduler(autonomy: &str) -> Result<bool, String> {
+    match autonomy {
+        "strict" | "custom" => Ok(false),
+        "standard" | "elevated" | "full" => Ok(true),
+        other => Err(format!(
+            "Dream acknowledgement contains unknown autonomy `{other}`"
+        )),
+    }
+}
+
 /// I13 — one row from `neoth jobs --bg --output json`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -8293,5 +8414,59 @@ mod tests {
         let inactive: PresetActivateAck =
             serde_json::from_str(r#"{"name":"lowkey","active":false}"#).unwrap();
         assert!(inactive.verify("lowkey").is_err());
+    }
+
+    #[test]
+    fn dream_status_keeps_strict_and_custom_fail_closed() {
+        for autonomy in ["strict", "custom"] {
+            let body = format!(
+                r#"{{"contract_version":1,"config_path":"freedom.yaml","config_present":true,"manual_available":true,"cron_enabled":true,"cron_at":"03:00","timezone":"Europe/Berlin","autonomy":"{autonomy}","autonomy_allows_scheduler":false,"scheduler_state":"blocked_by_autonomy","daemon_running":true,"daemon_pid":42,"reload_pending":false}}"#
+            );
+            let status: DreamStatusAck = serde_json::from_str(&body).unwrap();
+            status.verify().unwrap();
+
+            let contradictory = body
+                .replace(
+                    r#""autonomy_allows_scheduler":false"#,
+                    r#""autonomy_allows_scheduler":true"#,
+                )
+                .replace(
+                    r#""scheduler_state":"blocked_by_autonomy""#,
+                    r#""scheduler_state":"configured_on_disk""#,
+                );
+            assert!(
+                serde_json::from_str::<DreamStatusAck>(&contradictory)
+                    .unwrap()
+                    .verify()
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn dream_status_accepts_the_non_coercive_manual_default() {
+        let status: DreamStatusAck = serde_json::from_str(
+            r#"{"contract_version":1,"config_path":"freedom.yaml","config_present":false,"manual_available":true,"cron_enabled":false,"cron_at":"03:00","timezone":"Etc/UTC","autonomy":"standard","autonomy_allows_scheduler":true,"scheduler_state":"manual_only","daemon_running":false,"daemon_pid":null,"reload_pending":false}"#,
+        )
+        .unwrap();
+        status.verify().unwrap();
+        assert!(!status.cron_enabled);
+        assert!(status.manual_available);
+    }
+
+    #[test]
+    fn dream_cron_receipt_binds_persistence_reload_and_requested_state() {
+        let receipt: DreamCronAck = serde_json::from_str(
+            r#"{"ok":true,"action":"enable","changed":true,"cron_enabled":true,"config_path":"freedom.yaml","reload_requested":true,"reload_sentinel":".reload-requested","autonomy":"custom","autonomy_allows_scheduler":false}"#,
+        )
+        .unwrap();
+        receipt.verify(true).unwrap();
+        assert!(receipt.verify(false).is_err());
+
+        let no_reload: DreamCronAck = serde_json::from_str(
+            r#"{"ok":true,"action":"enable","changed":true,"cron_enabled":true,"config_path":"freedom.yaml","reload_requested":false,"reload_sentinel":"","autonomy":"standard","autonomy_allows_scheduler":true}"#,
+        )
+        .unwrap();
+        assert!(no_reload.verify(true).is_err());
     }
 }

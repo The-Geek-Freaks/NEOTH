@@ -179,6 +179,9 @@ export component MainWindow inherits Window {
     in property <bool> settings-show-cluster: true;
     in property <bool> settings-show-code-sessions: true;
     in-out property <bool> enable-telegram: false;
+    /// GOLD-LF-P2-23 — explicit, optional onboarding choice. False is deliberate
+    /// and no preset or navigation event may turn it on implicitly.
+    in-out property <bool> wizard-dream-cron-enabled: false;
     /// SPEC `cluster_auto_discovery` Q4: operator's choice on the
     /// cluster step. True = disable mDNS announce on this device.
     /// Default false (announce enabled per Design B + the noob-
@@ -433,6 +436,17 @@ export component MainWindow inherits Window {
     in-out property <bool> cfg-cluster-apply-in-flight: false;
     in-out property <string> cfg-cluster-apply-status: "";
     callback cfg-cluster-apply-clicked(bool, string, int, string, bool, bool, string, bool, string, string, string);
+    // GOLD-LF-P2-23 — typed `dream status` state forwarded to SettingsView.
+    in-out property <bool> dream-cron-enabled: false;
+    in-out property <bool> dream-cron-config-present: false;
+    in-out property <bool> dream-cron-status-verified: false;
+    in-out property <bool> dream-cron-operation-in-flight: false;
+    in-out property <string> dream-cron-scheduler-state: "unverified";
+    in-out property <string> dream-cron-autonomy: "unknown";
+    in-out property <string> dream-cron-schedule: "";
+    in-out property <string> dream-cron-status-error: "Dream status has not been verified yet.";
+    callback dream-cron-set(bool);
+    callback dream-cron-refresh();
     // Auto-update config (research P0).
     in-out property <bool>   cfg-autoupdate-enabled: false;
     in-out property <bool>   cfg-autoupdate-apply: false;
@@ -3002,6 +3016,36 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "OPTIONAL NIGHTLY DREAM";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    NeothCheckBox {
+                        text: "Enable one unattended Dream pass per day";
+                        checked <=> root.wizard-dream-cron-enabled;
+                    }
+                    Text {
+                        text: root.wizard-dream-cron-enabled
+                            && (root.autonomy-choice == "strict" || root.autonomy-choice == "custom")
+                            ? "Saved as enabled, but autonomy `" + root.autonomy-choice + "` keeps the scheduler blocked. NEOTH will not raise autonomy for you."
+                            : "Optional and OFF by default. Manual `neoth dream now` remains available. You can change this anytime in Settings → Config.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: root.wizard-dream-cron-enabled
+                            && (root.autonomy-choice == "strict" || root.autonomy-choice == "custom")
+                            ? Theme.accent-amber : Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
             if root.status-line != "": Text {
                 text: root.status-line;
                 font-family: Theme.font-display;
@@ -3096,11 +3140,6 @@ export component MainWindow inherits Window {
                     enabled: root.license-accepted;
                     clicked => {
                         root.finish-clicked();
-                        // Pick #33 — after writing freedom.yaml the
-                        // operator lands in the Chat surface (primary
-                        // daily view). Settings is one tap away via
-                        // the ⚙ icon in the chat sidebar.
-                        root.step = WizardStep.chat;
                     }
                 }
             }
@@ -3541,6 +3580,16 @@ export component MainWindow inherits Window {
             cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase) => {
                 root.cfg-cluster-apply-clicked(enabled, name, transport, peers, mdns, announce, ssids, replicate-raw, replay-days, port, passphrase);
             }
+            dream-cron-enabled: root.dream-cron-enabled;
+            dream-cron-config-present: root.dream-cron-config-present;
+            dream-cron-status-verified: root.dream-cron-status-verified;
+            dream-cron-operation-in-flight: root.dream-cron-operation-in-flight;
+            dream-cron-scheduler-state: root.dream-cron-scheduler-state;
+            dream-cron-autonomy: root.dream-cron-autonomy;
+            dream-cron-schedule: root.dream-cron-schedule;
+            dream-cron-status-error: root.dream-cron-status-error;
+            dream-cron-set-clicked(enabled) => { root.dream-cron-set(enabled); }
+            dream-cron-refresh-clicked => { root.dream-cron-refresh(); }
             cfg-autoupdate-enabled <=> root.cfg-autoupdate-enabled;
             cfg-autoupdate-apply <=> root.cfg-autoupdate-apply;
             cfg-autoupdate-channel-idx <=> root.cfg-autoupdate-channel-idx;

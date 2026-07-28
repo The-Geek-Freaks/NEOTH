@@ -3444,8 +3444,9 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
 - [ ] **GOLD-LF-P2-21 — neoth-archive-bridge Obsidian plugin:** ship the pinned external TypeScript plugin and NEOTH pairing/sync contract together, including install/update/repair/uninstall, vault preservation, offline behavior and clean-machine artifact tests. Source: archive-bridge recovery row.
 - [ ] **GOLD-LF-P2-22 — Per-counterparty ingress-clustering consent:** attach verified counterparty consent to every channel episode used by dreaming/clustering, default deny on unknown/revoked consent, and prove isolation, revocation and audit behavior. Source: ADR-005.
 - [ ] **GOLD-LF-P2-23 — dream.cron_enabled plus wizard nudge:** add the authoritative setting, hot-reload scheduler consumption and non-coercive CLI/GUI onboarding control; Strict and Custom fail closed and config/readback tests prove the actual runtime state. Source: ADR-003.
-  - **RUNTIME/OPERATOR CORE COMPLETE, ITEM REMAINS OPEN FOR GUI ONBOARDING
-    (2026-07-28, `3365f2f0`):** `dream.cron_enabled` is authoritative in
+  - **RUNTIME/OPERATOR/GUI CORE COMPLETE, ITEM REMAINS OPEN FOR CONSOLIDATED
+    INTEGRATION/RELEASE GATES (2026-07-28, `3365f2f0` plus this GUI
+    landing):** `dream.cron_enabled` is authoritative in
     config, readback and doctor/operator surfaces. Accepted reloads publish the
     config, epoch and a generation-bound commit gate as one atomic snapshot.
     Reload and shutdown retire and drain the previous gate before replacement
@@ -3459,9 +3460,23 @@ All four Wave-3 fixes verified **wiring-complete** (council: all 7 dispatch edge
     snapshot pairing, lease-vs-retirement, permanent shutdown retirement,
     unrelated reload restart, every typed effect and `Strict`/`Custom`.
     Independent final review found no HIGH/MEDIUM issue; file-scoped rustfmt and
-    diff checks passed. The checkbox deliberately stays open until the
-    non-coercive GUI onboarding/readback control and consolidated runtime gates
-    are implemented and verified.
+    diff checks passed. The GUI wizard and Settings now invoke the real typed
+    `neoth --output json dream cron enable|disable` and `dream status`
+    contracts; they publish state only after an exact receipt, reload evidence
+    and matching status readback. Canonical `dream.cron_enabled` has precedence
+    even when explicitly `false`, all supported legacy spellings remain
+    readable, and malformed explicit values block onboarding fail closed.
+    Settings is command-only rather than optimistically mutating the visible
+    checkbox. Revision and operation serialization reject stale startup or
+    settings readbacks. Wizard completion can enter Chat only from Rust after a
+    verified `Completed` outcome; malformed, partial and failed commits retain
+    the Finish/status/retry surface. Source/UI regressions cover alias
+    precedence, malformed values, receipt/readback ordering, races, partial
+    completion and the absence of Slint-side optimistic navigation. An
+    independent re-review found and then verified closure of the Finish
+    navigation HIGH, ending at 0 HIGH/0 MEDIUM. The checkbox deliberately stays
+    open only until the deferred consolidated Cargo/runtime/release matrix and
+    exact-head gates execute this completed wiring.
 - [ ] **GOLD-LF-P2-24 — BGE-M3 fallback embedding model:** implement explicit opt-in acquisition, exact artifact verification, routing/readiness/fallback semantics and full GUI/CLI/Buddy lifecycle parity. Source: ADR-004.
 - [ ] **GOLD-LF-P2-25 — First-class Voice Call surface:** implement the fully gated call adapter, account/config/credential/media/session lifecycle, typed health and receipts, all-surface onboarding and clean-machine qualification. Source: Plan 001 channel ledger.
 - [ ] **GOLD-LF-P2-26 — Three-phase streaming indicator:** drive waiting/receiving/finalizing UI state from the canonical stream controller, including cancellation/error/reconnect and reduced-motion behavior; no timer-only fake progress. Source: GUI-Polish recovery row.

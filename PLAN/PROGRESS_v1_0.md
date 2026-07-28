@@ -19,8 +19,10 @@
 > deserialization. The coherent CLI/GUI/Buddy/Doctor Topology envelope remains
 > an open follow-up; no broad cluster box is closed here.
 >
-> **Dream reload/commit checkpoint 2026-07-28 (`3365f2f0`; counts unchanged,
-> `GOLD-LF-P2-23` remains open):** `dream.cron_enabled` now drives the real
+> **Dream reload/commit plus GUI onboarding checkpoint 2026-07-28
+> (`3365f2f0` plus this GUI landing; counts unchanged,
+> `GOLD-LF-P2-23` remains open only for consolidated integration/release
+> gates):** `dream.cron_enabled` now drives the real
 > scheduler and operator readback. Each accepted config is published together
 > with its epoch and generation-bound commit gate as one atomic snapshot.
 > Reload/shutdown retire and drain the old generation before replacement or
@@ -31,9 +33,17 @@
 > shutdown retirement is permanent, and even unrelated accepted reloads replace
 > a still-desired or just-finished Dream with the exact new snapshot.
 > Deterministic race/effect tests, file-scoped rustfmt/diff checks and an
-> independent final review passed with no HIGH/MEDIUM finding. P2-23 remains
-> open for the non-coercive GUI onboarding/readback control plus consolidated
-> runtime/release gates.
+> independent final review passed with no HIGH/MEDIUM finding. The GUI wizard
+> and Settings are wired to the typed CLI receipt plus verified status readback,
+> never to a replacement config mutation. Canonical false wins legacy true;
+> malformed values fail closed; Settings is command-only; revision/operation
+> ordering rejects stale callbacks. Only verified Rust completion may navigate
+> out of Finish, while malformed, partial and failed completion retains the
+> visible retry surface. Source/UI regressions cover the complete contract. A
+> separate re-review found the former unconditional Slint navigation as HIGH
+> and approved its root-cause closure at 0 HIGH/0 MEDIUM. P2-23 now remains open
+> only until the deferred consolidated Cargo/runtime/release matrix and
+> exact-head gates execute the completed runtime and GUI wiring.
 >
 > **Request-bound GUI/Buddy stream lifecycle checkpoint 2026-07-28 (counts
 > unchanged; `GOLD-LF-P2-26` remains open):** the provider subprocess now emits
