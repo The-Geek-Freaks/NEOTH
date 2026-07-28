@@ -24,7 +24,8 @@
 #   2. From a Developer Command Prompt that's run `vcvars64.bat`:
 #        cd SRC
 #        cargo build --release --locked -p neoth --bins --features release-desktop
-#        cargo build --release --locked -p neothd-gui -p neoth-migrate -p neoth-relay
+#        cargo build --release --locked -p neothd-gui --features release-desktop
+#        cargo build --release --locked -p neoth-migrate -p neoth-relay
 #   3. Build `bridges\keet` with its pinned pnpm toolchain, then copy all six
 #      executables to your PATH. `scripts\install.sh` automates this in WSL.
 # ─────────────────────────────────────────────────────────────────────────────

@@ -3,6 +3,14 @@
 **Created:** 2026-05-24  **Last updated:** 2026-07-28
 > **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
 >
+> **GUI release-capability parity checkpoint 2026-07-28 (counts unchanged):**
+> the GUI crate now forwards the core `release-desktop` feature, and the signed
+> release workflow plus Unix and Windows source-build instructions select that
+> bundle explicitly. A static packaging contract pins all paths and prevents a
+> future reduced-core GUI artifact. Runtime compilation and clean-machine
+> installer evidence are deliberately reserved for the final integration wave;
+> no broad R3/R4 box is closed by this construction slice.
+>
 > **Cognitive Transport / Cluster forensic adoption checkpoint 2026-07-27
 > (`GOLD-NCT-00` complete; 28 implementation/adoption boxes OPEN):** the
 > complete 2,481-line research plan is now tracked

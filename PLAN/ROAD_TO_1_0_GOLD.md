@@ -18,6 +18,16 @@
 
 **Source artifacts:** All audit findings are in `REVIEWS/_gold_audit/`. The 6 agent audit files and `_wiring_results.md` are the primary input. Research files for Gold-TODO features are in `REVIEWS/_gold_audit/research/`.
 
+**Release capability parity checkpoint (2026-07-28; no broad box closed):**
+`neothd-gui` now exposes an explicit non-default `release-desktop` feature that
+forwards the complete signed desktop bundle into its embedded `neoth` core.
+The release workflow and both documented source-install paths select that
+feature, so shipped GUI actions cannot silently lose the WASM host, optional
+desktop channels, Iroh carrier, keychain or wizard capabilities present in the
+public CLI. `packaging/tests/test_release_capability_contract.py` pins the
+manifest and all three build paths. Runtime compilation and clean-machine
+installer proof remain part of the final integration wave; WS-R4 stays OPEN.
+
 ---
 
 ## 1. Build & Test Recipe

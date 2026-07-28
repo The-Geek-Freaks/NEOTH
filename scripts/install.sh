@@ -114,8 +114,8 @@ build_neoth() {
     # Match the signed desktop-release feature contract. A source install must
     # not silently omit the advertised WASM host or optional channel adapters.
     cargo build --release --locked -p neoth --bins --features release-desktop
-    cargo build --release --locked \
-        -p neothd-gui -p neoth-migrate -p neoth-relay
+    cargo build --release --locked -p neothd-gui --features release-desktop
+    cargo build --release --locked -p neoth-migrate -p neoth-relay
     log_info "Build complete."
 }
 

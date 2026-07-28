@@ -818,7 +818,7 @@ jobs:
       - name: Build desktop GUI
         if: matrix.include_gui
         working-directory: SRC
-        run: cargo build --release --locked -p neothd-gui --target ${{ matrix.target }}
+        run: cargo build --release --locked -p neothd-gui --features release-desktop --target ${{ matrix.target }}
 
       - name: Setup Node.js for Keet companion
         if: matrix.include_keet

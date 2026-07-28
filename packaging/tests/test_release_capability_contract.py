@@ -8,8 +8,11 @@ import unittest
 
 ROOT = Path(__file__).parents[2]
 CORE_MANIFEST = ROOT / "SRC" / "neothd" / "Cargo.toml"
+GUI_MANIFEST = ROOT / "SRC" / "neothd-gui" / "Cargo.toml"
 RELEASE_WORKFLOW = ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+UNIX_SOURCE_INSTALLER = ROOT / "scripts" / "install.sh"
+WINDOWS_INSTALLER = ROOT / "SRC" / "install.ps1"
 
 DESKTOP_TARGETS = {
     "x86_64-unknown-linux-gnu",
@@ -63,8 +66,11 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.manifest = tomllib.loads(CORE_MANIFEST.read_text(encoding="utf-8"))
+        cls.gui_manifest = tomllib.loads(GUI_MANIFEST.read_text(encoding="utf-8"))
         cls.workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
         cls.ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        cls.unix_source_installer = UNIX_SOURCE_INSTALLER.read_text(encoding="utf-8")
+        cls.windows_installer = WINDOWS_INSTALLER.read_text(encoding="utf-8")
 
     def test_desktop_bundle_selects_the_exact_iroh_feature_leaf(self) -> None:
         features = self.manifest["features"]
@@ -139,6 +145,40 @@ class ReleaseCapabilityContractTests(unittest.TestCase):
             "run: cross build --release --locked --bins --features "
             "release-server --target ${{ matrix.target }}",
             cross,
+        )
+
+    def test_gui_embeds_the_desktop_release_bundle_everywhere(self) -> None:
+        gui_features = self.gui_manifest["features"]
+        core_dependency = self.gui_manifest["dependencies"]["neothd"]
+        desktop_gui = workflow_step(self.workflow, "Build desktop GUI")
+        gui_build = (
+            "cargo build --release --locked -p neothd-gui "
+            "--features release-desktop"
+        )
+
+        self.assertListEqual(gui_features["default"], ["gui-loop"])
+        self.assertListEqual(
+            gui_features["release-desktop"],
+            ["neothd/release-desktop"],
+        )
+        self.assertEqual(core_dependency["package"], "neoth")
+        self.assertIs(core_dependency["default-features"], False)
+        self.assertIn("cluster", core_dependency["features"])
+
+        self.assertIn("if: matrix.include_gui", desktop_gui)
+        self.assertIn(
+            f"run: {gui_build} --target ${{{{ matrix.target }}}}",
+            desktop_gui,
+        )
+        self.assertIn(gui_build, self.unix_source_installer)
+        self.assertIn(gui_build, self.windows_installer)
+        self.assertNotIn(
+            "-p neothd-gui -p neoth-migrate",
+            self.unix_source_installer,
+        )
+        self.assertNotIn(
+            "-p neothd-gui -p neoth-migrate",
+            self.windows_installer,
         )
 
 

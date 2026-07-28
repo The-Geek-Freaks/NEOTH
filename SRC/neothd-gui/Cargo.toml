@@ -17,6 +17,9 @@ path = "src/main.rs"
 # sidebar entry + skips the subprocess wiring.
 default = ["gui-loop"]
 gui-loop = []
+# Forward the signed desktop-release capability contract into the embedded
+# core. Development builds stay slim unless the release bundle is requested.
+release-desktop = ["neothd/release-desktop"]
 
 [dependencies]
 # Slint native — pure-Rust Femtovg backend on Windows + Linux, system
