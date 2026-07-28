@@ -315,7 +315,7 @@ async fn handle_one(mut stream: TcpStream, peer: SocketAddr, state: &AuditRpcSta
             | "/jobs-run-token/mint"
             | "/jobs-run-token/consume"
     );
-    if req.method != "POST" || (!membership_route && !(state.audit_routes_enabled && audit_route)) {
+    if req.method != "POST" || !(membership_route || state.audit_routes_enabled && audit_route) {
         let _ = stream
             .write_all(http_response(404, "not found").as_bytes())
             .await;
