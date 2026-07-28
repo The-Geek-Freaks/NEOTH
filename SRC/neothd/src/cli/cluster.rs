@@ -1036,19 +1036,18 @@ async fn run_list(output: &OutputFormat) -> Result<()> {
                 return Ok(());
             }
             println!(
-                "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} {}",
-                "stable_node", "label", "state", "auth", "member", "carrier", "binding"
+                "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} binding",
+                "stable_node", "label", "state", "auth", "member", "carrier"
             );
             for member in members {
                 if member.bindings.is_empty() {
                     println!(
-                        "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} {}",
+                        "{:<16} {:<20} {:<10} {:<7} {:<7} {:<10} -",
                         short_key(member.stable_node_id.as_str()),
                         member.label,
                         member.state.as_str(),
                         member.auth_epoch.get(),
                         member.membership_epoch.get(),
-                        "-",
                         "-"
                     );
                 }

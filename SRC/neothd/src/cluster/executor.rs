@@ -565,7 +565,6 @@ async fn run_one_task_execution(
                     %error,
                     "cluster executor: could not persist indeterminate provider outcome"
                 );
-                drop(external_permit);
                 std::mem::forget(effect_guard);
                 return TaskExecutionResult::suppressed(TaskResultBody {
                     task_id: job.task_id,
@@ -638,7 +637,6 @@ async fn run_one_task_execution(
                 %persist_error,
                 "cluster executor: could not persist indeterminate provider outcome"
             );
-            drop(external_permit);
             std::mem::forget(effect_guard);
             return TaskExecutionResult::suppressed(TaskResultBody {
                 task_id: job.task_id,
@@ -658,7 +656,6 @@ async fn run_one_task_execution(
             provider_name: result.provider_name,
         });
     }
-    drop(external_permit);
     TaskExecutionResult::guarded(result, effect_guard)
 }
 

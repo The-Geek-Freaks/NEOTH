@@ -227,9 +227,8 @@ impl PeerStreamRegistry {
             let mut map = self.guard();
             let keys = map
                 .iter()
-                .filter_map(|(key, entry)| {
-                    (entry.stable_node_id.as_ref() == Some(stable_node_id)).then(|| key.clone())
-                })
+                .filter(|(_, entry)| entry.stable_node_id.as_ref() == Some(stable_node_id))
+                .map(|(key, _)| key.clone())
                 .collect::<Vec<_>>();
             keys.into_iter()
                 .filter_map(|key| map.remove(&key))

@@ -2012,6 +2012,10 @@ mod tests {
                 unsafe {
                     command.pre_exec(move || install_linux_parent_death_signal(expected_parent));
                 }
+                // The fixture must exit this parent immediately so Linux can
+                // deliver PDEATHSIG to the child. Waiting here would invalidate
+                // the contract under test; PID 1 reaps the orphan after exit.
+                #[allow(clippy::zombie_processes)]
                 let child = command.spawn().expect("spawn parent-death child fixture");
                 println!("PDF_PDEATH_CHILD_PID={}", child.id());
                 std::io::stdout()

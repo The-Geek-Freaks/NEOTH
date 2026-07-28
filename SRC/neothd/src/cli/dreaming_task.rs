@@ -1295,14 +1295,9 @@ mod tests {
             // Wait until the retirement thread has actually closed the gate.
             // This avoids a timing-based assertion that could pass merely
             // because the retirement thread had not been scheduled yet.
-            loop {
-                match rail.acquire_commit_lease(effect) {
-                    Ok(probe) => {
-                        drop(probe);
-                        std::thread::yield_now();
-                    }
-                    Err(_) => break,
-                }
+            while let Ok(probe) = rail.acquire_commit_lease(effect) {
+                drop(probe);
+                std::thread::yield_now();
             }
             assert!(
                 matches!(retired_rx.try_recv(), Err(mpsc::TryRecvError::Empty)),

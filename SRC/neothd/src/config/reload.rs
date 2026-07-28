@@ -1318,14 +1318,9 @@ mod tests {
 
         // Wait for reload to close the old gate. While our lease is active it
         // must not yet publish the replacement snapshot.
-        loop {
-            match old.acquire_dream_commit("retirement probe") {
-                Ok(probe) => {
-                    drop(probe);
-                    std::thread::yield_now();
-                }
-                Err(_) => break,
-            }
+        while let Ok(probe) = old.acquire_dream_commit("retirement probe") {
+            drop(probe);
+            std::thread::yield_now();
         }
         assert!(
             Arc::ptr_eq(&controller.accepted_snapshot(), &old),
@@ -1403,14 +1398,9 @@ mod tests {
 
         let retire_controller = Arc::clone(&controller);
         let retire = std::thread::spawn(move || retire_controller.retire_dream_runtime());
-        loop {
-            match accepted.acquire_dream_commit("shutdown probe") {
-                Ok(probe) => {
-                    drop(probe);
-                    std::thread::yield_now();
-                }
-                Err(_) => break,
-            }
+        while let Ok(probe) = accepted.acquire_dream_commit("shutdown probe") {
+            drop(probe);
+            std::thread::yield_now();
         }
         assert!(
             !retire.is_finished(),

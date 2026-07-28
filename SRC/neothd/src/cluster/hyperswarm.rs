@@ -896,7 +896,6 @@ async fn handle_peeroxide_connection(
                         return Err(error)
                             .context("membership changed before heartbeat classification");
                     }
-                    drop(heartbeat_permit);
                     if !sent_first_heartbeat {
                         sent_first_heartbeat = true;
                         if let FrameBody::Heartbeat(ref body) = hb.body {
@@ -1178,7 +1177,6 @@ async fn handle_peeroxide_connection(
                             return Err(error)
                                 .context("membership changed before gossip ACK classification");
                         }
-                        drop(ack_permit);
                         effect_guard.finish()?;
                     }
                     Ok(super::durable_sync::InboundCommit::Gap { expected, received }) => {

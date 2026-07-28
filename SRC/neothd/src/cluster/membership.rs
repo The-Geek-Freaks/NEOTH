@@ -365,6 +365,10 @@ impl LocalNodeIdentity {
         peeroxide::KeyPair::from_seed(self.peeroxide_seed)
     }
 
+    // Every argument is an independently signed protocol field. Keeping them
+    // explicit here makes omission visible at each call site and avoids a
+    // partially initialized attestation builder.
+    #[allow(clippy::too_many_arguments)]
     pub fn attest_endpoint(
         &self,
         carrier: CarrierKind,
@@ -1901,9 +1905,7 @@ impl MembershipGrant {
             effects: Arc::clone(&self.effects),
             lease: Some(lease),
         };
-        if let Err(error) = guard.validate(now_unix) {
-            return Err(error);
-        }
+        guard.validate(now_unix)?;
         Ok(guard)
     }
 }
@@ -2259,6 +2261,10 @@ impl MembershipController {
         })
     }
 
+    // This controller boundary mirrors the complete authority binding passed
+    // to the transactional store; callers must provide every signed identity,
+    // carrier, endpoint and expiry field together.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_invite(
         &self,
         stable_node_id: &StableNodeId,
@@ -2542,6 +2548,48 @@ struct PendingOutboxEvent {
     payload: String,
 }
 
+type EnrollmentInviteDbRow = (
+    String,
+    Vec<u8>,
+    String,
+    String,
+    String,
+    String,
+    u64,
+    u64,
+    i64,
+    Option<i64>,
+);
+type RevokeReceiptDbRow = (
+    u64,
+    u64,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
+type RevocationStatusDbRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    u16,
+    String,
+    u64,
+    u64,
+    u64,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    i64,
+    i64,
+);
+type RevalidatedGrantDbRow = (String, u64, u64, Option<i64>, i64, i64, u64, u64);
+
 impl MembershipStore {
     pub fn open(home: &Path) -> Result<Self> {
         let store = Self::open_path(home.join(AUTHORITY_DB_FILE), true)?;
@@ -2807,18 +2855,7 @@ impl MembershipStore {
         attestation.verify_exact(carrier, authenticated_transport, endpoint, now_unix)?;
         let mut conn = self.connection()?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let row: Option<(
-            String,
-            Vec<u8>,
-            String,
-            String,
-            String,
-            String,
-            u64,
-            u64,
-            i64,
-            Option<i64>,
-        )> = tx
+        let row: Option<EnrollmentInviteDbRow> = tx
             .query_row(
                 "SELECT invitation_digest,signing_public_key,stable_node_id,carrier,
                         transport_identity,endpoint,auth_epoch,membership_epoch,
@@ -3848,16 +3885,7 @@ impl MembershipStore {
 
     pub fn revoke_receipt(&self, stable_node_id: &StableNodeId) -> Result<Option<RevokeReceipt>> {
         let conn = self.connection()?;
-        let row: Option<(
-            u64,
-            u64,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        )> = conn
+        let row: Option<RevokeReceiptDbRow> = conn
             .query_row(
                 "SELECT t.auth_epoch,t.membership_epoch,t.receipt_id,r.status,r.details,
                         i.request_id,i.state,i.indeterminate_reason
@@ -4062,24 +4090,7 @@ fn revocation_status_on(
     conn: &Connection,
     request_id: &str,
 ) -> Result<Option<RevocationIntentStatus>> {
-    let row: Option<(
-        String,
-        String,
-        String,
-        String,
-        String,
-        u16,
-        String,
-        u64,
-        u64,
-        u64,
-        i64,
-        i64,
-        Option<String>,
-        Option<String>,
-        i64,
-        i64,
-    )> = conn
+    let row: Option<RevocationStatusDbRow> = conn
         .query_row(
             "SELECT request_digest,stable_node_id,state,reason,source,
                     snapshot_version,snapshot_digest,
@@ -4255,7 +4266,7 @@ fn revalidate_grant_on(conn: &Connection, grant: &MembershipGrant, now_unix: i64
         grant.expires_at_unix.is_none_or(|expiry| expiry > now_unix),
         "membership grant expired"
     );
-    let current: Option<(String, u64, u64, Option<i64>, i64, i64, u64, u64)> = conn
+    let current: Option<RevalidatedGrantDbRow> = conn
         .query_row(
             "SELECT m.state,m.auth_epoch,m.membership_epoch,b.expires_at,
                     EXISTS(SELECT 1 FROM revocation_tombstones t
@@ -4701,7 +4712,7 @@ mod tests {
             membership_epoch: MembershipEpoch::new(1).unwrap(),
             kind,
         };
-        let mut generations = vec![
+        let mut generations = [
             generation(LiveMembershipKind::Route),
             generation(LiveMembershipKind::Network),
             generation(LiveMembershipKind::QueuedProvider),
@@ -5140,7 +5151,6 @@ mod tests {
                 )
                 .unwrap()
         );
-        drop(external);
         drop(effect);
         let receipt = revoke.await.unwrap().unwrap();
         assert_eq!(receipt.intent_state, RevocationIntentState::Indeterminate);
@@ -5179,7 +5189,7 @@ mod tests {
             .admit(CarrierKind::Peeroxide, &transport, now)
             .unwrap();
         let mut effect = grant.begin_effect(now).unwrap();
-        let external = effect.begin_external(now).unwrap();
+        let _external = effect.begin_external(now).unwrap();
         let binding = controller
             .store()
             .build_revoke_binding(
@@ -5216,7 +5226,6 @@ mod tests {
         // Simulate a process crash after provider/network start and a failed
         // Indeterminate write: all process-local leases disappear, but the
         // durable unclassified marker survives.
-        drop(external);
         drop(effect);
         drop(controller);
         drop(live_sessions);
@@ -6150,7 +6159,7 @@ mod tests {
                         identity.stable_node_id(),
                         &identity.verifying_key().to_bytes(),
                         CarrierKind::Peeroxide,
-                        &transport,
+                        transport,
                         "127.0.0.1:31337",
                         label,
                         at,
@@ -6175,7 +6184,7 @@ mod tests {
                         &invite.invite_id,
                         &attestation,
                         CarrierKind::Peeroxide,
-                        &transport,
+                        transport,
                         "127.0.0.1:31337",
                         at + 1,
                     )

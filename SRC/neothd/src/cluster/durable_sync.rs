@@ -2101,6 +2101,7 @@ fn load_ground_truth_snapshot(conn: &Connection, id: i64) -> Result<GroundTruthS
     })
 }
 
+#[cfg(test)]
 fn acknowledge_outbound_on_conn(
     conn: &mut Connection,
     authenticated_peer: &PeerPubkey,
