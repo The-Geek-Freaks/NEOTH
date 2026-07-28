@@ -3089,6 +3089,15 @@ impl ClusterPeerRevokeAck {
             {
                 return Err("cluster revoke returned invalid carrier teardown state".into());
             }
+            if matches!(teardown.status.as_str(), "not_running" | "no_live_sessions")
+                && (teardown.closed_sessions != 0
+                    || teardown.routes_evicted != 0
+                    || teardown.queued_effects_dropped != 0)
+            {
+                return Err(
+                    "cluster revoke returned activity for an inactive carrier teardown".into(),
+                );
+            }
         }
         Ok(())
     }
@@ -6566,6 +6575,23 @@ mod tests {
         let revoke: ClusterPeerRevokeAck = serde_json::from_value(revoke_value.clone()).unwrap();
         revoke.verify(&canonical, home.path()).unwrap();
         assert!(revoke.verify(&"ab".repeat(32), home.path()).is_err());
+        let mut inconsistent_carrier = revoke_value.clone();
+        inconsistent_carrier["receipt"]["per_carrier_teardown"] = serde_json::json!({
+            "peeroxide": {
+                "closed_sessions": 1,
+                "routes_evicted": 0,
+                "queued_effects_dropped": 0,
+                "status": "not_running"
+            }
+        });
+        let inconsistent_carrier: ClusterPeerRevokeAck =
+            serde_json::from_value(inconsistent_carrier).unwrap();
+        assert!(
+            inconsistent_carrier
+                .verify(&canonical, home.path())
+                .is_err(),
+            "inactive carrier states must not carry live teardown activity"
+        );
         let mut missing_authority = revoke_value.clone();
         missing_authority["receipt"]
             .as_object_mut()

@@ -988,6 +988,10 @@ fn update_or_append_secrets_backend(body: &str, value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn ephemeral_test_secret() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
     #[test]
     fn scan_path_walks_dir_finds_secrets_skips_binary_and_skiplist_dirs() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1022,8 +1026,9 @@ mod tests {
         serde_yaml::from_str(yaml).expect("valid credentials yaml")
     }
 
-    fn legacy_ssh_freedom_yaml() -> &'static str {
-        r#"secrets_backend: file
+    fn legacy_ssh_freedom_yaml(password: &str) -> String {
+        format!(
+            r#"secrets_backend: file
 future_extension:
   keep: true
 ssh_tunnels:
@@ -1031,10 +1036,11 @@ ssh_tunnels:
       host: bastion.example
       username: alex
       auth:
-        password: legacy-ssh-password
+        password: {password}
     remote_host: 127.0.0.1
     remote_port: 5432
 "#
+        )
     }
 
     struct FailSshSetStore {
@@ -1067,7 +1073,8 @@ ssh_tunnels:
         let dir = tempfile::tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml()).unwrap();
+        let password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
         let store = keychain::InMemorySecretStore::default();
 
         crate::config::with_config_credential_migration_lock(&freedom_path, || {
@@ -1087,7 +1094,7 @@ ssh_tunnels:
         assert!(public.contains("secrets_backend: keychain"));
         assert!(public.contains("future_extension"));
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("legacy-ssh-password"));
+        assert!(!public.contains(&password));
         assert!(
             Credentials::load_or_default(&credentials_path)
                 .unwrap()
@@ -1099,9 +1106,12 @@ ssh_tunnels:
         let tunnels = effective.ssh_tunnels.expect("keychain SSH authority");
         match &tunnels[0].endpoint.auth {
             crate::transport::ssh_config::SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "legacy-ssh-password");
+                assert!(
+                    secret.expose_secret() == password.as_str(),
+                    "keychain migration changed the SSH password"
+                );
             }
-            other => panic!("unexpected migrated SSH auth: {other:?}"),
+            _ => panic!("unexpected migrated SSH auth variant"),
         }
     }
 
@@ -1110,7 +1120,8 @@ ssh_tunnels:
         let dir = tempfile::tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml()).unwrap();
+        let password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
         let store = keychain::InMemorySecretStore::default();
 
         let report = crate::config::with_config_credential_migration_lock(&freedom_path, || {
@@ -1131,14 +1142,17 @@ ssh_tunnels:
         assert!(public.contains("secrets_backend: file"));
         assert!(public.contains("future_extension"));
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("legacy-ssh-password"));
+        assert!(!public.contains(&password));
         let private = Credentials::load_or_default(&credentials_path).unwrap();
         let tunnels = private.ssh_tunnels.expect("file SSH authority");
         match &tunnels[0].endpoint.auth {
             crate::transport::ssh_config::SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "legacy-ssh-password");
+                assert!(
+                    secret.expose_secret() == password.as_str(),
+                    "file migration changed the SSH password"
+                );
             }
-            other => panic!("unexpected migrated SSH auth: {other:?}"),
+            _ => panic!("unexpected migrated SSH auth variant"),
         }
         assert!(store.get("ssh_tunnels").unwrap().is_none());
     }
@@ -1148,7 +1162,8 @@ ssh_tunnels:
         let dir = tempfile::tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        let freedom_before = legacy_ssh_freedom_yaml().as_bytes().to_vec();
+        let password = ephemeral_test_secret();
+        let freedom_before = legacy_ssh_freedom_yaml(&password).into_bytes();
         let credentials_before = b"provider_key: file-provider-secret\n".to_vec();
         std::fs::write(&freedom_path, &freedom_before).unwrap();
         std::fs::write(&credentials_path, &credentials_before).unwrap();
@@ -1188,7 +1203,8 @@ ssh_tunnels:
         let dir = tempfile::tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        let freedom_before = legacy_ssh_freedom_yaml().as_bytes().to_vec();
+        let password = ephemeral_test_secret();
+        let freedom_before = legacy_ssh_freedom_yaml(&password).into_bytes();
         let credentials_before = b"provider_key: file-provider-secret\n".to_vec();
         std::fs::write(&freedom_path, &freedom_before).unwrap();
         std::fs::write(&credentials_path, &credentials_before).unwrap();

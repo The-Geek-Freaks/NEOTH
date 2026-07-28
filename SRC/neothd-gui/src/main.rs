@@ -3693,11 +3693,7 @@ fn main() -> Result<()> {
                                     "chat stream repeated an authenticated background notice",
                                 ));
                             }
-                            let new_notices = parsed
-                                .notices
-                                .iter()
-                                .cloned()
-                                .collect::<Vec<_>>();
+                            let new_notices = parsed.notices.to_vec();
                             if let Err(error) = compact_completed_notice_frames(
                                 &mut acc,
                                 &parsed.completed_notice_ranges,
@@ -4328,10 +4324,9 @@ fn main() -> Result<()> {
                         w.set_chat_stall_active(stalled);
                         if active.is_some_and(|active| active.surface == ChatStreamSurface::Buddy)
                             && let Some(ov) = weak_buddy_watchdog.upgrade()
+                            && stalled
                         {
-                            if stalled {
-                                ov.set_status_text("No stream data for 60s — wait or Stop.".into());
-                            }
+                            ov.set_status_text("No stream data for 60s — wait or Stop.".into());
                         }
                     }
                 }
@@ -7817,15 +7812,15 @@ fn main() -> Result<()> {
     {
         let weak_bc = window.as_weak();
         window.on_bc_refresh_clicked(move || {
-            if let Some(window) = weak_bc.upgrade() {
-                if window.get_bc_cluster_revocation_state().as_str() != "submitting" {
-                    window.set_bc_cluster_revocation_request_id("".into());
-                    window.set_bc_cluster_revocation_state("checking".into());
-                    window.set_bc_cluster_revocation_detail(
-                        "Refreshing the authoritative durable revocation state.".into(),
-                    );
-                    window.set_bc_cluster_revocation_unresolved(true);
-                }
+            if let Some(window) = weak_bc.upgrade()
+                && window.get_bc_cluster_revocation_state().as_str() != "submitting"
+            {
+                window.set_bc_cluster_revocation_request_id("".into());
+                window.set_bc_cluster_revocation_state("checking".into());
+                window.set_bc_cluster_revocation_detail(
+                    "Refreshing the authoritative durable revocation state.".into(),
+                );
+                window.set_bc_cluster_revocation_unresolved(true);
             }
             let weak = weak_bc.clone();
             std::thread::spawn(move || refresh_buddyconfig(weak));
@@ -13339,11 +13334,7 @@ fn main() -> Result<()> {
                                             "Buddy chat repeated an authenticated background notice",
                                         ));
                                     }
-                                    let new_notices = parsed
-                                        .notices
-                                        .iter()
-                                        .cloned()
-                                        .collect::<Vec<_>>();
+                                    let new_notices = parsed.notices.to_vec();
                                     if let Err(error) = compact_completed_notice_frames(
                                         &mut acc,
                                         &parsed.completed_notice_ranges,
@@ -20095,10 +20086,10 @@ fn shutdown_gui_chat_runtime(
             .as_ref()
             .map(OwnedChatChild::request_id)
     };
-    if let Some(request_id) = parked_request {
-        if let Err(error) = kill_owned_chat_child(child, request_id) {
-            errors.push(error);
-        }
+    if let Some(request_id) = parked_request
+        && let Err(error) = kill_owned_chat_child(child, request_id)
+    {
+        errors.push(error);
     }
 
     // Every registered worker is also its request's cleanup reaper. Do not
@@ -20253,7 +20244,7 @@ fn new_stream_control_token() -> std::result::Result<zeroize::Zeroizing<String>,
     let mut control_nonce = zeroize::Zeroizing::new([0_u8; 16]);
     getrandom::getrandom(&mut control_nonce[..])
         .map_err(|error| format!("OS RNG unavailable for stream control token: {error}"))?;
-    Ok(zeroize::Zeroizing::new(hex::encode(&*control_nonce)))
+    Ok(zeroize::Zeroizing::new(hex::encode(control_nonce.as_ref())))
 }
 
 /// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
@@ -20314,6 +20305,7 @@ pub fn parse_stream_sentinel(raw: &str) -> (String, bool, StreamStats) {
     parse_stream_sentinel_with_expected_token(raw, None)
 }
 
+#[cfg(test)]
 fn parse_stream_sentinel_with_token(
     raw: &str,
     expected_control_token: &str,

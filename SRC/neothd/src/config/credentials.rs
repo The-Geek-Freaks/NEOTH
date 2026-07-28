@@ -1597,21 +1597,25 @@ impl Credentials {
     /// `credentials.yaml::ssh_tunnels` value always wins, including `Some([])`;
     /// the legacy block is still removed so it cannot later resurrect.
     ///
-    /// Returns `true` when a legacy root key was removed, `false` when there was
-    /// nothing to migrate. Any parse/render/publication failure leaves the
-    /// original coherent pair (or its recoverable journal) intact.
+    /// Any parse/render/publication failure leaves the original coherent pair
+    /// (or its recoverable journal) intact.
     pub(super) fn migrate_legacy_ssh_tunnels_at(
         freedom_path: &Path,
         credentials_path: &Path,
-    ) -> Result<bool> {
-        Self::migrate_legacy_ssh_tunnels_at_using_fault(freedom_path, credentials_path, |_| Ok(()))
+    ) -> Result<()> {
+        Self::migrate_legacy_ssh_tunnels_at_using_fault(
+            freedom_path,
+            credentials_path,
+            |_| Ok(()),
+        )?;
+        Ok(())
     }
 
     fn migrate_legacy_ssh_tunnels_at_using_fault<H>(
         freedom_path: &Path,
         credentials_path: &Path,
         fault: H,
-    ) -> Result<bool>
+    ) -> Result<LegacySshMigrationOutcome>
     where
         H: FnMut(DualFileFaultPoint) -> Result<()>,
     {
@@ -1628,7 +1632,7 @@ impl Credentials {
         credentials_path: &Path,
         injected_store: Option<&dyn super::keychain::SecretStore>,
         fault: H,
-    ) -> Result<bool>
+    ) -> Result<LegacySshMigrationOutcome>
     where
         H: FnMut(DualFileFaultPoint) -> Result<()>,
     {
@@ -1643,7 +1647,7 @@ impl Credentials {
                 with_legacy_pair_locks(freedom_path, credentials_path, || {
                     let freedom_before = FileSnapshot::capture(freedom_path)?;
                     let FileSnapshot::Present(freedom_source) = &freedom_before else {
-                        return Ok(false);
+                        return Ok(LegacySshMigrationOutcome::Unchanged);
                     };
                     let credentials_before = FileSnapshot::capture(credentials_path)?;
                     let mut public = SensitiveYamlValue(
@@ -1662,7 +1666,7 @@ impl Credentials {
                     })?;
                     let key = serde_yaml::Value::String("ssh_tunnels".to_string());
                     let Some(legacy_value) = root.remove(&key) else {
-                        return Ok(false);
+                        return Ok(LegacySshMigrationOutcome::Unchanged);
                     };
                     // Keep stale plaintext auth zeroizing even when a
                     // dedicated authority means it must not be parsed or used.
@@ -1743,7 +1747,7 @@ impl Credentials {
                         &freedom_after,
                         &credentials_before,
                         &credentials_after,
-                        true,
+                        LegacySshMigrationOutcome::Migrated,
                         Some(|path: &Path, body: &[u8]| {
                             crate::util::atomic_write::atomic_write_private(path, body)
                                 .with_context(|| format!("atomically write {}", path.display()))
@@ -2050,6 +2054,12 @@ impl Credentials {
             })
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LegacySshMigrationOutcome {
+    Unchanged,
+    Migrated,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2938,6 +2948,10 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ephemeral_test_secret() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
 
     fn conf_key(seed: u8) -> crate::wal::crypto::WalSegmentKey {
         let m = crate::wal::crypto::WalMasterKey::from_bytes(&[seed; 32]).unwrap();
@@ -4660,6 +4674,16 @@ mod tests {
     ) {
         use crate::config::keychain::SecretStore as _;
 
+        let authority_passwords = authority
+            .iter()
+            .filter_map(|tunnel| match &tunnel.endpoint.auth {
+                crate::transport::ssh_config::SshAuth::Password(secret) => {
+                    Some(secret.expose_secret().to_owned())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let legacy_password = ephemeral_test_secret();
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
@@ -4667,7 +4691,7 @@ mod tests {
             &freedom_path,
             format!(
                 "secrets_backend: keychain\n{}",
-                legacy_ssh_freedom_yaml("legacy-public")
+                legacy_ssh_freedom_yaml(&legacy_password)
             ),
         )
         .unwrap();
@@ -4681,19 +4705,20 @@ mod tests {
             .unwrap();
         store.set("ssh_tunnels", &secret).unwrap();
 
-        assert!(
+        assert_eq!(
             Credentials::migrate_legacy_ssh_tunnels_at_using_fault_and_store(
                 &freedom_path,
                 &credentials_path,
                 Some(&store),
                 |_| Ok(()),
             )
-            .unwrap()
+            .unwrap(),
+            LegacySshMigrationOutcome::Migrated,
         );
 
         let public = std::fs::read_to_string(&freedom_path).unwrap();
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("legacy-public"));
+        assert!(!public.contains(&legacy_password));
         let raw = Credentials::load_or_default(&credentials_path).unwrap();
         assert!(
             raw.ssh_tunnels.is_none(),
@@ -4702,7 +4727,12 @@ mod tests {
         if credentials_path.exists() {
             let private = std::fs::read_to_string(&credentials_path).unwrap();
             assert!(!private.contains("ssh_tunnels"));
-            assert!(!private.contains("keychain-private"));
+            for password in &authority_passwords {
+                assert!(
+                    !private.contains(password),
+                    "keychain password leaked into credentials.yaml"
+                );
+            }
         }
         let mut effective = raw;
         crate::config::keychain::supplement_from_store(&mut effective, &store).unwrap();
@@ -4711,7 +4741,8 @@ mod tests {
 
     #[test]
     fn keychain_ssh_authority_wins_without_leaking_into_credentials_file() {
-        assert_keychain_ssh_authority_is_not_persisted(vec![test_ssh_tunnel("keychain-private")]);
+        let password = ephemeral_test_secret();
+        assert_keychain_ssh_authority_is_not_persisted(vec![test_ssh_tunnel(&password)]);
     }
 
     #[test]
@@ -4747,9 +4778,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
+        let legacy_password = ephemeral_test_secret();
         let freedom_before = format!(
             "secrets_backend: keychain\n{}",
-            legacy_ssh_freedom_yaml("legacy-must-not-shadow-keychain")
+            legacy_ssh_freedom_yaml(&legacy_password)
         )
         .into_bytes();
         let credentials_before = b"future_secret: preserve-exactly\n".to_vec();
@@ -4781,20 +4813,24 @@ mod tests {
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("legacy-password")).unwrap();
+        let password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
 
         let effective = crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
         assert_eq!(effective.ssh_tunnels.len(), 1);
         match &effective.ssh_tunnels[0].endpoint.auth {
             crate::transport::ssh_config::SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "legacy-password");
+                assert!(
+                    secret.expose_secret() == password.as_str(),
+                    "effective SSH password did not match the migrated value"
+                );
             }
-            other => panic!("unexpected migrated auth: {other:?}"),
+            _ => panic!("unexpected migrated SSH auth variant"),
         }
 
         let public = std::fs::read_to_string(&freedom_path).unwrap();
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("legacy-password"));
+        assert!(!public.contains(&password));
         assert!(public.contains("future_extension"));
         let credentials = Credentials::load_or_default(&credentials_path).unwrap();
         assert_eq!(
@@ -4813,7 +4849,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("must-not-resurrect")).unwrap();
+        let legacy_password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&legacy_password)).unwrap();
         Credentials {
             ssh_tunnels: Some(Vec::new()),
             ..Default::default()
@@ -4825,7 +4862,7 @@ mod tests {
         assert!(effective.ssh_tunnels.is_empty());
         let public = std::fs::read_to_string(&freedom_path).unwrap();
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("must-not-resurrect"));
+        assert!(!public.contains(&legacy_password));
         let credentials = Credentials::load_or_default(&credentials_path).unwrap();
         assert_eq!(credentials.ssh_tunnels, Some(Vec::new()));
     }
@@ -4896,7 +4933,8 @@ mod tests {
             let dir = tempdir().unwrap();
             let freedom_path = dir.path().join("freedom.yaml");
             let credentials_path = dir.path().join("credentials.yaml");
-            std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("crash-safe")).unwrap();
+            let password = ephemeral_test_secret();
+            std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
             std::fs::write(
                 &credentials_path,
                 "future_secret: preserve-through-recovery\n",
@@ -4927,10 +4965,10 @@ mod tests {
             assert_eq!(effective.ssh_tunnels.len(), 1);
             let public = std::fs::read_to_string(&freedom_path).unwrap();
             assert!(!public.contains("ssh_tunnels"));
-            assert!(!public.contains("crash-safe"));
+            assert!(!public.contains(&password));
             let private = std::fs::read_to_string(&credentials_path).unwrap();
             assert!(private.contains("future_secret"));
-            assert!(private.contains("crash-safe"));
+            assert!(private.contains(&password));
             assert!(!dir.path().join(DUAL_FILE_JOURNAL_NAME).exists());
         }
     }
@@ -4940,7 +4978,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("pw")).unwrap();
+        let password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
         std::fs::write(&credentials_path, "future_secret:\n  nested: keep-me\n").unwrap();
 
         crate::config::FreedomConfig::load_from_path(&freedom_path).unwrap();
@@ -4948,7 +4987,7 @@ mod tests {
         assert!(raw.contains("future_secret"));
         assert!(raw.contains("keep-me"));
         assert!(raw.contains("ssh_tunnels"));
-        assert!(raw.contains("password: pw"));
+        assert!(raw.contains(&format!("password: {password}")));
     }
 
     #[test]
@@ -4963,6 +5002,7 @@ mod tests {
             serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
         )
         .unwrap();
+        let password = ephemeral_test_secret();
         Credentials {
             ssh_tunnels: Some(vec![crate::transport::ssh_config::SshTunnelConfig {
                 endpoint: crate::transport::ssh_config::SshEndpoint {
@@ -4970,7 +5010,7 @@ mod tests {
                     port: 22,
                     username: "alex".into(),
                     auth: crate::transport::ssh_config::SshAuth::Password(SecretString::from(
-                        "credential-only-password",
+                        password.clone(),
                     )),
                 },
                 remote_host: "127.0.0.1".into(),
@@ -5002,9 +5042,12 @@ mod tests {
         assert_eq!(effective.ssh_tunnels.len(), 1);
         match &effective.ssh_tunnels[0].endpoint.auth {
             crate::transport::ssh_config::SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "credential-only-password");
+                assert!(
+                    secret.expose_secret() == password.as_str(),
+                    "effective SSH password changed during public-only update"
+                );
             }
-            other => panic!("unexpected effective SSH auth: {other:?}"),
+            _ => panic!("unexpected effective SSH auth variant"),
         }
     }
 
@@ -5013,7 +5056,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let freedom_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
-        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml("rmw-password")).unwrap();
+        let password = ephemeral_test_secret();
+        std::fs::write(&freedom_path, legacy_ssh_freedom_yaml(&password)).unwrap();
 
         crate::config::FreedomConfig::update_at(&freedom_path, |config| {
             config.operator_id = Some("updated".into());
@@ -5023,16 +5067,19 @@ mod tests {
 
         let public = std::fs::read_to_string(&freedom_path).unwrap();
         assert!(!public.contains("ssh_tunnels"));
-        assert!(!public.contains("rmw-password"));
+        assert!(!public.contains(&password));
         assert!(public.contains("future_extension"));
         let credentials = Credentials::load_or_default(&credentials_path).unwrap();
         let tunnels = credentials.ssh_tunnels.expect("migrated SSH authority");
         assert_eq!(tunnels.len(), 1);
         match &tunnels[0].endpoint.auth {
             crate::transport::ssh_config::SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "rmw-password");
+                assert!(
+                    secret.expose_secret() == password.as_str(),
+                    "read-modify-write migration changed the SSH password"
+                );
             }
-            other => panic!("unexpected migrated auth: {other:?}"),
+            _ => panic!("unexpected migrated SSH auth variant"),
         }
     }
 

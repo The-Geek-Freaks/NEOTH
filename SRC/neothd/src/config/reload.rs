@@ -716,6 +716,10 @@ mod tests {
     use crate::secret::SecretString;
     use crate::transport::ssh_config::{SshAuth, SshEndpoint, SshTunnelConfig};
 
+    fn ephemeral_test_secret() -> String {
+        uuid::Uuid::new_v4().to_string()
+    }
+
     fn fresh_config() -> FreedomConfig {
         FreedomConfig {
             operator_id: Some("sam".into()),
@@ -999,8 +1003,10 @@ mod tests {
         let yaml_path = dir.path().join("freedom.yaml");
         let credentials_path = dir.path().join("credentials.yaml");
         write_yaml(&yaml_path, &serde_yaml::to_string(&fresh_config()).unwrap());
+        let old_password = ephemeral_test_secret();
+        let new_password = ephemeral_test_secret();
         Credentials {
-            ssh_tunnels: Some(vec![ssh_tunnel("old-password")]),
+            ssh_tunnels: Some(vec![ssh_tunnel(&old_password)]),
             ..Default::default()
         }
         .write(&credentials_path)
@@ -1009,7 +1015,7 @@ mod tests {
         let ctrl = ReloadController::new(initial, yaml_path);
 
         Credentials::update_at(&credentials_path, |credentials| {
-            credentials.ssh_tunnels = Some(vec![ssh_tunnel("new-password")]);
+            credentials.ssh_tunnels = Some(vec![ssh_tunnel(&new_password)]);
             Ok(())
         })
         .unwrap();
@@ -1024,9 +1030,12 @@ mod tests {
         }
         match &ctrl.latest().ssh_tunnels[0].endpoint.auth {
             SshAuth::Password(secret) => {
-                assert_eq!(secret.expose_secret(), "old-password");
+                assert!(
+                    secret.expose_secret() == old_password.as_str(),
+                    "rejected reload changed the active SSH password"
+                );
             }
-            other => panic!("unexpected active SSH auth: {other:?}"),
+            _ => panic!("unexpected active SSH auth variant"),
         }
     }
 

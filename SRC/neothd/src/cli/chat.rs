@@ -11057,9 +11057,7 @@ modes:
         // The final token estimate must still fit within the effective cap.
         assert!(
             result.prompt_token_estimate <= result.effective_cap,
-            "prompt_token_estimate {} must be <= effective_cap {}",
-            result.prompt_token_estimate,
-            result.effective_cap,
+            "prompt token estimate must remain within the effective cap",
         );
 
         drop(writer);

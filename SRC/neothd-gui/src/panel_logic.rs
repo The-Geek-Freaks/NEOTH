@@ -543,6 +543,7 @@ pub struct ClusterPeerRow {
 
 /// Human last-seen age from `last_seen_age_secs` (None / JSON null → "never").
 /// Mirrors `cli/cluster.rs::fmt_last_seen` so the GUI matches the CLI table.
+#[cfg(test)]
 fn fmt_peer_last_seen(age: Option<i64>) -> String {
     match age {
         None => "never".to_string(),
@@ -558,6 +559,7 @@ fn fmt_peer_last_seen(age: Option<i64>) -> String {
 /// membership `members` shape. The live runtime uses
 /// [`parse_cluster_topology_envelope`] so invalid authority snapshots are never
 /// rendered as an honest empty fleet.
+#[cfg(test)]
 pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
     if let Ok(rows) = parse_cluster_topology_envelope(json) {
         return rows;
@@ -5906,6 +5908,7 @@ fn require_exact_authority_path(
 ///
 /// The fail-closed acknowledgement type rejects unknown, missing and mistyped
 /// fields. Callers retain their last-known-good view on any error.
+#[cfg(test)]
 pub fn parse_mesh_status(json: &str) -> Result<MeshStatusSnap, String> {
     let wire = crate::gui_action::ClusterStatusAck::from_json(json)
         .map_err(|error| format!("invalid cluster status JSON: {error:#}"))?;

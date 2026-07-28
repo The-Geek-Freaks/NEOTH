@@ -312,10 +312,9 @@ fn parse_unified_cgroup_path(contents: &str) -> Result<String, String> {
         let path = fields
             .next()
             .ok_or_else(|| "missing cgroup path".to_string())?;
-        if hierarchy == "0" && controllers.is_empty() {
-            if unified.replace(path.to_string()).is_some() {
-                return Err("multiple unified cgroup-v2 entries".to_string());
-            }
+        if hierarchy == "0" && controllers.is_empty() && unified.replace(path.to_string()).is_some()
+        {
+            return Err("multiple unified cgroup-v2 entries".to_string());
         }
     }
     let path = unified.ok_or_else(|| "no unified cgroup-v2 entry".to_string())?;
@@ -464,7 +463,7 @@ fn parse_cgroup_populated(contents: &str) -> Result<bool, String> {
     populated.ok_or_else(|| "cgroup.events has no populated state".to_string())
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn parse_cgroup_populated_bytes(contents: &[u8]) -> Option<bool> {
     contents.split(|byte| *byte == b'\n').find_map(|line| {
         let line = line.strip_prefix(b"populated ")?;
@@ -2496,7 +2495,7 @@ mod tests {
 
         let cgroup = std::fs::read_to_string("/proc/self/cgroup")
             .and_then(|contents| {
-                parse_unified_cgroup_path(&contents).map_err(|error| std::io::Error::other(error))
+                parse_unified_cgroup_path(&contents).map_err(std::io::Error::other)
             })
             .expect("read private cgroup namespace");
         assert_eq!(cgroup, "/", "provider can see a cgroup ancestor");
@@ -2672,24 +2671,23 @@ mod tests {
     ) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
-            let snapshot = inspect_linux_unit(systemctl, unit_name)
-                .unwrap_or_else(|error| panic!("inspect stopped test unit {unit_name}: {error}"));
+            let snapshot = match inspect_linux_unit(systemctl, unit_name) {
+                Ok(snapshot) => snapshot,
+                Err(_) => panic!("inspect stopped test unit"),
+            };
             let inactive = snapshot.load_state == "not-found"
                 || (snapshot.active_state == "inactive" && snapshot.sub_state == "dead");
             let empty = match std::fs::read_to_string(cgroup_directory.join("cgroup.events")) {
                 Ok(events) => !parse_cgroup_populated(&events).expect("parse test cgroup.events"),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-                Err(error) => panic!(
-                    "read stopped test cgroup {}: {error}",
-                    cgroup_directory.display()
-                ),
+                Err(_) => panic!("read stopped test cgroup"),
             };
             if inactive && empty {
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "manager did not prove unit {unit_name} inactive and empty"
+                "manager did not prove test unit inactive and empty"
             );
             std::thread::sleep(CHAT_TREE_POLL_INTERVAL);
         }

@@ -193,7 +193,7 @@ fn secret_field<'a>(
         "tududi_api_token" => credentials.tududi_api_token.as_ref(),
         "paperless_token" => credentials.paperless_token.as_ref(),
         "ssh_tunnels" => None,
-        _ => panic!("SECRET_FIELD_KEYS contains unhandled field `{field}`"),
+        _ => panic!("SECRET_FIELD_KEYS contains an unhandled scalar secret field"),
     }
 }
 
@@ -241,7 +241,7 @@ fn set_secret_field(
         "cluster_passphrase" => credentials.cluster_passphrase = value,
         "tududi_api_token" => credentials.tududi_api_token = value,
         "paperless_token" => credentials.paperless_token = value,
-        _ => panic!("SECRET_FIELD_KEYS contains unhandled field `{field}`"),
+        _ => panic!("SECRET_FIELD_KEYS contains an unhandled scalar secret field"),
     }
 }
 

@@ -118,6 +118,7 @@ pub enum ChatStreamPhase {
 }
 
 impl ChatStreamPhase {
+    #[cfg(test)]
     pub const ALL: [Self; 6] = [
         Self::Waiting,
         Self::Receiving,
@@ -317,6 +318,7 @@ impl ChatStreamController {
         self.current.map(Self::unchanged)
     }
 
+    #[cfg(test)]
     pub fn is_active(&self, request_id: ChatStreamRequestId) -> bool {
         self.current_for(request_id)
             .is_some_and(|state| state.phase.is_active())
