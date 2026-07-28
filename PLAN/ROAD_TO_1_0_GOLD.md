@@ -1104,6 +1104,25 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   Until that is implemented, independently reviewed and exact-head green, this
   checkpoint is progress evidence only, not a release-completion claim.
 
+  **Installed-authority forensic correction 2026-07-28 (R3-17 remains OPEN):**
+  the 2026-07-22 local-checkpoint prose above does not describe the current
+  source tree and must not be used as implementation evidence. A current-HEAD
+  source/history audit found no authenticated installed-Skill authority record,
+  no independent generation-bound current-anchor implementation and no
+  activation receipt consumed by loader/router/update paths. External user,
+  community and generated manifests can still inherit `enabled: true`, become
+  visible through the normal loader and reach routing based on that manifest
+  boolean alone. R3-17 therefore requires a separate full authority slice after
+  the mutation-WAL repair: imported/community/generated Skills land inactive;
+  a versioned authenticated authority record and independent current anchor
+  bind exact package generation, provenance, tools, delegation, model and
+  source claims; loader, router, updater and extractor require the same current
+  valid record; edits, upgrades and recovery revoke stale grants; and CLI, GUI
+  and Buddy expose an explicit exact-generation activation decision and
+  receipt. Migration, rollback and crash recovery must fail closed. The old
+  paragraph is retained as historical worktree prose only; counts and the open
+  R3-17 box do not change.
+
   **External review 4/5 correction 2026-07-26 (narrow R3-17 slice; box remains
   OPEN):** routed Skills no longer inherit ambiguous MCP authority when their
   manifest omits `tool_allowlist`. The Skill schema, loader documentation,

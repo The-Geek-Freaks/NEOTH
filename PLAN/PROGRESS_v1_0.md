@@ -589,6 +589,22 @@
 > remains outstanding. No broad box or dashboard count changes at this
 > checkpoint.
 >
+> **Installed-authority forensic correction 2026-07-28 (R3-17 remains OPEN):**
+> the 2026-07-22 local-checkpoint prose above is not implementation evidence for
+> current HEAD. The current source/history audit found neither the claimed
+> authenticated installed-Skill authority/current-anchor pair nor an activation
+> receipt enforced by loader and router. External user, community and generated
+> Skills can still inherit `enabled: true` and route from the manifest boolean.
+> A separate full authority slice must make external installs inactive by
+> default; bind exact generation, provenance, tools, delegation, model and
+> source claims in an authenticated authority record plus independent current
+> anchor; require them in loader/router/updater/extractor; revoke on edits,
+> upgrades and recovery; and expose the same exact activation decision/receipt
+> through CLI, GUI and Buddy. Migration, rollback and crash recovery remain
+> fail-closed requirements. The earlier paragraph is retained only as
+> historical worktree prose. No box or dashboard count changes at this
+> correction.
+>
 > **R3-18 recurring-egress correction 2026-07-22:** the hidden legacy loops
 > make the previous daemon-wide wording false. Generic `updater.enabled`
 > defaults on independently of the GUI's `auto_update.enabled/auto_apply`
