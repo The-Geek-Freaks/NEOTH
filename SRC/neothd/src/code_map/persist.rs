@@ -845,17 +845,6 @@ pub fn load_edges_for_root(
     load_edges_filtered(conn, Some(root))
 }
 
-/// Load at most `limit + 1` edges for a root so callers can reject an
-/// oversized graph without first allocating its complete persisted edge set.
-pub(crate) fn load_edges_for_root_bounded(
-    conn: &Connection,
-    root: &str,
-    limit: usize,
-) -> Result<(Vec<crate::code_map::graph::CodeEdge>, bool)> {
-    load_edges_for_root_bounded_with_text_limit(conn, root, limit, usize::MAX)
-        .map(|(edges, truncated, _)| (edges, truncated))
-}
-
 /// Impact-analysis loader with a second, byte-based allocation boundary.
 /// SQLite reports each row's text size before Rust materialises its strings,
 /// so a concurrent insertion after an aggregate preflight cannot force one
@@ -1798,7 +1787,8 @@ mod tests {
             .collect();
         persist_edges(&mut conn, "/repo/a", &edges).unwrap();
 
-        let (loaded, truncated) = load_edges_for_root_bounded(&conn, "/repo/a", 2).unwrap();
+        let (loaded, truncated, _) =
+            load_edges_for_root_bounded_with_text_limit(&conn, "/repo/a", 2, usize::MAX).unwrap();
 
         assert!(truncated);
         assert_eq!(loaded.len(), 2);

@@ -385,7 +385,7 @@ where
         );
     }
 
-    let evidence_limit = options.max_nodes.max(1).min(MAX_IMPACT_NODES);
+    let evidence_limit = options.max_nodes.clamp(1, MAX_IMPACT_NODES);
     let remaining_text_bytes = MAX_PREPROCESSING_TEXT_BYTES.saturating_sub(symbol_text_bytes);
     let (raw_edges, edge_limit_exceeded, _) = load_edges_for_root_bounded_with_text_limit(
         conn,
@@ -1338,8 +1338,8 @@ fn compare_impacted_nodes(left: &ImpactedNode, right: &ImpactedNode) -> Ordering
 }
 
 fn aggregate_files(nodes: &[ImpactedNode]) -> Vec<ImpactedFile> {
-    let mut files: BTreeMap<(String, String), (usize, f64, BTreeSet<(String, u32)>)> =
-        BTreeMap::new();
+    type FileAggregate = (usize, f64, BTreeSet<(String, u32)>);
+    let mut files: BTreeMap<(String, String), FileAggregate> = BTreeMap::new();
     for impacted in nodes {
         let entry = files
             .entry((impacted.node.root.clone(), impacted.node.file.clone()))

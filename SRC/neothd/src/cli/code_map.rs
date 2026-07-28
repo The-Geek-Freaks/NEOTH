@@ -1124,7 +1124,7 @@ mod tests {
             .unwrap();
         let db = tempdir().unwrap();
         let mut conn = crate::code_map::persist::open(&db.path().join("code_map.db")).unwrap();
-        persist_validated_snapshot(&mut conn, &initial_map, std::fs::read).unwrap();
+        persist_validated_snapshot(&mut conn, &initial_map, |path| std::fs::read(path)).unwrap();
 
         std::fs::write(&source_path, "pub fn candidate() {}\n").unwrap();
         let map = RepoMapBuilder::new(repo.path())
@@ -1132,7 +1132,8 @@ mod tests {
             .scan()
             .unwrap();
         std::fs::write(&source_path, "pub fn changed_after_scan() {}\n").unwrap();
-        let error = persist_validated_snapshot(&mut conn, &map, std::fs::read).unwrap_err();
+        let error =
+            persist_validated_snapshot(&mut conn, &map, |path| std::fs::read(path)).unwrap_err();
 
         assert!(error.to_string().contains("changed after the scan"));
         assert_eq!(
