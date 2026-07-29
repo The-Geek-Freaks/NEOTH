@@ -1234,8 +1234,8 @@ fn main() -> Result<()> {
     info!("neothd-gui starting (R-1 Phase 3 — autonomy + channels + keys)");
 
     let arguments: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
-    if runtime_probe_requested(&arguments) {
-        return run_runtime_probe();
+    if let Some(require_tray) = runtime_probe_mode(&arguments) {
+        return run_runtime_probe(require_tray);
     }
     let product_launcher =
         product_launcher_mode(arguments, std::env::var_os(PRODUCT_LAUNCHER_ENV))?;
@@ -3690,7 +3690,7 @@ fn main() -> Result<()> {
                                 .any(|notice| delivered_notice_ids.contains(&notice.id))
                             {
                                 break Some(std::io::Error::other(
-                                    "chat stream repeated an authenticated background notice",
+                                    "chat stream repeated an authenticated operator event",
                                 ));
                             }
                             let new_notices = parsed.notices.to_vec();
@@ -13443,7 +13443,7 @@ fn main() -> Result<()> {
                                         .any(|notice| delivered_notice_ids.contains(&notice.id))
                                     {
                                         break Some(std::io::Error::other(
-                                            "Buddy chat repeated an authenticated background notice",
+                                            "Buddy chat repeated an authenticated operator event",
                                         ));
                                     }
                                     let new_notices = parsed.notices.to_vec();
@@ -13806,14 +13806,21 @@ fn main() -> Result<()> {
 /// resolved or created: the probe validates only the shipped display stack and
 /// must never mutate operator configuration. `Window::run` shows the real
 /// native window; the bounded timer then waits until winit exposes that native
-/// handle. A successful exit therefore proves construction and real event-loop
-/// readiness instead of merely parsing the Slint document.
-fn run_runtime_probe() -> Result<()> {
+/// handle. When requested, the probe also creates the real platform tray and
+/// keeps its handle alive for a bounded registration window so the external
+/// release watcher can prove the D-Bus handshake. A successful exit therefore
+/// proves construction and real event-loop readiness instead of merely parsing
+/// the Slint document.
+fn run_runtime_probe(require_tray: bool) -> Result<()> {
     use slint::winit_030::WinitWindowAccessor;
 
     let window = MainWindow::new().context("construct GUI runtime-probe window")?;
     let ready = std::rc::Rc::new(std::cell::Cell::new(false));
     let observed_ready = ready.clone();
+    let tray_ready = std::rc::Rc::new(std::cell::Cell::new(!require_tray));
+    let observed_tray_ready = tray_ready.clone();
+    let tray_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let observed_tray_slot = tray_slot.clone();
     let ticks = std::rc::Rc::new(std::cell::Cell::new(0_u16));
     let observed_ticks = ticks.clone();
     let weak = window.as_weak();
@@ -13822,12 +13829,28 @@ fn run_runtime_probe() -> Result<()> {
         slint::TimerMode::Repeated,
         std::time::Duration::from_millis(10),
         move || {
+            if observed_ready.get() {
+                let next_tick = observed_ticks.get().saturating_add(1);
+                observed_ticks.set(next_tick);
+                if next_tick >= 100 {
+                    let _ = slint::quit_event_loop();
+                }
+                return;
+            }
             if let Some(window) = weak.upgrade()
                 && window.window().with_winit_window(|_| ()).is_some()
             {
+                if require_tray {
+                    let tray = tray::setup(&window);
+                    observed_tray_ready.set(tray.is_some());
+                    *observed_tray_slot.borrow_mut() = tray;
+                }
                 observed_ready.set(true);
+                observed_ticks.set(0);
                 let _ = window.hide();
-                let _ = slint::quit_event_loop();
+                if !require_tray || !observed_tray_ready.get() {
+                    let _ = slint::quit_event_loop();
+                }
                 return;
             }
             let next_tick = observed_ticks.get().saturating_add(1);
@@ -13845,7 +13868,17 @@ fn run_runtime_probe() -> Result<()> {
             ticks.get()
         );
     }
-    println!("NEOTH GUI runtime probe: ready");
+    if !tray_ready.get() {
+        anyhow::bail!(
+            "GUI runtime probe observed a native window, but the required platform tray failed to register"
+        );
+    }
+    drop(tray_slot);
+    if require_tray {
+        println!("NEOTH GUI runtime probe: ready; platform tray registered");
+    } else {
+        println!("NEOTH GUI runtime probe: ready");
+    }
     Ok(())
 }
 
@@ -18236,15 +18269,16 @@ fn insert_stream_notices(
     notices: &[StreamNotice],
 ) -> usize {
     let request_id_wire = request_id.as_wire();
-    let mut insertion_index = rows
+    let mut background_insertion_index = rows
         .iter()
         .position(|row| row.request_id.as_str() == request_id_wire.as_str())
         .unwrap_or(rows.len());
+    let mut turn_event_insertion_index = rows
+        .iter()
+        .rposition(|row| row.request_id.as_str() == request_id_wire.as_str())
+        .map_or(rows.len(), |index| index.saturating_add(1));
     let mut inserted = 0;
     for notice in notices {
-        if notice.kind != "background_result" {
-            continue;
-        }
         let notice_request_id = format!("notice:{}:{}", notice.kind, notice.id);
         if rows
             .iter()
@@ -18252,15 +18286,41 @@ fn insert_stream_notices(
         {
             continue;
         }
-        let text = if notice.text.trim().is_empty() {
-            "[btw] Background task completed without output.".to_string()
-        } else {
-            format!("[btw] {}", notice.text)
+        let (role, text, insertion_index, is_background) = match notice.kind.as_str() {
+            "background_result" => (
+                "assistant",
+                if notice.text.trim().is_empty() {
+                    "[btw] Background task completed without output.".to_string()
+                } else {
+                    format!("[btw] {}", notice.text)
+                },
+                background_insertion_index,
+                true,
+            ),
+            "review_result" => (
+                "assistant",
+                format!("[review]\n{}", notice.text),
+                turn_event_insertion_index,
+                false,
+            ),
+            "operator_notice" => (
+                "assistant",
+                format!("[notice]\n{}", notice.text),
+                turn_event_insertion_index,
+                false,
+            ),
+            "finalization_error" => (
+                "error",
+                format!("Finalization failed: {}", notice.text),
+                turn_event_insertion_index,
+                false,
+            ),
+            _ => continue,
         };
         rows.insert(
             insertion_index,
             ChatMessage {
-                role: "assistant".into(),
+                role: role.into(),
                 text: text.into(),
                 timestamp: notice
                     .timestamp
@@ -18272,7 +18332,12 @@ fn insert_stream_notices(
                 ..Default::default()
             },
         );
-        insertion_index += 1;
+        if is_background {
+            background_insertion_index += 1;
+            turn_event_insertion_index += 1;
+        } else {
+            turn_event_insertion_index += 1;
+        }
         inserted += 1;
     }
     inserted
@@ -20557,6 +20622,40 @@ fn new_stream_control_token() -> std::result::Result<zeroize::Zeroizing<String>,
     Ok(zeroize::Zeroizing::new(hex::encode(control_nonce.as_ref())))
 }
 
+const CHAT_STREAM_PROTOCOL_VERSION: u64 = 2;
+
+fn chat_stream_request_id(control_token: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-chat-stream-request-v2\0");
+    digest.update(control_token.as_bytes());
+    hex::encode(digest.finalize())
+}
+
+fn chat_stream_content_hash(text: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+fn chat_stream_finalization_receipt(
+    request_id: &str,
+    chunk_count: u64,
+    content_hash: &str,
+) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-chat-stream-finalization-v2\0");
+    digest.update(request_id.as_bytes());
+    digest.update(b"\0");
+    digest.update(chunk_count.to_le_bytes());
+    digest.update(b"\0");
+    digest.update(content_hash.as_bytes());
+    hex::encode(digest.finalize())
+}
+
 /// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
 /// `neoth chat --stream` into `(reply_text, done)`. The CLI streams raw reply
 /// deltas, emits an authenticated `provider_done` boundary before post-reply
@@ -20606,6 +20705,32 @@ struct StreamNotice {
 enum StreamNoticeFrame {
     NotNotice,
     Valid(StreamNotice),
+    InvalidAuthenticated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderDeltaFrame {
+    sequence: u64,
+    text: String,
+}
+
+enum ParsedProviderDeltaFrame {
+    NotDelta,
+    Valid(ProviderDeltaFrame),
+    InvalidAuthenticated,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProviderDoneFrame {
+    protocol_version: u64,
+    request_id: String,
+    count: u64,
+    content_hash: String,
+}
+
+enum ParsedProviderDoneFrame {
+    NotDone,
+    Valid(ProviderDoneFrame),
     InvalidAuthenticated,
 }
 
@@ -20729,7 +20854,11 @@ fn parse_chat_stream_protocol_with_mode(
     let mut notices = Vec::new();
     let mut completed_notice_ranges = Vec::new();
     let mut notice_ids = std::collections::HashSet::new();
+    let mut provider_done: Option<ProviderDoneFrame> = None;
     let mut provider_done_count = 0u8;
+    let mut provider_delta_count = 0u64;
+    let mut provider_delta_text = String::new();
+    let mut saw_untyped_reply = false;
     let mut provider_reply_open = true;
     let mut protocol_valid = true;
     let mut segment_start = 0usize;
@@ -20741,6 +20870,15 @@ fn parse_chat_stream_protocol_with_mode(
             continue;
         }
         let line = segment.trim_end_matches(['\r', '\n']).trim();
+        if is_authenticated_done_candidate(line, expected_control_token) {
+            // The one valid terminal frame is removed from this prefix by
+            // `final_stream_sentinel`. Any authenticated `done` that remains
+            // here is therefore duplicated, misplaced, or shadowed by a later
+            // terminal frame and invalidates the whole completion contract.
+            protocol_valid = false;
+            segment_start = segment_end;
+            continue;
+        }
         match authenticated_stream_notice(line, expected_control_token) {
             StreamNoticeFrame::Valid(notice) => {
                 if !notice_ids.insert(notice.id.clone()) {
@@ -20753,15 +20891,66 @@ fn parse_chat_stream_protocol_with_mode(
                 protocol_valid = false;
             }
             StreamNoticeFrame::NotNotice => {
-                if is_authenticated_provider_done(line, expected_control_token) {
-                    provider_done_count = provider_done_count.saturating_add(1);
-                    provider_reply_open = false;
-                } else if provider_reply_open {
-                    visible.push_str(segment);
+                match authenticated_provider_delta(line, expected_control_token) {
+                    ParsedProviderDeltaFrame::Valid(delta) => {
+                        if !provider_reply_open
+                            || delta.sequence != provider_delta_count.saturating_add(1)
+                        {
+                            protocol_valid = false;
+                        } else {
+                            provider_delta_count = delta.sequence;
+                            provider_delta_text.push_str(&delta.text);
+                            visible.push_str(&delta.text);
+                        }
+                    }
+                    ParsedProviderDeltaFrame::InvalidAuthenticated => {
+                        protocol_valid = false;
+                    }
+                    ParsedProviderDeltaFrame::NotDelta => {
+                        match authenticated_provider_done(line, expected_control_token) {
+                            ParsedProviderDoneFrame::Valid(boundary) => {
+                                provider_done_count = provider_done_count.saturating_add(1);
+                                if provider_done.replace(boundary).is_some() {
+                                    protocol_valid = false;
+                                }
+                                provider_reply_open = false;
+                            }
+                            ParsedProviderDoneFrame::InvalidAuthenticated => {
+                                protocol_valid = false;
+                            }
+                            ParsedProviderDoneFrame::NotDone if provider_reply_open => {
+                                if !segment.trim().is_empty() {
+                                    saw_untyped_reply = true;
+                                }
+                                visible.push_str(segment);
+                            }
+                            ParsedProviderDoneFrame::NotDone => {}
+                        }
+                    }
                 }
             }
         }
         segment_start = segment_end;
+    }
+    if let Some(boundary) = provider_done.as_ref() {
+        if boundary.protocol_version == CHAT_STREAM_PROTOCOL_VERSION {
+            protocol_valid &= !saw_untyped_reply
+                && provider_delta_count == boundary.count
+                && chat_stream_content_hash(&provider_delta_text) == boundary.content_hash;
+        } else {
+            // Version 1 is retained only for local preflight/recall actions,
+            // which do not own the stdout body and therefore cannot provide
+            // typed provider deltas or a content hash.
+            protocol_valid &= boundary.protocol_version == 1
+                && sentinel
+                    .and_then(|frame| frame.get("model"))
+                    .and_then(|value| value.as_str())
+                    == Some("local");
+        }
+    }
+    if let (Some(boundary), Some(done)) = (provider_done.as_ref(), sentinel) {
+        protocol_valid &=
+            terminal_matches_provider_boundary(done, expected_control_token, boundary);
     }
     ParsedChatStream {
         text: visible.trim_end().to_string(),
@@ -20800,6 +20989,16 @@ fn authenticated_stream_notice(
     if frame.get("control_token").and_then(|value| value.as_str()) != Some(expected_control_token) {
         return StreamNoticeFrame::NotNotice;
     }
+    let expected_request_id = chat_stream_request_id(expected_control_token);
+    if frame
+        .get("protocol_version")
+        .and_then(|value| value.as_u64())
+        != Some(CHAT_STREAM_PROTOCOL_VERSION)
+        || frame.get("request_id").and_then(|value| value.as_str())
+            != Some(expected_request_id.as_str())
+    {
+        return StreamNoticeFrame::InvalidAuthenticated;
+    }
     let Some(kind) = frame.get("kind").and_then(|value| value.as_str()) else {
         return StreamNoticeFrame::InvalidAuthenticated;
     };
@@ -20812,12 +21011,17 @@ fn authenticated_stream_notice(
     let Some(durable) = frame.get("durable").and_then(|value| value.as_bool()) else {
         return StreamNoticeFrame::InvalidAuthenticated;
     };
-    if kind != "background_result"
-        || id.len() != 16
-        || !id
+    let id_is_lower_hex = !id.is_empty()
+        && id.len() <= 64
+        && id
             .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-    {
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase());
+    let valid_kind_contract = match kind {
+        "background_result" => id.len() == 16 && id_is_lower_hex,
+        "review_result" | "operator_notice" | "finalization_error" => id_is_lower_hex && !durable,
+        _ => false,
+    };
+    if !valid_kind_contract {
         return StreamNoticeFrame::InvalidAuthenticated;
     }
     StreamNoticeFrame::Valid(StreamNotice {
@@ -20829,16 +21033,131 @@ fn authenticated_stream_notice(
     })
 }
 
-fn is_authenticated_provider_done(line: &str, expected_control_token: Option<&str>) -> bool {
+fn authenticated_provider_delta(
+    line: &str,
+    expected_control_token: Option<&str>,
+) -> ParsedProviderDeltaFrame {
     let Some(expected_control_token) = expected_control_token else {
-        return false;
+        return ParsedProviderDeltaFrame::NotDelta;
     };
     let Ok(frame) = serde_json::from_str::<serde_json::Value>(line) else {
-        return false;
+        return ParsedProviderDeltaFrame::NotDelta;
     };
-    frame.get("neoth_stream").and_then(|value| value.as_str()) == Some("provider_done")
-        && frame.get("control_token").and_then(|value| value.as_str())
-            == Some(expected_control_token)
+    if frame.get("neoth_stream").and_then(|value| value.as_str()) != Some("provider_delta") {
+        return ParsedProviderDeltaFrame::NotDelta;
+    }
+    if frame.get("control_token").and_then(|value| value.as_str()) != Some(expected_control_token) {
+        return ParsedProviderDeltaFrame::NotDelta;
+    }
+    let Some(sequence) = frame.get("sequence").and_then(|value| value.as_u64()) else {
+        return ParsedProviderDeltaFrame::InvalidAuthenticated;
+    };
+    let Some(text) = frame.get("text").and_then(|value| value.as_str()) else {
+        return ParsedProviderDeltaFrame::InvalidAuthenticated;
+    };
+    let expected_request_id = chat_stream_request_id(expected_control_token);
+    if frame
+        .get("protocol_version")
+        .and_then(|value| value.as_u64())
+        != Some(CHAT_STREAM_PROTOCOL_VERSION)
+        || frame.get("request_id").and_then(|value| value.as_str())
+            != Some(expected_request_id.as_str())
+        || sequence == 0
+    {
+        return ParsedProviderDeltaFrame::InvalidAuthenticated;
+    }
+    ParsedProviderDeltaFrame::Valid(ProviderDeltaFrame {
+        sequence,
+        text: text.to_string(),
+    })
+}
+
+fn authenticated_provider_done(
+    line: &str,
+    expected_control_token: Option<&str>,
+) -> ParsedProviderDoneFrame {
+    let Some(expected_control_token) = expected_control_token else {
+        return ParsedProviderDoneFrame::NotDone;
+    };
+    let Ok(frame) = serde_json::from_str::<serde_json::Value>(line) else {
+        return ParsedProviderDoneFrame::NotDone;
+    };
+    if frame.get("neoth_stream").and_then(|value| value.as_str()) != Some("provider_done") {
+        return ParsedProviderDoneFrame::NotDone;
+    }
+    if frame.get("control_token").and_then(|value| value.as_str()) != Some(expected_control_token) {
+        return ParsedProviderDoneFrame::NotDone;
+    }
+    let protocol_version = frame
+        .get("protocol_version")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let request_id = frame
+        .get("request_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let Some(count) = frame.get("count").and_then(|value| value.as_u64()) else {
+        return ParsedProviderDoneFrame::InvalidAuthenticated;
+    };
+    let content_hash = frame
+        .get("content_hash")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if protocol_version == CHAT_STREAM_PROTOCOL_VERSION {
+        if request_id != chat_stream_request_id(expected_control_token)
+            || content_hash.len() != 64
+            || !content_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return ParsedProviderDoneFrame::InvalidAuthenticated;
+        }
+    } else if protocol_version != 1 {
+        return ParsedProviderDoneFrame::InvalidAuthenticated;
+    }
+    ParsedProviderDoneFrame::Valid(ProviderDoneFrame {
+        protocol_version,
+        request_id: request_id.to_string(),
+        count,
+        content_hash: content_hash.to_string(),
+    })
+}
+
+fn terminal_matches_provider_boundary(
+    done: &serde_json::Value,
+    expected_control_token: Option<&str>,
+    boundary: &ProviderDoneFrame,
+) -> bool {
+    let Some(expected_control_token) = expected_control_token else {
+        return true;
+    };
+    let done_version = done
+        .get("protocol_version")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    if done_version != boundary.protocol_version
+        || done.get("count").and_then(|value| value.as_u64()) != Some(boundary.count)
+    {
+        return false;
+    }
+    if done_version == 1 {
+        return done.get("model").and_then(|value| value.as_str()) == Some("local");
+    }
+    let expected_request_id = chat_stream_request_id(expected_control_token);
+    if boundary.request_id != expected_request_id
+        || done.get("request_id").and_then(|value| value.as_str())
+            != Some(expected_request_id.as_str())
+        || done.get("content_hash").and_then(|value| value.as_str())
+            != Some(boundary.content_hash.as_str())
+    {
+        return false;
+    }
+    let expected_receipt = chat_stream_finalization_receipt(
+        &expected_request_id,
+        boundary.count,
+        &boundary.content_hash,
+    );
+    done.get("finalization_receipt")
+        .and_then(|value| value.as_str())
+        == Some(expected_receipt.as_str())
 }
 
 /// Accept a completion marker only when it is valid JSON on the final
@@ -20868,6 +21187,18 @@ fn final_stream_sentinel(
         return None;
     }
     Some((pos, sentinel))
+}
+
+fn is_authenticated_done_candidate(line: &str, expected_control_token: Option<&str>) -> bool {
+    let Some(expected_control_token) = expected_control_token else {
+        return false;
+    };
+    let Ok(frame) = serde_json::from_str::<serde_json::Value>(line) else {
+        return false;
+    };
+    frame.get("neoth_stream").and_then(|value| value.as_str()) == Some("done")
+        && frame.get("control_token").and_then(|value| value.as_str())
+            == Some(expected_control_token)
 }
 
 /// ODY-12 UI-control targets — must match `main.slint`'s nav values.
@@ -20924,6 +21255,12 @@ fn parse_stream_links_with_expected_token(
     raw: &str,
     expected_control_token: Option<&str>,
 ) -> Vec<(String, String, String)> {
+    if expected_control_token.is_some() {
+        let parsed = parse_chat_stream_protocol(raw, expected_control_token);
+        if !parsed.done || !parsed.protocol_valid {
+            return Vec::new();
+        }
+    }
     let Some((_, sentinel)) = final_stream_sentinel(raw, expected_control_token) else {
         return Vec::new();
     };
@@ -21045,6 +21382,48 @@ pub const PRESET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::fr
 #[cfg(test)]
 mod chat_subprocess_tests {
     use super::*;
+
+    fn provider_delta_frame(token: &str, sequence: u64, text: &str) -> String {
+        serde_json::json!({
+            "neoth_stream": "provider_delta",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id(token),
+            "control_token": token,
+            "sequence": sequence,
+            "text": text,
+        })
+        .to_string()
+    }
+
+    fn provider_done_frame(token: &str, count: u64, text: &str) -> String {
+        serde_json::json!({
+            "neoth_stream": "provider_done",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id(token),
+            "control_token": token,
+            "count": count,
+            "content_hash": chat_stream_content_hash(text),
+        })
+        .to_string()
+    }
+
+    fn done_frame(token: &str, count: u64, text: &str) -> serde_json::Value {
+        let request_id = chat_stream_request_id(token);
+        let content_hash = chat_stream_content_hash(text);
+        serde_json::json!({
+            "neoth_stream": "done",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": request_id,
+            "control_token": token,
+            "count": count,
+            "content_hash": content_hash,
+            "finalization_receipt": chat_stream_finalization_receipt(
+                &chat_stream_request_id(token),
+                count,
+                &chat_stream_content_hash(text),
+            ),
+        })
+    }
 
     #[test]
     fn segment_single_paragraph_is_one_bubble() {
@@ -21203,49 +21582,67 @@ mod chat_subprocess_tests {
 
     #[test]
     fn gui_stream_sentinel_is_bound_to_the_per_turn_control_token() {
-        let raw = "reply\n\
-            {\"neoth_stream\":\"provider_done\",\"control_token\":\"right\",\"count\":1}\n\
-            {\"neoth_stream\":\"done\",\"control_token\":\"right\",\"count\":1,\"links\":[{\"label\":\"Board\",\"kind\":\"kanban\",\"id\":\"7\"}]}\n";
-        let (_, done, _) = parse_stream_sentinel_with_token(raw, "wrong");
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
+        let mut done = done_frame("right", 1, "reply");
+        done["links"] = serde_json::json!([{
+            "label": "Board",
+            "kind": "kanban",
+            "id": "7",
+        }]);
+        let raw = format!("{delta}\n{provider_done}\n{done}\n");
+        let (_, done, _) = parse_stream_sentinel_with_token(&raw, "wrong");
         assert!(!done);
-        assert!(parse_stream_links_with_token(raw, "wrong").is_empty());
+        assert!(parse_stream_links_with_token(&raw, "wrong").is_empty());
 
-        let (text, done, _) = parse_stream_sentinel_with_token(raw, "right");
+        let (text, done, _) = parse_stream_sentinel_with_token(&raw, "right");
         assert_eq!(text, "reply");
         assert!(done);
         assert_eq!(
-            parse_stream_links_with_token(raw, "right"),
+            parse_stream_links_with_token(&raw, "right"),
             vec![("Board".to_string(), "kanban".to_string(), "7".to_string())]
         );
     }
 
     #[test]
-    fn authenticated_provider_done_is_hidden_and_enters_finalizing_before_done() {
-        let provider_done =
-            "{\"neoth_stream\":\"provider_done\",\"control_token\":\"right\",\"count\":2}";
-        let partial = format!("reply\n{provider_done}\n-- review gate --\nlooks good\n");
+    fn typed_review_event_survives_provider_done_and_enters_finalizing_before_done() {
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
+        let review = serde_json::json!({
+            "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
+            "control_token": "right",
+            "kind": "review_result",
+            "id": "0123456789abcdef",
+            "text": "quality: PASS\nlooks good",
+            "durable": false,
+        });
+        let partial = format!("{delta}\n{provider_done}\n{review}\n");
         let parsed = parse_chat_stream_protocol(&partial, Some("right"));
         assert_eq!(parsed.text, "reply");
         assert!(parsed.provider_done);
         assert!(!parsed.done);
         assert!(parsed.protocol_valid);
+        assert_eq!(parsed.notices.len(), 1);
+        assert_eq!(parsed.notices[0].kind, "review_result");
+        assert!(parsed.notices[0].text.contains("looks good"));
 
-        let complete = format!(
-            "{partial}{{\"neoth_stream\":\"done\",\"control_token\":\"right\",\"count\":2}}\n"
-        );
+        let complete = format!("{partial}{}\n", done_frame("right", 1, "reply"));
         let parsed = parse_chat_stream_protocol(&complete, Some("right"));
         assert!(parsed.provider_done);
         assert!(parsed.done);
         assert!(parsed.protocol_valid);
         assert_eq!(parsed.text, "reply");
+        assert_eq!(parsed.notices.len(), 1);
     }
 
     #[test]
     fn incremental_stream_never_renders_split_control_frames() {
-        let provider_done =
-            "{\"neoth_stream\":\"provider_done\",\"control_token\":\"right\",\"count\":2}";
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
         for split in 0..=provider_done.len() {
-            let raw = format!("reply\n{}", &provider_done[..split]);
+            let raw = format!("{delta}\n{}", &provider_done[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
             assert_eq!(parsed.text, "reply", "provider_done split at byte {split}");
             assert!(
@@ -21255,11 +21652,19 @@ mod chat_subprocess_tests {
             assert!(parsed.notices.is_empty());
         }
 
-        let notice = "{\"neoth_stream\":\"notice\",\"control_token\":\"right\",\
-            \"kind\":\"background_result\",\"id\":\"0123456789abcdef\",\
-            \"text\":\"finished\",\"durable\":true}";
+        let notice = serde_json::json!({
+            "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
+            "control_token": "right",
+            "kind": "background_result",
+            "id": "0123456789abcdef",
+            "text": "finished",
+            "durable": true,
+        })
+        .to_string();
         for split in 0..=notice.len() {
-            let raw = format!("reply\n{}", &notice[..split]);
+            let raw = format!("{delta}\n{}", &notice[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
             assert_eq!(parsed.text, "reply", "notice split at byte {split}");
             assert!(
@@ -21269,8 +21674,8 @@ mod chat_subprocess_tests {
             assert!(!parsed.provider_done);
         }
 
-        let prefix = format!("reply\n{provider_done}\n");
-        let done = "{\"neoth_stream\":\"done\",\"control_token\":\"right\",\"count\":2}";
+        let prefix = format!("{delta}\n{provider_done}\n");
+        let done = done_frame("right", 1, "reply").to_string();
         for split in 0..=done.len() {
             let raw = format!("{prefix}{}", &done[..split]);
             let parsed = parse_chat_stream_protocol_incremental(&raw, Some("right"));
@@ -21295,8 +21700,13 @@ mod chat_subprocess_tests {
         const MAX_BACKGROUND_RESULT_BYTES: usize = 16 * 1024 * 1024;
         let mut frame = Vec::with_capacity(MAX_BACKGROUND_RESULT_BYTES + 256);
         frame.extend_from_slice(
-            b"{\"neoth_stream\":\"notice\",\"control_token\":\"right\",\
-              \"kind\":\"background_result\",\"id\":\"0123456789abcdef\",\"text\":\"",
+            format!(
+                "{{\"neoth_stream\":\"notice\",\"protocol_version\":2,\
+                  \"request_id\":\"{}\",\"control_token\":\"right\",\
+                  \"kind\":\"background_result\",\"id\":\"0123456789abcdef\",\"text\":\"",
+                chat_stream_request_id("right")
+            )
+            .as_bytes(),
         );
         frame.resize(frame.len() + MAX_BACKGROUND_RESULT_BYTES, b'x');
         frame.extend_from_slice(b"\",\"durable\":true}\n");
@@ -21362,12 +21772,16 @@ mod chat_subprocess_tests {
 
     #[test]
     fn authenticated_done_without_provider_boundary_fails_closed() {
-        let raw = "reply\n{\"neoth_stream\":\"done\",\"control_token\":\"right\",\"count\":1}\n";
-        let parsed = parse_chat_stream_protocol(raw, Some("right"));
+        let raw = format!(
+            "{}\n{}\n",
+            provider_delta_frame("right", 1, "reply"),
+            done_frame("right", 1, "reply")
+        );
+        let parsed = parse_chat_stream_protocol(&raw, Some("right"));
         assert!(parsed.done);
         assert!(!parsed.provider_done);
         assert!(!parsed.protocol_valid);
-        assert!(!parse_stream_sentinel_with_token(raw, "right").1);
+        assert!(!parse_stream_sentinel_with_token(&raw, "right").1);
     }
 
     #[test]
@@ -21378,19 +21792,84 @@ mod chat_subprocess_tests {
         assert!(!parsed.provider_done);
         assert!(parsed.text.contains("provider_done"));
 
-        let duplicate = "reply\n\
-            {\"neoth_stream\":\"provider_done\",\"control_token\":\"right\",\"count\":1}\n\
-            {\"neoth_stream\":\"provider_done\",\"control_token\":\"right\",\"count\":1}\n";
-        let parsed = parse_chat_stream_protocol(duplicate, Some("right"));
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
+        let duplicate = format!("{delta}\n{provider_done}\n{provider_done}\n");
+        let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
         assert!(!parsed.provider_done);
         assert!(!parsed.protocol_valid);
         assert_eq!(parsed.text, "reply");
     }
 
     #[test]
+    fn provider_completion_binds_version_request_sequence_count_hash_and_receipt() {
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
+        let done = done_frame("right", 1, "reply");
+        let valid = format!("{delta}\n{provider_done}\n{done}\n");
+        assert!(
+            parse_chat_stream_protocol(&valid, Some("right")).protocol_valid,
+            "control fixture must prove the complete v2 contract"
+        );
+
+        let mut bad_delta: serde_json::Value = serde_json::from_str(&delta).unwrap();
+        bad_delta["sequence"] = serde_json::json!(2);
+        let bad_sequence = format!("{bad_delta}\n{provider_done}\n{done}\n");
+        assert!(!parse_chat_stream_protocol(&bad_sequence, Some("right")).protocol_valid);
+
+        let mut bad_boundary: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
+        bad_boundary["count"] = serde_json::json!(9);
+        let bad_count = format!("{delta}\n{bad_boundary}\n{done}\n");
+        assert!(!parse_chat_stream_protocol(&bad_count, Some("right")).protocol_valid);
+
+        let mut bad_hash: serde_json::Value = serde_json::from_str(&provider_done).unwrap();
+        bad_hash["content_hash"] = serde_json::json!("0".repeat(64));
+        let bad_hash = format!("{delta}\n{bad_hash}\n{done}\n");
+        assert!(!parse_chat_stream_protocol(&bad_hash, Some("right")).protocol_valid);
+
+        let mut bad_done = done.clone();
+        bad_done["protocol_version"] = serde_json::json!(1);
+        let bad_version = format!("{delta}\n{provider_done}\n{bad_done}\n");
+        assert!(!parse_chat_stream_protocol(&bad_version, Some("right")).protocol_valid);
+
+        let mut bad_receipt = done;
+        bad_receipt["finalization_receipt"] = serde_json::json!("0".repeat(64));
+        let bad_receipt = format!("{delta}\n{provider_done}\n{bad_receipt}\n");
+        assert!(!parse_chat_stream_protocol(&bad_receipt, Some("right")).protocol_valid);
+    }
+
+    #[test]
+    fn duplicate_or_shadowed_authenticated_done_frames_fail_closed() {
+        let delta = provider_delta_frame("right", 1, "reply");
+        let provider_done = provider_done_frame("right", 1, "reply");
+        let valid_done = done_frame("right", 1, "reply");
+        let duplicate = format!("{delta}\n{provider_done}\n{valid_done}\n{valid_done}\n");
+        let parsed = parse_chat_stream_protocol(&duplicate, Some("right"));
+        assert!(parsed.done);
+        assert!(!parsed.protocol_valid);
+
+        let mut malformed_first = valid_done.clone();
+        malformed_first["count"] = serde_json::json!(999);
+        let shadowed = format!("{delta}\n{provider_done}\n{malformed_first}\n{valid_done}\n");
+        let parsed = parse_chat_stream_protocol(&shadowed, Some("right"));
+        assert!(parsed.done);
+        assert!(!parsed.protocol_valid);
+    }
+
+    #[test]
+    fn stream_finalization_receipt_matches_the_cli_wire_fixture() {
+        assert_eq!(
+            chat_stream_finalization_receipt("fixture-request-v2", 7, "fixture-content-hash"),
+            "f29748caef33c551f3324f3f481e7afcd17de8c4452ca97e1bcc772d0c66c98f"
+        );
+    }
+
+    #[test]
     fn authenticated_background_notice_is_hidden_and_preserves_multiline_text() {
         let notice = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
             "control_token": "right",
             "kind": "background_result",
             "id": "0123456789abcdef",
@@ -21418,6 +21897,8 @@ mod chat_subprocess_tests {
     fn background_notice_requires_token_and_unique_valid_id() {
         let wrong_token = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("wrong"),
             "control_token": "wrong",
             "kind": "background_result",
             "id": "0123456789abcdef",
@@ -21431,6 +21912,8 @@ mod chat_subprocess_tests {
 
         let valid = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
             "control_token": "right",
             "kind": "background_result",
             "id": "0123456789abcdef",
@@ -21445,6 +21928,8 @@ mod chat_subprocess_tests {
 
         let malformed = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
             "control_token": "right",
             "kind": "background_result",
             "id": "not-a-valid-id",
@@ -21458,6 +21943,8 @@ mod chat_subprocess_tests {
 
         let no_durable_receipt = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
             "control_token": "right",
             "kind": "background_result",
             "id": "0123456789abcdef",
@@ -21471,6 +21958,8 @@ mod chat_subprocess_tests {
 
         let recoverable = serde_json::json!({
             "neoth_stream": "notice",
+            "protocol_version": CHAT_STREAM_PROTOCOL_VERSION,
+            "request_id": chat_stream_request_id("right"),
             "control_token": "right",
             "kind": "background_result",
             "id": "0123456789abcdef",
@@ -21525,6 +22014,51 @@ mod chat_subprocess_tests {
         assert_eq!(rows[2].request_id.as_str(), "42");
         assert_eq!(insert_stream_notices(&mut rows, request_id, &notices), 0);
         assert_eq!(rows.len(), 4);
+    }
+
+    #[test]
+    fn review_and_finalization_events_materialize_after_the_same_turn() {
+        let request_id = ChatStreamRequestId::parse_wire("42").unwrap();
+        let mut rows = vec![
+            ChatMessage {
+                role: "operator".into(),
+                text: "question".into(),
+                request_id: request_id.as_wire().into(),
+                ..Default::default()
+            },
+            ChatMessage {
+                role: "assistant".into(),
+                text: "reply".into(),
+                request_id: request_id.as_wire().into(),
+                ..Default::default()
+            },
+        ];
+        let notices = vec![
+            StreamNotice {
+                id: "0123456789abcdef".to_string(),
+                kind: "review_result".to_string(),
+                text: "quality: PASS".to_string(),
+                durable: false,
+                timestamp: None,
+            },
+            StreamNotice {
+                id: "fedcba9876543210".to_string(),
+                kind: "finalization_error".to_string(),
+                text: "WAL drain failed".to_string(),
+                durable: false,
+                timestamp: None,
+            },
+        ];
+
+        assert_eq!(insert_stream_notices(&mut rows, request_id, &notices), 2);
+        assert_eq!(rows[2].role.as_str(), "assistant");
+        assert_eq!(rows[2].text.as_str(), "[review]\nquality: PASS");
+        assert_eq!(rows[3].role.as_str(), "error");
+        assert_eq!(
+            rows[3].text.as_str(),
+            "Finalization failed: WAL drain failed"
+        );
+        assert_eq!(insert_stream_notices(&mut rows, request_id, &notices), 0);
     }
 
     #[test]
@@ -24632,14 +25166,25 @@ mod interface_preference_tests {
 
     #[test]
     fn product_launcher_and_relative_home_contracts_are_explicit() {
-        assert!(runtime_probe_requested(&[OsString::from(
-            "--runtime-probe"
-        )]));
-        assert!(!runtime_probe_requested(&[]));
-        assert!(!runtime_probe_requested(&[
-            OsString::from("--runtime-probe"),
-            OsString::from("--product-launcher"),
-        ]));
+        assert_eq!(
+            runtime_probe_mode(&[OsString::from("--runtime-probe")]),
+            Some(false)
+        );
+        assert_eq!(
+            runtime_probe_mode(&[
+                OsString::from("--runtime-probe"),
+                OsString::from("--require-tray"),
+            ]),
+            Some(true)
+        );
+        assert_eq!(runtime_probe_mode(&[]), None);
+        assert_eq!(
+            runtime_probe_mode(&[
+                OsString::from("--runtime-probe"),
+                OsString::from("--product-launcher"),
+            ]),
+            None
+        );
         assert!(!product_launcher_requested(Vec::<OsString>::new()).unwrap());
         assert!(product_launcher_requested([OsString::from("--product-launcher")]).unwrap());
         assert!(product_launcher_requested([OsString::from("--unknown")]).is_err());
@@ -25165,8 +25710,12 @@ fn resolve_neoth_home(
 
 const PRODUCT_LAUNCHER_ENV: &str = "NEOTH_PRODUCT_LAUNCHER";
 
-fn runtime_probe_requested(args: &[std::ffi::OsString]) -> bool {
-    matches!(args, [argument] if argument == "--runtime-probe")
+fn runtime_probe_mode(args: &[std::ffi::OsString]) -> Option<bool> {
+    match args {
+        [probe] if probe == "--runtime-probe" => Some(false),
+        [probe, tray] if probe == "--runtime-probe" && tray == "--require-tray" => Some(true),
+        _ => None,
+    }
 }
 
 fn product_launcher_mode(

@@ -2861,6 +2861,10 @@ struct ProviderDispatchResult {
     /// streaming overwrites this with the measured delta count; composed and
     /// direct routes expose their complete reply as one logical chunk.
     stream_chunk_count: u32,
+    /// True only when the exact user-visible reply has already crossed stdout.
+    /// Post-provider hooks force this false so Block/Replace runs before any
+    /// provider bytes can reach the operator.
+    stream_output_emitted: bool,
 }
 
 struct FramedProviderDispatch {
@@ -2869,6 +2873,12 @@ struct FramedProviderDispatch {
     /// Emission is deliberately deferred until every post-reply pipeline has
     /// succeeded so this remains the final non-empty stdout line.
     stream_done_line: Option<String>,
+    /// A configured PostProviderCall hook owns the content gate. In that case
+    /// the accepted/replaced body plus both completion frames are emitted only
+    /// after the hook returns Continue.
+    stream_output_deferred: bool,
+    stream_limit_tokens: u32,
+    stream_elapsed_ms: u64,
 }
 
 impl ProviderDispatchResult {
@@ -2887,6 +2897,7 @@ impl ProviderDispatchResult {
             provider,
             model,
             stream_chunk_count,
+            stream_output_emitted: false,
         }
     }
 
@@ -2894,21 +2905,113 @@ impl ProviderDispatchResult {
         self.stream_chunk_count = stream_chunk_count;
         self
     }
+
+    fn with_stream_output_emitted(mut self) -> Self {
+        self.stream_output_emitted = true;
+        self
+    }
 }
 
-fn stream_provider_done_line(control_token: Option<&str>, chunk_count: u32) -> Option<String> {
+const CHAT_STREAM_PROTOCOL_VERSION: u8 = 2;
+
+fn stream_request_id(control_token: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-chat-stream-request-v2\0");
+    digest.update(control_token.as_bytes());
+    hex::encode(digest.finalize())
+}
+
+fn stream_content_hash(response_text: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    hex::encode(Sha256::digest(response_text.as_bytes()))
+}
+
+fn stream_finalization_receipt(request_id: &str, chunk_count: u32, content_hash: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+
+    let mut digest = Sha256::new();
+    digest.update(b"neoth-chat-stream-finalization-v2\0");
+    digest.update(request_id.as_bytes());
+    digest.update(b"\0");
+    digest.update(u64::from(chunk_count).to_le_bytes());
+    digest.update(b"\0");
+    digest.update(content_hash.as_bytes());
+    hex::encode(digest.finalize())
+}
+
+fn stream_provider_delta_line(
+    control_token: &str,
+    sequence: u32,
+    text: &str,
+) -> std::io::Result<String> {
+    #[derive(serde::Serialize)]
+    struct ProviderDeltaFrame<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
+        control_token: &'a str,
+        sequence: u32,
+        text: &'a str,
+    }
+
+    serde_json::to_string(&ProviderDeltaFrame {
+        neoth_stream: "provider_delta",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
+        control_token,
+        sequence,
+        text,
+    })
+    .map_err(std::io::Error::other)
+}
+
+fn write_provider_stream_delta(
+    mut output: impl std::io::Write,
+    control_token: Option<&str>,
+    sequence: u32,
+    text: &str,
+) -> std::io::Result<()> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    if let Some(control_token) = control_token {
+        writeln!(
+            output,
+            "{}",
+            stream_provider_delta_line(control_token, sequence, text)?
+        )?;
+    } else {
+        write!(output, "{text}")?;
+    }
+    output.flush()
+}
+
+fn stream_provider_done_line(
+    control_token: Option<&str>,
+    chunk_count: u32,
+    response_text: &str,
+) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ProviderDoneFrame<'a> {
         neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
         control_token: &'a str,
         count: u32,
+        content_hash: String,
     }
 
     let control_token = control_token?;
     serde_json::to_string(&ProviderDoneFrame {
         neoth_stream: "provider_done",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
         control_token,
         count: chunk_count,
+        content_hash: stream_content_hash(response_text),
     })
     .ok()
 }
@@ -2933,6 +3036,8 @@ fn write_authenticated_stream_notice(
     #[derive(serde::Serialize)]
     struct NoticeFrame<'a> {
         neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: String,
         control_token: &'a str,
         kind: &'a str,
         id: &'a str,
@@ -2942,6 +3047,8 @@ fn write_authenticated_stream_notice(
 
     let notice = serde_json::to_string(&NoticeFrame {
         neoth_stream: "notice",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id: stream_request_id(control_token),
         control_token,
         kind,
         id,
@@ -2963,12 +3070,25 @@ struct StreamDoneMetadata<'a> {
     response_text: &'a str,
 }
 
+struct PostReplyStreamPlan<'a> {
+    control_token: Option<&'a str>,
+    done_line: Option<String>,
+    output_deferred: bool,
+    provider_chunk_count: u32,
+    limit_tokens: u32,
+    elapsed_ms: u64,
+}
+
 fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
     #[derive(serde::Serialize)]
     struct DoneFrame<'a, T> {
         neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: Option<String>,
         control_token: Option<&'a str>,
         count: u32,
+        content_hash: String,
+        finalization_receipt: Option<String>,
         used_tokens: u32,
         limit_tokens: u32,
         input_tokens: u32,
@@ -2978,10 +3098,19 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
         links: T,
     }
 
+    let content_hash = stream_content_hash(metadata.response_text);
+    let request_id = metadata.control_token.map(stream_request_id);
+    let finalization_receipt = request_id.as_deref().map(|request_id| {
+        stream_finalization_receipt(request_id, metadata.chunk_count, &content_hash)
+    });
     serde_json::to_string(&DoneFrame {
         neoth_stream: "done",
+        protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
+        request_id,
         control_token: metadata.control_token,
         count: metadata.chunk_count,
+        content_hash,
+        finalization_receipt,
         used_tokens: metadata
             .input_tokens
             .unwrap_or(0)
@@ -3000,9 +3129,11 @@ fn write_provider_done_and_build_stream_done_line(
     mut output: impl std::io::Write,
     metadata: StreamDoneMetadata<'_>,
 ) -> std::io::Result<String> {
-    if let Some(provider_done_line) =
-        stream_provider_done_line(metadata.control_token, metadata.chunk_count)
-    {
+    if let Some(provider_done_line) = stream_provider_done_line(
+        metadata.control_token,
+        metadata.chunk_count,
+        metadata.response_text,
+    ) {
         write_stream_control_line(&mut output, &provider_done_line)?;
     }
     Ok(build_stream_done_line(metadata))
@@ -3017,9 +3148,10 @@ fn finalize_dispatch_stream_to(
     control_token: Option<&str>,
     limit_tokens: u32,
     elapsed_ms: u64,
+    stream_output_deferred: bool,
     dispatch: ProviderDispatchResult,
 ) -> std::io::Result<FramedProviderDispatch> {
-    let stream_done_line = if stream {
+    let stream_done_line = if stream && !stream_output_deferred {
         Some(write_provider_done_and_build_stream_done_line(
             &mut output,
             StreamDoneMetadata {
@@ -3039,6 +3171,9 @@ fn finalize_dispatch_stream_to(
     Ok(FramedProviderDispatch {
         dispatch,
         stream_done_line,
+        stream_output_deferred,
+        stream_limit_tokens: limit_tokens,
+        stream_elapsed_ms: elapsed_ms,
     })
 }
 
@@ -3061,19 +3196,57 @@ fn write_local_stream_completion_to(
     control_token: Option<&str>,
     chunk_count: u32,
 ) -> std::io::Result<()> {
-    let stream_done_line = write_provider_done_and_build_stream_done_line(
-        &mut output,
-        StreamDoneMetadata {
+    #[derive(serde::Serialize)]
+    struct LocalProviderDone<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: Option<String>,
+        control_token: Option<&'a str>,
+        count: u32,
+    }
+    #[derive(serde::Serialize)]
+    struct LocalDone<'a> {
+        neoth_stream: &'static str,
+        protocol_version: u8,
+        request_id: Option<String>,
+        control_token: Option<&'a str>,
+        count: u32,
+        used_tokens: u32,
+        limit_tokens: u32,
+        input_tokens: u32,
+        output_tokens: u32,
+        elapsed_ms: u64,
+        model: &'static str,
+        links: [(); 0],
+    }
+
+    let request_id = control_token.map(stream_request_id);
+    if control_token.is_some() {
+        let provider_done = serde_json::to_string(&LocalProviderDone {
+            neoth_stream: "provider_done",
+            protocol_version: 1,
+            request_id: request_id.clone(),
             control_token,
-            chunk_count,
-            input_tokens: None,
-            output_tokens: None,
-            limit_tokens: 0,
-            elapsed_ms: 0,
-            model: "local",
-            response_text: "",
-        },
-    )?;
+            count: chunk_count,
+        })
+        .map_err(std::io::Error::other)?;
+        write_stream_control_line(&mut output, &provider_done)?;
+    }
+    let stream_done_line = serde_json::to_string(&LocalDone {
+        neoth_stream: "done",
+        protocol_version: 1,
+        request_id,
+        control_token,
+        count: chunk_count,
+        used_tokens: 0,
+        limit_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        elapsed_ms: 0,
+        model: "local",
+        links: [],
+    })
+    .map_err(std::io::Error::other)?;
     write_stream_control_line(&mut output, &stream_done_line)
 }
 
@@ -3346,6 +3519,7 @@ async fn dispatch_provider(
     route: TurnDispatchRoute,
     council_skip: Option<CouncilSkipAudit>,
     stream_control_token: Option<&str>,
+    defer_provider_output: bool,
 ) -> Result<DispatchOutput> {
     // Consent is revalidated by ProviderCallAuthorizer immediately before
     // every concrete provider leaf. That gate checks the current durable
@@ -3549,8 +3723,11 @@ async fn dispatch_provider(
                 }
             };
             let stream_call_started = std::time::Instant::now();
-            // Streaming path: print each delta as it arrives, accumulate the
-            // full response for the WAL PROVIDER_RESPONSE frame.
+            // Streaming path: accumulate the full response for the WAL
+            // PROVIDER_RESPONSE frame. Without a PostProviderCall content gate,
+            // each authenticated GUI delta (or raw CLI delta) is emitted live.
+            // Any active post-provider hook forces complete buffering so
+            // Block/Replace executes before the first operator-visible byte.
             let mut stream = match provider.stream(req).await {
                 Ok(s) => s,
                 Err(e) => {
@@ -3606,12 +3783,24 @@ async fn dispatch_provider(
                             response_identity = Some(chunk.identity.clone());
                         }
                         if !chunk.delta.is_empty() {
-                            if let Some(safe) = md_buf.push(&chunk.delta) {
-                                print!("{safe}");
-                                let _ = std::io::stdout().flush();
+                            let next_sequence = chunk_count.saturating_add(1);
+                            if !defer_provider_output {
+                                if stream_control_token.is_some() {
+                                    let stdout = std::io::stdout();
+                                    write_provider_stream_delta(
+                                        stdout.lock(),
+                                        stream_control_token,
+                                        next_sequence,
+                                        &chunk.delta,
+                                    )
+                                    .context("write authenticated provider stream delta")?;
+                                } else if let Some(safe) = md_buf.push(&chunk.delta) {
+                                    print!("{safe}");
+                                    let _ = std::io::stdout().flush();
+                                }
                             }
                             acc.push_str(&chunk.delta);
-                            chunk_count += 1;
+                            chunk_count = next_sequence;
                             // HERMES-09b — ~4 chars/token estimate per streamed delta.
                             tps_meter.observe((chunk.delta.len() as u64).div_ceil(4));
                             // F4/D21 — journal the partial chunk so a mid-stream crash
@@ -3635,10 +3824,12 @@ async fn dispatch_provider(
                         if chunk.done {
                             saw_done_chunk = true;
                             // Release any construct still held at stream end.
-                            let rest = md_buf.flush();
-                            if !rest.is_empty() {
-                                print!("{rest}");
-                                let _ = std::io::stdout().flush();
+                            if !defer_provider_output && stream_control_token.is_none() {
+                                let rest = md_buf.flush();
+                                if !rest.is_empty() {
+                                    print!("{rest}");
+                                    let _ = std::io::stdout().flush();
+                                }
                             }
                             input_tokens = chunk.input_tokens;
                             output_tokens = chunk.output_tokens;
@@ -3652,10 +3843,12 @@ async fn dispatch_provider(
                         warn!(error = %e, "stream chunk error");
                         // GR-091: release any markdown tail still buffered so the
                         // already-streamed partial output isn't swallowed on error.
-                        let tail = md_buf.flush();
-                        if !tail.is_empty() {
-                            print!("{tail}");
-                            let _ = std::io::stdout().flush();
+                        if !defer_provider_output && stream_control_token.is_none() {
+                            let tail = md_buf.flush();
+                            if !tail.is_empty() {
+                                print!("{tail}");
+                                let _ = std::io::stdout().flush();
+                            }
                         }
                         return_dispatch_error!(e);
                     }
@@ -3666,11 +3859,13 @@ async fn dispatch_provider(
             // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
             // release any markdown tail still buffered (the done-arm flush didn't run).
             {
-                let rest = md_buf.flush();
-                if !rest.is_empty() {
-                    use std::io::Write as _;
-                    print!("{rest}");
-                    let _ = std::io::stdout().flush();
+                if !defer_provider_output && stream_control_token.is_none() {
+                    let rest = md_buf.flush();
+                    if !rest.is_empty() {
+                        use std::io::Write as _;
+                        print!("{rest}");
+                        let _ = std::io::stdout().flush();
+                    }
                 }
             }
             if !saw_done_chunk {
@@ -3711,14 +3906,19 @@ async fn dispatch_provider(
                     elapsed_ms,
                 );
             }
-            ProviderDispatchResult::new(
+            let result = ProviderDispatchResult::new(
                 acc,
                 input_tokens,
                 output_tokens,
                 provider_used,
                 model_used,
             )
-            .with_stream_chunk_count(chunk_count)
+            .with_stream_chunk_count(chunk_count);
+            if defer_provider_output {
+                result
+            } else {
+                result.with_stream_output_emitted()
+            }
         } else {
             // Non-streaming: existing behavior. START frame already emitted
             // above the branch; END frame fires after both arms converge.
@@ -3731,7 +3931,6 @@ async fn dispatch_provider(
             } = &route
             {
                 let response_text = response_text.clone();
-                println!("{response_text}");
                 ProviderDispatchResult::new(
                     response_text,
                     None,
@@ -3774,7 +3973,6 @@ async fn dispatch_provider(
                         return_dispatch_error!(e);
                     }
                 };
-                println!("{response_text}");
                 ProviderDispatchResult::new(
                     response_text,
                     None,
@@ -4015,7 +4213,6 @@ async fn dispatch_provider(
                 mcp_tool_calls = outcome.successful_calls;
                 // REVFIX-EXCERPTS-01 — capture structured call records for digest.
                 mcp_tool_records = outcome.tool_call_records;
-                println!("{}", outcome.final_text);
                 // A multi-round/tool response may span several providers and wire
                 // models. Keep the envelope identity explicit instead of falsely
                 // attributing the composed result to the configured primary.
@@ -4098,7 +4295,6 @@ async fn dispatch_provider(
                                     resolved.output_tokens,
                                     resolved_elapsed_ms,
                                 );
-                                println!("{}", resolved.text);
                                 ProviderDispatchResult::new(
                                     resolved.text,
                                     resolved.input_tokens,
@@ -4113,7 +4309,6 @@ async fn dispatch_provider(
                                 ));
                             }
                             None => {
-                                println!("{}", completion.text);
                                 ProviderDispatchResult::new(
                                     completion.text,
                                     completion.input_tokens,
@@ -4143,7 +4338,7 @@ async fn dispatch_provider(
         })
     }
     .await;
-    let dispatch_result = match dispatch_result {
+    let mut dispatch_result = match dispatch_result {
         Ok(output) => output,
         Err(error) => {
             drop(authorized_provider);
@@ -4154,12 +4349,35 @@ async fn dispatch_provider(
         }
     };
 
-    // Stream framing is route-independent. `args.stream` may still resolve to
-    // Council, MCP, refinement-loop, or Direct; every successful route has
-    // already printed its reply by this point. Emit exactly one authenticated
-    // provider boundary now, then defer the terminal marker to the caller until
-    // every post-reply pipeline has succeeded. If any later durability/pipeline
-    // step fails, consumers see provider_done without done and fail closed.
+    // Stream framing is route-independent. Council/MCP/direct routes produce a
+    // complete body rather than provider deltas, so expose that body as one
+    // logical authenticated delta when no post-provider content gate exists.
+    // The actual streaming route already emitted its deltas above.
+    if args.stream && !defer_provider_output && !dispatch_result.stream_output_emitted {
+        let chunk_count = u32::from(!dispatch_result.response_text.is_empty());
+        let stdout = std::io::stdout();
+        if let Err(error) = write_provider_stream_delta(
+            stdout.lock(),
+            stream_control_token,
+            chunk_count,
+            &dispatch_result.response_text,
+        )
+        .context("write authenticated composed provider reply")
+        {
+            drop(authorized_provider);
+            drop(call_authorizer);
+            drop(writer);
+            let _ = writer_join.await;
+            return Err(error);
+        }
+        dispatch_result.stream_chunk_count = chunk_count;
+        dispatch_result.stream_output_emitted = true;
+    }
+
+    // Emit exactly one authenticated provider boundary when output was already
+    // admitted. A gated reply defers both content and boundary until the hook
+    // returns Continue. In either case `done` stays deferred until the complete
+    // post-reply pipeline and WAL drain succeed.
     let sentinel_cap = crate::tokens::budget::effective_cap(
         &dispatch_result.provider,
         &dispatch_result.model,
@@ -4173,6 +4391,7 @@ async fn dispatch_provider(
         stream_control_token,
         sentinel_cap,
         inference_started.elapsed().as_millis() as u64,
+        defer_provider_output,
         dispatch_result,
     )
     .context("write authenticated provider completion marker")
@@ -4327,6 +4546,7 @@ async fn run_post_reply_pipelines(
     // Empty vec when no BlockFilter hooks fired this turn (no-op).
     pending_block_restorations: Vec<crate::hooks::block_filter::FilteredBlock>,
     ephemeral_consent: &crate::consent::EphemeralConsent,
+    mut stream_plan: PostReplyStreamPlan<'_>,
 ) -> Result<()> {
     let first_tour_home = instance_paths.home.clone();
     // ODY-16: auto-scale token cap from discovered model context window
@@ -4393,9 +4613,9 @@ async fn run_post_reply_pipelines(
     let provider: &dyn crate::providers::Provider = &authorized_post_provider;
     // ── TOML hooks: PostProviderCall (Phase 29 R-15) ─────────────────────
     // Last chance to mutate or block the model's reply before it lands in
-    // the WAL + reaches the operator. Already-printed streaming output
-    // can't be unprinted; the hook can still rewrite the WAL-recorded
-    // body (downstream recall + archive see the rewritten text).
+    // the WAL or reaches the operator. A live provider stream is buffered
+    // whenever this stage has an enabled hook, so Block leaks zero reply
+    // bytes and Replace becomes the one visible/WAL-recorded body.
     // GOLD-ADAPT-SKILL-09: PostProviderCall does not produce new filtered
     // blocks — ignore any (there should be none since BlockFilter hooks
     // are meant for PreProviderCall only). After the stage runs, restore
@@ -4795,6 +5015,41 @@ async fn run_post_reply_pipelines(
         }
     }
 
+    if args.stream && stream_plan.output_deferred {
+        // Every response-mutating layer has now settled. Expose the accepted
+        // body as one logical delta, then publish a boundary bound to exactly
+        // those bytes. A later durability/review failure leaves provider_done
+        // without done and is surfaced as a typed finalization_error event.
+        stream_plan.provider_chunk_count = u32::from(!response_text.is_empty());
+        let stdout = std::io::stdout();
+        let mut stdout_lock = stdout.lock();
+        write_provider_stream_delta(
+            &mut stdout_lock,
+            stream_plan.control_token,
+            stream_plan.provider_chunk_count,
+            &response_text,
+        )
+        .context("write post-provider-gated reply")?;
+        stream_plan.done_line = Some(
+            write_provider_done_and_build_stream_done_line(
+                &mut stdout_lock,
+                StreamDoneMetadata {
+                    control_token: stream_plan.control_token,
+                    chunk_count: stream_plan.provider_chunk_count,
+                    input_tokens: final_input_tokens,
+                    output_tokens: final_output_tokens,
+                    limit_tokens: stream_plan.limit_tokens,
+                    elapsed_ms: stream_plan.elapsed_ms,
+                    model: &model_used,
+                    response_text: &response_text,
+                },
+            )
+            .context("write post-provider-gated completion boundary")?,
+        );
+    } else if !args.stream {
+        println!("{response_text}");
+    }
+
     // ── ADR extraction (Phase 31 R-21 ADR-1) ─────────────────────────────
     // Scan the provider's reply for DECISION:/Beschluss:/ADR: markers. Each
     // hit writes `~/.neoth/adr/NNNN-<slug>.md`. Failures log but never
@@ -5085,10 +5340,37 @@ async fn run_post_reply_pipelines(
         .await
         {
             Ok(verdicts) => {
-                println!("\n── review gate ──");
-                for v in &verdicts {
+                let typed_gui_stream = args.stream && stream_plan.control_token.is_some();
+                if !typed_gui_stream {
+                    println!("\n── review gate ──");
+                }
+                for (index, v) in verdicts.iter().enumerate() {
                     let mark = if v.passed { "PASS" } else { "FAIL" };
-                    println!("  {}: {}", v.stage.as_str(), mark);
+                    if let Some(control_token) = typed_gui_stream
+                        .then_some(stream_plan.control_token)
+                        .flatten()
+                    {
+                        let text = if v.feedback.is_empty() {
+                            format!("{}: {mark}", v.stage.as_str())
+                        } else {
+                            format!("{}: {mark}\n{}", v.stage.as_str(), v.feedback)
+                        };
+                        let notice_key = format!("{raw_event_id}:{}:{index}", v.stage.as_str());
+                        let notice_id =
+                            format!("{:016x}", xxhash_rust::xxh3::xxh3_64(notice_key.as_bytes()));
+                        let stdout = std::io::stdout();
+                        write_authenticated_stream_notice(
+                            stdout.lock(),
+                            control_token,
+                            "review_result",
+                            &notice_id,
+                            &text,
+                            false,
+                        )
+                        .context("write authenticated review-result stream event")?;
+                    } else {
+                        println!("  {}: {}", v.stage.as_str(), mark);
+                    }
                     // One WAL frame per stage. Body is hashed, not stored,
                     // to keep the WAL small per the event-type doc.
                     let payload = serde_json::to_vec(&serde_json::json!({
@@ -5109,8 +5391,11 @@ async fn run_post_reply_pipelines(
                 }
                 // Surface the feedback bodies inline so the operator
                 // sees them in the same terminal — they were paid for.
-                for v in &verdicts {
-                    if !v.feedback.is_empty() {
+                if !typed_gui_stream {
+                    for v in &verdicts {
+                        if v.feedback.is_empty() {
+                            continue;
+                        }
                         println!("\n[{}]\n{}", v.stage.as_str(), v.feedback);
                     }
                 }
@@ -5298,6 +5583,11 @@ async fn run_post_reply_pipelines(
     writer_join
         .await
         .context("WAL writer task failed after post-reply pipelines")?;
+    if let Some(stream_done_line) = stream_plan.done_line {
+        let stdout = std::io::stdout();
+        write_stream_control_line(stdout.lock(), &stream_done_line)
+            .context("write authenticated stream completion marker")?;
+    }
     Ok(())
 }
 
@@ -5952,6 +6242,18 @@ async fn run_chat_with_consent(
     if let Some((allowed, disallowed)) = agent_tool_policy {
         mcp_tool_scope = mcp_tool_scope.with_agent(allowed, disallowed);
     }
+    // Every complete-body post-provider mutator owns the same user-output
+    // boundary. Hooks may Block/Replace; block restoration and refusal
+    // recovery may replace bytes. Keep the stream internal until all enabled
+    // mutators settle, otherwise visible output and the durable body diverge.
+    let defer_provider_output = hooks.iter().any(|hook| {
+        hook.stage == crate::hooks::HookStage::PostProviderCall && hook.enabled.unwrap_or(true)
+    }) || !pending_block_restorations.is_empty()
+        || config.refusal_recovery.enabled
+        || config.refusal_recovery.jailbreak_retry_enabled
+        || config.refusal_recovery.abliterated_fallback_enabled
+        || (config.refusal_recovery.teacher_escalation_enabled
+            && crate::providers::is_local_provider(provider.name()));
 
     let route_thinking_budget = skill_effort
         .filter(|_| provider.request_controls().supports_thinking_budget())
@@ -6072,9 +6374,13 @@ async fn run_chat_with_consent(
                         output_tokens: final_output_tokens,
                         provider: provider_used,
                         model: model_used,
+                        stream_chunk_count,
                         ..
                     },
                 stream_done_line,
+                stream_output_deferred,
+                stream_limit_tokens,
+                stream_elapsed_ms,
             },
         writer,
         writer_join,
@@ -6108,10 +6414,12 @@ async fn run_chat_with_consent(
         chat_route,
         council_skip,
         stream_control_token.as_ref().map(|token| token.as_str()),
+        defer_provider_output,
     )
     .await?;
 
-    run_post_reply_pipelines(
+    let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
+    let post_reply_result = run_post_reply_pipelines(
         response_text,
         writer,
         writer_join,
@@ -6149,14 +6457,37 @@ async fn run_chat_with_consent(
         // hook stage so WAL/recall never see placeholders.
         pending_block_restorations,
         &ephemeral_consent,
+        PostReplyStreamPlan {
+            control_token: stream_control_token_ref,
+            done_line: stream_done_line,
+            output_deferred: stream_output_deferred,
+            provider_chunk_count: stream_chunk_count,
+            limit_tokens: stream_limit_tokens,
+            elapsed_ms: stream_elapsed_ms,
+        },
     )
-    .await?;
-
-    if let Some(stream_done_line) = stream_done_line {
-        let stdout = std::io::stdout();
-        let stdout_lock = stdout.lock();
-        write_stream_control_line(stdout_lock, &stream_done_line)
-            .context("write authenticated stream completion marker")?;
+    .await;
+    if let Err(error) = post_reply_result {
+        if let Some(control_token) = stream_control_token_ref {
+            let request_id = stream_request_id(control_token);
+            let notice_id = request_id[..16].to_string();
+            let message = crate::security::redact::sanitize_tool_output(&format!("{error:#}"));
+            let stdout = std::io::stdout();
+            if let Err(write_error) = write_authenticated_stream_notice(
+                stdout.lock(),
+                control_token,
+                "finalization_error",
+                &notice_id,
+                &message,
+                false,
+            ) {
+                tracing::warn!(
+                    %write_error,
+                    "authenticated finalization-error event could not be written"
+                );
+            }
+        }
+        return Err(error);
     }
 
     Ok(())
@@ -10290,7 +10621,8 @@ mod tests {
     #[test]
     fn authenticated_stream_frames_preserve_provider_review_done_order() {
         let control_token = "0123456789abcdef0123456789abcdef";
-        let provider_done_line = stream_provider_done_line(Some(control_token), 2).unwrap();
+        let provider_done_line =
+            stream_provider_done_line(Some(control_token), 2, "primary reply").unwrap();
         let stream_done_line = build_stream_done_line(StreamDoneMetadata {
             control_token: Some(control_token),
             chunk_count: 2,
@@ -10333,14 +10665,25 @@ mod tests {
 
     #[test]
     fn provider_done_frame_is_token_bound_and_carries_no_reply_text() {
-        let line = stream_provider_done_line(Some("0123456789abcdef0123456789abcdef"), 7).unwrap();
+        let line = stream_provider_done_line(Some("0123456789abcdef0123456789abcdef"), 7, "reply")
+            .unwrap();
         let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
 
         assert_eq!(frame["neoth_stream"], "provider_done");
         assert_eq!(frame["control_token"], "0123456789abcdef0123456789abcdef");
         assert_eq!(frame["count"], 7);
+        assert_eq!(frame["protocol_version"], CHAT_STREAM_PROTOCOL_VERSION);
+        assert_eq!(frame["content_hash"], stream_content_hash("reply"));
         assert!(frame.get("text").is_none());
         assert!(frame.get("reply").is_none());
+    }
+
+    #[test]
+    fn stream_finalization_receipt_uses_the_canonical_wire_fixture() {
+        assert_eq!(
+            stream_finalization_receipt("fixture-request-v2", 7, "fixture-content-hash"),
+            "f29748caef33c551f3324f3f481e7afcd17de8c4452ca97e1bcc772d0c66c98f"
+        );
     }
 
     #[test]
@@ -10370,7 +10713,7 @@ mod tests {
 
     #[test]
     fn provider_done_frame_is_absent_without_an_authenticated_token() {
-        assert!(stream_provider_done_line(None, 7).is_none());
+        assert!(stream_provider_done_line(None, 7, "reply").is_none());
     }
 
     #[test]
@@ -10448,12 +10791,19 @@ mod tests {
             )
             .with_stream_chunk_count(chunks);
             let mut stdout = b"reply".to_vec();
-            let framed =
-                finalize_dispatch_stream_to(&mut stdout, true, Some(control_token), 64, 3, output)
-                    .unwrap();
+            let framed = finalize_dispatch_stream_to(
+                &mut stdout,
+                true,
+                Some(control_token),
+                64,
+                3,
+                false,
+                output,
+            )
+            .unwrap();
 
             let provider_done_line =
-                stream_provider_done_line(Some(control_token), chunks).unwrap();
+                stream_provider_done_line(Some(control_token), chunks, "reply").unwrap();
             let stdout = String::from_utf8(stdout).unwrap();
             assert_eq!(stdout.matches(&provider_done_line).count(), 1);
             let done_line = framed
@@ -10498,7 +10848,8 @@ mod tests {
         };
 
         let nonstream =
-            finalize_dispatch_stream_to(RejectWrites, false, None, 64, 3, make_output()).unwrap();
+            finalize_dispatch_stream_to(RejectWrites, false, None, 64, 3, false, make_output())
+                .unwrap();
         assert!(nonstream.stream_done_line.is_none());
 
         let error = match finalize_dispatch_stream_to(
@@ -10507,6 +10858,7 @@ mod tests {
             Some("0123456789abcdef0123456789abcdef"),
             64,
             3,
+            false,
             make_output(),
         ) {
             Ok(_) => panic!("stream finalization must surface write failure"),
