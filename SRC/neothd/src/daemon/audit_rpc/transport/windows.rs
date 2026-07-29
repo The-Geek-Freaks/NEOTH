@@ -268,28 +268,72 @@ fn verify_named_pipe_current_user_dacl(handle: HANDLE) -> Result<()> {
         unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
         "cannot read audit-RPC named-pipe DACL ACE"
     );
-    // SAFETY: GetAce returned a live ACE header owned by the descriptor.
-    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+    let dacl_start = dacl as usize;
+    let dacl_end = dacl_start
+        .checked_add(information.AclBytesInUse as usize)
+        .context("audit-RPC named-pipe ACL size overflows the address space")?;
+    let ace_start = ace as usize;
+    let ace_header_end = ace_start
+        .checked_add(std::mem::size_of::<ACE_HEADER>())
+        .context("audit-RPC named-pipe ACE header overflows the address space")?;
+    ensure!(
+        ace_start >= dacl_start && ace_header_end <= dacl_end,
+        "audit-RPC named-pipe ACE header lies outside the validated ACL"
+    );
+    // SAFETY: GetAce returned the sole ACE in the live descriptor and the
+    // complete, potentially unaligned header lies inside AclBytesInUse.
+    let header = unsafe { ace.cast::<ACE_HEADER>().read_unaligned() };
     ensure!(
         header.AceType == 0 && u32::from(header.AceFlags) & INHERITED_ACE == 0,
         "audit-RPC named-pipe DACL ACE is not one explicit allow entry"
     );
+    let ace_size = usize::from(header.AceSize);
+    let ace_end = ace_start
+        .checked_add(ace_size)
+        .context("audit-RPC named-pipe ACE size overflows the address space")?;
     ensure!(
-        header.AceSize as usize >= std::mem::size_of::<ACCESS_ALLOWED_ACE>(),
+        ace_size >= std::mem::size_of::<ACCESS_ALLOWED_ACE>() && ace_end <= dacl_end,
         "audit-RPC named-pipe allow ACE is truncated"
     );
-    // SAFETY: type and minimum size were checked above. SidStart begins the
-    // variable-length SID stored inside this ACCESS_ALLOWED_ACE.
-    let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+    // SAFETY: the complete, potentially unaligned fixed ACE prefix lies inside
+    // the validated ACE extent. The variable SID is bounded separately below.
+    let allowed = unsafe { ace.cast::<ACCESS_ALLOWED_ACE>().read_unaligned() };
     ensure!(
         allowed.Mask == GENERIC_ALL,
         "audit-RPC named-pipe allow ACE mask is {:#010x}; expected GENERIC_ALL",
         allowed.Mask
     );
-    let sid = (&allowed.SidStart as *const u32).cast_mut().cast();
+    let sid_offset = std::mem::offset_of!(ACCESS_ALLOWED_ACE, SidStart);
+    const SID_FIXED_HEADER_BYTES: usize = 8;
+    ensure!(
+        ace_size >= sid_offset + SID_FIXED_HEADER_BYTES,
+        "audit-RPC named-pipe allow ACE has a truncated SID header"
+    );
+    // SAFETY: the ACE extent was proven to lie inside AclBytesInUse. Turning
+    // exactly that extent into bytes lets all variable-length SID inspection
+    // below use safe indexing instead of raw-pointer dereferences.
+    let ace_bytes = unsafe { std::slice::from_raw_parts(ace.cast::<u8>(), ace_size) };
+    let sid_bytes = &ace_bytes[sid_offset..];
+    let sub_authority_count = usize::from(sid_bytes[1]);
+    let sid_size = SID_FIXED_HEADER_BYTES
+        .checked_add(
+            sub_authority_count
+                .checked_mul(std::mem::size_of::<u32>())
+                .context("audit-RPC named-pipe SID sub-authority count overflows")?,
+        )
+        .context("audit-RPC named-pipe SID size overflows")?;
+    ensure!(
+        sid_size <= sid_bytes.len(),
+        "audit-RPC named-pipe allow ACE has a truncated SID"
+    );
+    let sid = sid_bytes.as_ptr().cast_mut().cast();
     ensure!(
         unsafe { IsValidSid(sid) } != 0,
         "audit-RPC named-pipe DACL contains an invalid SID"
+    );
+    ensure!(
+        unsafe { GetLengthSid(sid) } as usize == sid_size,
+        "audit-RPC named-pipe DACL SID length is inconsistent"
     );
     // SAFETY: both the expected SID and ACE SID were validated.
     ensure!(
