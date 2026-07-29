@@ -35,6 +35,7 @@
 //! self-hosted sources require a future explicit operator host policy.
 
 use std::ffi::OsStr;
+use std::net::IpAddr;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -46,6 +47,9 @@ const APPROVED_GIT_HOSTS: &[&str] = &["github.com", "gitlab.com", "codeberg.org"
 const MAX_GIT_SOURCE_BYTES: usize = 2048;
 const MAX_GIT_STDOUT_BYTES: usize = 2 * 1024 * 1024;
 const MAX_GIT_STDERR_BYTES: usize = 64 * 1024;
+const MAX_GIT_VERSION_BYTES: usize = 256;
+const MAX_PINNED_GIT_ADDRESSES: usize = 16;
+const MIN_DNS_PIN_GIT_VERSION: (u32, u32, u32) = (2, 37, 0);
 
 /// Timeout for the `git ls-remote` subprocess. 5s is well above any
 /// reasonable upstream response; longer than that means the operator's
@@ -63,23 +67,27 @@ pub async fn resolve_latest_version(source: &str) -> Result<String, String> {
         .host_str()
         .expect("approved git source parser always returns a host")
         .to_string();
-    let origin = format!("https://{host}/");
-    tokio::time::timeout(
-        RESOLVER_TIMEOUT,
-        crate::tools::web_fetch::validate_url(&origin),
-    )
-    .await
-    .map_err(|_| "approved git source DNS validation timed out".to_string())?
-    .map_err(|_| "approved git source failed public-network validation".to_string())?;
     let url = parsed.as_str().to_string();
-    debug!(forge = %host, "resolving latest version via hardened git ls-remote");
 
     let isolated_cwd = tempfile::Builder::new()
         .prefix("neoth-git-probe-")
         .tempdir()
         .map_err(|_| "create isolated git probe directory".to_string())?;
+    ensure_git_supports_dns_pinning(isolated_cwd.path()).await?;
+    let addresses = tokio::time::timeout(
+        RESOLVER_TIMEOUT,
+        resolve_public_git_addresses(host.as_str()),
+    )
+    .await
+    .map_err(|_| "approved git source DNS resolution timed out".to_string())??;
+    let dns_pin = curlopt_resolve_value(host.as_str(), &addresses);
+    debug!(
+        forge = %host,
+        pinned_addresses = addresses.len(),
+        "resolving latest version via DNS-pinned hardened git ls-remote"
+    );
 
-    let mut cmd = hardened_git_command(&url, isolated_cwd.path());
+    let mut cmd = hardened_git_command(&url, &dns_pin, isolated_cwd.path());
     let mut child = cmd
         .spawn()
         .map_err(|_| "spawn hardened git ls-remote probe".to_string())?;
@@ -147,12 +155,12 @@ pub async fn resolve_latest_version(source: &str) -> Result<String, String> {
     })
 }
 
-fn hardened_git_command(url: &str, cwd: &Path) -> tokio::process::Command {
+fn hardened_git_command(url: &str, dns_pin: &str, cwd: &Path) -> tokio::process::Command {
     let mut cmd = hardened_git_process(cwd);
     cmd.arg("-c")
         .arg("credential.helper=")
         .arg("-c")
-        .arg("credential.interactive=never")
+        .arg("credential.interactive=false")
         .arg("-c")
         .arg("core.askPass=")
         .arg("-c")
@@ -162,7 +170,11 @@ fn hardened_git_command(url: &str, cwd: &Path) -> tokio::process::Command {
         .arg("-c")
         .arg("http.proxy=")
         .arg("-c")
+        .arg("http.extraHeader=")
+        .arg("-c")
         .arg("http.maxRequests=1")
+        .arg("-c")
+        .arg(format!("http.curloptResolve={dns_pin}"))
         .arg("ls-remote")
         .arg("--tags")
         .arg("--refs")
@@ -173,6 +185,182 @@ fn hardened_git_command(url: &str, cwd: &Path) -> tokio::process::Command {
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     cmd
+}
+
+/// Resolve an approved forge exactly once and retain the validated addresses
+/// that Git will connect to. Passing the same set through
+/// `http.curloptResolve` closes the classic check-then-re-resolve hole: a DNS
+/// answer cannot be public during validation and private when libcurl dials.
+async fn resolve_public_git_addresses(host: &str) -> Result<Vec<IpAddr>, String> {
+    let resolved = tokio::net::lookup_host((host, 443))
+        .await
+        .map_err(|_| "approved git source DNS resolution failed".to_string())?;
+    validate_public_git_addresses(resolved.map(|address| address.ip()))
+}
+
+fn validate_public_git_addresses(
+    addresses: impl IntoIterator<Item = IpAddr>,
+) -> Result<Vec<IpAddr>, String> {
+    let mut unique = std::collections::BTreeSet::new();
+    for address in addresses {
+        if !is_globally_routable_git_address(address) {
+            return Err(
+                "approved git source resolved to a non-public or reserved address".to_string(),
+            );
+        }
+        unique.insert(address);
+        if unique.len() > MAX_PINNED_GIT_ADDRESSES {
+            return Err(format!(
+                "approved git source exceeds the {MAX_PINNED_GIT_ADDRESSES}-address DNS limit"
+            ));
+        }
+    }
+    if unique.is_empty() {
+        return Err("approved git source DNS resolved zero addresses".to_string());
+    }
+    Ok(unique.into_iter().collect())
+}
+
+/// Conservative IANA special-purpose filter for the Git transport. Stable Rust
+/// does not yet expose `IpAddr::is_global`, so keep the small transport-local
+/// predicate explicit. Approved public forges do not need any of these ranges;
+/// rejecting a future ambiguous allocation is safer than letting updater DNS
+/// reach a local or reserved network.
+fn is_globally_routable_git_address(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(address) => {
+            let [a, b, c, d] = address.octets();
+            !(a == 0
+                || address.is_private()
+                || (a == 100 && b & 0xc0 == 0x40)
+                || address.is_loopback()
+                || address.is_link_local()
+                || (a == 192 && b == 0 && c == 0 && d != 9 && d != 10)
+                // Deprecated 6to4 Relay Anycast. A resolver must not use a
+                // transition address to escape the public-destination check.
+                || (a == 192 && b == 88 && c == 99)
+                || address.is_documentation()
+                || (a == 198 && b & 0xfe == 18)
+                || a >= 224)
+        }
+        IpAddr::V6(address) => {
+            let segments = address.segments();
+            let numeric = u128::from_be_bytes(address.octets());
+            !(address.is_unspecified()
+                || address.is_loopback()
+                || address.is_multicast()
+                || address.is_unique_local()
+                || address.is_unicast_link_local()
+                // Deprecated IPv4-compatible and IPv4-mapped forms. A normal
+                // A record arrives as `IpAddr::V4`, so no legitimate forge
+                // resolution needs either alias form.
+                || matches!(segments, [0, 0, 0, 0, 0, 0 | 0xffff, _, _])
+                // Well-known NAT64 (`64:ff9b::/96`). Even though the prefix is
+                // globally routed on some networks, its final 32 bits can
+                // encode loopback, link-local or RFC-1918 IPv4 destinations.
+                || matches!(segments, [0x64, 0xff9b, 0, 0, 0, 0, _, _])
+                // IPv4-IPv6 translation local-use prefix (`64:ff9b:1::/48`).
+                || matches!(segments, [0x64, 0xff9b, 1, _, _, _, _, _])
+                // Discard-only (`100::/64`).
+                || matches!(segments, [0x100, 0, 0, 0, _, _, _, _])
+                // Dummy IPv6 prefix (`100:0:0:1::/64`).
+                || matches!(segments, [0x100, 0, 0, 1, _, _, _, _])
+                // IETF protocol assignments (`2001::/23`) except the small
+                // set explicitly recorded as globally reachable by IANA.
+                || (matches!(segments, [0x2001, b, _, _, _, _, _, _] if b < 0x200)
+                    && !(numeric == 0x2001_0001_0000_0000_0000_0000_0000_0001
+                        || numeric == 0x2001_0001_0000_0000_0000_0000_0000_0002
+                        || matches!(segments, [0x2001, 3, _, _, _, _, _, _])
+                        || matches!(segments, [0x2001, 4, 0x112, _, _, _, _, _])
+                        || matches!(segments, [0x2001, b, _, _, _, _, _, _] if (0x20..=0x3f).contains(&b))))
+                || matches!(segments, [0x2002, _, _, _, _, _, _, _])
+                || matches!(segments, [0x2001, 0xdb8, ..] | [0x3fff, 0..=0x0fff, ..])
+                || matches!(segments, [0x5f00, ..]))
+        }
+    }
+}
+
+fn curlopt_resolve_value(host: &str, addresses: &[IpAddr]) -> String {
+    let addresses = addresses
+        .iter()
+        .map(|address| match address {
+            IpAddr::V4(address) => address.to_string(),
+            IpAddr::V6(address) => format!("[{address}]"),
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    // The plain form is a permanent entry for this short-lived Git process.
+    // Avoid the optional `+` prefix so Git builds linked against older libcurl
+    // releases do not reject an otherwise supported pinned address list.
+    format!("{host}:443:{addresses}")
+}
+
+/// Git only gained `http.curloptResolve` in 2.37. An older binary silently
+/// ignores unknown config keys, which would look successful while reopening
+/// DNS rebinding. Verify the capability before the network subprocess.
+async fn ensure_git_supports_dns_pinning(cwd: &Path) -> Result<(), String> {
+    let mut command = hardened_git_process(cwd);
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let mut child = command
+        .spawn()
+        .map_err(|_| "spawn Git version capability check".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "capture Git version capability output".to_string())?;
+    let stdout_task = tokio::spawn(capture_bounded(stdout, MAX_GIT_VERSION_BYTES));
+    let status = match tokio::time::timeout(RESOLVER_TIMEOUT, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(_)) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            return Err("wait for Git version capability check".to_string());
+        }
+        Err(_) => {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = stdout_task.await;
+            return Err("Git version capability check timed out".to_string());
+        }
+    };
+    let output = stdout_task
+        .await
+        .map_err(|_| "Git version capture task failed".to_string())?
+        .map_err(|_| "read Git version capability output".to_string())?;
+    if !status.success() || output.truncated {
+        return Err("Git version capability check failed".to_string());
+    }
+    let text = std::str::from_utf8(&output.bytes)
+        .map_err(|_| "Git version capability output is not UTF-8".to_string())?;
+    let version = parse_git_version(text)
+        .ok_or_else(|| "Git version capability output is invalid".to_string())?;
+    if version < MIN_DNS_PIN_GIT_VERSION {
+        return Err(format!(
+            "Git {}.{}.{} or newer is required for DNS-pinned Skill source probes",
+            MIN_DNS_PIN_GIT_VERSION.0, MIN_DNS_PIN_GIT_VERSION.1, MIN_DNS_PIN_GIT_VERSION.2
+        ));
+    }
+    Ok(())
+}
+
+fn parse_git_version(output: &str) -> Option<(u32, u32, u32)> {
+    let numeric = output
+        .trim()
+        .strip_prefix("git version ")?
+        .split_whitespace()
+        .next()?;
+    let mut parts = numeric.split('.');
+    Some((
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ))
 }
 
 /// Construct the process boundary shared by every Git probe. In addition to
@@ -458,7 +646,8 @@ mod tests {
     #[test]
     fn hardened_git_command_disables_credentials_redirects_and_prompts() {
         let cwd = tempfile::tempdir().unwrap();
-        let command = hardened_git_command("https://github.com/owner/repo", cwd.path());
+        let dns_pin = "github.com:443:192.30.255.112,[2606:50c0:8000::154]";
+        let command = hardened_git_command("https://github.com/owner/repo", dns_pin, cwd.path());
         let command = command.as_std();
         let args: Vec<String> = command
             .get_args()
@@ -466,11 +655,13 @@ mod tests {
             .collect();
         for required in [
             "credential.helper=",
-            "credential.interactive=never",
+            "credential.interactive=false",
             "core.askPass=",
             "http.followRedirects=false",
             "http.sslVerify=true",
             "http.proxy=",
+            "http.extraHeader=",
+            "http.curloptResolve=github.com:443:192.30.255.112,[2606:50c0:8000::154]",
             "--end-of-options",
         ] {
             assert!(args.iter().any(|arg| arg == required), "missing {required}");
@@ -508,6 +699,111 @@ mod tests {
             Some(cwd.path().parent().unwrap().to_string_lossy().as_ref())
         );
         assert_eq!(command.get_current_dir(), Some(cwd.path()));
+    }
+
+    #[test]
+    fn git_address_policy_rejects_every_local_alias_and_reserved_family() {
+        for address in [
+            "0.0.0.1",
+            "10.0.0.1",
+            "100.64.0.1",
+            "127.0.0.1",
+            "169.254.169.254",
+            "192.0.0.8",
+            "192.0.2.1",
+            "192.88.99.1",
+            "198.18.0.1",
+            "224.0.0.1",
+            "240.0.0.1",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b::7f00:1",
+            "64:ff9b:1::1",
+            "100::1",
+            "100:0:0:1::1",
+            "2001:2::1",
+            "2001:db8::1",
+            "2002::1",
+            "3fff::1",
+            "5f00::1",
+            "fc00::1",
+            "fe80::1",
+            "ff02::1",
+        ] {
+            let address = address.parse::<IpAddr>().unwrap();
+            assert!(
+                !is_globally_routable_git_address(address),
+                "{address} must not be eligible for a Git source pin"
+            );
+        }
+        for address in [
+            "1.1.1.1",
+            "8.8.8.8",
+            "192.0.0.9",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+        ] {
+            let address = address.parse::<IpAddr>().unwrap();
+            assert!(
+                is_globally_routable_git_address(address),
+                "{address} must remain eligible for a Git source pin"
+            );
+        }
+    }
+
+    #[test]
+    fn validated_git_addresses_are_unique_bounded_and_deterministic() {
+        let addresses = validate_public_git_addresses([
+            "8.8.8.8".parse().unwrap(),
+            "1.1.1.1".parse().unwrap(),
+            "8.8.8.8".parse().unwrap(),
+        ])
+        .unwrap();
+        assert_eq!(
+            addresses,
+            vec!["1.1.1.1".parse().unwrap(), "8.8.8.8".parse().unwrap()]
+        );
+        assert!(
+            validate_public_git_addresses(["127.0.0.1".parse().unwrap()])
+                .unwrap_err()
+                .contains("non-public or reserved")
+        );
+        let too_many = (1..=MAX_PINNED_GIT_ADDRESSES + 1)
+            .map(|last| IpAddr::V4(std::net::Ipv4Addr::new(1, 1, 1, last as u8)));
+        assert!(
+            validate_public_git_addresses(too_many)
+                .unwrap_err()
+                .contains("DNS limit")
+        );
+    }
+
+    #[test]
+    fn curlopt_resolve_pin_formats_ipv4_and_ipv6_without_dns_relookup() {
+        let addresses = [
+            "192.30.255.112".parse().unwrap(),
+            "2606:50c0:8000::154".parse().unwrap(),
+        ];
+        assert_eq!(
+            curlopt_resolve_value("github.com", &addresses),
+            "github.com:443:192.30.255.112,[2606:50c0:8000::154]"
+        );
+    }
+
+    #[test]
+    fn git_version_parser_accepts_vendor_suffixes_and_enforces_pin_floor() {
+        assert_eq!(
+            parse_git_version("git version 2.49.0.windows.1\n"),
+            Some((2, 49, 0))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.39.5 (Apple Git-154)\n"),
+            Some((2, 39, 5))
+        );
+        assert!(parse_git_version("git version unknown").is_none());
+        assert!((2, 36, 9) < MIN_DNS_PIN_GIT_VERSION);
+        assert!((2, 37, 0) >= MIN_DNS_PIN_GIT_VERSION);
     }
 
     #[tokio::test]
