@@ -763,7 +763,10 @@ mod tests {
         .unwrap();
         assert_eq!(
             addresses,
-            vec!["1.1.1.1".parse().unwrap(), "8.8.8.8".parse().unwrap()]
+            vec![
+                "1.1.1.1".parse::<std::net::IpAddr>().unwrap(),
+                "8.8.8.8".parse::<std::net::IpAddr>().unwrap(),
+            ]
         );
         assert!(
             validate_public_git_addresses(["127.0.0.1".parse().unwrap()])

@@ -1083,7 +1083,7 @@ async fn run_test_invoke_with_wal(
 /// normal crash-recovery states; unsafe file types, corrupt complete frames,
 /// and physical/logical/frame-count limit breaches are typed capture errors.
 /// `home` binds decryption to the same instance key used by home-owned writers.
-#[cfg(any(test, feature = "wasm-plugin-host"))]
+#[cfg(test)]
 fn decode_wal_frames(
     segment: &std::path::Path,
     home: &std::path::Path,
