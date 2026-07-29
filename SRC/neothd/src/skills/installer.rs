@@ -4864,7 +4864,7 @@ pub(crate) fn recover_pending_transactions_locked(root: &BoundDirectory) -> Resu
         cleanup_private_file_stages(&directory, &display_path)?;
     }
 
-    for (id, transaction) in pending {
+    for (id, mut transaction) in pending {
         transaction.stages.sort();
         transaction.backups.sort();
         let public_path = root.display_path.join(&id);

@@ -242,8 +242,9 @@ pub(super) fn exchange_blocking(
         if allowed == 0 {
             anyhow::bail!("audit-RPC response exceeds {max_response} bytes");
         }
+        let read_limit = chunk.len().min(allowed);
         let read = stream
-            .read(&mut chunk[..chunk.len().min(allowed)])
+            .read(&mut chunk[..read_limit])
             .context("read audit-RPC Unix response")?;
         if read == 0 {
             break;

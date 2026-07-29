@@ -831,7 +831,7 @@ pub(crate) async fn reconcile_pending(
             pending.mark_intent_durable_authenticated(receipt)?;
         }
         let Some(_terminal_binding) = pending.reconcile(intent_seen)? else {
-            return Ok(None);
+            return Ok::<_, anyhow::Error>(None);
         };
         let terminal_was_owned = pending.terminal_delivery_owned_by_current_process();
         pending.mark_terminal_submitting()?;
