@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 readonly BUILDER="$SCRIPT_DIR/build-packages.sh"
+readonly REPO_ROOT="$(cd -- "$SCRIPT_DIR/../.." && pwd -P)"
+readonly SNI_WATCHER="$SCRIPT_DIR/status-notifier-watcher.py"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -22,6 +24,13 @@ expect_fail_contains() {
 }
 
 bash -n "$BUILDER" "$0"
+python3 - "$SNI_WATCHER" <<'PY'
+import ast
+import pathlib
+import sys
+
+ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+PY
 diff -u <(sed 's/\r$//' "$SCRIPT_DIR/fixtures/expected-layout.txt") <("$BUILDER" --print-layout)
 "$BUILDER" --help >/dev/null
 grep -F 'NEOTH-${version}-${target}.deb' "$BUILDER" >/dev/null || fail "stable DEB asset name drifted"
@@ -32,6 +41,14 @@ grep -Fx 'Exec=/usr/bin/neothd-gui --product-launcher' "$SCRIPT_DIR/neoth.deskto
 if grep -Fx 'Exec=/usr/bin/neothd-gui' "$SCRIPT_DIR/neoth.desktop" >/dev/null; then
   fail "generic desktop launch must not force GUI"
 fi
+grep -F 'org.kde.StatusNotifierWatcher' "$SNI_WATCHER" >/dev/null ||
+  fail "release smoke watcher must own the canonical SNI watcher name"
+grep -F 'RegisterStatusNotifierItem' "$SNI_WATCHER" >/dev/null ||
+  fail "release smoke watcher must expose SNI item registration"
+grep -F -- 'dbus-run-session -- bash' "$REPO_ROOT/.github/workflows/release.yml" >/dev/null ||
+  fail "native Linux smoke must create an isolated D-Bus session"
+grep -F -- '--runtime-probe --require-tray' "$REPO_ROOT/.github/workflows/release.yml" >/dev/null ||
+  fail "native Linux smoke must require successful tray registration"
 if "$BUILDER" --unknown >/dev/null 2>&1; then
   fail "unknown arguments must fail"
 fi

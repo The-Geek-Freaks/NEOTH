@@ -530,6 +530,28 @@ require(
     "musl smoke is outside the final release dependency graph",
 )
 
+linux_native_smoke = job("smoke-linux-native")
+require(
+    "needs: package-linux-native" in linux_native_smoke,
+    "Linux native smoke is not bound to the immutable package artifact",
+)
+require(
+    "persist-credentials: false" in linux_native_smoke,
+    "Linux native smoke checkout retains Git credentials",
+)
+require(
+    "timeout-minutes: 30" in linux_native_smoke
+    and "timeout --kill-after=5s 20s" in linux_native_smoke,
+    "Linux native smoke can hang without a bounded job and runtime probe",
+)
+require("secrets." not in linux_native_smoke, "Linux native smoke receives a signing secret")
+require(
+    "dbus-run-session" in linux_native_smoke
+    and "status-notifier-watcher.py" in linux_native_smoke
+    and "--runtime-probe --require-tray" in linux_native_smoke,
+    "Linux native smoke does not prove the installed StatusNotifierItem runtime",
+)
+
 for platform in ("linux", "macos"):
     preflight = job(f"preflight-{platform}-native")
     package = job(f"package-{platform}-native")

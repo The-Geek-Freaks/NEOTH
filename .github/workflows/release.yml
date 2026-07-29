@@ -1548,6 +1548,10 @@ jobs:
     name: Linux clean-machine smoke ${{ matrix.architecture }}
     needs: package-linux-native
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -1559,16 +1563,22 @@ jobs:
             target: aarch64-unknown-linux-gnu
             runner: ubuntu-24.04-arm
     steps:
+      - name: Checkout immutable smoke harness
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
       - name: Download immutable native Linux packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: neoth-${{ github.ref_name }}-linux-${{ matrix.architecture }}-native
           path: dist/packages
 
-      - name: Install RPM tooling
+      - name: Install native package and SNI smoke tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends rpm xvfb xauth
+          sudo apt-get install -y --no-install-recommends \
+            dbus-x11 python3-dbus python3-gi rpm xauth xvfb
 
       - name: Native DEB install, upgrade and removal smoke
         shell: bash
@@ -1604,8 +1614,35 @@ jobs:
           done
           test "$(/usr/bin/neoth-keet-bridge --version)" = "$VERSION"
           PROBE_HOME="$RUNNER_TEMP/neoth-gui-probe-home"
+          SNI_LOG="$RUNNER_TEMP/neoth-sni-watcher.log"
           test ! -e "$PROBE_HOME"
-          NEOTH_HOME="$PROBE_HOME" xvfb-run -a /usr/bin/neothd-gui --runtime-probe
+          dbus-run-session -- bash -euo pipefail -c '
+            /usr/bin/python3 "$1" >"$2" 2>&1 &
+            watcher_pid=$!
+            cleanup_watcher() {
+              kill "$watcher_pid" >/dev/null 2>&1 || true
+              wait "$watcher_pid" >/dev/null 2>&1 || true
+            }
+            trap cleanup_watcher EXIT
+            for _ in {1..100}; do
+              if grep -Fqx "READY" "$2"; then
+                break
+              fi
+              if ! kill -0 "$watcher_pid" >/dev/null 2>&1; then
+                cat "$2"
+                exit 1
+              fi
+              sleep 0.05
+            done
+            grep -Fqx "READY" "$2"
+            NEOTH_HOME="$3" timeout --kill-after=5s 20s \
+              xvfb-run -a "$4" --runtime-probe --require-tray
+            grep -Fq "REGISTERED " "$2"
+          ' bash \
+            "$PWD/packaging/linux/status-notifier-watcher.py" \
+            "$SNI_LOG" \
+            "$PROBE_HOME" \
+            /usr/bin/neothd-gui
           test ! -e "$PROBE_HOME"
           sudo apt-get remove -y neoth
           test -f "$STATE_MARKER"
