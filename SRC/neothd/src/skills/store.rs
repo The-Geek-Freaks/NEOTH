@@ -88,12 +88,8 @@ fn child_identity_token(metadata: &cap_std::fs::Metadata) -> Result<String> {
     }
     #[cfg(windows)]
     {
-        let volume = metadata
-            .volume_serial_number()
-            .context("opened Windows Skill object has no volume identity")?;
-        let file_index = metadata
-            .file_index()
-            .context("opened Windows Skill object has no file-index identity")?;
+        let volume = metadata.dev();
+        let file_index = metadata.ino();
         Ok(format!("windows:{volume:08x}:{file_index:016x}:{kind}"))
     }
 }

@@ -509,7 +509,6 @@ mod tests {
 
         let skills_dir = home.join("skills");
         let current = super::super::installer::inspect_current_install(&skills_dir, id)
-            .unwrap()
             .expect("installed Skill fixture exists");
         super::super::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,

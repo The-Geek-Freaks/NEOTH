@@ -1429,7 +1429,6 @@ mod tests {
 
     fn record_test_install_incarnation(home: &Path, id: &str) {
         let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
-            .unwrap()
             .expect("installed Skill fixture exists");
         crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,

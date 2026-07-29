@@ -32,7 +32,7 @@ use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt as _};
+use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
 #[cfg(unix)]
 use cap_std::fs::DirBuilder;
 use cap_std::fs::{Dir, OpenOptions};
@@ -659,6 +659,7 @@ struct ValidatedSkillAuthority {
 /// retained together under the shared mutation lock. Runtime consumers must
 /// route from this object rather than reopening `<skills>/<id>` after
 /// validation.
+#[derive(Debug)]
 pub struct ValidatedInstalledSkillAuthority {
     authority: ValidatedSkillAuthority,
     effective_manifest: SkillManifest,
@@ -799,6 +800,7 @@ impl SkillAuthorityValidation {
     }
 }
 
+#[derive(Debug)]
 pub enum InstalledSkillAuthorityValidation {
     Active(ValidatedInstalledSkillAuthority),
     Inactive(SkillAuthorityInactiveReason),
@@ -3143,7 +3145,9 @@ fn read_private_regular_file_observed(
     let limit = u64::try_from(max_bytes)
         .context("Skill authority read limit conversion")?
         .saturating_add(1);
-    let read = file.by_ref().take(limit).read_to_end(&mut bytes);
+    let read = std::io::Read::by_ref(&mut file)
+        .take(limit)
+        .read_to_end(&mut bytes);
     observe(bytes.len() as u64)?;
     read.with_context(|| format!("read private Skill authority file {}", path.display()))?;
     if bytes.len() > max_bytes {
@@ -4169,7 +4173,6 @@ mod tests {
     ) {
         let current =
             super::super::installer::inspect_current_install(&home.join("skills"), skill_id)
-                .unwrap()
                 .unwrap();
         super::super::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,
@@ -4215,7 +4218,6 @@ mod tests {
         let reload = reload_controller(home.path(), config);
         let current =
             super::super::installer::inspect_current_install(&home.path().join("skills"), "alpha")
-                .unwrap()
                 .unwrap();
         let proof = super::super::mutation_lifecycle::authenticate_current_install_incarnation(
             home.path(),

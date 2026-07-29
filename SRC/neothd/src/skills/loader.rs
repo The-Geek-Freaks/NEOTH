@@ -695,6 +695,7 @@ fn sanitize_inventory_error(error: &str) -> String {
     clean
 }
 
+#[derive(Debug)]
 struct LoadedUserSkill {
     skill: Skill,
     manifest_sha256: String,
@@ -1169,7 +1170,6 @@ mod tests {
 
     fn record_test_install_incarnation(home: &Path, id: &str) {
         let current = super::super::installer::inspect_current_install(&home.join("skills"), id)
-            .unwrap()
             .expect("installed Skill fixture exists");
         super::super::mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,

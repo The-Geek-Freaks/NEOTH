@@ -1972,7 +1972,8 @@ mod tests {
         let (writer, join) =
             crate::wal::spawn_for_home(wal_dir.join("direct.wal"), home.path().to_path_buf())
                 .unwrap();
-        let mut transitions = super::registry::subscribe_runtime_authority_transitions_for_test();
+        let mut transitions =
+            super::super::registry::subscribe_runtime_authority_transitions_for_test();
         let generation = "c1".repeat(32);
         let mut binding = test_incarnation_binding(
             home.path(),
@@ -1992,7 +1993,7 @@ mod tests {
         };
         assert_eq!(
             recv_runtime_transition_for_test(&mut transitions, home.path()).await,
-            super::registry::RuntimeAuthorityTransitionKind::InstallIntent
+            super::super::registry::RuntimeAuthorityTransitionKind::InstallIntent
         );
 
         binding.intent_receipt = Some(intent_receipt);
@@ -2004,7 +2005,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             recv_runtime_transition_for_test(&mut transitions, home.path()).await,
-            super::registry::RuntimeAuthorityTransitionKind::InstallResult
+            super::super::registry::RuntimeAuthorityTransitionKind::InstallResult
         );
 
         drop(writer);
@@ -2014,7 +2015,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn standalone_ack_notifies_but_pre_ack_failure_stays_silent() {
         let home = tempfile::tempdir().unwrap();
-        let mut transitions = super::registry::subscribe_runtime_authority_transitions_for_test();
+        let mut transitions =
+            super::super::registry::subscribe_runtime_authority_transitions_for_test();
         let failed = test_incarnation_binding(
             home.path(),
             "failed_signal",
@@ -2051,7 +2053,7 @@ mod tests {
         ));
         assert_eq!(
             recv_runtime_transition_for_test(&mut transitions, home.path()).await,
-            super::registry::RuntimeAuthorityTransitionKind::InstallIntent
+            super::super::registry::RuntimeAuthorityTransitionKind::InstallIntent
         );
     }
 

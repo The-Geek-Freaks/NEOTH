@@ -1397,7 +1397,6 @@ jobs:
         .unwrap();
         let current =
             crate::skills::installer::inspect_current_install(&dir.path().join("skills"), id)
-                .unwrap()
                 .unwrap();
         crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
             dir.path(),

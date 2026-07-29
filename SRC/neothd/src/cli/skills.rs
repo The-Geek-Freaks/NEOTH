@@ -1915,7 +1915,6 @@ mod tests {
 
     fn record_authority_test_install(home: &Path, id: &str) {
         let current = installer::inspect_current_install(&home.join("skills"), id)
-            .unwrap()
             .expect("installed Skill fixture");
         mutation_lifecycle::record_committed_install_incarnation_for_test(
             home,
@@ -1947,7 +1946,6 @@ mod tests {
         install_authority_test_wal_key(home.path());
         record_authority_test_install(home.path(), id);
         let generation = installer::inspect_current_install(&home.path().join("skills"), id)
-            .unwrap()
             .unwrap()
             .generation_sha256;
         let install_proof = mutation_lifecycle::authenticate_current_install_incarnation(

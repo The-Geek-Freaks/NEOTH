@@ -5330,7 +5330,7 @@ async fn run_chat_with_consent(
         .unwrap_or_else(FreedomConfig::default_path);
     let instance_paths = InstancePaths::new(
         chat_neoth_home(args.config.as_deref()),
-        selected_config_path,
+        selected_config_path.clone(),
     );
     let first_tour_home = instance_paths.home.clone();
 
@@ -15397,7 +15397,7 @@ modes:
     /// Catalog returns None on an empty skill list (fresh install).
     #[test]
     fn skill_catalog_silent_on_empty_list() {
-        let result = maybe_skill_catalog_block(&[]);
+        let result = maybe_skill_catalog_block::<crate::skills::schema::Skill>(&[]);
         assert!(result.is_none(), "should return None for empty skill list");
     }
 
