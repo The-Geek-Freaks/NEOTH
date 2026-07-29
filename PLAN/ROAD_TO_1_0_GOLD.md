@@ -77,6 +77,11 @@ rejects a tag unless both full workflows are fresh and green for the exact
 unchanged tag head. The artifact-reuse and support-class matrix is specified in
 `PLAN/BUILD_AND_RELEASE_CADENCE.md`; `packaging/tests/test_ci_cadence_contract.py`
 prevents the fast path from silently replacing the final evidence.
+`packaging/roadmap_release_gate.py` also blocks every stable or pre-release
+tag's build and publication while any task in this file is unchecked or
+partial. (The pushed Git ref itself already exists before Actions starts.) Its sole exception is
+`GOLD-RELEASE-ARTIFACTS`, because that exact evidence is created by the
+already-gated release workflow itself.
 
 1. Freeze ownership and source boundaries for the wave. Each independent slice
    gets cheap static checks plus its smallest real unit/contract filter; do not
@@ -1476,6 +1481,31 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   manifest does not yet decompose every public CLI capability; external-channel
   chat routing and a real chat-session controller remain absent, and the broader
   onboarding/Buddy/accessibility work is unchanged.
+
+  **macOS/Main/Buddy chat ownership correction (2026-07-29; remains OPEN):**
+  the current GUI-owned `neoth chat` child design is intentionally fail-closed
+  on non-Linux Unix and therefore cannot provide the primary macOS GUI product
+  journey. ADR-010 fixes the ownership boundary: `neoth serve` becomes the sole
+  long-lived `ChatRuntime`; Main GUI, Buddy and daemon-aware CLI start, attach,
+  reconnect, inspect and explicitly cancel the same stable request through the
+  existing authenticated local endpoint. Closing a window detaches rather than
+  aborting paid/provider work. Cancel is durable and cooperative: no new effect
+  may start after its request-bound admission gate closes, but an effect already
+  admitted before the durable cancel linearization is drained to a safe boundary
+  before a terminal `Cancelled` receipt. Replay eviction may not erase the
+  compact durable same-boot idempotency row. Native packages must install and
+  transact the platform user-session daemon launcher; packaged GUI/Buddy may
+  activate and authenticate it but never own its lifetime. Direct CLI and
+  daemon startup must share an exact-home cross-process runtime-ownership lease
+  so an absence-check/GUI-activation race cannot create two WAL/provider owners.
+  The shared
+  turn pipeline, accepted-snapshot/consent binding, sequenced replay, typed
+  terminal receipt, sole-WAL ownership, terminalize-and-join shutdown,
+  GUI/Buddy bridge and
+  packaged macOS send/cancel/close/reopen/handoff journey are all mandatory.
+  `launchd`, `kqueue`, process-group, second-socket and localhost-TCP workarounds
+  are explicitly rejected. See
+  [`PLAN/ADR/010-daemon-owned-chat-runtime.md`](ADR/010-daemon-owned-chat-runtime.md).
 - [ ] **GOLD-R4-06 Buddy product-grade utility:** evolve Buddy into an always-available desktop companion with useful quick actions, current task/session context, notifications, approvals, channel/automation status, drag/drop or share ingestion, voice/media entry where supported, safe interruption/cancel, and direct handoff into the full GUI/CLI. Every action must traverse the same permission, cost, audit and Custom-Home boundaries as the primary surfaces.
 - [ ] **GOLD-R4-07 Channel parity and onboarding quality:** compare the current channel registry against OpenClaw and the relevant adopted sources, implement every high-value channel/behavior still missing, and fully wire add/edit/probe/remove, credentials, allowlists, media/reply/streaming behavior, health/error status and GUI/CLI onboarding. Unsupported channels require an explicit evidence-based skip, not silent absence.
 - [ ] **GOLD-R4-08 Clean-machine release qualification:** automate install/first-run/switch/update/repair/uninstall smoke tests on supported Windows, macOS and Linux runners/VMs, including paths with spaces/non-ASCII, standard-user permissions, offline/local-only setup and failed network/provider states. Validate exact artifact contents, signatures, launchers, desktop/start-menu integration and CLI PATH behavior.
@@ -4257,7 +4287,7 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 - [x] Full build + clippy + test green on Windows+MSVC: `cargo clippy -p neoth --tests --no-deps -- -D warnings` exits 0; `cargo test -p neoth --lib` exits 0 — ✅ 2026-07-04 evidence: clippy `-D warnings` CLIPPY_EXIT=0 (5 runs this session) + full lib suite 9868 passed / 0 failed (4 full runs: 9846→9847→9863→9868); CI matrix additionally running per-push.
 - [x] `NEOTH_REGEN_CLI_DOCS=1 cargo test -p neoth --lib cli_commands_md_is_up_to_date` exits 0 (no CLI doc drift) — ✅ 2026-07-04 evidence: regen run TEST_EXIT=0 (docs/cli-commands.md regenerated for `neoth dictate`) and the drift test passes inside every full-suite run since.
 - [x] README/docs honesty pass merged (GOLD-HON-01..GOLD-HON-26 all done) — ✅ flipped 2026-07-04 (stale box, duplicates WS-B which is [x] 26/26).
-- [ ] Signed release artifacts exist (cargo-dist or manual) with sha256 companion hashes — ✅ **CI COMPLETE, operator-tag-push-gated (verified 2026-07-14):** `.github/workflows/release.yml` fully implements the signed pipeline — matrix `cargo build --release` bakes `NEOTH_RELEASE_MINISIGN_PUBKEY` via `option_env!`, per-artifact `.sha256` + aggregated `SHA256SUMS`, cosign keyless `.cosign.bundle`, **minisign `.minisig` via the in-process `neoth release sign`** (dogfoods the just-built Linux `neoth` public binary; `neothd` is packaged only as the compatibility launcher; reads `NEOTH_RELEASE_MINISIGN_SECRET`), and uploads archives + `.sha256` + `SHA256SUMS` + `.cosign.bundle` + `.minisig` to the GitHub Release. Signing code: `cli/release.rs` → `updater/sig_keygen.rs::sign_minisig` (ed25519-dalek + blake2 pre-hash); verify counterpart `updater/sig_verify.rs` is consumed before `atomic_replace_binary`. PROG-13 keypair already live (secret+variable, 2026-06-04). **No code/CI work remains — the box stays `[ ]` only because the ARTIFACTS come into existence when the operator pushes a `v[0-9]+.[0-9]+.[0-9]+` tag (public release = operator action, not agent-performable).**
+- [ ] **GOLD-RELEASE-ARTIFACTS** Signed release artifacts exist (cargo-dist or manual) with sha256 companion hashes — ✅ **CI COMPLETE, operator-tag-push-gated (verified 2026-07-14):** `.github/workflows/release.yml` fully implements the signed pipeline — matrix `cargo build --release` bakes `NEOTH_RELEASE_MINISIGN_PUBKEY` via `option_env!`, per-artifact `.sha256` + aggregated `SHA256SUMS`, cosign keyless `.cosign.bundle`, **minisign `.minisig` via the in-process `neoth release sign`** (dogfoods the just-built Linux `neoth` public binary; `neothd` is packaged only as the compatibility launcher; reads `NEOTH_RELEASE_MINISIGN_SECRET`), and uploads archives + `.sha256` + `SHA256SUMS` + `.cosign.bundle` + `.minisig` to the GitHub Release. Signing code: `cli/release.rs` → `updater/sig_keygen.rs::sign_minisig` (ed25519-dalek + blake2 pre-hash); verify counterpart `updater/sig_verify.rs` is consumed before `atomic_replace_binary`. PROG-13 keypair already live (secret+variable, 2026-06-04). **No code/CI work remains — the box stays `[ ]` only because the ARTIFACTS come into existence when the operator pushes a `v[0-9]+.[0-9]+.[0-9]+` tag (public release = operator action, not agent-performable).**
 
 **WS-F (Gold-TODO features):** GOLD-FEAT-01..GOLD-FEAT-12 are all 1.0 GOLD scope and must be complete before the tag. The former 01..04/05..12 milestone split is superseded by the 2026-07-13 operator directive. WS-G evaluations complete.
 

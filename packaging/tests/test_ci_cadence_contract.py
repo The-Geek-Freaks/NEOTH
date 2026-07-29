@@ -84,6 +84,45 @@ def workflow_jobs(workflow: str) -> dict[str, str]:
     )
 
 
+def job_dependencies(body: str) -> set[str]:
+    match = re.search(r"(?m)^    needs:(?P<inline>[^\n]*)$", body)
+    if match is None:
+        return set()
+    inline = match.group("inline").strip()
+    if inline.startswith("[") and inline.endswith("]"):
+        return {
+            dependency.strip()
+            for dependency in inline[1:-1].split(",")
+            if dependency.strip()
+        }
+    if inline:
+        return {inline}
+    tail = body[match.end() :].splitlines()
+    dependencies: set[str] = set()
+    for line in tail:
+        item = re.fullmatch(r"      - ([A-Za-z0-9_-]+)", line)
+        if item is not None:
+            dependencies.add(item.group(1))
+            continue
+        if line.strip():
+            break
+    return dependencies
+
+
+def transitive_dependencies(jobs: dict[str, str], job: str) -> set[str]:
+    result: set[str] = set()
+    pending = list(job_dependencies(jobs[job]))
+    while pending:
+        dependency = pending.pop()
+        if dependency in result:
+            continue
+        if dependency not in jobs:
+            raise AssertionError(f"unknown workflow dependency {dependency!r}")
+        result.add(dependency)
+        pending.extend(job_dependencies(jobs[dependency]))
+    return result
+
+
 class CiCadenceContractTests(unittest.TestCase):
     def test_preflight_is_the_only_main_push_workflow_in_this_contract(self) -> None:
         preflight = trigger_block(PREFLIGHT_TEXT)
@@ -146,6 +185,7 @@ class CiCadenceContractTests(unittest.TestCase):
                         "python3 packaging/tests/test_ci_cadence_contract.py",
                         "python3 packaging/tests/test_generate_release_manifests.py",
                         "python3 packaging/tests/test_openclaw_provider_parity.py",
+                        "python3 packaging/tests/test_roadmap_release_gate.py",
                         "python3 packaging/tests/test_release_asset_contract.py",
                         "python3 packaging/tests/test_release_capability_contract.py",
                         "python3 packaging/tests/test_release_gate_contract.py",
@@ -237,6 +277,31 @@ class CiCadenceContractTests(unittest.TestCase):
             "SECURITY_RUN=$(freshest_exact_head_run security.yml Security)",
             RELEASE_TEXT,
         )
+        jobs = workflow_jobs(RELEASE_TEXT)
+        release_root = "verify-release-version"
+        self.assertIn(
+            "python packaging/roadmap_release_gate.py --release-tag",
+            jobs[release_root],
+        )
+        self.assertNotIn("continue-on-error:", jobs[release_root])
+        for job in jobs:
+            self.assertNotRegex(
+                jobs[job],
+                r"(?m)^    if:",
+                f"release job {job} may not conditionally bypass a failed root gate",
+            )
+            self.assertNotRegex(
+                jobs[job],
+                r"(?m)^    continue-on-error:",
+                f"release job {job} may not ignore its own failed gate",
+            )
+            if job == release_root:
+                continue
+            self.assertIn(
+                release_root,
+                transitive_dependencies(jobs, job),
+                f"release job {job} can bypass the Road-to-Gold root gate",
+            )
         self.assertIn('-f head_sha="$RELEASE_SHA"', RELEASE_TEXT)
         self.assertIn("and .conclusion == \"success\"", RELEASE_TEXT)
 

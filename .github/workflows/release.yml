@@ -190,6 +190,9 @@ jobs:
               f"== {tag_version}; neoth-plugin-sdk={sdk['package']['version']}"
           )
 
+      - name: Require complete Road to 1.0 Gold
+        run: python packaging/roadmap_release_gate.py --release-tag
+
       - name: Verify release key and artifact isolation contracts
         run: python .github/release-tools/test-release-isolation.py
 

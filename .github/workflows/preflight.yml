@@ -69,6 +69,7 @@ jobs:
           python3 packaging/tests/test_ci_cadence_contract.py
           python3 packaging/tests/test_generate_release_manifests.py
           python3 packaging/tests/test_openclaw_provider_parity.py
+          python3 packaging/tests/test_roadmap_release_gate.py
           python3 packaging/tests/test_release_asset_contract.py
           python3 packaging/tests/test_release_capability_contract.py
           python3 packaging/tests/test_release_gate_contract.py

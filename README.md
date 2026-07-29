@@ -472,8 +472,9 @@ canonical memory/ground-truth snapshots over peeroxide and optional Iroh carrier
 [the durable sync contract](docs/mesh-sync.md). The **WASM plugin capability sandbox**
 (V10-04) ships in the native desktop
 release binaries and is exercised by tests, but it is **feature-gated** (`wasm-plugin-host`)
-— source builds opt in, and the headless cross-compiled server targets (musl /
-aarch64-linux) omit it, the same native-only treatment as the OS clipboard. **Built for
+— source builds opt in, and only the headless static musl server archive omits it.
+Native GNU Linux x64 and ARM64 desktop archives both include the GUI, Keet companion,
+WASM host and other `release-desktop` capabilities. **Built for
 DAUs and pros** is the explicit design **goal**, not a finished claim — it is the hard bet
 NEOTH is making, and the single thing most worth holding it accountable to. Everything
 marked **Yes** is implemented and exercised by tests; the live status of every line item is
