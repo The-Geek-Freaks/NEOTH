@@ -1,0 +1,501 @@
+{
+  "schema_version": 1,
+  "contract": "GOLD-R4-14",
+  "retrieved_at": "2026-07-29T06:31:24Z",
+  "upstream": {
+    "repository": "openclaw/openclaw",
+    "branch": "main",
+    "head_commit": "c55acff0496ddf52de5f921cd178b516467990d5",
+    "head_committed_at": "2026-07-29T06:22:40Z",
+    "documentation": {
+      "path": "docs/concepts/model-providers.md",
+      "last_commit": "48addb3d570c60a7309030cbb6e49ec7f74a986f",
+      "last_committed_at": "2026-07-26T03:57:26Z",
+      "blob_sha": "0f2ae0229dc22021ea7f2ca35ee3bea0f72575c6",
+      "sha256": "40d88b756590ca959536a633a32cd0d6815e8383d8df41278470b43aa0b3e074",
+      "bytes": 40263,
+      "source_url": "https://github.com/openclaw/openclaw/blob/48addb3d570c60a7309030cbb6e49ec7f74a986f/docs/concepts/model-providers.md"
+    },
+    "registry": {
+      "source_rule": "top-level providers arrays in extensions/*/openclaw.plugin.json",
+      "manifests": [
+        {
+          "path": "extensions/amazon-bedrock-mantle/openclaw.plugin.json",
+          "blob_sha": "b441befa7863a9f0a308bd08481ff2e6735379fb",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "amazon-bedrock-mantle"
+          ]
+        },
+        {
+          "path": "extensions/amazon-bedrock/openclaw.plugin.json",
+          "blob_sha": "17d10f9a08fe22a550ea59b22548aac38f3595dd",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "amazon-bedrock"
+          ]
+        },
+        {
+          "path": "extensions/anthropic-vertex/openclaw.plugin.json",
+          "blob_sha": "89cd7f7a045cf5e8382c1cbba5b48f87c096d304",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "anthropic-vertex"
+          ]
+        },
+        {
+          "path": "extensions/anthropic/openclaw.plugin.json",
+          "blob_sha": "decd4c060e6b89b160c59e27a5ab22b60dc686e7",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "anthropic"
+          ]
+        },
+        {
+          "path": "extensions/arcee/openclaw.plugin.json",
+          "blob_sha": "e1a2048c657272d4131471be0736d8cc21c87413",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "arcee"
+          ]
+        },
+        {
+          "path": "extensions/baseten/openclaw.plugin.json",
+          "blob_sha": "3bcdf9cca4772098e4d7ca3031d85efc0c322c7e",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "baseten"
+          ]
+        },
+        {
+          "path": "extensions/byteplus/openclaw.plugin.json",
+          "blob_sha": "c71e1f1707c22d1cec507a14f87ebca44380d08b",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "byteplus",
+            "byteplus-plan"
+          ]
+        },
+        {
+          "path": "extensions/cerebras/openclaw.plugin.json",
+          "blob_sha": "530f53b8240d735c14e64ea6ac96909acd0b79f0",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "cerebras"
+          ]
+        },
+        {
+          "path": "extensions/chutes/openclaw.plugin.json",
+          "blob_sha": "58066a3e8ef91461b6b51b99207dd8c63dc5d176",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "chutes"
+          ]
+        },
+        {
+          "path": "extensions/clawrouter/openclaw.plugin.json",
+          "blob_sha": "971bcc698751bfd2a634f04dcbecaa1b36148247",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "clawrouter"
+          ]
+        },
+        {
+          "path": "extensions/cloudflare-ai-gateway/openclaw.plugin.json",
+          "blob_sha": "845eeb4e8c4486adf74eabd05a687cf5d987808b",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "cloudflare-ai-gateway"
+          ]
+        },
+        {
+          "path": "extensions/cohere/openclaw.plugin.json",
+          "blob_sha": "815386c370fcae8c3f4aa4975e738857492eb5af",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "cohere"
+          ]
+        },
+        {
+          "path": "extensions/comfy/openclaw.plugin.json",
+          "blob_sha": "5568ed1e3ccd74b5eaaf6c0592e9953199a38a62",
+          "scope": "non_llm",
+          "provider_ids": [
+            "comfy"
+          ]
+        },
+        {
+          "path": "extensions/copilot-proxy/openclaw.plugin.json",
+          "blob_sha": "9a9f34cef0becd75e1bda7df1e783d97253efb7d",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "copilot-proxy"
+          ]
+        },
+        {
+          "path": "extensions/deepinfra/openclaw.plugin.json",
+          "blob_sha": "a981f701a9c2d4c40b1b03f9d8e3822658fd6370",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "deepinfra"
+          ]
+        },
+        {
+          "path": "extensions/deepseek/openclaw.plugin.json",
+          "blob_sha": "e4c0e4da389dfdcebe0429b8fe28bdf7a6ddf630",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "deepseek"
+          ]
+        },
+        {
+          "path": "extensions/fal/openclaw.plugin.json",
+          "blob_sha": "49fa2b63c83c42850dee5c7737d9f6b3d55cae29",
+          "scope": "non_llm",
+          "provider_ids": [
+            "fal"
+          ]
+        },
+        {
+          "path": "extensions/featherless/openclaw.plugin.json",
+          "blob_sha": "03adec3ad3f883f4e3305784209f008a87d4d07a",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "featherless"
+          ]
+        },
+        {
+          "path": "extensions/fireworks/openclaw.plugin.json",
+          "blob_sha": "2df6fe02bec3c8e6f8b01b267785843a19d393cb",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "fireworks"
+          ]
+        },
+        {
+          "path": "extensions/github-copilot/openclaw.plugin.json",
+          "blob_sha": "285930c9cf76ce1d5fe345d2c71ad054af64f62f",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "github-copilot"
+          ]
+        },
+        {
+          "path": "extensions/gmi/openclaw.plugin.json",
+          "blob_sha": "457b4793e4c615bea9b9c5fc52560e7b8b9c63d9",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "gmi",
+            "gmi-cloud",
+            "gmicloud"
+          ]
+        },
+        {
+          "path": "extensions/google/openclaw.plugin.json",
+          "blob_sha": "2cb4016a34bae1698f4f1026d4470f7ba60285c9",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "google",
+            "google-gemini-cli",
+            "google-vertex"
+          ]
+        },
+        {
+          "path": "extensions/groq/openclaw.plugin.json",
+          "blob_sha": "b804b40bf075035a60f8ffc36467b63017ee066b",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "groq"
+          ]
+        },
+        {
+          "path": "extensions/huggingface/openclaw.plugin.json",
+          "blob_sha": "ff02ee4aaa78efdf88fed57bdbd3e18b5fcdb19d",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "huggingface"
+          ]
+        },
+        {
+          "path": "extensions/kilocode/openclaw.plugin.json",
+          "blob_sha": "4f2b1eb378e650cec0c106156e5cadc2c3be3048",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "kilocode"
+          ]
+        },
+        {
+          "path": "extensions/kimi-coding/openclaw.plugin.json",
+          "blob_sha": "7d17066f279685ca611ccb4ef74fce6bcbca2773",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "kimi",
+            "kimi-coding"
+          ]
+        },
+        {
+          "path": "extensions/litellm/openclaw.plugin.json",
+          "blob_sha": "1dfc4c77630a472d1513d62ad99db9c427e7470f",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "litellm"
+          ]
+        },
+        {
+          "path": "extensions/llama-cpp/openclaw.plugin.json",
+          "blob_sha": "86b208113382a93e3d89852576d5f59e29662266",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "llama-cpp"
+          ]
+        },
+        {
+          "path": "extensions/lmstudio/openclaw.plugin.json",
+          "blob_sha": "2f655cd027b958b69c9aa3dbb18ff209d91c2068",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "lmstudio"
+          ]
+        },
+        {
+          "path": "extensions/longcat/openclaw.plugin.json",
+          "blob_sha": "df1ef242908f3d7e45fe6189087affb2b80c5144",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "longcat"
+          ]
+        },
+        {
+          "path": "extensions/meta/openclaw.plugin.json",
+          "blob_sha": "bd4c7a18dd34f28a3b4f6b521b7ddf6a0128b566",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "meta"
+          ]
+        },
+        {
+          "path": "extensions/microsoft-foundry/openclaw.plugin.json",
+          "blob_sha": "022970185add0980900346dc1fb7bd8cc2fa6a90",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "microsoft-foundry"
+          ]
+        },
+        {
+          "path": "extensions/minimax/openclaw.plugin.json",
+          "blob_sha": "659d4228fda49c49a9574114c1f13df7dd1db81c",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "minimax",
+            "minimax-portal"
+          ]
+        },
+        {
+          "path": "extensions/mistral/openclaw.plugin.json",
+          "blob_sha": "af45d5fb25fb1a305b5e6f5e8b04452ebf7c1117",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "mistral"
+          ]
+        },
+        {
+          "path": "extensions/moonshot/openclaw.plugin.json",
+          "blob_sha": "16bc84755b1397ca9771286dc9585a6c374a1952",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "moonshot"
+          ]
+        },
+        {
+          "path": "extensions/novita/openclaw.plugin.json",
+          "blob_sha": "8198093683ff1e44df737df903d55aeede56400f",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "novita",
+            "novita-ai",
+            "novitaai"
+          ]
+        },
+        {
+          "path": "extensions/nvidia/openclaw.plugin.json",
+          "blob_sha": "0b0ca54c0dd8625ae1ec641df3e9cb8c1d5ae84d",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "nvidia"
+          ]
+        },
+        {
+          "path": "extensions/ollama/openclaw.plugin.json",
+          "blob_sha": "70b8af68cf6600acc0058020d68d8eafd4b29110",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "ollama",
+            "ollama-cloud"
+          ]
+        },
+        {
+          "path": "extensions/openai/openclaw.plugin.json",
+          "blob_sha": "21d33c41ff730699b8cda3398e9ba637fb90fbc1",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "openai"
+          ]
+        },
+        {
+          "path": "extensions/opencode-go/openclaw.plugin.json",
+          "blob_sha": "86aa330edbf41d2cfd8c1a630c4403fed7cd4076",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "opencode-go"
+          ]
+        },
+        {
+          "path": "extensions/opencode/openclaw.plugin.json",
+          "blob_sha": "fa5d5a317b83f3e70f060351ae4e6928149b0d07",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "opencode"
+          ]
+        },
+        {
+          "path": "extensions/openrouter/openclaw.plugin.json",
+          "blob_sha": "dce4ca209573a37b2bd32984c649eaccff3f8310",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "openrouter"
+          ]
+        },
+        {
+          "path": "extensions/qianfan/openclaw.plugin.json",
+          "blob_sha": "d5f2d9e8ad86c7106d55cb2206aa2a70a660bcb1",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "qianfan"
+          ]
+        },
+        {
+          "path": "extensions/qwen/openclaw.plugin.json",
+          "blob_sha": "763a6cf6d27c4d6340cd87798c138bbb3dfb845c",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "qwen",
+            "qwencloud",
+            "modelstudio",
+            "dashscope",
+            "qwen-token-plan",
+            "bailian-token-plan"
+          ]
+        },
+        {
+          "path": "extensions/sglang/openclaw.plugin.json",
+          "blob_sha": "39376e2d0add6c2538067f1260b51329d5b9aa52",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "sglang"
+          ]
+        },
+        {
+          "path": "extensions/stepfun/openclaw.plugin.json",
+          "blob_sha": "ad71e31b12564bfa111d31d414b00fde6a9dcd27",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "stepfun",
+            "stepfun-plan"
+          ]
+        },
+        {
+          "path": "extensions/synthetic/openclaw.plugin.json",
+          "blob_sha": "a94f60b2163cd67c41bb59fc5aedf4217ab91444",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "synthetic"
+          ]
+        },
+        {
+          "path": "extensions/tencent/openclaw.plugin.json",
+          "blob_sha": "ba4e9b5a0e901be7f8c893739c1ca564df718b00",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "tencent-tokenhub",
+            "tencent-tokenplan"
+          ]
+        },
+        {
+          "path": "extensions/together/openclaw.plugin.json",
+          "blob_sha": "5709b9d16eefb49f290a8c70cdd5d0733dd185e2",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "together"
+          ]
+        },
+        {
+          "path": "extensions/venice/openclaw.plugin.json",
+          "blob_sha": "1a814854653b55b117c225fd943a81fb0d2f22f3",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "venice"
+          ]
+        },
+        {
+          "path": "extensions/vercel-ai-gateway/openclaw.plugin.json",
+          "blob_sha": "dbc04920c815a1df5d5e17dbb824a1904f56ae2f",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "vercel-ai-gateway"
+          ]
+        },
+        {
+          "path": "extensions/vllm/openclaw.plugin.json",
+          "blob_sha": "21f9bbd8dcd9e2aa793f86a877b686428d67ea5b",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "vllm"
+          ]
+        },
+        {
+          "path": "extensions/volcengine/openclaw.plugin.json",
+          "blob_sha": "c5951d1ac548d9ef0154fbf44434e4c0d2df3a4c",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "volcengine",
+            "volcengine-plan"
+          ]
+        },
+        {
+          "path": "extensions/vydra/openclaw.plugin.json",
+          "blob_sha": "7e0cd5e4beedbf022446005efbf02456870e1d55",
+          "scope": "non_llm",
+          "provider_ids": [
+            "vydra"
+          ]
+        },
+        {
+          "path": "extensions/xai/openclaw.plugin.json",
+          "blob_sha": "92ffb4ad1e1c7e7762ab4460c96e3e5582802174",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "xai"
+          ]
+        },
+        {
+          "path": "extensions/xiaomi/openclaw.plugin.json",
+          "blob_sha": "07ded12e4213eadbf7d5f203fd6c25353a69efe2",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "xiaomi",
+            "xiaomi-token-plan"
+          ]
+        },
+        {
+          "path": "extensions/zai/openclaw.plugin.json",
+          "blob_sha": "88ada474bfa0379ba305f900fb9a5edb529b05e7",
+          "scope": "llm_inference",
+          "provider_ids": [
+            "zai"
+          ]
+        }
+      ]
+    },
+    "operator_defined_provider_id": "operator-defined"
+  }
+}

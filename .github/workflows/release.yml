@@ -199,6 +199,13 @@ jobs:
           python packaging/tests/test_release_capability_contract.py
           python packaging/tests/test_release_gate_contract.py
 
+      - name: Require current OpenClaw provider baseline
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python packaging/tests/test_openclaw_provider_parity.py
+          python packaging/openclaw_provider_parity.py --check-upstream
+
       - name: Verify clean-machine authenticity bootstrap contract
         run: python packaging/test_bootstrap_verifier.py
 

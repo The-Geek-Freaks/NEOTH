@@ -1,0 +1,693 @@
+{
+  "schema_version": 1,
+  "contract": "GOLD-R4-14",
+  "snapshot_head": "c55acff0496ddf52de5f921cd178b516467990d5",
+  "disposition_semantics": {
+    "native": "Provider-specific typed implementation satisfies the full R4-14 contract.",
+    "typed_compatible": "Typed compatibility adapter satisfies the full R4-14 contract for this exact upstream id.",
+    "missing": "Full R4-14 parity is not proven. Partial native code and endpoint presets remain missing until protocol, auth, discovery, capability, cost, retry, diagnostics and all consumer-surface tests pass."
+  },
+  "providers": [
+    {
+      "id": "amazon-bedrock",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "aws_bedrock"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/aws_bedrock.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "amazon-bedrock-mantle",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "anthropic",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "anthropic_api",
+        "claude_cli"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/anthropic_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "anthropic-vertex",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "arcee",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "bailian-token-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "baseten",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "byteplus",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "byteplus-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "cerebras",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "chutes",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "clawrouter",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "cloudflare-ai-gateway",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "cohere",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "cohere_api"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/cohere_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "copilot-proxy",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "dashscope",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "deepinfra",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "deepseek",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/deepseek"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "featherless",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "fireworks",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/fireworks"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "github-copilot",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "copilot_api"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/copilot.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "gmi",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "gmi-cloud",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "gmicloud",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "google",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "gemini_api"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/gemini_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "google-gemini-cli",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "google-vertex",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "groq",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/groq"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "huggingface",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "kilocode",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "kimi",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "kimi-coding",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "litellm",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "llama-cpp",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/llama_cpp"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "lmstudio",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/lm_studio"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "longcat",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "meta",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "microsoft-foundry",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "minimax",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "minimax-portal",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "mistral",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/mistral"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "modelstudio",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "moonshot",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/moonshot"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "novita",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "novita-ai",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "novitaai",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "nvidia",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "ollama",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "local_ollama"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/ollama_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "ollama-cloud",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "openai",
+      "disposition": "missing",
+      "implementation_status": "partial_native",
+      "neoth_bindings": [
+        "openai_api"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/openai_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "opencode",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "opencode-go",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "openrouter",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/openrouter"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "operator-defined",
+      "disposition": "missing",
+      "implementation_status": "partial_generic_endpoint",
+      "neoth_bindings": [
+        "openai_compat"
+      ],
+      "evidence": [
+        "SRC/neothd/src/config/inference.rs",
+        "SRC/neothd/src/providers/openai_api.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "qianfan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "qwen",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "qwen-token-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "qwencloud",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "sglang",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "stepfun",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "stepfun-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "synthetic",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "tencent-tokenhub",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "tencent-tokenplan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "together",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/together"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "venice",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "vercel-ai-gateway",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "vllm",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/vllm"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "volcengine",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "volcengine-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "xai",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/xai"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    },
+    {
+      "id": "xiaomi",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "xiaomi-token-plan",
+      "disposition": "missing",
+      "implementation_status": "absent",
+      "neoth_bindings": [],
+      "evidence": [],
+      "tests": []
+    },
+    {
+      "id": "zai",
+      "disposition": "missing",
+      "implementation_status": "openai_compat_preset",
+      "neoth_bindings": [
+        "openai_compat/known_endpoint/zai"
+      ],
+      "evidence": [
+        "SRC/neothd/src/providers/known_endpoints.rs"
+      ],
+      "tests": []
+    }
+  ]
+}

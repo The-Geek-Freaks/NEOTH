@@ -1692,6 +1692,30 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   false/free-help defects; they do not add any missing provider, transport,
   authentication, capability, discovery, consumer-parity or migration work.
 
+  **Current provider snapshot gate (2026-07-29; build-order step (1) complete
+  in the working tree, R4-14 remains OPEN):** the baseline now pins OpenClaw
+  repository head `c55acff0496ddf52de5f921cd178b516467990d5`, provider-doc
+  commit `48addb3d570c60a7309030cbb6e49ec7f74a986f`, doc blob
+  `0f2ae0229dc22021ea7f2ca35ee3bea0f72575c6` and SHA-256
+  `40d88b756590ca959536a633a32cd0d6815e8383d8df41278470b43aa0b3e074`.
+  The registry side also pins every provider-bearing
+  `extensions/*/openclaw.plugin.json` blob: 57 manifests classify 73 distinct
+  LLM provider ids plus three explicitly out-of-scope media-only ids. The
+  machine-readable NEOTH matrix adds the operator-defined endpoint sentinel
+  and preserves all 74 LLM rows independently; **all 74 remain `missing`**
+  under the full contract. The three media-only classifications are pinned by
+  an executable allowlist, and schema v1 rejects every complete-parity claim
+  until an executable registry-to-factory-to-surface proof replaces it. Seven
+  partial native adapters, twelve
+  `openai_compat` presets and the generic endpoint are recorded only as
+  incomplete evidence, never promoted to parity or silently aliased. Offline
+  CI rejects missing, duplicate, stale or unclassified rows; the earliest
+  release job re-fetches one immutable OpenClaw `main` commit and rejects doc,
+  manifest-blob, manifest-set or provider-id drift. A live recheck against
+  then-current upstream head `0babd1a73fceb9943c4adf801f2acc098cc7b8eb`
+  found the pinned provider inputs unchanged. This gate adds no runtime
+  provider, protocol, auth, discovery or consumer wiring.
+
   Required architecture/build order: introduce one data-driven
   `ProviderDescriptor` (stable vendor id, aliases, transport, endpoints, auth,
   discovery, capabilities, pricing and region semantics) plus
