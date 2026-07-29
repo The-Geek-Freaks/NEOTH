@@ -201,7 +201,8 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
                 }
                 OutputFormat::Table => {
                     println!(
-                        "✓ proposal {id} adopted into its skill file (backup kept — `rollback {id}` to undo)."
+                        "✓ proposal {id} applied to its skill file (backup kept — `rollback {id}` to undo). \
+                         Any changed installed NEOTH Skill generation remains pending explicit activation."
                     );
                     offer_upstream_pr_if_bundled(&home, &id)?;
                 }
@@ -221,7 +222,10 @@ pub async fn run_self_improve(args: SelfImproveArgs, output: OutputFormat) -> Re
                     })
                 ),
                 OutputFormat::Table => {
-                    println!("✓ proposal {id} rolled back — skill file restored.");
+                    println!(
+                        "✓ proposal {id} rolled back — skill file restored. Any changed installed \
+                         NEOTH Skill generation remains pending explicit activation."
+                    );
                 }
             }
             Ok(())

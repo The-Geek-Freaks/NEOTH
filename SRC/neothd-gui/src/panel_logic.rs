@@ -869,6 +869,11 @@ pub struct SkillSummary {
     pub path: String,
     pub origin: String,
     pub repairable: bool,
+    /// Authenticated execution state, never a raw manifest-policy guess.
+    pub runtime_state: String,
+    pub authority_generation: String,
+    pub authority_incarnation: String,
+    pub authority_install_receipt: String,
 }
 
 /// Parse the tagged diagnostic `neoth skills --list --output json` contract.
@@ -901,6 +906,14 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
                     error,
                     path,
                     origin: "user".to_string(),
+                    runtime_state: row
+                        .get("runtime_state")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("broken")
+                        .to_string(),
+                    authority_generation: String::new(),
+                    authority_incarnation: String::new(),
+                    authority_install_receipt: String::new(),
                 });
             }
             if status != "healthy" {
@@ -913,7 +926,29 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .to_string();
-            let enabled = s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+            let runtime_state = row
+                .get("runtime_state")
+                .and_then(|state| state.as_str())?
+                .to_string();
+            let authority_generation = row
+                .get("package_generation_sha256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let authority_incarnation = row
+                .get("install_incarnation")
+                .and_then(serde_json::Value::as_u64)
+                .map(|value| value.to_string())
+                .unwrap_or_default();
+            let authority_install_receipt = row
+                .get("install_terminal_receipt_sha256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let enabled = matches!(
+                runtime_state.as_str(),
+                "trusted_bundled_active" | "installed_active"
+            );
             let keywords = s
                 .get("trigger_keywords")
                 .and_then(|k| k.as_array())
@@ -954,6 +989,10 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
                     .and_then(|origin| origin.as_str())
                     .unwrap_or_default()
                     .to_string(),
+                runtime_state,
+                authority_generation,
+                authority_incarnation,
+                authority_install_receipt,
             })
         })
         .collect()
@@ -1002,6 +1041,10 @@ pub struct SkillIndexRow {
     pub path: String,
     pub origin: String,
     pub repairable: bool,
+    pub runtime_state: String,
+    pub authority_generation: String,
+    pub authority_incarnation: String,
+    pub authority_install_receipt: String,
 }
 
 /// Group skills by their first tag ("general" when untagged), alphabetical
@@ -1018,6 +1061,7 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
             || s.error.to_lowercase().contains(&needle)
             || s.path.to_lowercase().contains(&needle)
             || s.origin.to_lowercase().contains(&needle)
+            || s.runtime_state.to_lowercase().contains(&needle)
     };
     let mut groups: std::collections::BTreeMap<String, Vec<&SkillSummary>> =
         std::collections::BTreeMap::new();
@@ -1049,6 +1093,10 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
             path: String::new(),
             origin: String::new(),
             repairable: false,
+            runtime_state: String::new(),
+            authority_generation: String::new(),
+            authority_incarnation: String::new(),
+            authority_install_receipt: String::new(),
         });
         out.extend(members.into_iter().map(|s| SkillIndexRow {
             id: s.id.clone(),
@@ -1063,6 +1111,10 @@ pub fn group_skill_rows(skills: &[SkillSummary], filter: &str) -> Vec<SkillIndex
             path: s.path.clone(),
             origin: s.origin.clone(),
             repairable: s.repairable,
+            runtime_state: s.runtime_state.clone(),
+            authority_generation: s.authority_generation.clone(),
+            authority_incarnation: s.authority_incarnation.clone(),
+            authority_install_receipt: s.authority_install_receipt.clone(),
         }));
     }
     out
@@ -6935,15 +6987,15 @@ mod tests {
     #[test]
     fn parse_skills_array_with_keywords() {
         let json = r#"[
-            {"status":"healthy","manifest":{"id":"verification","description":"verify before done","trigger_keywords":["verify","check"],"enabled":true},"origin":"bundled","path":null},
-            {"status":"healthy","manifest":{"id":"research","description":"deep research","trigger_keywords":[]},"origin":"user","path":"/skills/research"}
+            {"status":"healthy","manifest":{"id":"verification","description":"verify before done","trigger_keywords":["verify","check"],"enabled":true},"origin":"bundled","path":null,"runtime_state":"trusted_bundled_active"},
+            {"status":"healthy","manifest":{"id":"research","description":"deep research","trigger_keywords":[]},"origin":"user","path":"/skills/research","runtime_state":"installed_active"}
         ]"#;
         let rows = parse_skills(json);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].id, "verification");
         assert_eq!(rows[0].keywords, "verify, check");
         assert!(rows[0].enabled);
-        assert!(rows[1].enabled, "missing enabled defaults true");
+        assert!(rows[1].enabled, "installed authority controls GUI state");
         assert_eq!(rows[1].keywords, "");
         assert_eq!(rows[0].origin, "bundled");
         assert_eq!(rows[1].operation_id, "research");
@@ -6955,8 +7007,8 @@ mod tests {
     fn parse_skills_reads_tags() {
         let rows = parse_skills(
             r#"[
-                {"status":"healthy","manifest":{"id":"a","description":"A","tags":["security","net"]},"origin":"bundled","path":null},
-                {"status":"healthy","manifest":{"id":"b","description":"B"},"origin":"bundled","path":null}
+                {"status":"healthy","manifest":{"id":"a","description":"A","tags":["security","net"]},"origin":"bundled","path":null,"runtime_state":"trusted_bundled_active"},
+                {"status":"healthy","manifest":{"id":"b","description":"B"},"origin":"bundled","path":null,"runtime_state":"trusted_bundled_active"}
             ]"#,
         );
         assert_eq!(rows[0].tags, vec!["security", "net"]);
@@ -6996,6 +7048,10 @@ mod tests {
             path: format!("/skills/{id}"),
             origin: "user".to_string(),
             repairable: false,
+            runtime_state: "installed_active".to_string(),
+            authority_generation: "a".repeat(64),
+            authority_incarnation: "1".to_string(),
+            authority_install_receipt: "b".repeat(64),
         };
         let skills = vec![
             mk("zeta", &["security"], ""),
@@ -7038,8 +7094,8 @@ mod tests {
         // id-less entry skipped.
         let rows = parse_skills(
             r#"[
-                {"status":"healthy","manifest":{"description":"no id"},"origin":"bundled","path":null},
-                {"status":"healthy","manifest":{"id":"ok","description":"OK"},"origin":"bundled","path":null}
+                {"status":"healthy","manifest":{"description":"no id"},"origin":"bundled","path":null,"runtime_state":"trusted_bundled_active"},
+                {"status":"healthy","manifest":{"id":"ok","description":"OK"},"origin":"bundled","path":null,"runtime_state":"trusted_bundled_active"}
             ]"#,
         );
         assert_eq!(rows.len(), 1);

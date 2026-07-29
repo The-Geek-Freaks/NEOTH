@@ -28,7 +28,7 @@
 //! small (typically < 1 KiB).
 
 use super::mode_registry::ResolvedMode;
-use super::schema::Skill;
+use super::schema::{RuntimeSkillView, Skill};
 
 /// Maximum Levenshtein edit distance accepted for a fuzzy keyword token match.
 /// 1 edit tolerates a single insertion, deletion, or substitution on a token
@@ -207,7 +207,7 @@ fn passes_path_gate(paths: &[String], active_files: &[String]) -> bool {
 ///
 /// Passes `&[]` for `active_files` so all path-gated skills always activate
 /// (backward-compat for callers that do not have an editor file context).
-pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
+pub fn route<'a, S: RuntimeSkillView>(message: &str, skills: &'a [S]) -> Option<RouteMatch<'a>> {
     route_with_min_weight(message, skills, DEFAULT_MIN_WEIGHT, &[])
 }
 
@@ -223,9 +223,9 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
 /// skipped before the keyword scan when none of the active files match. Pass
 /// `&[]` to disable the gate (all skills eligible) — this is the correct value
 /// for channel turns and any caller without an editor file context.
-pub fn route_with_min_weight<'a>(
+pub fn route_with_min_weight<'a, S: RuntimeSkillView>(
     message: &str,
-    skills: &'a [Skill],
+    skills: &'a [S],
     min_weight: usize,
     active_files: &[String],
 ) -> Option<RouteMatch<'a>> {
@@ -235,7 +235,8 @@ pub fn route_with_min_weight<'a>(
     }
 
     let mut best: Option<(usize, &Skill, Vec<String>)> = None;
-    for skill in skills {
+    for runtime_skill in skills {
+        let skill = runtime_skill.runtime_skill();
         if !skill.is_enabled() {
             continue;
         }
@@ -333,21 +334,18 @@ pub fn compose_mode_skill_layer(parent: Option<&Skill>, resolved: &ResolvedMode)
 /// [`EMBEDDING_THRESHOLD`]**; below threshold returns `None` so
 /// callers can fall back to keyword Stage-1.
 ///
-/// The Phase 2 wire-up in `cli::chat` will:
-///   1. Embed the operator's message once via `EmbedProvider`
-///   2. Look up each candidate skill's pre-computed description
-///      embedding from the session-cached `HashMap<&str, Vec<f32>>`
-///   3. Call this function to pick the cosine winner
-///
-/// Today this exists so consumers can prep against the stable API
-/// surface; the actual chat-loop wire-up is a follow-on commit.
-pub fn cosine_rerank<'a>(
+/// [`route_stage2_embedding`] uses this helper after embedding the operator's
+/// message and each authority-admitted candidate description. CLI chat calls
+/// that entry point after the keyword stage misses (or when always-embed
+/// routing is enabled).
+pub fn cosine_rerank<'a, S: RuntimeSkillView>(
     message_embedding: &[f32],
-    skills: &'a [Skill],
+    skills: &'a [S],
     skill_embeddings: &std::collections::HashMap<String, Vec<f32>>,
 ) -> Option<(&'a Skill, f32)> {
     let mut best: Option<(&Skill, f32)> = None;
-    for skill in skills {
+    for runtime_skill in skills {
+        let skill = runtime_skill.runtime_skill();
         if !skill.is_enabled() {
             continue;
         }
@@ -399,9 +397,9 @@ pub fn cosine_rerank<'a>(
 ///     still scored
 ///   - Dim mismatch between message + skill embeddings → `cosine()`
 ///     returns 0.0, that skill never crosses threshold
-pub async fn route_stage2_embedding<'a>(
+pub async fn route_stage2_embedding<'a, S: RuntimeSkillView>(
     message: &str,
-    skills: &'a [Skill],
+    skills: &'a [S],
     embed_provider: &dyn crate::providers::embed::EmbedProvider,
 ) -> Option<(&'a Skill, f32)> {
     use crate::providers::embed::EmbedRequest;
@@ -421,7 +419,8 @@ pub async fn route_stage2_embedding<'a>(
     };
     let mut skill_embeddings: std::collections::HashMap<String, Vec<f32>> =
         std::collections::HashMap::new();
-    for skill in skills {
+    for runtime_skill in skills {
+        let skill = runtime_skill.runtime_skill();
         if !skill.is_enabled() {
             continue;
         }
@@ -503,7 +502,7 @@ mod tests {
 
     #[test]
     fn no_skills_no_match() {
-        assert!(route("hello", &[]).is_none());
+        assert!(route("hello", &Vec::<Skill>::new()).is_none());
     }
 
     // ── GOLD-ADOPT-28 lazy mode-layer composition ──────────────────────────

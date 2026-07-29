@@ -35,6 +35,13 @@
 //!   - `event_type` + `event_id` + `hlc` + `session_id` + `node_id`
 //!     are preserved — operators auditing the WAL still see "frame
 //!     0x01 at this HLC was redacted at the operator's request".
+//!   - Installed-Skill mutation and authority proof frames are categorically
+//!     non-redactable. Their authenticated payloads are live authorization
+//!     inputs, not memory content; erasing one would silently invalidate the
+//!     installed runtime authority chain.
+//!   - Every original frame CRC validates before predicates or redaction run;
+//!     the eraser never converts pre-existing corruption into a newly valid
+//!     redacted frame.
 //!
 //! What is NOT preserved (by design):
 //!   - The payload bytes themselves. Gone, overwritten with zeros.
@@ -62,6 +69,22 @@ use super::types::EventFlags;
 /// FLAGS_OFFSET_IN_HEADER_BODY`. Single source of truth so the two sites can't
 /// drift if the header layout ever changes (see `EventHeaderV2` field order).
 const FLAGS_OFFSET_IN_HEADER_BODY: usize = 4;
+
+fn is_installed_skill_runtime_proof(header: &EventHeaderV2) -> bool {
+    if header.event_type != super::events::EVENT_TYPE_EXTENDED {
+        return false;
+    }
+    matches!(
+        super::events::ExtendedSubtype::from_u8(header.event_subtype),
+        Some(
+            super::events::ExtendedSubtype::SkillInstallIntent
+                | super::events::ExtendedSubtype::SkillInstallResult
+                | super::events::ExtendedSubtype::SkillRemovalIntent
+                | super::events::ExtendedSubtype::SkillRemovalResult
+                | super::events::ExtendedSubtype::SkillAuthorityDecision
+        )
+    )
+}
 
 /// Stable sibling lock shared by the WAL writer and physical redactors.
 ///
@@ -115,9 +138,12 @@ impl RedactReport {
 /// event with the per-segment numbers.
 ///
 /// `predicate` runs against the original payload bytes BEFORE they are
-/// overwritten. Wrap it carefully: a panic in the predicate aborts the
-/// scan; the partially-redacted segment stays consistent because each
-/// redaction is fsync'd before the next predicate call.
+/// overwritten. Installed-Skill mutation/authority proofs are not memory
+/// content and cannot be redacted: if the predicate matches one, this returns
+/// an error before any replacement reaches disk. Wrap the predicate carefully:
+/// a panic aborts the scan, but the original segment remains byte-identical
+/// because all frame edits are staged in memory and committed atomically only
+/// after the complete walk succeeds.
 pub fn scan_and_redact<F>(segment_path: &Path, mut predicate: F) -> Result<RedactReport>
 where
     F: FnMut(&[u8]) -> bool,
@@ -582,12 +608,6 @@ where
             );
         }
 
-        if header.flags.contains(EventFlags::REDACTED) {
-            report.already_redacted += 1;
-            cursor += total_len;
-            continue;
-        }
-
         let payload_start = start + PREAMBLE_LEN + HEADER_BODY_LEN + header.reserved_len as usize;
         let payload_len = header.payload_len as usize;
         // Length-field consistency: reserved + payload + CRC must sit INSIDE the
@@ -603,10 +623,39 @@ where
                 segment_path.display()
             );
         }
+        let crc_offset = start + total - CRC_LEN;
+        let stored_crc = u32::from_le_bytes(
+            frames[crc_offset..crc_offset + CRC_LEN]
+                .try_into()
+                .expect("validated frame CRC slice has fixed length"),
+        );
+        let computed_crc = crc32c::crc32c(&frames[start..crc_offset]);
+        if stored_crc != computed_crc {
+            anyhow::bail!(
+                "wal::redact: CRC mismatch at logical offset {} in {} — tamper-suspect \
+                 frame; refusing to repair corruption through redaction",
+                base_offset + cursor,
+                segment_path.display()
+            );
+        }
+        if header.flags.contains(EventFlags::REDACTED) {
+            report.already_redacted += 1;
+            cursor += total_len;
+            continue;
+        }
         if !predicate(&frames[payload_start..payload_start + payload_len]) {
             report.frames_skipped += 1;
             cursor += total_len;
             continue;
+        }
+        if is_installed_skill_runtime_proof(&header) {
+            anyhow::bail!(
+                "wal::redact: topic matched protected installed-Skill runtime proof \
+                 {} at logical offset {} in {}; refusing to invalidate live authority",
+                super::events::extended_subtype_name(header.event_subtype),
+                base_offset + cursor,
+                segment_path.display()
+            );
         }
 
         // Redact in the buffer: zero payload, flip REDACTED, recompute CRC over
@@ -650,18 +699,88 @@ where
 /// the frame so its payload is zeros, its REDACTED flag is set, and
 /// its CRC is recomputed.
 ///
-/// Public so a future `cli/wal redact --offset N` command (manual
-/// operator surgery) can call it directly. The scanner uses it
-/// internally for each predicate match.
-pub fn redact_frame_in_place(
+/// Test-only low-level primitive used by verifier/redaction regression tests.
+/// Production topic scans always use the path-bound sidecar lock and
+/// crash-consistent atomic replacement path above; exposing an unlocked
+/// `File`-only rewrite API would let a future caller bypass that contract.
+///
+/// Installed-Skill mutation/authority proof frames are rejected before the
+/// first write. Their authenticated payload is part of the live execution
+/// authority chain and therefore is not operator memory content. The header is
+/// re-read from `file` at `frame_offset` and must exactly match the supplied
+/// parsed header, so a stale or forged caller argument cannot bypass that
+/// classification.
+#[cfg(test)]
+pub(crate) fn redact_frame_in_place(
     file: &mut std::fs::File,
     frame_offset: u64,
     header: &EventHeaderV2,
 ) -> Result<()> {
-    let payload_offset =
-        frame_offset + (PREAMBLE_LEN + HEADER_BODY_LEN + header.reserved_len as usize) as u64;
-    let payload_len = header.payload_len as usize;
-    let total_len = header.total_len as usize;
+    file.seek(SeekFrom::Start(frame_offset))
+        .context("seek to frame start for redaction header verification")?;
+    let mut preamble = [0u8; PREAMBLE_LEN];
+    file.read_exact(&mut preamble)
+        .context("read frame magic for redaction header verification")?;
+    anyhow::ensure!(
+        preamble == MAGIC,
+        "refusing direct redaction at offset {frame_offset}: actual frame magic is invalid"
+    );
+    let mut actual_header_bytes = [0u8; HEADER_BODY_LEN];
+    file.read_exact(&mut actual_header_bytes)
+        .context("read actual frame header for redaction verification")?;
+    let actual_header = EventHeaderV2::from_le_bytes(&actual_header_bytes)
+        .context("parse actual frame header for redaction verification")?;
+    anyhow::ensure!(
+        actual_header == *header,
+        "refusing direct redaction at offset {frame_offset}: supplied header does not match \
+         the actual on-disk frame header"
+    );
+    let total_len = actual_header.total_len as usize;
+    anyhow::ensure!(
+        actual_header.payload_len as usize <= crate::wal::writer::MAX_PAYLOAD_BYTES,
+        "refusing direct redaction at offset {frame_offset}: actual payload length {} \
+         exceeds the WAL payload ceiling {}",
+        actual_header.payload_len,
+        crate::wal::writer::MAX_PAYLOAD_BYTES
+    );
+    anyhow::ensure!(
+        total_len <= crate::wal::recovery::MAX_FRAME_LEN,
+        "refusing direct redaction at offset {frame_offset}: actual frame length {total_len} \
+         exceeds the WAL frame ceiling {}",
+        crate::wal::recovery::MAX_FRAME_LEN
+    );
+    let frame_end = frame_offset
+        .checked_add(u64::try_from(total_len).context("actual frame length exceeds u64")?)
+        .context("actual frame end offset overflow")?;
+    let file_len = file
+        .metadata()
+        .context("stat actual frame before direct redaction")?
+        .len();
+    anyhow::ensure!(
+        frame_end <= file_len,
+        "refusing direct redaction at offset {frame_offset}: actual frame ends at {frame_end}, \
+         beyond the {file_len}-byte file"
+    );
+    let mut actual_frame = vec![0u8; total_len];
+    file.seek(SeekFrom::Start(frame_offset))
+        .context("seek to actual frame for redaction integrity verification")?;
+    file.read_exact(&mut actual_frame)
+        .context("read actual frame for redaction integrity verification")?;
+    let decoded = super::frame::decode_frame(&actual_frame)
+        .context("verify actual frame CRC before direct redaction")?;
+    anyhow::ensure!(
+        decoded.header == actual_header,
+        "refusing direct redaction at offset {frame_offset}: decoded frame identity changed \
+         during verification"
+    );
+    anyhow::ensure!(
+        !is_installed_skill_runtime_proof(&actual_header),
+        "refusing to redact protected installed-Skill runtime proof {}",
+        super::events::extended_subtype_name(actual_header.event_subtype)
+    );
+    let payload_offset = frame_offset
+        + (PREAMBLE_LEN + HEADER_BODY_LEN + actual_header.reserved_len as usize) as u64;
+    let payload_len = actual_header.payload_len as usize;
 
     // 1. Zero the payload.
     let zeros = vec![0u8; payload_len];
@@ -673,7 +792,7 @@ pub fn redact_frame_in_place(
     // 2. Flip the REDACTED flag in the header. Flags live at
     // FLAGS_OFFSET_IN_HEADER_BODY of the header body; absolute offset =
     // frame_offset + PREAMBLE_LEN + FLAGS_OFFSET_IN_HEADER_BODY.
-    let new_flags = (header.flags | EventFlags::REDACTED).bits();
+    let new_flags = (actual_header.flags | EventFlags::REDACTED).bits();
     file.seek(SeekFrom::Start(
         frame_offset + PREAMBLE_LEN as u64 + FLAGS_OFFSET_IN_HEADER_BODY as u64,
     ))
@@ -822,11 +941,20 @@ mod tests {
     /// pattern in `wal::frame::tests` but private to this module to
     /// avoid cross-test coupling).
     fn make_header(payload_len: u32, event_id: u64) -> EventHeaderV2 {
+        make_typed_header(payload_len, event_id, 0x01, 0)
+    }
+
+    fn make_typed_header(
+        payload_len: u32,
+        event_id: u64,
+        event_type: u8,
+        event_subtype: u8,
+    ) -> EventHeaderV2 {
         EventHeaderV2 {
             wal_format_version: EventHeaderV2::WAL_FORMAT_VERSION,
             event_schema_version: EventHeaderV2::EVENT_SCHEMA_VERSION,
-            event_type: 0x01,
-            event_subtype: 0,
+            event_type,
+            event_subtype,
             flags: EventFlags::empty(),
             header_len: HEADER_BODY_LEN as u16,
             reserved_len: 0,
@@ -889,6 +1017,252 @@ mod tests {
         }
         std::fs::write(&path, &bytes).unwrap();
         (dir, path, offsets)
+    }
+
+    fn write_segment_with_typed_frame(
+        event_type: u8,
+        event_subtype: u8,
+        payload: &[u8],
+    ) -> (tempfile::TempDir, std::path::PathBuf, u64, EventHeaderV2) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
+        let mut bytes = SegmentHeader::new(1, 1, 0, 0, [0u8; 16])
+            .to_le_bytes()
+            .to_vec();
+        let offset = bytes.len() as u64;
+        let header = make_typed_header(payload.len() as u32, 1, event_type, event_subtype);
+        bytes.extend_from_slice(&encode_frame(&header, payload));
+        std::fs::write(&path, bytes).unwrap();
+        (dir, path, offset, header)
+    }
+
+    #[test]
+    fn physical_topic_redaction_refuses_every_installed_skill_runtime_proof() {
+        let proof_subtypes = [
+            crate::wal::events::ExtendedSubtype::SkillInstallIntent,
+            crate::wal::events::ExtendedSubtype::SkillInstallResult,
+            crate::wal::events::ExtendedSubtype::SkillRemovalIntent,
+            crate::wal::events::ExtendedSubtype::SkillRemovalResult,
+            crate::wal::events::ExtendedSubtype::SkillAuthorityDecision,
+        ];
+
+        for subtype in proof_subtypes {
+            let (_dir, path, _, _) = write_segment_with_typed_frame(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                subtype as u8,
+                br#"{"skill_id":"alpha","topic":"operator-request"}"#,
+            );
+            let before = std::fs::read(&path).unwrap();
+
+            let error = scan_and_redact(&path, payload_contains_topic("alpha"))
+                .expect_err("runtime proof payload must be non-redactable");
+
+            assert!(
+                format!("{error:#}").contains("protected installed-Skill runtime proof"),
+                "{subtype:?} returned unexpected refusal: {error:#}"
+            );
+            assert!(
+                format!("{error:#}").contains(subtype.name()),
+                "refusal must identify {subtype:?}: {error:#}"
+            );
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                before,
+                "{subtype:?} bytes changed despite the categorical refusal"
+            );
+        }
+    }
+
+    #[test]
+    fn protected_proof_refusal_does_not_commit_earlier_staged_redactions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("000001.wal");
+        let mut bytes = SegmentHeader::new(1, 1, 0, 0, [0u8; 16])
+            .to_le_bytes()
+            .to_vec();
+        for (event_id, subtype, payload) in [
+            (
+                1,
+                crate::wal::events::ExtendedSubtype::CommunicationProfileUpdated,
+                br#"{"topic":"alpha","kind":"ordinary-memory"}"#.as_slice(),
+            ),
+            (
+                2,
+                crate::wal::events::ExtendedSubtype::SkillAuthorityDecision,
+                br#"{"skill_id":"alpha","kind":"runtime-proof"}"#.as_slice(),
+            ),
+        ] {
+            let header = make_typed_header(
+                payload.len() as u32,
+                event_id,
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                subtype as u8,
+            );
+            bytes.extend_from_slice(&encode_frame(&header, payload));
+        }
+        std::fs::write(&path, &bytes).unwrap();
+
+        let error = scan_and_redact(&path, payload_contains_topic("alpha"))
+            .expect_err("a later protected match must abort the segment transaction");
+
+        assert!(format!("{error:#}").contains("skill_authority_decision"));
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            bytes,
+            "an earlier ordinary match was only staged and must not reach disk"
+        );
+    }
+
+    #[test]
+    fn topic_redaction_cannot_repair_a_tampered_proof_subtype_into_unprotected_data() {
+        let (_dir, path, offset, _) = write_segment_with_typed_frame(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8,
+            br#"{"skill_id":"alpha"}"#,
+        );
+        let mut tampered = std::fs::read(&path).unwrap();
+        tampered[offset as usize + PREAMBLE_LEN + 3] =
+            crate::wal::events::ExtendedSubtype::CommunicationProfileUpdated as u8;
+        std::fs::write(&path, &tampered).unwrap();
+
+        let error = scan_and_redact(&path, payload_contains_topic("alpha"))
+            .expect_err("redaction must not turn a CRC-invalid subtype rewrite into valid data");
+
+        assert!(format!("{error:#}").contains("CRC mismatch"), "{error:#}");
+        assert_eq!(
+            std::fs::read(path).unwrap(),
+            tampered,
+            "tamper refusal must not repair or otherwise rewrite the segment"
+        );
+    }
+
+    #[test]
+    fn direct_frame_redaction_refuses_installed_skill_runtime_proof() {
+        let (_dir, path, offset, header) = write_segment_with_typed_frame(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8,
+            br#"{"skill_id":"alpha"}"#,
+        );
+        let before = std::fs::read(&path).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        let error = redact_frame_in_place(&mut file, offset, &header)
+            .expect_err("direct offset redaction must share the proof policy");
+
+        assert!(format!("{error:#}").contains("protected installed-Skill runtime proof"));
+        drop(file);
+        assert_eq!(std::fs::read(path).unwrap(), before);
+    }
+
+    #[test]
+    fn direct_frame_redaction_cannot_spoof_any_proof_with_an_unprotected_header() {
+        for proof_subtype in [
+            crate::wal::events::ExtendedSubtype::SkillInstallIntent,
+            crate::wal::events::ExtendedSubtype::SkillInstallResult,
+            crate::wal::events::ExtendedSubtype::SkillRemovalIntent,
+            crate::wal::events::ExtendedSubtype::SkillRemovalResult,
+            crate::wal::events::ExtendedSubtype::SkillAuthorityDecision,
+        ] {
+            let (_dir, path, offset, actual_header) = write_segment_with_typed_frame(
+                crate::wal::events::EVENT_TYPE_EXTENDED,
+                proof_subtype as u8,
+                br#"{"skill_id":"alpha"}"#,
+            );
+            let before = std::fs::read(&path).unwrap();
+            let mut forged_header = actual_header;
+            forged_header.event_subtype =
+                crate::wal::events::ExtendedSubtype::CommunicationProfileUpdated as u8;
+            let mut file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .unwrap();
+
+            let error = redact_frame_in_place(&mut file, offset, &forged_header).expect_err(
+                "caller-supplied frame identity cannot override on-disk proof identity",
+            );
+
+            assert!(
+                format!("{error:#}").contains("supplied header does not match"),
+                "{proof_subtype:?}: {error:#}"
+            );
+            drop(file);
+            assert_eq!(
+                std::fs::read(path).unwrap(),
+                before,
+                "{proof_subtype:?}: mismatched caller metadata must fail before the first write"
+            );
+        }
+    }
+
+    #[test]
+    fn direct_frame_redaction_rejects_oversized_header_before_allocation_or_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("oversized-frame.wal");
+        let header = make_typed_header(
+            (crate::wal::writer::MAX_PAYLOAD_BYTES + 1) as u32,
+            1,
+            0x01,
+            0,
+        );
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&header.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        let error = redact_frame_in_place(&mut file, 0, &header)
+            .expect_err("oversized caller header must be bounded before allocation");
+
+        assert!(
+            format!("{error:#}").contains("payload ceiling"),
+            "{error:#}"
+        );
+        drop(file);
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn direct_frame_redaction_rejects_truncated_frame_before_allocation_or_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("truncated-frame.wal");
+        let header = make_typed_header(128, 1, 0x01, 0);
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&header.to_le_bytes());
+        std::fs::write(&path, &bytes).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+
+        let error = redact_frame_in_place(&mut file, 0, &header)
+            .expect_err("truncated frame must fail the metadata bound before allocation");
+
+        assert!(format!("{error:#}").contains("beyond the"), "{error:#}");
+        drop(file);
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn unprotected_extended_frame_remains_topic_redactable() {
+        let (_dir, path, offset, _) = write_segment_with_typed_frame(
+            crate::wal::events::EVENT_TYPE_EXTENDED,
+            crate::wal::events::ExtendedSubtype::CommunicationProfileUpdated as u8,
+            br#"{"topic":"alpha"}"#,
+        );
+
+        let report =
+            scan_and_redact(&path, payload_contains_topic("alpha")).expect("redact normal event");
+
+        assert_eq!(report.frames_redacted, vec![offset]);
     }
 
     #[test]

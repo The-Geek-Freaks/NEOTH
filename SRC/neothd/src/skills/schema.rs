@@ -1,5 +1,6 @@
 //! Skill manifest types.
 
+use std::ops::Deref;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -232,6 +233,21 @@ pub struct Skill {
 }
 
 impl Skill {
+    /// Materialize a compile-time bundled Skill. Runtime loaders use this
+    /// constructor instead of inferring trust from an id or an on-disk path:
+    /// only bytes embedded in the binary may enter through this boundary.
+    pub(super) fn from_trusted_bundled(
+        manifest: SkillManifest,
+        path: PathBuf,
+        content_hash: String,
+    ) -> Self {
+        Self {
+            manifest,
+            path,
+            content_hash,
+        }
+    }
+
     pub fn id(&self) -> &str {
         &self.manifest.id
     }
@@ -300,6 +316,182 @@ impl Skill {
     /// Default `SkillVisibility::On` — all skills auto-route unless changed.
     pub fn visibility(&self) -> crate::config::SkillVisibility {
         self.manifest.visibility
+    }
+}
+
+/// Immutable Skill admitted to routing.
+///
+/// The inner `Skill` remains useful for inventory and package tooling, but a
+/// production router accepts only this sealed runtime form. This prevents a
+/// raw user manifest or `enabled: true` flag from becoming execution
+/// authority merely because a caller obtained a `Vec<Skill>`.
+#[derive(Debug, Clone, Serialize)]
+pub struct RuntimeSkill {
+    skill: Skill,
+    origin: RuntimeSkillOrigin,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum RuntimeSkillOrigin {
+    TrustedBundled {
+        embedded_content_hash: String,
+    },
+    InstalledAuthority {
+        package_generation_sha256: String,
+        manifest_sha256: String,
+        install_incarnation: u64,
+        install_terminal_receipt_sha256: String,
+        record_sha256: String,
+        current_anchor_sha256: String,
+        authority_sequence: u64,
+        decision_id: String,
+    },
+}
+
+impl RuntimeSkill {
+    /// Admit bytes compiled into this binary. A user package with the same id
+    /// cannot call this boundary through the loader.
+    pub(super) fn from_trusted_bundled(skill: Skill) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            skill.path.starts_with(std::path::Path::new("<bundled>")),
+            "trusted bundled Skill must carry the compile-time path marker"
+        );
+        Ok(Self {
+            origin: RuntimeSkillOrigin::TrustedBundled {
+                embedded_content_hash: skill.content_hash.clone(),
+            },
+            skill,
+        })
+    }
+
+    /// Consume exact installed-package authority and freeze its effective
+    /// manifest into the routing snapshot.
+    pub(super) fn from_validated_installed(
+        authority: super::authority::ValidatedInstalledSkillAuthority,
+        path: PathBuf,
+        content_hash: String,
+        observed_manifest_sha256: &str,
+    ) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            authority.manifest_sha256() == observed_manifest_sha256,
+            "installed Skill manifest changed before runtime materialization"
+        );
+        anyhow::ensure!(
+            authority.record().skill_id == authority.manifest().id,
+            "installed Skill authority id does not match its effective manifest"
+        );
+        let origin = RuntimeSkillOrigin::InstalledAuthority {
+            package_generation_sha256: authority.package_generation_sha256().to_string(),
+            manifest_sha256: authority.manifest_sha256().to_string(),
+            install_incarnation: authority.install_incarnation(),
+            install_terminal_receipt_sha256: authority
+                .install_terminal_receipt_sha256()
+                .to_string(),
+            record_sha256: authority.record_sha256().to_string(),
+            current_anchor_sha256: authority.current_anchor_sha256().to_string(),
+            authority_sequence: authority.record().authority_sequence,
+            decision_id: authority.record().decision_id.clone(),
+        };
+        Ok(Self {
+            skill: Skill {
+                manifest: authority.manifest().clone(),
+                path,
+                content_hash,
+            },
+            origin,
+        })
+    }
+
+    pub fn is_trusted_bundled(&self) -> bool {
+        matches!(&self.origin, RuntimeSkillOrigin::TrustedBundled { .. })
+    }
+
+    pub fn authority_record_sha256(&self) -> Option<&str> {
+        match &self.origin {
+            RuntimeSkillOrigin::TrustedBundled { .. } => None,
+            RuntimeSkillOrigin::InstalledAuthority { record_sha256, .. } => Some(record_sha256),
+        }
+    }
+
+    pub fn package_generation_sha256(&self) -> Option<&str> {
+        match &self.origin {
+            RuntimeSkillOrigin::TrustedBundled { .. } => None,
+            RuntimeSkillOrigin::InstalledAuthority {
+                package_generation_sha256,
+                ..
+            } => Some(package_generation_sha256),
+        }
+    }
+
+    pub fn manifest_sha256(&self) -> Option<&str> {
+        match &self.origin {
+            RuntimeSkillOrigin::TrustedBundled { .. } => None,
+            RuntimeSkillOrigin::InstalledAuthority {
+                manifest_sha256, ..
+            } => Some(manifest_sha256),
+        }
+    }
+
+    pub fn install_incarnation(&self) -> Option<u64> {
+        match &self.origin {
+            RuntimeSkillOrigin::TrustedBundled { .. } => None,
+            RuntimeSkillOrigin::InstalledAuthority {
+                install_incarnation,
+                ..
+            } => Some(*install_incarnation),
+        }
+    }
+
+    pub fn install_terminal_receipt_sha256(&self) -> Option<&str> {
+        match &self.origin {
+            RuntimeSkillOrigin::TrustedBundled { .. } => None,
+            RuntimeSkillOrigin::InstalledAuthority {
+                install_terminal_receipt_sha256,
+                ..
+            } => Some(install_terminal_receipt_sha256),
+        }
+    }
+
+    pub fn as_skill(&self) -> &Skill {
+        &self.skill
+    }
+}
+
+impl Deref for RuntimeSkill {
+    type Target = Skill;
+
+    fn deref(&self) -> &Self::Target {
+        &self.skill
+    }
+}
+
+mod runtime_skill_view_sealed {
+    pub trait Sealed {}
+}
+
+/// Sealed input accepted by routing and mode registries. Production code can
+/// supply only `RuntimeSkill`; unit tests may exercise pure routing with raw
+/// fixtures without opening that bypass in normal builds.
+pub trait RuntimeSkillView: runtime_skill_view_sealed::Sealed {
+    fn runtime_skill(&self) -> &Skill;
+}
+
+impl runtime_skill_view_sealed::Sealed for RuntimeSkill {}
+
+impl RuntimeSkillView for RuntimeSkill {
+    fn runtime_skill(&self) -> &Skill {
+        self.as_skill()
+    }
+}
+
+#[cfg(test)]
+impl runtime_skill_view_sealed::Sealed for Skill {}
+
+#[cfg(test)]
+impl RuntimeSkillView for Skill {
+    fn runtime_skill(&self) -> &Skill {
+        self
     }
 }
 

@@ -18,6 +18,7 @@
 //! provider.complete(). Skill system_prompt is appended to the assembled
 //! operator context so per-turn skill instructions win over global rules.
 
+pub mod authority;
 /// GOLD-ADAPT-ODY-20 — auto-skill extraction from MCP-loop agent runs.
 /// After ≥ 2 tool-calls an LLM distils {title,steps,tags,confidence} from the
 /// turn; skills above the 0.6 confidence threshold that are computer-executable

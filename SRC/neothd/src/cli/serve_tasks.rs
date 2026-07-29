@@ -3157,10 +3157,11 @@ pub(crate) fn spawn_updater_skill_cron(
     writer: WalWriterHandle,
 ) -> Option<JoinHandle<()>> {
     let home_for_skills = home.to_path_buf();
+    let reload_for_skills = Arc::clone(&reload_controller);
     let builder: UpdaterSpecBuilder = Arc::new(move |config, gate| {
-        crate::updater::probes::skill_plugin_specs_blocking(
+        crate::updater::probes::skill_plugin_specs_authorized_blocking(
             home_for_skills.clone(),
-            config.skills.clone(),
+            Arc::clone(&reload_for_skills),
             config.plugins.wasm.clone(),
             gate,
         )

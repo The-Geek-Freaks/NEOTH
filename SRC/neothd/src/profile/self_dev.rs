@@ -17,6 +17,7 @@
 //! wires the CLI surface.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 use super::estimators::BehaviouralProfile;
 use super::presets::{PresetData, ProfilePreset};
@@ -68,9 +69,69 @@ impl ProposalKind {
 pub enum ValidatedProposalTarget {
     Preset(ProfilePreset),
     Verbosity(super::presets::Verbosity),
-    BriefingTime { hour: u8, minute: u8 },
-    ExtensionSelector(String),
+    BriefingTime {
+        hour: u8,
+        minute: u8,
+    },
+    ExtensionSelector {
+        id: String,
+        authority: ExtensionAuthorityBinding,
+    },
     SourceEdit,
+}
+
+/// Exact target identity shown when a LearnExtension proposal is persisted for
+/// operator review. A proposal can never recapture this at acceptance time:
+/// doing so would let a same-id replacement inherit prior consent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "origin", rename_all = "snake_case")]
+pub enum ExtensionAuthorityBinding {
+    Bundled,
+    Installed {
+        package_generation_sha256: String,
+        install_incarnation: u64,
+        install_terminal_receipt_sha256: String,
+    },
+}
+
+impl ExtensionAuthorityBinding {
+    fn validate(&self) -> Result<(), String> {
+        let valid_sha256 = |value: &str| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        };
+        match self {
+            Self::Bundled => Ok(()),
+            Self::Installed {
+                package_generation_sha256,
+                install_incarnation,
+                install_terminal_receipt_sha256,
+            } if valid_sha256(package_generation_sha256)
+                && *install_incarnation > 0
+                && valid_sha256(install_terminal_receipt_sha256) =>
+            {
+                Ok(())
+            }
+            Self::Installed { .. } => {
+                Err("extension authority binding is not a valid exact install proof".into())
+            }
+        }
+    }
+
+    fn stable_component(&self) -> String {
+        match self {
+            Self::Bundled => "bundled".to_string(),
+            Self::Installed {
+                package_generation_sha256,
+                install_incarnation,
+                install_terminal_receipt_sha256,
+            } => format!(
+                "installed:{package_generation_sha256}:{install_incarnation}:{install_terminal_receipt_sha256}"
+            ),
+        }
+    }
 }
 
 /// One concrete proposal the operator reviews. `confidence` is the
@@ -95,9 +156,27 @@ pub struct SelfDevProposal {
     /// it's an ISO time `"08:30"`. Empty allowed for kinds that
     /// don't have a single-string target.
     pub target: String,
+    /// Exact activation target captured before the proposal becomes visible.
+    /// Old/hand-written ID-only extension proposals deserialize but fail closed
+    /// at acceptance and must be regenerated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_authority: Option<ExtensionAuthorityBinding>,
 }
 
 impl SelfDevProposal {
+    pub fn bind_extension_authority(
+        &mut self,
+        binding: ExtensionAuthorityBinding,
+    ) -> Result<(), String> {
+        if self.kind != ProposalKind::LearnExtension {
+            return Err("only LearnExtension proposals accept Skill authority bindings".into());
+        }
+        binding.validate()?;
+        self.id = extension_content_id(&self.target, &binding);
+        self.extension_authority = Some(binding);
+        Ok(())
+    }
+
     /// Build the WAL payload for `EVENT_TYPE_SELF_DEV_PROPOSED`
     /// (0x1C). The accepted/declined events use just the id.
     pub fn to_proposed_payload(&self, ts_unix: i64) -> Vec<u8> {
@@ -107,6 +186,7 @@ impl SelfDevProposal {
             "reason": self.reason,
             "confidence": self.confidence,
             "target": self.target,
+            "extension_authority": self.extension_authority,
             "ts_unix": ts_unix,
         }))
         .unwrap_or_default()
@@ -130,6 +210,11 @@ impl SelfDevProposal {
         }
         if !self.confidence.is_finite() || !(0.0..=1.0).contains(&self.confidence) {
             return Err("proposal confidence must be finite and within 0.0..=1.0".into());
+        }
+        if self.kind != ProposalKind::LearnExtension && self.extension_authority.is_some() {
+            return Err(
+                "only LearnExtension proposals may carry an extension authority binding".into(),
+            );
         }
 
         match &self.kind {
@@ -192,7 +277,22 @@ impl SelfDevProposal {
                             .into(),
                     );
                 }
-                Ok(ValidatedProposalTarget::ExtensionSelector(id.to_string()))
+                let authority = self.extension_authority.clone().ok_or_else(|| {
+                    "extension proposal lacks the exact reviewed target authority; regenerate the proposal before acceptance"
+                        .to_string()
+                })?;
+                authority.validate()?;
+                let expected_id = extension_content_id(id, &authority);
+                if self.id != expected_id {
+                    return Err(
+                        "extension proposal content no longer matches its reviewed cryptographic identity; regenerate and review it again"
+                            .into(),
+                    );
+                }
+                Ok(ValidatedProposalTarget::ExtensionSelector {
+                    id: id.to_string(),
+                    authority,
+                })
             }
             ProposalKind::SourceEdit {
                 patch_path,
@@ -273,6 +373,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: (-profile.tone.casual_score).min(1.0),
                 target: "formal".into(),
+                extension_authority: None,
             });
         } else if suggest_casual {
             out.push(SelfDevProposal {
@@ -284,6 +385,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: profile.tone.casual_score.min(1.0),
                 target: "lowkey".into(),
+                extension_authority: None,
             });
         }
     }
@@ -303,6 +405,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: ((profile.length.median_chars as f64) / 500.0).min(1.0),
                 target: "detailed".into(),
+                extension_authority: None,
             });
         }
         // Operator writes terse prompts → terse replies.
@@ -318,6 +421,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: (30.0 - profile.length.median_chars as f64).max(0.0) / 30.0,
                 target: "terse".into(),
+                extension_authority: None,
             });
         }
     }
@@ -336,6 +440,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: (total as f64 / 200.0).min(0.9),
                 target: format!("{brief_hour:02}:30"),
+                extension_authority: None,
             });
         }
     }
@@ -354,6 +459,7 @@ pub fn propose_adjustments(
                 ),
                 confidence: (*hits as f64 / 100.0).min(0.85),
                 target: top_topic.clone(),
+                extension_authority: None,
             });
     }
 
@@ -376,6 +482,20 @@ fn stable_id(kind: &str, distinguishing: &str) -> String {
         hash = hash.wrapping_mul(16_777_619);
     }
     format!("{kind}-{hash:08x}")
+}
+
+/// Consent identity for an exact LearnExtension target. Unlike the short
+/// operator-facing IDs used for heuristic proposals, this identifier is a
+/// cryptographic commitment to the typed target and its authority proof.
+/// A proposal edited after review therefore cannot retain the accepted ID.
+fn extension_content_id(target: &str, authority: &ExtensionAuthorityBinding) -> String {
+    let authority = authority.stable_component();
+    let canonical = format!(
+        "learn_extension\0{}\0{target}\0{}\0{authority}",
+        target.len(),
+        authority.len()
+    );
+    format!("learn_extension-{:x}", Sha256::digest(canonical.as_bytes()))
 }
 
 #[cfg(test)]
@@ -689,6 +809,7 @@ mod tests {
             reason: "test".into(),
             confidence: 0.75,
             target: "formal".into(),
+            extension_authority: None,
         };
         let v: serde_json::Value =
             serde_json::from_slice(&p.to_proposed_payload(1_700_000_000)).unwrap();
@@ -715,6 +836,7 @@ mod tests {
             reason: "validated test proposal".into(),
             confidence: 0.8,
             target: "formal".into(),
+            extension_authority: None,
         };
         assert_eq!(
             proposal.validate_for_acceptance().unwrap(),
@@ -740,9 +862,72 @@ mod tests {
 
         proposal.kind = ProposalKind::LearnExtension;
         proposal.target = "deep-review".into();
+        proposal
+            .bind_extension_authority(ExtensionAuthorityBinding::Bundled)
+            .unwrap();
         assert_eq!(
             proposal.validate_for_acceptance().unwrap(),
-            ValidatedProposalTarget::ExtensionSelector("deep-review".into())
+            ValidatedProposalTarget::ExtensionSelector {
+                id: "deep-review".into(),
+                authority: ExtensionAuthorityBinding::Bundled,
+            }
+        );
+    }
+
+    #[test]
+    fn extension_acceptance_rejects_target_or_authority_changed_after_review() {
+        let mut proposal = SelfDevProposal {
+            id: "unbound".into(),
+            kind: ProposalKind::LearnExtension,
+            reason: "validated test proposal".into(),
+            confidence: 0.8,
+            target: "deep-review".into(),
+            extension_authority: None,
+        };
+        proposal
+            .bind_extension_authority(ExtensionAuthorityBinding::Bundled)
+            .unwrap();
+        let reviewed_id = proposal.id.clone();
+        assert_eq!(reviewed_id.len(), "learn_extension-".len() + 64);
+
+        proposal.target = "another-skill".into();
+        assert_eq!(proposal.id, reviewed_id);
+        assert!(
+            proposal
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("cryptographic identity")
+        );
+
+        proposal.target = "deep-review".into();
+        proposal.extension_authority = Some(ExtensionAuthorityBinding::Installed {
+            package_generation_sha256: "a".repeat(64),
+            install_incarnation: 7,
+            install_terminal_receipt_sha256: "b".repeat(64),
+        });
+        assert!(
+            proposal
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("cryptographic identity")
+        );
+    }
+
+    #[test]
+    fn extension_acceptance_rejects_legacy_unbound_proposal() {
+        let proposal = SelfDevProposal {
+            id: stable_id("learn_extension", "deep-review"),
+            kind: ProposalKind::LearnExtension,
+            reason: "legacy proposal".into(),
+            confidence: 0.8,
+            target: "deep-review".into(),
+            extension_authority: None,
+        };
+        assert!(
+            proposal
+                .validate_for_acceptance()
+                .unwrap_err()
+                .contains("exact reviewed target authority")
         );
     }
 
@@ -754,6 +939,7 @@ mod tests {
             reason: "test".into(),
             confidence: 0.8,
             target: "Formal".into(),
+            extension_authority: None,
         };
         assert!(
             base.validate_for_acceptance()

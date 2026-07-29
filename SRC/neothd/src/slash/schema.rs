@@ -100,7 +100,7 @@ pub enum SlashAction {
     /// `/disconnect <channel>` — revoke credentials + leave the
     /// adapter shell. Idempotent for already-disconnected channels.
     DisconnectChannel,
-    /// `/skill <list|enable|disable|info> [name]` — skill registry surface.
+    /// `/skill <list|enable|disable|revoke|info> [name]` — skill registry surface.
     SkillRegistry,
     /// `/plugin <list|enable|disable|info> [id]` — WASM plugin registry.
     PluginRegistry,
@@ -182,7 +182,8 @@ impl SlashAction {
         let sub = args.split_whitespace().next().unwrap_or("");
         match self {
             Self::ConfigGet => args.split_whitespace().count() >= 2,
-            Self::SkillRegistry | Self::PluginRegistry => matches!(sub, "enable" | "disable"),
+            Self::SkillRegistry => matches!(sub, "enable" | "disable" | "revoke"),
+            Self::PluginRegistry => matches!(sub, "enable" | "disable"),
             Self::MemoryView => sub == "forget",
             Self::ConsentManage => matches!(sub, "grant" | "revoke"),
             Self::AutonomyLevel => !args.trim().is_empty(),

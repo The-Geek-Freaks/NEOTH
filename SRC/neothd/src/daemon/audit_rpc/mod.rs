@@ -84,7 +84,10 @@ pub use server::{
     ALLOWED_CLIENT_EVENT_TYPES, ALLOWED_CLIENT_EXTENDED_SUBTYPES, AuditRpcState,
     is_allowed_client_event, is_allowed_client_event_pair,
 };
+#[cfg(test)]
+pub(crate) use sidecar::read_sidecar;
+pub(crate) use sidecar::write_sidecar;
 pub use sidecar::{SidecarGuard, remove_sidecar, sidecar_path};
-pub(crate) use sidecar::{read_sidecar, write_sidecar};
 pub use token::{init_rpc_token, read_rpc_token, rpc_token_path};
+#[cfg(test)]
 pub(crate) use transport::AuditEndpointV2;

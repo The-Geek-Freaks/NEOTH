@@ -14,13 +14,14 @@ use std::io::IsTerminal;
 use anyhow::{Context, Result};
 use clap::Args;
 use serde::Serialize;
-use tracing::info;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::skills::loader::{SkillInventoryOrigin, SkillInventoryRow, diagnostic_inventory};
+use crate::skills::loader::{
+    SkillInventoryOrigin, SkillInventoryRow, SkillInventoryRuntimeState, diagnostic_inventory,
+};
 use crate::skills::mutation_lifecycle::{self, IntentDelivery as SkillIntentDelivery};
-use crate::skills::{installer, load_all, operator_skill_warnings, route};
+use crate::skills::{installer, operator_skill_warnings, route};
 
 fn print_operator_skill_warnings(warnings: &[String]) {
     for warning in operator_skill_warnings(warnings) {
@@ -166,10 +167,14 @@ fn skill_create_receipt(report: &crate::skills::creator::CreateReport) -> SkillC
     clap::ArgGroup::new("force_target")
         .args(["install", "create"])
         .multiple(false)
+), group(
+    clap::ArgGroup::new("authority_toggle")
+        .args(["enable", "disable", "revoke"])
+        .multiple(false)
 ))]
 pub struct SkillsArgs {
     /// Print the table of installed skills.
-    #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable"])]
+    #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "inspect_install", "inspect_target", "uninstall", "create", "enable", "disable", "revoke"])]
     pub list: bool,
 
     /// Run the router against an arbitrary message and report the match.
@@ -192,12 +197,12 @@ pub struct SkillsArgs {
 
     /// Validate a local skill source and report the exact manifest generation
     /// plus whether its id already exists. Read-only except crash recovery.
-    #[arg(long = "inspect-install", value_name = "PATH", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable", "disable"])]
+    #[arg(long = "inspect-install", value_name = "PATH", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable", "disable", "revoke"])]
     pub inspect_install: Option<PathBuf>,
 
     /// Inspect the exact currently-live public entry (healthy or broken)
     /// without following links/reparse points. Read-only except crash recovery.
-    #[arg(long = "inspect-target", value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "inspect_install", "uninstall", "create", "enable", "disable"])]
+    #[arg(long = "inspect-target", value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "inspect_install", "uninstall", "create", "enable", "disable", "revoke"])]
     pub inspect_target: Option<String>,
 
     /// Bind an install to the id returned by `--inspect-install`.
@@ -242,7 +247,7 @@ pub struct SkillsArgs {
     #[arg(
         long,
         requires = "force_target",
-        conflicts_with_all = ["list", "test", "run_tests", "uninstall", "enable", "disable"]
+        conflicts_with_all = ["list", "test", "run_tests", "uninstall", "enable", "disable", "revoke"]
     )]
     pub force: bool,
 
@@ -280,14 +285,45 @@ pub struct SkillsArgs {
     /// GOLD-ADOPT-14 — activate a skill that ships disabled (e.g. the imported
     /// `pm-*` skills): adds it to `freedom.yaml::skills.enabled` (clearing any
     /// disable). Persists across restarts + binary upgrades.
-    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "disable"])]
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "disable", "revoke"])]
     pub enable: Option<String>,
 
     /// GOLD-ADOPT-14 — deactivate a bundled skill: adds it to
     /// `freedom.yaml::skills.disabled` (clearing any enable). `disabled` always
     /// wins, so this also overrides a prior `--enable`.
-    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable"])]
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable", "revoke"])]
     pub disable: Option<String>,
+
+    /// Revoke the exact current installed-Skill generation. Revocation writes
+    /// an authenticated authority record and also disables the Skill in
+    /// freedom.yaml. Bundled Skills use `--disable` instead.
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable", "disable"])]
+    pub revoke: Option<String>,
+
+    /// Bind a GUI/Buddy authority action to the exact package generation shown
+    /// before consent.
+    #[arg(
+        long = "expected-authority-generation-sha256",
+        value_name = "SHA256",
+        requires_all = ["authority_toggle", "expected_authority_incarnation", "expected_authority_install_receipt_sha256"]
+    )]
+    pub expected_authority_generation_sha256: Option<String>,
+
+    /// Bind authority consent across identical-byte reinstall (ABA).
+    #[arg(
+        long = "expected-authority-incarnation",
+        value_name = "N",
+        requires_all = ["authority_toggle", "expected_authority_generation_sha256", "expected_authority_install_receipt_sha256"]
+    )]
+    pub expected_authority_incarnation: Option<u64>,
+
+    /// Bind authority consent to the authenticated terminal install receipt.
+    #[arg(
+        long = "expected-authority-install-receipt-sha256",
+        value_name = "SHA256",
+        requires_all = ["authority_toggle", "expected_authority_generation_sha256", "expected_authority_incarnation"]
+    )]
+    pub expected_authority_install_receipt_sha256: Option<String>,
 
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
@@ -307,32 +343,371 @@ fn apply_skill_toggle(skills: &mut crate::config::SkillsConfig, id_lc: &str, tur
     }
 }
 
-/// Canonical skill-toggle mutation for CLI, slash actions, and future GUI
-/// callers. Validation happens before the locked config RMW; malformed
-/// freedom.yaml bytes are preserved by [`FreedomConfig::update_at`].
-pub(crate) async fn set_skill_enabled_at(
-    home: &std::path::Path,
-    id: &str,
-    turn_on: bool,
-) -> Result<String> {
-    let id_lc = id.trim().to_lowercase();
-    if id_lc.is_empty() {
-        anyhow::bail!("skill id must not be empty");
-    }
-    let skills = load_all(&home.join("skills")).await?;
-    if !skills
-        .iter()
-        .any(|skill| skill.id().to_lowercase() == id_lc)
-    {
-        anyhow::bail!("no skill with id '{id}' — run `neoth skills --list` to see installed ids");
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SkillAuthorityTarget {
+    Enabled,
+    Disabled,
+    Revoked,
+}
+
+impl SkillAuthorityTarget {
+    fn state_label(self) -> &'static str {
+        match self {
+            Self::Enabled => "enabled",
+            Self::Disabled => "disabled",
+            Self::Revoked => "revoked",
+        }
     }
 
-    FreedomConfig::update_at(&home.join("freedom.yaml"), |cfg| {
-        apply_skill_toggle(&mut cfg.skills, &id_lc, turn_on);
+    fn turns_policy_on(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct SkillToggleOutcome {
+    pub(crate) id: String,
+    pub(crate) state: &'static str,
+    pub(crate) origin: &'static str,
+    pub(crate) authority: Option<crate::skills::authority::SkillAuthorityReceipt>,
+    pub(crate) reload_requested: bool,
+    pub(crate) reload_sentinel: String,
+    pub(crate) reload_ts_unix: u64,
+}
+
+fn update_skill_policy_at(config_path: &Path, id_lc: &str, turn_on: bool) -> Result<()> {
+    FreedomConfig::update_at(config_path, |cfg| {
+        apply_skill_toggle(&mut cfg.skills, id_lc, turn_on);
         Ok(())
     })
-    .map_err(|error| anyhow::anyhow!("update freedom.yaml: {error}"))?;
-    Ok(id_lc)
+    .map_err(|error| anyhow::anyhow!("update freedom.yaml: {error}"))
+}
+
+async fn publish_installed_skill_decision(
+    home: &Path,
+    id: &str,
+    reload: &crate::config::reload::ReloadController,
+    decision: crate::skills::authority::SkillAuthorityDecision,
+    expectation: Option<crate::skills::authority::InstalledSkillDecisionExpectation>,
+) -> Result<crate::skills::authority::SkillAuthorityReceipt> {
+    let home = home.to_path_buf();
+    let id = id.to_string();
+    let reload = reload.clone();
+    tokio::task::spawn_blocking(move || {
+        let first =
+            crate::skills::authority::publish_installed_authority_decision_with_expectation(
+                &home,
+                &id,
+                &reload,
+                decision.clone(),
+                expectation.as_ref(),
+            )?;
+        if first.durability() == crate::skills::authority::SkillAuthorityDurability::Confirmed
+            && first.accepted_policy_current_at_return()
+        {
+            return Ok(first);
+        }
+        let confirmed =
+            crate::skills::authority::publish_installed_authority_decision_with_expectation(
+                &home,
+                &id,
+                &reload,
+                decision,
+                expectation.as_ref(),
+            )
+            .context("reconfirm visible installed-Skill authority decision")?;
+        anyhow::ensure!(
+            confirmed.durability() == crate::skills::authority::SkillAuthorityDurability::Confirmed,
+            "installed-Skill authority decision is visible but durability remains unconfirmed"
+        );
+        anyhow::ensure!(
+            confirmed.accepted_policy_current_at_return(),
+            "accepted Skill policy changed before authority confirmation"
+        );
+        Ok(confirmed)
+    })
+    .await
+    .context("installed-Skill authority worker failed")?
+}
+
+async fn activate_installed_skill(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+    decision_source: crate::skills::authority::SkillAuthorityDecisionSource,
+    expectation: Option<crate::skills::authority::InstalledSkillDecisionExpectation>,
+) -> Result<crate::skills::authority::SkillAuthorityReceipt> {
+    let id_for_plan = id.to_string();
+    let (prepared, prospective_config) = FreedomConfig::prepare_update_at(config_path, |config| {
+        apply_skill_toggle(&mut config.skills, &id_for_plan, true);
+        Ok(config.clone())
+    })
+    .context("prepare exact Skill enable policy generation")?;
+    let prospective_reload =
+        crate::config::reload::ReloadController::new(prospective_config, config_path.to_path_buf());
+    let home = home.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    let id = id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let rollback_path = config_path.clone();
+        let rollback_id = id.clone();
+        crate::skills::authority::publish_installed_activation_transaction(
+            &home,
+            &id,
+            &prospective_reload,
+            decision_source,
+            expectation.as_ref(),
+            move || prepared.commit(),
+            move || update_skill_policy_at(&rollback_path, &rollback_id, false),
+        )
+    })
+    .await
+    .context("installed-Skill activation transaction worker failed")?
+}
+
+async fn verify_skill_decision_commit(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+    target: SkillAuthorityTarget,
+    origin: SkillInventoryOrigin,
+    receipt: Option<&crate::skills::authority::SkillAuthorityReceipt>,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    let id = id.to_string();
+    let receipt = receipt.cloned();
+    tokio::task::spawn_blocking(move || {
+        let config = FreedomConfig::load_from_path(&config_path)
+            .context("re-read Skill policy after authority decision")?;
+        let policy_enabled = config
+            .skills
+            .enabled
+            .iter()
+            .any(|value| value.trim().eq_ignore_ascii_case(&id));
+        let policy_disabled = config
+            .skills
+            .disabled
+            .iter()
+            .any(|value| value.trim().eq_ignore_ascii_case(&id));
+        match origin {
+            SkillInventoryOrigin::Bundled => {
+                anyhow::ensure!(
+                    receipt.is_none(),
+                    "bundled Skill decision unexpectedly minted installed authority"
+                );
+                anyhow::ensure!(
+                    (target == SkillAuthorityTarget::Enabled
+                        && policy_enabled
+                        && !policy_disabled)
+                        || (target == SkillAuthorityTarget::Disabled && policy_disabled),
+                    "bundled Skill policy changed before decision confirmation"
+                );
+            }
+            SkillInventoryOrigin::User => {
+                let receipt =
+                    receipt.context("installed Skill decision has no authority receipt")?;
+                let status = crate::skills::authority::inspect_current_authority(&home, &id)?
+                    .context("installed Skill decision has no authenticated current readback")?;
+                anyhow::ensure!(
+                    status.record_sha256() == receipt.record_sha256()
+                        && status.current_anchor_sha256() == receipt.current_anchor_sha256()
+                        && status.record().decision_id == receipt.decision_id()
+                        && status.record().state == receipt.state(),
+                    "installed Skill authority changed before decision confirmation"
+                );
+                match target {
+                    SkillAuthorityTarget::Enabled => {
+                        anyhow::ensure!(
+                            policy_enabled && !policy_disabled,
+                            "installed Skill policy changed before activation confirmation"
+                        );
+                        let reload = crate::config::reload::ReloadController::new(
+                            config,
+                            config_path,
+                        );
+                        match crate::skills::authority::validate_installed_authority(
+                            &home, &id, &reload,
+                        ) {
+                            crate::skills::authority::InstalledSkillAuthorityValidation::Active(
+                                authority,
+                            ) if authority.record_sha256() == receipt.record_sha256()
+                                && authority.package_generation_sha256()
+                                    == receipt.package_generation_sha256() => {}
+                            _ => anyhow::bail!(
+                                "installed Skill activation is not executable at exact-generation readback"
+                            ),
+                        }
+                    }
+                    SkillAuthorityTarget::Disabled | SkillAuthorityTarget::Revoked => {
+                        anyhow::ensure!(
+                            policy_disabled,
+                            "installed Skill authority reduction lacks its policy disable"
+                        );
+                    }
+                }
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("Skill decision confirmation worker failed")?
+}
+
+/// Canonical bundled-policy / installed-authority mutation shared by CLI, GUI,
+/// Buddy slash actions and authenticated proposal adoption.
+///
+/// Installed activation commits a prospective-policy inactive guard, the exact
+/// config CAS, and final Active authority under one package mutation lock.
+/// Disable/revoke commit policy denial before reducing authority. Same-id
+/// bundled fallback therefore cannot appear at an intermediate boundary.
+pub(crate) async fn set_skill_authority_at(
+    home: &Path,
+    id: &str,
+    target: SkillAuthorityTarget,
+    decision_source: crate::skills::authority::SkillAuthorityDecisionSource,
+) -> Result<SkillToggleOutcome> {
+    set_skill_authority_at_config(
+        home,
+        &home.join("freedom.yaml"),
+        id,
+        target,
+        decision_source,
+    )
+    .await
+}
+
+pub(crate) async fn set_skill_authority_at_config(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+    target: SkillAuthorityTarget,
+    decision_source: crate::skills::authority::SkillAuthorityDecisionSource,
+) -> Result<SkillToggleOutcome> {
+    set_skill_authority_at_config_with_expectation(
+        home,
+        config_path,
+        id,
+        target,
+        decision_source,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn set_skill_authority_at_config_with_expectation(
+    home: &Path,
+    config_path: &Path,
+    id: &str,
+    target: SkillAuthorityTarget,
+    decision_source: crate::skills::authority::SkillAuthorityDecisionSource,
+    expectation: Option<crate::skills::authority::InstalledSkillDecisionExpectation>,
+) -> Result<SkillToggleOutcome> {
+    let id_lc = id.trim().to_lowercase();
+    crate::skills::creator::validate_skill_id(&id_lc).context("validate skill id")?;
+    let skills_dir = home.join("skills");
+    let accepted_config = FreedomConfig::load_from_path(config_path)
+        .with_context(|| format!("load Skill policy from {}", config_path.display()))?;
+    let inventory = crate::skills::loader::diagnostic_inventory_for_accepted_config(
+        &skills_dir,
+        accepted_config,
+        config_path.to_path_buf(),
+    )
+    .await?;
+    let origin = match inventory
+        .iter()
+        .find(|row| row.id().eq_ignore_ascii_case(&id_lc))
+    {
+        Some(SkillInventoryRow::Healthy { origin, .. }) => *origin,
+        Some(SkillInventoryRow::Broken {
+            runtime_state: SkillInventoryRuntimeState::BundledFallbackActive,
+            ..
+        }) if target == SkillAuthorityTarget::Disabled => SkillInventoryOrigin::Bundled,
+        Some(SkillInventoryRow::Broken { error, .. }) => {
+            anyhow::bail!(
+                "installed Skill `{id_lc}` is broken and cannot change authority; disable remains available only while a bundled fallback is active: {error}"
+            )
+        }
+        None => {
+            anyhow::bail!(
+                "no skill with id '{id}' — run `neoth skills --list` to see installed ids"
+            )
+        }
+    };
+    let authority = match origin {
+        SkillInventoryOrigin::Bundled => {
+            anyhow::ensure!(
+                expectation.is_none(),
+                "bundled Skill `{id_lc}` does not accept an installed-generation expectation"
+            );
+            anyhow::ensure!(
+                target != SkillAuthorityTarget::Revoked,
+                "bundled Skill `{id_lc}` has compile-time trust; use --disable to deny it by policy"
+            );
+            update_skill_policy_at(config_path, &id_lc, target.turns_policy_on())?;
+            None
+        }
+        SkillInventoryOrigin::User => {
+            anyhow::ensure!(
+                expectation.is_some()
+                    || decision_source
+                        == crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+                "GUI/Buddy installed-Skill authority requires an exact generation, incarnation, and install-receipt expectation"
+            );
+            let receipt = if target == SkillAuthorityTarget::Enabled {
+                activate_installed_skill(home, config_path, &id_lc, decision_source, expectation)
+                    .await?
+            } else {
+                update_skill_policy_at(config_path, &id_lc, false)?;
+                let config = FreedomConfig::load_from_path(config_path)
+                    .context("load denied Skill policy for authority reduction")?;
+                let reload =
+                    crate::config::reload::ReloadController::new(config, config_path.to_path_buf());
+                let (state, reason) = match target {
+                    SkillAuthorityTarget::Disabled => (
+                        crate::skills::authority::SkillAuthorityState::Inactive,
+                        Some("operator disabled installed Skill".to_string()),
+                    ),
+                    SkillAuthorityTarget::Revoked => (
+                        crate::skills::authority::SkillAuthorityState::Revoked,
+                        Some("operator revoked installed Skill".to_string()),
+                    ),
+                    SkillAuthorityTarget::Enabled => unreachable!("handled above"),
+                };
+                let decision = crate::skills::authority::SkillAuthorityDecision::new(
+                    decision_source,
+                    state,
+                    reason,
+                )?;
+                publish_installed_skill_decision(home, &id_lc, &reload, decision, expectation)
+                    .await?
+            };
+            Some(receipt)
+        }
+    };
+    verify_skill_decision_commit(
+        home,
+        config_path,
+        &id_lc,
+        target,
+        origin,
+        authority.as_ref(),
+    )
+    .await?;
+    let (reload_sentinel, reload_ts_unix) = crate::cli::reload::request_reload_at(home)
+        .context("Skill decision committed, but requesting the daemon reload failed")?;
+    Ok(SkillToggleOutcome {
+        id: id_lc,
+        state: target.state_label(),
+        origin: match origin {
+            SkillInventoryOrigin::Bundled => "bundled",
+            SkillInventoryOrigin::User => "installed",
+        },
+        authority,
+        reload_requested: true,
+        reload_sentinel: reload_sentinel.display().to_string(),
+        reload_ts_unix,
+    })
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
@@ -534,7 +909,7 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 print_skill_uninstall_report(&report, &skills_dir, args.output)?;
                 return Ok(());
             }
-            installer::PreparedSkillRemovalOutcome::Prepared(prepared) => prepared,
+            installer::PreparedSkillRemovalOutcome::Prepared(prepared) => *prepared,
         };
         prepared
             .mark_intent_submitting()
@@ -647,7 +1022,9 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                 };
                 println!("{verb} skill `{}` at {}", report.id, report.path.display());
                 print_operator_skill_warnings(&report.warnings);
-                println!("Try it: neoth skills --test \"<a message that should trigger it>\"");
+                println!(
+                    "Installed inactive; explicit activation is required before routing or tests."
+                );
             }
         }
         return Ok(());
@@ -657,33 +1034,46 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         || (args.test.is_none()
             && args.run_tests.is_none()
             && args.enable.is_none()
-            && args.disable.is_none())
+            && args.disable.is_none()
+            && args.revoke.is_none())
     {
         let inventory = diagnostic_inventory(&skills_dir).await?;
         print_skill_inventory(&inventory, args.output, &skills_dir)?;
         return Ok(());
     }
 
-    let skills = load_all(&skills_dir).await?;
-    info!(
-        path = %skills_dir.display(),
-        count = skills.len(),
-        "skills loaded"
-    );
-
     // GOLD-ADOPT-14 — enable/disable toggle, persisted to freedom.yaml.
-    if args.enable.is_some() || args.disable.is_some() {
-        return run_skill_toggle(&args, &skills).await;
+    if args.enable.is_some() || args.disable.is_some() || args.revoke.is_some() {
+        return run_skill_toggle(&args).await;
     }
 
     if let Some(skill_id) = &args.run_tests {
-        let skill = skills.iter().find(|s| s.id() == skill_id).ok_or_else(|| {
-            anyhow::anyhow!(
-                "no skill with id '{skill_id}' loaded from {}",
-                skills_dir.display(),
-            )
-        })?;
         let config = FreedomConfig::load_from_default_path()?;
+        let accepted = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            FreedomConfig::default_path(),
+        ));
+        let config_epoch = accepted.accepted_snapshot().epoch();
+        let runtime_registry =
+            crate::skills::SkillRegistry::load_with_reload_controller(&skills_dir, accepted)
+                .await
+                .with_context(|| {
+                    format!(
+                        "load authority-admitted Skill registry for test execution from {}",
+                        skills_dir.display()
+                    )
+                })?;
+        let runtime_skills = runtime_registry.snapshot_owned_for_epoch(config_epoch);
+        let skill = runtime_skills
+            .iter()
+            .find(|skill| skill.id() == skill_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no active authority-admitted skill with id '{skill_id}' loaded from {}; \
+                     activate the exact installed generation before running provider tests",
+                    skills_dir.display(),
+                )
+            })?;
         let provider =
             crate::providers::from_config_at(&config, &FreedomConfig::default_neoth_home()).await?;
         let default_model = crate::providers::provider_default_wire_model(provider.as_ref());
@@ -696,7 +1086,8 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
             default_model,
             "skills.test_harness",
         );
-        let outcomes = crate::skills::test_harness::run_all_scenarios_for(&provider, skill).await?;
+        let outcomes =
+            crate::skills::test_harness::run_all_scenarios_for_authorized(&provider, skill).await?;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 for o in &outcomes {
@@ -750,7 +1141,16 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     }
 
     if let Some(msg) = &args.test {
-        match route(msg, &skills) {
+        let runtime_registry = crate::skills::SkillRegistry::load(&skills_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "load authority-admitted Skill registry for routing test from {}",
+                    skills_dir.display()
+                )
+            })?;
+        let runtime_skills = runtime_registry.snapshot_owned();
+        match route(msg, runtime_skills.as_slice()) {
             Some(m) => match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     let v = serde_json::json!({
@@ -807,34 +1207,58 @@ fn print_skill_inventory(
                 return Ok(());
             }
             println!(
-                "{:<9} {:<24} {:<8} {:<7} description",
-                "status", "id", "origin", "enabled"
+                "{:<9} {:<24} {:<8} {:<25} description",
+                "status", "id", "origin", "runtime"
             );
-            println!("{}", "-".repeat(92));
+            println!("{}", "-".repeat(112));
             for row in inventory {
                 match row {
                     SkillInventoryRow::Healthy {
-                        manifest, origin, ..
+                        manifest,
+                        origin,
+                        runtime_state,
+                        ..
                     } => println!(
-                        "{:<9} {:<24} {:<8} {:<7} {}",
+                        "{:<9} {:<24} {:<8} {:<25} {}",
                         "healthy",
                         truncate(&manifest.id, 24),
                         match origin {
                             SkillInventoryOrigin::Bundled => "bundled",
                             SkillInventoryOrigin::User => "user",
                         },
-                        if manifest.enabled { "yes" } else { "no" },
+                        match runtime_state {
+                            SkillInventoryRuntimeState::TrustedBundledActive => "bundled-active",
+                            SkillInventoryRuntimeState::InstalledActive => "installed-active",
+                            SkillInventoryRuntimeState::BundledFallbackActive =>
+                                "bundled-fallback-active",
+                            SkillInventoryRuntimeState::Disabled => "disabled/quarantined",
+                        },
                         truncate(&manifest.description, 40),
                     ),
                     SkillInventoryRow::Broken {
-                        id, error, path, ..
+                        id,
+                        error,
+                        path,
+                        runtime_state,
+                        ..
                     } => {
                         println!(
-                            "{:<9} {:<24} {:<8} {:<7} {}",
+                            "{:<9} {:<24} {:<8} {:<25} {}",
                             "BROKEN",
                             truncate(id, 24),
                             "user",
-                            "n/a",
+                            match runtime_state {
+                                SkillInventoryRuntimeState::BundledFallbackActive => {
+                                    "bundled-fallback-active"
+                                }
+                                SkillInventoryRuntimeState::Disabled => "disabled/quarantined",
+                                SkillInventoryRuntimeState::TrustedBundledActive => {
+                                    "bundled-active"
+                                }
+                                SkillInventoryRuntimeState::InstalledActive => {
+                                    "invalid-installed-active"
+                                }
+                            },
                             truncate(error, 40),
                         );
                         println!("  reason: {error}");
@@ -873,40 +1297,72 @@ async fn reconcile_pending_skill_mutation(home: &Path, skills_dir: &Path) -> Res
     mutation_lifecycle::reconcile_pending(home, skills_dir, None).await
 }
 
-/// GOLD-ADOPT-14 — `neoth skill {--enable,--disable} <id>`: validate the id is a
-/// real loaded skill, then persist the toggle to `freedom.yaml::skills.{enabled,
-/// disabled}` (atomic, secret-stripped). Mirrors the `neoth council suppress`
-/// load→mutate→write pattern. Bails when no freedom.yaml exists (init first).
-async fn run_skill_toggle(
-    args: &SkillsArgs,
-    skills: &[crate::skills::schema::Skill],
-) -> Result<()> {
-    let (id, turn_on) = match (&args.enable, &args.disable) {
-        (Some(id), _) => (id.as_str(), true),
-        (_, Some(id)) => (id.as_str(), false),
-        // The dispatcher only calls this when one of the two is Some.
-        _ => unreachable!("run_skill_toggle requires --enable or --disable"),
+/// Apply one typed enable/disable/revoke action and emit the complete authority
+/// plus reload acknowledgement consumed by GUI automation.
+async fn run_skill_toggle(args: &SkillsArgs) -> Result<()> {
+    let (id, target) = match (&args.enable, &args.disable, &args.revoke) {
+        (Some(id), _, _) => (id.as_str(), SkillAuthorityTarget::Enabled),
+        (_, Some(id), _) => (id.as_str(), SkillAuthorityTarget::Disabled),
+        (_, _, Some(id)) => (id.as_str(), SkillAuthorityTarget::Revoked),
+        // The dispatcher only calls this when one authority action is present.
+        _ => unreachable!("run_skill_toggle requires --enable, --disable, or --revoke"),
     };
-    // `skills` was already loaded by the caller; keep the invariant explicit
-    // while routing the mutation through the shared locked helper.
-    debug_assert!(
-        skills
-            .iter()
-            .any(|skill| skill.id().eq_ignore_ascii_case(id))
-    );
-    let id_lc = set_skill_enabled_at(&FreedomConfig::default_neoth_home(), id, turn_on).await?;
-
-    let state = if turn_on { "enabled" } else { "disabled" };
+    // The GUI currently invokes this executable as a subprocess. Record the
+    // trusted mutation boundary, not a caller-asserted presentation surface.
+    // A future authenticated GUI IPC endpoint may derive OperatorGui
+    // server-side; a public CLI flag must never mint that attribution.
+    let source = crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli;
+    let expectation = match (
+        &args.expected_authority_generation_sha256,
+        args.expected_authority_incarnation,
+        &args.expected_authority_install_receipt_sha256,
+    ) {
+        (Some(generation), Some(incarnation), Some(receipt)) => Some(
+            crate::skills::authority::InstalledSkillDecisionExpectation::new(
+                generation.clone(),
+                incarnation,
+                receipt.clone(),
+            )?,
+        ),
+        (None, None, None) => None,
+        _ => anyhow::bail!(
+            "--expected-authority-generation-sha256, --expected-authority-incarnation, and --expected-authority-install-receipt-sha256 must be supplied together"
+        ),
+    };
+    let home = FreedomConfig::default_neoth_home();
+    let outcome = set_skill_authority_at_config_with_expectation(
+        &home,
+        &home.join("freedom.yaml"),
+        id,
+        target,
+        source,
+        expectation,
+    )
+    .await?;
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!(
-                "{}",
-                serde_json::to_string(&serde_json::json!({ "id": id_lc, "state": state }))?
-            );
+            println!("{}", serde_json::to_string(&outcome)?);
         }
         OutputFormat::Table => {
-            println!("Skill `{id_lc}` {state} (freedom.yaml::skills.{state}).");
-            println!("  Applies on the next skill load (daemon reload / next CLI turn).");
+            println!(
+                "Skill `{}` {} (origin: {}).",
+                outcome.id, outcome.state, outcome.origin
+            );
+            if let Some(receipt) = outcome.authority.as_ref() {
+                println!(
+                    "  Authority sequence {} for generation {} ({}).",
+                    receipt.authority_sequence(),
+                    receipt.package_generation_sha256(),
+                    match receipt.durability() {
+                        crate::skills::authority::SkillAuthorityDurability::Confirmed => "durable",
+                        crate::skills::authority::SkillAuthorityDurability::Unconfirmed =>
+                            "visible; durability unconfirmed",
+                        crate::skills::authority::SkillAuthorityDurability::StateUncertain =>
+                            "state uncertain",
+                    }
+                );
+            }
+            println!("  Live reload requested: {}", outcome.reload_sentinel);
         }
     }
     Ok(())
@@ -959,6 +1415,56 @@ mod tests {
         assert!(install.force);
 
         assert!(crate::cli::Cli::try_parse_from(["neoth", "skills", "--force"]).is_err());
+    }
+
+    #[test]
+    fn authority_actions_are_exclusive_and_decision_source_is_not_caller_controlled() {
+        let generation = "a".repeat(64);
+        let receipt = "b".repeat(64);
+        let cli = crate::cli::Cli::try_parse_from([
+            "neoth",
+            "skills",
+            "--revoke",
+            "alpha",
+            "--expected-authority-generation-sha256",
+            generation.as_str(),
+            "--expected-authority-incarnation",
+            "1",
+            "--expected-authority-install-receipt-sha256",
+            receipt.as_str(),
+        ])
+        .unwrap();
+        let crate::cli::Commands::Skills(args) = cli.command else {
+            panic!("expected skills command");
+        };
+        assert_eq!(args.revoke.as_deref(), Some("alpha"));
+
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "skills",
+                "--enable",
+                "alpha",
+                "--disable",
+                "alpha",
+            ])
+            .is_err()
+        );
+        assert!(
+            crate::cli::Cli::try_parse_from([
+                "neoth",
+                "skills",
+                "--revoke",
+                "alpha",
+                "--decision-source",
+                "gui",
+            ])
+            .is_err()
+        );
+        assert!(
+            crate::cli::Cli::try_parse_from(["neoth", "skills", "--revoke", "alpha", "--list",])
+                .is_err()
+        );
     }
 
     #[test]
@@ -1208,12 +1714,20 @@ mod tests {
                 manifest: Box::new(manifest),
                 origin: SkillInventoryOrigin::User,
                 path: Some(PathBuf::from("skills").join("alpha")),
+                runtime_state: SkillInventoryRuntimeState::InstalledActive,
+                package_generation_sha256: Some("a".repeat(64)),
+                install_incarnation: Some(1),
+                install_terminal_receipt_sha256: Some("b".repeat(64)),
             },
             SkillInventoryRow::Broken {
                 id: "broken-skill".to_string(),
                 error: "missing skill.yaml".to_string(),
                 path: PathBuf::from("skills").join("broken-skill"),
                 repairability: installer::SkillRepairability::ManifestReplaceable,
+                runtime_state: SkillInventoryRuntimeState::Disabled,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
         ];
 
@@ -1225,14 +1739,22 @@ mod tests {
         let expected_path = expected_path.to_string_lossy();
         assert_eq!(healthy["path"].as_str(), Some(expected_path.as_ref()));
         assert_eq!(healthy["manifest"]["id"], "alpha");
-        assert_eq!(healthy.len(), 4);
+        assert_eq!(healthy["runtime_state"], "installed_active");
+        assert_eq!(healthy["package_generation_sha256"], "a".repeat(64));
+        assert_eq!(healthy["install_incarnation"], 1);
+        assert_eq!(healthy["install_terminal_receipt_sha256"], "b".repeat(64));
+        assert_eq!(healthy.len(), 8);
 
         let broken = value[1].as_object().unwrap();
         assert_eq!(broken["status"], "broken");
         assert_eq!(broken["id"], "broken-skill");
         assert_eq!(broken["error"], "missing skill.yaml");
         assert_eq!(broken["repairability"], "manifest_replaceable");
-        assert_eq!(broken.len(), 5);
+        assert_eq!(broken["runtime_state"], "disabled");
+        assert!(broken["package_generation_sha256"].is_null());
+        assert!(broken["install_incarnation"].is_null());
+        assert!(broken["install_terminal_receipt_sha256"].is_null());
+        assert_eq!(broken.len(), 9);
     }
 
     #[test]
@@ -1378,6 +1900,136 @@ mod tests {
         assert_eq!(s.disabled, vec!["pm-retro".to_string()]);
     }
 
+    fn install_authority_test_wal_key(home: &Path) {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir).unwrap();
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+    }
+
+    fn record_authority_test_install(home: &Path, id: &str) {
+        let current = installer::inspect_current_install(&home.join("skills"), id)
+            .unwrap()
+            .expect("installed Skill fixture");
+        mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn installed_toggle_roundtrip_publishes_exact_authority_before_runtime_success() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "authority-roundtrip";
+        let skill_dir = home.path().join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            "id: authority-roundtrip\n\
+             description: CLI GUI Buddy authority roundtrip\n\
+             enabled: true\n",
+        )
+        .unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            serde_yaml::to_string(&FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        install_authority_test_wal_key(home.path());
+        record_authority_test_install(home.path(), id);
+        let generation = installer::inspect_current_install(&home.path().join("skills"), id)
+            .unwrap()
+            .unwrap()
+            .generation_sha256;
+        let install_proof = mutation_lifecycle::authenticate_current_install_incarnation(
+            home.path(),
+            id,
+            &generation,
+        )
+        .unwrap();
+        let expectation = crate::skills::authority::InstalledSkillDecisionExpectation::new(
+            generation,
+            install_proof.install_incarnation(),
+            install_proof.terminal_receipt_sha256().to_string(),
+        )
+        .unwrap();
+
+        let active = set_skill_authority_at_config_with_expectation(
+            home.path(),
+            &home.path().join("freedom.yaml"),
+            id,
+            SkillAuthorityTarget::Enabled,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorGui,
+            Some(expectation.clone()),
+        )
+        .await
+        .unwrap();
+        let active_receipt = active.authority.as_ref().expect("installed receipt");
+        assert_eq!(
+            active_receipt.state(),
+            crate::skills::authority::SkillAuthorityState::Active
+        );
+        assert_eq!(
+            active_receipt.decision_source(),
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorGui
+        );
+        let config = FreedomConfig::load_from_path(&home.path().join("freedom.yaml")).unwrap();
+        let reload =
+            crate::config::reload::ReloadController::new(config, home.path().join("freedom.yaml"));
+        assert!(matches!(
+            crate::skills::authority::validate_installed_authority(home.path(), id, &reload),
+            crate::skills::authority::InstalledSkillAuthorityValidation::Active(_)
+        ));
+
+        let disabled = set_skill_authority_at_config_with_expectation(
+            home.path(),
+            &home.path().join("freedom.yaml"),
+            id,
+            SkillAuthorityTarget::Disabled,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+            Some(expectation),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            disabled.authority.as_ref().unwrap().state(),
+            crate::skills::authority::SkillAuthorityState::Inactive
+        );
+        let config = FreedomConfig::load_from_path(&home.path().join("freedom.yaml")).unwrap();
+        assert!(config.skills.disabled.iter().any(|value| value == id));
+        let current = crate::skills::authority::inspect_current_authority(home.path(), id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            current.record().state,
+            crate::skills::authority::SkillAuthorityState::Inactive
+        );
+
+        let revoked = set_skill_authority_at(
+            home.path(),
+            id,
+            SkillAuthorityTarget::Revoked,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            revoked.authority.as_ref().unwrap().state(),
+            crate::skills::authority::SkillAuthorityState::Revoked
+        );
+        assert!(revoked.reload_requested);
+        assert!(Path::new(&revoked.reload_sentinel).is_file());
+    }
+
     /// Decode every authenticated-home WAL frame to `{event_type, payload}`
     /// JSON through the same bounded, encrypted, no-follow scanner production
     /// reconciliation uses.
@@ -1414,6 +2066,10 @@ mod tests {
             kind: installer::SkillMutationKind::Replace,
             origin: installer::SkillMutationOrigin::CliInstall,
             skill_id: "demo_skill".into(),
+            mutation_sequence: None,
+            previous_terminal_receipt_sha256: None,
+            prior_install_incarnation: None,
+            resulting_install_incarnation: None,
             source_generation_sha256: Some(source.clone()),
             prior_generation_sha256: Some(prior.clone()),
             prior_object_identity_sha256: Some("4".repeat(64)),
@@ -1480,6 +2136,10 @@ mod tests {
             kind: installer::SkillMutationKind::Remove,
             origin: installer::SkillMutationOrigin::CliUninstall,
             skill_id: "demo_skill".into(),
+            mutation_sequence: None,
+            previous_terminal_receipt_sha256: None,
+            prior_install_incarnation: None,
+            resulting_install_incarnation: None,
             source_generation_sha256: None,
             prior_generation_sha256: Some(prior.clone()),
             prior_object_identity_sha256: Some("5".repeat(64)),
@@ -1536,6 +2196,10 @@ mod tests {
             kind: installer::SkillMutationKind::Install,
             origin: installer::SkillMutationOrigin::CliInstall,
             skill_id: "failed_skill".into(),
+            mutation_sequence: None,
+            previous_terminal_receipt_sha256: None,
+            prior_install_incarnation: None,
+            resulting_install_incarnation: None,
             source_generation_sha256: Some(source),
             prior_generation_sha256: None,
             prior_object_identity_sha256: None,

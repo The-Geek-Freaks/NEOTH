@@ -1816,6 +1816,8 @@ fn stage_proposal_state_locked(home: &Path, mut p: Proposal) -> Result<String> {
 /// Accept a pending proposal: back up the CURRENT skill file content, then write
 /// the proposed `after`. Returns an error if the id is unknown / not pending.
 /// This is the ONLY path that writes a production skill file.
+/// For an installed NEOTH Skill this creates a new package generation; it does
+/// not inherit activation authority from the predecessor generation.
 ///
 /// IMPR-02: if the proposal carries a `spec.drift_sha`, runs
 /// `git diff --stat <sha>..HEAD -- <skill_path>` and prints a warning when the
@@ -2022,6 +2024,8 @@ fn run_journaled_skill_write(
 }
 
 /// Roll back an accepted proposal: restore the backed-up content to the skill.
+/// Installed-skill rollback likewise creates a distinct package generation and
+/// requires explicit activation rather than reviving prior authority.
 ///
 /// B19: uses the shared state lock and an `AcceptJournal` for crash-safe,
 /// proposal-bound proposal + ledger recovery.

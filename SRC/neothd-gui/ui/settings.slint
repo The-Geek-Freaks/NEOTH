@@ -119,6 +119,10 @@ export struct SkillRow {
     path: string,
     origin: string,
     repairable: bool,
+    runtime-state: string,
+    authority-generation: string,
+    authority-incarnation: string,
+    authority-install-receipt: string,
 }
 
 // SPEC-05 — one saved preset for the selector (moved here from main.slint
@@ -1034,7 +1038,10 @@ export component SettingsView inherits Rectangle {
     callback memory-forget-confirm-clicked(string);
     /// GUI-overhaul feature parity — operator toggled a skill's enable state.
     /// Args: (skill-id, enabled). Rust shells `neoth skills --enable/--disable`.
+    in property <bool> skill-authority-operation-in-flight: false;
     callback skill-toggle-clicked(string, bool);
+    /// Permanently revoke the exact current installed generation.
+    callback skill-revoke-clicked(string);
     /// Operator clicked "Install skill…" → Rust opens rfd folder picker →
     /// `neoth skills --install <dir>` → toast + refresh.
     callback skill-install-clicked();
@@ -2256,7 +2263,7 @@ export component SettingsView inherits Rectangle {
                                     // to mid-row (NeothCheckBox inherits Rectangle,
                                     // which fills by default).
                                     width: 28px;
-                                    enabled: !s.broken;
+                                    enabled: !s.broken && !root.skill-authority-operation-in-flight;
                                     checked: s.enabled;
                                     toggled(v) => {
                                         if !s.broken {
@@ -2279,12 +2286,63 @@ export component SettingsView inherits Rectangle {
                                     color: Theme.consent;
                                     vertical-alignment: center;
                                 }
+                                if s.runtime-state == "bundled_fallback_active": Text {
+                                    text: "BUNDLED FALLBACK ACTIVE";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.consent;
+                                    vertical-alignment: center;
+                                }
+                                if s.broken && s.runtime-state == "bundled_fallback_active": NeothButton {
+                                    label: "Disable fallback";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    enabled: !root.skill-authority-operation-in-flight;
+                                    clicked => {
+                                        root.skill-toggle-clicked(s.operation-id, false);
+                                    }
+                                }
+                                if !s.broken && s.origin == "user" && s.runtime-state == "disabled": Text {
+                                    text: "INACTIVE / NOT AUTHORIZED";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-2xs;
+                                    color: Theme.text-tertiary;
+                                    vertical-alignment: center;
+                                }
                                 if s.tags != "": Text {
                                     text: s.tags;
                                     font-family: Theme.font-mono;
                                     font-size: Theme.font-size-2xs;
                                     color: Theme.text-tertiary;
                                     vertical-alignment: center;
+                                }
+                                property <bool> sk-revoking: false;
+                                if !s.broken && s.origin == "user" && !sk-revoking: NeothButton {
+                                    label: "Revoke";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    enabled: !root.skill-authority-operation-in-flight;
+                                    clicked => { sk-revoking = true; }
+                                }
+                                if !s.broken && s.origin == "user" && sk-revoking: NeothButton {
+                                    label: "Confirm revoke";
+                                    primary: false;
+                                    danger: true;
+                                    size: "sm";
+                                    enabled: !root.skill-authority-operation-in-flight;
+                                    clicked => {
+                                        sk-revoking = false;
+                                        root.skill-revoke-clicked(s.operation-id);
+                                    }
+                                }
+                                if !s.broken && s.origin == "user" && sk-revoking: NeothButton {
+                                    label: "Cancel";
+                                    primary: false;
+                                    size: "sm";
+                                    enabled: !root.skill-authority-operation-in-flight;
+                                    clicked => { sk-revoking = false; }
                                 }
                                 if s.broken && s.repairable && s.origin == "user": NeothButton {
                                     label: "Repair manifest…";

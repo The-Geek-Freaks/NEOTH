@@ -216,6 +216,7 @@ pub fn propose_from_feedback(summary: &FeedbackSummary) -> Option<SelfDevProposa
         ),
         confidence,
         target: "lowkey".to_string(),
+        extension_authority: None,
     })
 }
 

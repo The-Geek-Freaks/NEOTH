@@ -201,7 +201,8 @@ pub async fn maybe_extract_skill(
 
     let rationale = format!(
         "Auto-extracted from an agent run with {} tool calls (confidence {:.2}). \
-         Tags: {}. Review and activate via `neoth skills install <id>`.",
+         Tags: {}. Review first; approval installs the package inactive, and a \
+         separate explicit activation decision is required before routing.",
         tool_call_count,
         extracted.confidence,
         extracted.tags.join(", ")
@@ -436,6 +437,11 @@ mod tests {
         let m: crate::skills::schema::SkillManifest =
             serde_yaml::from_str(&p.draft_yaml).expect("loader-compat round-trip");
         assert!(!m.id.is_empty());
+        assert!(
+            !m.enabled,
+            "auto-extracted drafts must remain pending activation"
+        );
+        assert!(p.rationale.contains("installs the package inactive"));
     }
 
     #[tokio::test]

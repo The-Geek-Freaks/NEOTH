@@ -133,6 +133,12 @@ impl ProposedAction {
     /// YAML frontmatter exposes id / kind / status / generated_unix
     /// so Dataview can list `WHERE status = "pending"`.
     pub fn to_obsidian_md(&self) -> String {
+        let activation_note = if self.kind == ProposalKind::Skill {
+            "- Activation: approval installs `enabled: false`; activate the exact installed \
+             generation separately before routing.\n"
+        } else {
+            ""
+        };
         format!(
             "---\n\
              id: \"{id}\"\n\
@@ -149,7 +155,8 @@ impl ProposedAction {
              ```\n\n\
              ## Operator action\n\n\
              - Approve: `neoth proactive accept {id}`\n\
-             - Reject:  `neoth proactive reject {id}`\n",
+             - Reject:  `neoth proactive reject {id}`\n\
+             {activation_note}",
             id = escape_yaml_string(&self.id),
             kind = self.kind.as_str(),
             status = self.status.as_str(),
@@ -157,6 +164,7 @@ impl ProposedAction {
             title = self.title,
             rationale = self.rationale,
             draft = self.draft_yaml.trim_end_matches('\n'),
+            activation_note = activation_note,
         )
     }
 }
@@ -189,15 +197,9 @@ pub fn reconcile_approved_skill(
     home: &Path,
     proposal: &ProposedAction,
 ) -> anyhow::Result<SkillReconciliation> {
-    use anyhow::Context as _;
-    let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(&proposal.draft_yaml)
-        .with_context(|| {
-            format!(
-                "approved skill proposal {} carries invalid draft_yaml",
-                proposal.id
-            )
-        })?;
+    let (manifest, inactive_yaml) = approved_inactive_skill_manifest(proposal)?;
     if let Some(current) = installed_skill_yaml(home, &manifest.id)?
+        && current != inactive_yaml
         && current != proposal.draft_yaml
     {
         return Ok(SkillReconciliation::OperatorModified { id: manifest.id });
@@ -236,13 +238,14 @@ fn installed_skill_yaml(home: &Path, id: &str) -> anyhow::Result<Option<String>>
     }
 }
 
-/// Adopt an operator-approved Skill proposal into the live skill loader path.
+/// Install an operator-approved Skill proposal into the inactive package store.
 ///
 /// This is the single schema boundary used by both `neoth proactive accept`
 /// and the curator reconciliation cron. The draft is parsed as the real
-/// [`SkillManifest`], its id is validated as a safe directory component, and
-/// the authenticated complete-package lifecycle publishes
-/// `<home>/skills/<id>/skill.yaml` without dropping sibling assets.
+/// [`SkillManifest`], canonicalized with `enabled: false`, its id is validated
+/// as a safe directory component, and the authenticated complete-package
+/// lifecycle publishes `<home>/skills/<id>/skill.yaml` without dropping
+/// sibling assets. Approval is not activation authority.
 pub fn adopt_approved_skill(
     home: &Path,
     proposal: &ProposedAction,
@@ -260,9 +263,50 @@ fn adopt_approved_skill_with_origin(
     origin: crate::skills::installer::SkillMutationOrigin,
 ) -> anyhow::Result<crate::skills::creator::CreateReport> {
     use crate::skills::creator::{
-        ExistingSkillPolicy, validate_skill_id, write_skill_yaml_audited,
+        CreateExpectation, ExistingSkillPolicy, validate_skill_id, write_skill_yaml_audited,
     };
-    use crate::skills::schema::SkillManifest;
+    use anyhow::Context;
+
+    let (manifest, inactive_yaml) = approved_inactive_skill_manifest(proposal)?;
+    validate_skill_id(&manifest.id)
+        .with_context(|| format!("skill id {:?} is not a safe directory name", manifest.id))?;
+    // Inspect the complete package generation before reading the manifest. If
+    // anything changes between these two reads, the later replacement remains
+    // bound to the older generation and the mutation lifecycle refuses it.
+    let inspected =
+        crate::skills::installer::inspect_installed_target(&home.join("skills"), &manifest.id)?;
+    let current = installed_skill_yaml(home, &manifest.id)?;
+    let migrating_exact_approved_generation = current.as_deref()
+        == Some(proposal.draft_yaml.as_str())
+        && proposal.draft_yaml != inactive_yaml;
+    let expectation = migrating_exact_approved_generation.then(|| CreateExpectation {
+        id: manifest.id.clone(),
+        target_generation_sha256: inspected.target_generation_sha256.clone(),
+    });
+    write_skill_yaml_audited(
+        home,
+        &home.join("skills"),
+        &manifest.id,
+        &inactive_yaml,
+        if migrating_exact_approved_generation {
+            ExistingSkillPolicy::Replace
+        } else {
+            ExistingSkillPolicy::KeepIfIdentical
+        },
+        expectation.as_ref(),
+        origin,
+    )
+}
+
+/// Parse and canonicalize the exact operator-approved draft while enforcing the
+/// install/activation split. Proposal approval permits an inactive package to
+/// land in the store; it is never activation authority. This rewrite is
+/// intentionally repeated at the final adoption boundary so imported or
+/// legacy proposal records carrying `enabled: true` cannot bypass newer
+/// producer defaults.
+fn approved_inactive_skill_manifest(
+    proposal: &ProposedAction,
+) -> anyhow::Result<(crate::skills::schema::SkillManifest, String)> {
     use anyhow::Context;
 
     if proposal.kind != ProposalKind::Skill {
@@ -276,23 +320,13 @@ fn adopt_approved_skill_with_origin(
         );
     }
 
-    let manifest: SkillManifest =
-        serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
+    crate::skills::creator::canonical_inactive_manifest_yaml(&proposal.draft_yaml).with_context(
+        || {
             format!(
-                "approved skill proposal {} carries invalid draft_yaml",
+                "approved skill proposal {} carries invalid SkillManifest draft_yaml",
                 proposal.id
             )
-        })?;
-    validate_skill_id(&manifest.id)
-        .with_context(|| format!("skill id {:?} is not a safe directory name", manifest.id))?;
-    write_skill_yaml_audited(
-        home,
-        &home.join("skills"),
-        &manifest.id,
-        &proposal.draft_yaml,
-        ExistingSkillPolicy::KeepIfIdentical,
-        None,
-        origin,
+        },
     )
 }
 
@@ -1133,6 +1167,50 @@ mod tests {
         );
         assert!(!report.replaced_existing);
         assert!(report.warnings.is_empty());
+        let installed: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&std::fs::read_to_string(&report.path).unwrap()).unwrap();
+        assert!(
+            !installed.enabled,
+            "proposal approval installs an inactive package, not routing authority"
+        );
+    }
+
+    #[test]
+    fn approved_legacy_enabled_draft_is_canonicalized_inactive_at_adoption() {
+        let home = tempfile::tempdir().unwrap();
+        let mut proposal = sample(ProposalKind::Skill, "legacy enabled draft", 100);
+        proposal.status = ProposalStatus::Approved;
+        proposal.draft_yaml = "id: legacy_enabled\n\
+                               description: Legacy externally generated draft\n\
+                               trigger_keywords: [legacy]\n\
+                               system_prompt: Never route before activation.\n\
+                               enabled: true\n"
+            .to_string();
+
+        let package = home.path().join("skills").join("legacy_enabled");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(package.join("skill.yaml"), &proposal.draft_yaml).unwrap();
+        let asset = package.join("operator-note.txt");
+        std::fs::write(&asset, b"preserve me").unwrap();
+
+        let report = adopt_approved_skill(home.path(), &proposal).unwrap();
+        let installed: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&std::fs::read_to_string(&report.path).unwrap()).unwrap();
+
+        assert!(report.replaced_existing);
+        assert!(!installed.enabled);
+        assert!(
+            std::fs::read_to_string(&report.path)
+                .unwrap()
+                .contains("enabled: false"),
+            "the persisted manifest must carry the inactive state explicitly"
+        );
+        adopt_approved_skill(home.path(), &proposal).unwrap();
+        assert_eq!(
+            std::fs::read(asset).unwrap(),
+            b"preserve me",
+            "inactive canonicalization must preserve existing package assets"
+        );
     }
 
     #[test]
@@ -1394,6 +1472,14 @@ mod tests {
         assert!(md.contains("```yaml"));
         assert!(md.contains("neoth proactive accept"));
         assert!(md.contains("neoth proactive reject"));
+    }
+
+    #[test]
+    fn skill_obsidian_note_separates_install_approval_from_activation() {
+        let p = sample(ProposalKind::Skill, "Generated skill", 1_700_000_000);
+        let md = p.to_obsidian_md();
+        assert!(md.contains("approval installs `enabled: false`"));
+        assert!(md.contains("activate the exact installed generation separately"));
     }
 
     #[test]

@@ -1255,6 +1255,7 @@ export component MainWindow inherits Window {
     in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
     in-out property <bool> skills-always-embed-route: true;
+    in property <bool> skill-authority-operation-in-flight: false;
     in property <[ChannelRow]> channels: [];
     in property <[string]> channel-types: [];
     in property <string> channel-status-error: "";
@@ -1295,6 +1296,7 @@ export component MainWindow inherits Window {
     callback settings-backup-now-clicked;
     callback settings-rollback-preview-clicked;
     callback skill-toggle(string, bool);
+    callback skill-revoke(string);
     callback skill-install();
     callback skill-uninstall(string);
     callback skill-create(string, string, string, string);
@@ -3478,8 +3480,10 @@ export component MainWindow inherits Window {
             consent-fields-count <=> root.consent-fields-count;
             consent-visible <=> root.consent-visible;
             skills-always-embed-route: root.skills-always-embed-route;
+            skill-authority-operation-in-flight: root.skill-authority-operation-in-flight;
             skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             skill-toggle-clicked(id, en) => { root.skill-toggle(id, en); }
+            skill-revoke-clicked(id) => { root.skill-revoke(id); }
             skill-install-clicked => { root.skill-install(); }
             skill-uninstall-clicked(id) => { root.skill-uninstall(id); }
             skill-create-clicked(id, desc, kw, prompt) => { root.skill-create(id, desc, kw, prompt); }

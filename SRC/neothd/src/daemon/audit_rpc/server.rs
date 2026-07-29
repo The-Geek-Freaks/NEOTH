@@ -83,6 +83,7 @@ pub const ALLOWED_CLIENT_EXTENDED_SUBTYPES: &[u8] = &[
     ExtendedSubtype::SkillInstallResult as u8,
     ExtendedSubtype::SkillRemovalIntent as u8,
     ExtendedSubtype::SkillRemovalResult as u8,
+    ExtendedSubtype::SkillAuthorityDecision as u8,
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
@@ -157,6 +158,7 @@ fn skill_audit_dedup_binding(
                     | ExtendedSubtype::SkillInstallResult
                     | ExtendedSubtype::SkillRemovalIntent
                     | ExtendedSubtype::SkillRemovalResult
+                    | ExtendedSubtype::SkillAuthorityDecision
             )
         )
     {
@@ -189,6 +191,46 @@ fn skill_audit_dedup_binding(
     let key = format!("{event_subtype:02x}:{audit_event_id}");
     let payload_sha256 = hex::encode(Sha256::digest(payload));
     Ok(Some((key, payload_sha256)))
+}
+
+async fn authenticate_skill_authority_ingress(
+    home: &Path,
+    event_type: u8,
+    event_subtype: u8,
+    payload: &[u8],
+) -> Result<()> {
+    if event_type != EVENT_TYPE_EXTENDED
+        || event_subtype != ExtendedSubtype::SkillAuthorityDecision as u8
+    {
+        return Ok(());
+    }
+    let home = home.to_path_buf();
+    let payload = payload.to_vec();
+    tokio::task::spawn_blocking(move || {
+        crate::skills::authority::authenticate_authority_wal_ingress(&home, &payload)
+    })
+    .await
+    .context("join Skill authority audit-RPC authentication")??;
+    Ok(())
+}
+
+fn notify_runtime_authority_transition_after_ack(home: &Path, event_type: u8, event_subtype: u8) {
+    use crate::skills::registry::RuntimeAuthorityTransitionKind;
+
+    if event_type != EVENT_TYPE_EXTENDED {
+        return;
+    }
+    let kind = match ExtendedSubtype::from_u8(event_subtype) {
+        Some(ExtendedSubtype::SkillInstallIntent) => RuntimeAuthorityTransitionKind::InstallIntent,
+        Some(ExtendedSubtype::SkillInstallResult) => RuntimeAuthorityTransitionKind::InstallResult,
+        Some(ExtendedSubtype::SkillRemovalIntent) => RuntimeAuthorityTransitionKind::RemovalIntent,
+        Some(ExtendedSubtype::SkillRemovalResult) => RuntimeAuthorityTransitionKind::RemovalResult,
+        Some(ExtendedSubtype::SkillAuthorityDecision) => {
+            RuntimeAuthorityTransitionKind::AuthorityDecision
+        }
+        _ => return,
+    };
+    crate::skills::registry::notify_runtime_authority_transition(home, kind);
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -411,13 +453,15 @@ pub(crate) async fn bind_and_serve(
     let (listener, endpoint) = super::transport::bind(home, endpoint_nonce)
         .await
         .context("bind same-user audit-RPC transport")?;
-    let task = tokio::spawn(async move { run_accept_loop(listener, state).await });
+    let home = home.to_path_buf();
+    let task = tokio::spawn(async move { run_accept_loop(listener, state, home).await });
     Ok((endpoint, task))
 }
 
 async fn run_accept_loop(
     mut listener: super::transport::AuditListener,
     state: AuditRpcState,
+    home: std::path::PathBuf,
 ) -> Result<()> {
     let sem = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_CONNS));
     let mut connections = tokio::task::JoinSet::new();
@@ -441,11 +485,12 @@ async fn run_accept_loop(
                     continue;
                 };
                 let state = state.clone();
+                let home = home.clone();
                 connections.spawn(async move {
                     let _permit = permit; // released when this task ends
                     match tokio::time::timeout(
                         std::time::Duration::from_secs(CONNECTION_TIMEOUT_SECS),
-                        handle_one(stream, &state),
+                        handle_one(stream, &state, &home),
                     )
                     .await
                     {
@@ -565,6 +610,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 async fn handle_one(
     mut stream: super::transport::AuditStream,
     state: &AuditRpcState,
+    home: &Path,
 ) -> Result<()> {
     // Layer 1 is enforced by `AuditListener::accept`: the peer's kernel token
     // (UID/SID) must exactly match the daemon user before this function runs.
@@ -838,6 +884,7 @@ async fn handle_one(
                         | ExtendedSubtype::SkillInstallResult
                         | ExtendedSubtype::SkillRemovalIntent
                         | ExtendedSubtype::SkillRemovalResult
+                        | ExtendedSubtype::SkillAuthorityDecision
                 )
             ))
     {
@@ -861,6 +908,20 @@ async fn handle_one(
         emit_reject(state, reason).await;
         let _ = stream
             .write_all(http_response(422, reason).as_bytes())
+            .await;
+        let _ = stream.shutdown().await;
+        return Ok(());
+    }
+
+    // Authority frames are scanned globally and authenticated before their
+    // Skill id is inspected. Reject malformed or unauthenticated ingress
+    // before append so one local request cannot poison unrelated Skills.
+    if let Err(error) =
+        authenticate_skill_authority_ingress(home, event_type, event_subtype, &payload).await
+    {
+        emit_reject(state, "invalid_skill_authority_binding").await;
+        let _ = stream
+            .write_all(http_response(400, &format!("{error:#}")).as_bytes())
             .await;
         let _ = stream.shutdown().await;
         return Ok(());
@@ -893,6 +954,7 @@ async fn handle_one(
         .await
         {
             Ok(SkillAuditAppendOutcome::Appended(offset)) => {
+                notify_runtime_authority_transition_after_ack(home, event_type, event_subtype);
                 emit_accept(state, event_type, event_subtype).await;
                 let body = format!("{{\"ok\":true,\"offset\":{offset}}}");
                 let _ = stream
@@ -900,6 +962,7 @@ async fn handle_one(
                     .await;
             }
             Ok(SkillAuditAppendOutcome::Duplicate) => {
+                notify_runtime_authority_transition_after_ack(home, event_type, event_subtype);
                 let body = "{\"ok\":true,\"duplicate\":true}";
                 let _ = stream
                     .write_all(http_response_json(200, body).as_bytes())

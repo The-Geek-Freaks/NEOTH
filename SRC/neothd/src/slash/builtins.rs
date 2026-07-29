@@ -185,6 +185,7 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
             "Usage: /skill list\n\
              Usage: /skill enable <name>\n\
              Usage: /skill disable <name>\n\
+             Usage: /skill revoke <name>\n\
              Usage: /skill info <name>",
         ),
         action_cmd(

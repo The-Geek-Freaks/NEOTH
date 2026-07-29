@@ -489,6 +489,7 @@ mod tests {
             reason: "test".into(),
             confidence: 0.75,
             target: "formal".into(),
+            extension_authority: None,
         }
     }
 

@@ -98,20 +98,20 @@ pub(crate) fn endpoint_for_home(home: &Path, endpoint_nonce: &str) -> Result<Aud
     #[cfg(unix)]
     {
         let runtime_name = unix::runtime_directory_name(&home_sha256, endpoint_nonce);
-        return Ok(AuditEndpointV2::UnixSocket {
+        Ok(AuditEndpointV2::UnixSocket {
             path: canonical_home.join(runtime_name).join("audit.sock"),
             endpoint_nonce: endpoint_nonce.to_owned(),
             home_sha256,
-        });
+        })
     }
 
     #[cfg(windows)]
     {
-        return Ok(AuditEndpointV2::WindowsNamedPipe {
+        Ok(AuditEndpointV2::WindowsNamedPipe {
             name: windows::pipe_name(&home_sha256, endpoint_nonce),
             endpoint_nonce: endpoint_nonce.to_owned(),
             home_sha256,
-        });
+        })
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -129,13 +129,13 @@ pub(crate) async fn bind(
     #[cfg(unix)]
     {
         let listener = unix::Listener::bind(&endpoint)?;
-        return Ok((AuditListener { inner: listener }, endpoint));
+        Ok((AuditListener { inner: listener }, endpoint))
     }
 
     #[cfg(windows)]
     {
         let listener = windows::Listener::bind(&endpoint)?;
-        return Ok((AuditListener { inner: listener }, endpoint));
+        Ok((AuditListener { inner: listener }, endpoint))
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -206,12 +206,12 @@ pub(crate) fn exchange_blocking(
 
     #[cfg(unix)]
     {
-        return unix::exchange_blocking(endpoint, request, max_response, timeout);
+        unix::exchange_blocking(endpoint, request, max_response, timeout)
     }
 
     #[cfg(windows)]
     {
-        return windows::exchange_blocking(endpoint, request, max_response, timeout);
+        windows::exchange_blocking(endpoint, request, max_response, timeout)
     }
 
     #[cfg(not(any(unix, windows)))]

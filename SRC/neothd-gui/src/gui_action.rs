@@ -806,18 +806,51 @@ impl HemisphereSetAck {
     }
 }
 
-/// Exact `neoth skills --enable|--disable <id> --output json` acknowledgement.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SkillAuthorityReceiptAck {
+    pub skill_id: String,
+    pub package_generation_sha256: String,
+    pub manifest_sha256: String,
+    pub install_incarnation: u64,
+    pub install_terminal_receipt_sha256: String,
+    pub authority_sequence: u64,
+    pub record_sha256: String,
+    pub current_anchor_sha256: String,
+    pub decision_id: String,
+    pub provenance: String,
+    pub decision_source: String,
+    pub state: String,
+    pub claims: serde_json::Value,
+    pub durability: String,
+    pub accepted_policy_current_at_return: bool,
+}
+
+/// Exact `neoth skills --enable|--disable|--revoke <id> --output json`
+/// acknowledgement. Installed rows require an authenticated authority receipt;
+/// bundled rows explicitly carry no runtime authority record.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SkillToggleAck {
     pub id: String,
     pub state: String,
+    pub origin: String,
+    pub authority: Option<SkillAuthorityReceiptAck>,
+    pub reload_requested: bool,
+    pub reload_sentinel: String,
+    pub reload_ts_unix: u64,
 }
 
 impl SkillToggleAck {
-    /// Confirm the daemon acknowledged the exact skill and target state the GUI
-    /// requested. The CLI lowercases the id, so the id match is case-insensitive.
-    pub fn verify(&self, expected_id: &str, expected_state: &str) -> Result<(), String> {
+    /// Confirm the CLI receipt and independently re-read the durable
+    /// authority/config state plus reload sentinel. This proves the mutation
+    /// and reload request, not that a separate daemon has already applied it.
+    pub fn verify(
+        &self,
+        expected_id: &str,
+        expected_state: &str,
+        expected_home: &Path,
+    ) -> Result<(), String> {
         if !self.id.eq_ignore_ascii_case(expected_id) {
             return Err(format!(
                 "skill toggle acknowledged id `{}`, expected `{expected_id}`",
@@ -829,6 +862,178 @@ impl SkillToggleAck {
                 "skill toggle acknowledged state `{}`, expected `{expected_state}`",
                 self.state
             ));
+        }
+        if !self.reload_requested || self.reload_ts_unix == 0 {
+            return Err("skill toggle did not acknowledge a reload request".into());
+        }
+        let expected_sentinel = expected_home.join(neothd::config::reload::RELOAD_SENTINEL_NAME);
+        require_exact_path(&self.reload_sentinel, &expected_sentinel)?;
+        let sentinel = std::fs::metadata(&expected_sentinel)
+            .map_err(|error| format!("skill reload sentinel is not readable: {error}"))?;
+        if !sentinel.is_file() {
+            return Err("skill reload sentinel is not a regular file".into());
+        }
+        let config_path = expected_home.join("freedom.yaml");
+        let config = neothd::config::FreedomConfig::load_from_path(&config_path)
+            .map_err(|error| format!("could not re-read Skill policy: {error:#}"))?;
+        let id_lc = expected_id.trim().to_lowercase();
+        let policy_enabled = config
+            .skills
+            .enabled
+            .iter()
+            .any(|id| id.trim().eq_ignore_ascii_case(&id_lc));
+        let policy_disabled = config
+            .skills
+            .disabled
+            .iter()
+            .any(|id| id.trim().eq_ignore_ascii_case(&id_lc));
+        match self.origin.as_str() {
+            "bundled" => {
+                if self.authority.is_some() {
+                    return Err("bundled Skill toggle unexpectedly minted authority".into());
+                }
+                if (expected_state == "enabled" && (!policy_enabled || policy_disabled))
+                    || (expected_state == "disabled" && !policy_disabled)
+                    || expected_state == "revoked"
+                {
+                    return Err("bundled Skill policy readback does not match the receipt".into());
+                }
+            }
+            "installed" => {
+                let receipt = self.authority.as_ref().ok_or_else(|| {
+                    "installed Skill toggle omitted its exact authority receipt".to_string()
+                })?;
+                receipt.verify(expected_id, expected_state)?;
+                let status =
+                    neothd::skills::authority::inspect_current_authority(expected_home, &id_lc)
+                        .map_err(|error| {
+                            format!("could not re-read installed Skill authority: {error:#}")
+                        })?
+                        .ok_or_else(|| {
+                            "installed Skill authority receipt has no committed readback"
+                                .to_string()
+                        })?;
+                if status.record_sha256() != receipt.record_sha256
+                    || status.current_anchor_sha256() != receipt.current_anchor_sha256
+                    || status.record().skill_id != receipt.skill_id
+                    || status.record().decision_id != receipt.decision_id
+                    || status.record().authority_sequence != receipt.authority_sequence
+                    || status.record().package_generation_sha256
+                        != receipt.package_generation_sha256
+                    || status.record().manifest_sha256 != receipt.manifest_sha256
+                    || status.record().install_incarnation != receipt.install_incarnation
+                    || status.record().install_terminal_receipt_sha256
+                        != receipt.install_terminal_receipt_sha256
+                {
+                    return Err(
+                        "installed Skill authority readback differs from the CLI receipt".into(),
+                    );
+                }
+                let record = serde_json::to_value(status.record()).map_err(|error| {
+                    format!("could not project installed Skill authority readback: {error}")
+                })?;
+                if record.get("provenance").and_then(serde_json::Value::as_str)
+                    != Some(receipt.provenance.as_str())
+                    || record
+                        .get("decision_source")
+                        .and_then(serde_json::Value::as_str)
+                        != Some(receipt.decision_source.as_str())
+                    || record.get("state").and_then(serde_json::Value::as_str)
+                        != Some(receipt.state.as_str())
+                    || record.get("claims") != Some(&receipt.claims)
+                {
+                    return Err(
+                        "installed Skill authority semantics differ from the CLI receipt".into(),
+                    );
+                }
+                if expected_state == "enabled" {
+                    if !policy_enabled || policy_disabled {
+                        return Err(
+                            "installed Skill activation policy was not committed exactly".into(),
+                        );
+                    }
+                    let reload = neothd::config::reload::ReloadController::new(config, config_path);
+                    match neothd::skills::authority::validate_installed_authority(
+                        expected_home,
+                        &id_lc,
+                        &reload,
+                    ) {
+                        neothd::skills::authority::InstalledSkillAuthorityValidation::Active(
+                            authority,
+                        ) if authority.package_generation_sha256()
+                            == receipt.package_generation_sha256
+                            && authority.record_sha256() == receipt.record_sha256 => {}
+                        _ => {
+                            return Err(
+                                "installed Skill is not active at exact-generation readback".into(),
+                            );
+                        }
+                    }
+                } else if !policy_disabled {
+                    return Err(
+                        "installed Skill authority reduction lacks its policy disable".into(),
+                    );
+                }
+            }
+            other => return Err(format!("skill toggle returned unknown origin `{other}`")),
+        }
+        Ok(())
+    }
+}
+
+impl SkillAuthorityReceiptAck {
+    fn verify(&self, expected_id: &str, expected_state: &str) -> Result<(), String> {
+        if !self.skill_id.eq_ignore_ascii_case(expected_id) {
+            return Err("Skill authority receipt targets a different id".into());
+        }
+        for (value, label) in [
+            (
+                self.package_generation_sha256.as_str(),
+                "package generation",
+            ),
+            (self.manifest_sha256.as_str(), "manifest"),
+            (
+                self.install_terminal_receipt_sha256.as_str(),
+                "install receipt",
+            ),
+            (self.record_sha256.as_str(), "authority record"),
+            (self.current_anchor_sha256.as_str(), "current anchor"),
+        ] {
+            if !is_sha256(value) {
+                return Err(format!("Skill authority {label} digest is invalid"));
+            }
+        }
+        if self.install_incarnation == 0 || self.authority_sequence == 0 {
+            return Err("Skill authority receipt has a zero sequence/incarnation".into());
+        }
+        require_lower_hex(&self.decision_id, 32, "Skill authority decision id")?;
+        let expected_authority_state = match expected_state {
+            "enabled" => "active",
+            "disabled" => "inactive",
+            "revoked" => "revoked",
+            _ => return Err("GUI requested an unknown Skill authority state".into()),
+        };
+        if self.state != expected_authority_state
+            // GUI authority mutations currently cross the same local CLI
+            // subprocess boundary as direct operator invocations. Do not
+            // accept a caller-asserted GUI provenance label as audit truth.
+            || self.decision_source != "operator_cli"
+            || self.durability != "confirmed"
+            || !self.accepted_policy_current_at_return
+        {
+            return Err(
+                "Skill authority receipt has the wrong state, source, or durability".into(),
+            );
+        }
+        if self.provenance.trim().is_empty()
+            || !self.claims.is_object()
+            || self
+                .claims
+                .get("skills_policy_sha256")
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|digest| !is_sha256(digest))
+        {
+            return Err("Skill authority receipt has invalid provenance/claims".into());
         }
         Ok(())
     }
@@ -4890,12 +5095,30 @@ mod tests {
 
     #[test]
     fn skill_toggle_ack_verifies_id_and_state() {
-        let ack: SkillToggleAck =
-            serde_json::from_str(r#"{"id":"my-skill","state":"enabled"}"#).unwrap();
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enabled: [my-skill]\n",
+        )
+        .unwrap();
+        let sentinel = home
+            .path()
+            .join(neothd::config::reload::RELOAD_SENTINEL_NAME);
+        std::fs::write(&sentinel, "ts_unix=1\n").unwrap();
+        let ack: SkillToggleAck = serde_json::from_value(serde_json::json!({
+            "id": "my-skill",
+            "state": "enabled",
+            "origin": "bundled",
+            "authority": null,
+            "reload_requested": true,
+            "reload_sentinel": sentinel,
+            "reload_ts_unix": 1
+        }))
+        .unwrap();
         // CLI lowercases the id → case-insensitive match.
-        assert!(ack.verify("My-Skill", "enabled").is_ok());
-        assert!(ack.verify("my-skill", "disabled").is_err()); // wrong state
-        assert!(ack.verify("other", "enabled").is_err()); // wrong id
+        assert!(ack.verify("My-Skill", "enabled", home.path()).is_ok());
+        assert!(ack.verify("my-skill", "disabled", home.path()).is_err()); // wrong state
+        assert!(ack.verify("other", "enabled", home.path()).is_err()); // wrong id
     }
 
     fn write_test_skill(path: &Path, id: &str, asset: &[u8]) {

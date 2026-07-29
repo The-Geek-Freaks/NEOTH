@@ -1202,34 +1202,38 @@ async fn build_prompt_bundle(
         })
         .collect();
     let skills_dir = home.join("skills");
+    let one_shot_reload = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+        config.clone(),
+        args.config
+            .clone()
+            .unwrap_or_else(|| home.join("freedom.yaml")),
+    ));
+    let one_shot_config_epoch = one_shot_reload.accepted_snapshot().epoch();
     // E-22 chat-route (Session 21, 2026-05-23): swap raw `load_all` for
     // the SkillRegistry path so the chat call goes through the same
-    // ArcSwap<Vec<Skill>> primitive the daemon's hot-reload watcher
-    // targets. When running inside a long-lived daemon, the process-wide
-    // global registry (initialised by `serve.rs`) is reused — the chat
-    // path then automatically sees skill edits the watcher picked up
-    // between turns. One-shot `neoth chat` falls back to a per-call
-    // registry build (no watcher, no shared state).
-    let (blocks_res, registry_res) = match crate::skills::registry::global() {
-        Some(reg) => {
-            let blocks = if args.incognito {
-                Ok(Vec::new())
-            } else {
-                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs).await
-            };
-            (blocks, Ok::<_, anyhow::Error>(reg))
-        }
-        None if args.incognito => (
+    // compound epoch+authority publication as the daemon. This function is
+    // passed a concrete FreedomConfig rather than an AcceptedConfigSnapshot,
+    // so it deliberately builds an epoch-0 registry for that exact config.
+    // Reusing an unrelated process-global registry here could pair config N
+    // with Skill authority N+1.
+    let (blocks_res, registry_res) = if args.incognito {
+        (
             Ok(Vec::new()),
-            crate::skills::SkillRegistry::load(&skills_dir).await,
-        ),
-        None => {
-            let (b, r) = tokio::join!(
-                crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs),
-                crate::skills::SkillRegistry::load(&skills_dir),
-            );
-            (b, r)
-        }
+            crate::skills::SkillRegistry::load_with_reload_controller(
+                &skills_dir,
+                std::sync::Arc::clone(&one_shot_reload),
+            )
+            .await,
+        )
+    } else {
+        let (b, r) = tokio::join!(
+            crate::memory::operator_md::assemble(&home, &cwd, &extra_dirs),
+            crate::skills::SkillRegistry::load_with_reload_controller(
+                &skills_dir,
+                std::sync::Arc::clone(&one_shot_reload),
+            ),
+        );
+        (b, r)
     };
     let blocks = blocks_res.unwrap_or_default();
     // GOLD-CCPARITY-SUBDIR-MD-01 — emit one SUBDIR_MD_LOADED (0x8C) WAL frame
@@ -1294,10 +1298,11 @@ async fn build_prompt_bundle(
     // `cli/serve.rs::build_pipeline_handler` calls the same helper
     // so every inbound surface reaches the same context layering.
 
-    // Arc<Vec<Skill>> snapshot — derefs to &[Skill] for the router.
+    // Arc<Vec<RuntimeSkill>> snapshot — every installed entry consumed a
+    // validated authority capability before reaching this point.
     let raw_installed_skills = registry_res
         .with_context(|| format!("load skill registry from {}", skills_dir.display()))?
-        .snapshot_owned();
+        .snapshot_owned_for_epoch(one_shot_config_epoch);
 
     // ── ARCH-07 (Session 28) — pinned-hash integrity gate ─────────────────
     //
@@ -1325,7 +1330,7 @@ async fn build_prompt_bundle(
                 .map(|s| (s.id(), s.content_hash.as_str())),
             &config.skills.pinned_hashes,
         );
-        let mut kept: Vec<crate::skills::schema::Skill> = Vec::new();
+        let mut kept: Vec<crate::skills::schema::RuntimeSkill> = Vec::new();
         for (skill, verdict) in raw_installed_skills.iter().zip(verdicts.iter()) {
             match verdict.verdict {
                 crate::skills::versioning::PinnedHashOutcome::Allowed => {
@@ -1404,7 +1409,7 @@ async fn build_prompt_bundle(
     // matching explicit `/skill-id` slash invocation. This keeps the router
     // pure — it never needs to know about visibility; filtering happens before
     // it is called (same architecture as the path-gate filter for PATHS-01).
-    let installed_skills: std::sync::Arc<Vec<crate::skills::schema::Skill>> = {
+    let installed_skills: std::sync::Arc<Vec<crate::skills::schema::RuntimeSkill>> = {
         let needs_filter = installed_skills
             .iter()
             .any(|s| !matches!(s.manifest.visibility, crate::config::SkillVisibility::On));
@@ -1485,8 +1490,9 @@ async fn build_prompt_bundle(
     // mode's `system_prompt_delta` layers on top of the parent skill's
     // base `system_prompt`. When no mode hits, fall back to the broad
     // `skills::route` Stage-1 keyword scan + Stage-2 embedding re-rank.
-    let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
-        .context("build chat skill mode registry")?;
+    let mode_registry =
+        crate::skills::mode_registry::ModeRegistry::from_skills(installed_skills.as_slice())
+            .context("build chat skill mode registry")?;
     let mode_hit = if eval_suppress {
         None
     } else {
@@ -1538,7 +1544,10 @@ async fn build_prompt_bundle(
         // GOLD-ADOPT-28 lazy routing: load ONLY the matched mode's sub-doc on
         // top of the parent's thin base (shared primitive — same rule as the
         // channel path in serve_pipeline.rs).
-        let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
+        let layer = crate::skills::router::compose_mode_skill_layer(
+            parent.map(|skill| skill.as_skill()),
+            resolved,
+        );
         // GOLD-CCPARITY-MODEL-02: parent skill's model override still applies
         // when a mode is active — the mode is a behaviour variant of its
         // parent and inherits the parent's model selection.
@@ -1550,8 +1559,9 @@ async fn build_prompt_bundle(
         // security principal. Preserve the parent's delegation boundary just
         // like its model, effort and tool allowlist.
         let delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
-        let loop_trigger = routed_skill_loop_trigger(parent);
-        skill_tool_allowlist = routed_skill_tool_allowlist(parent);
+        let parent_skill = parent.map(|skill| skill.as_skill());
+        let loop_trigger = routed_skill_loop_trigger(parent_skill);
+        skill_tool_allowlist = routed_skill_tool_allowlist(parent_skill);
         crate::analytics::babel::signals::emit(
             crate::analytics::babel::signals::SignalKind::SkillMode,
         );
@@ -1583,7 +1593,7 @@ async fn build_prompt_bundle(
         let active_files = read_env_active_files();
         let mut skill_match = crate::skills::router::route_with_min_weight(
             &prompt,
-            &installed_skills,
+            installed_skills.as_slice(),
             stage1_floor,
             &active_files,
         );
@@ -1592,7 +1602,7 @@ async fn build_prompt_bundle(
                 crate::providers::embed_provider_from_config(&config).await
             && let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
                 &prompt,
-                &installed_skills,
+                installed_skills.as_slice(),
                 embed_provider.as_ref(),
             )
             .await
@@ -2543,13 +2553,20 @@ async fn enforce_preflight(
                                 );
                             }
                             info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
-                            let outcome = crate::slash::dispatch_action(
-                                action,
-                                &cmd_args,
-                                config,
-                                crate::slash::CommandSource::Cli,
-                            )
-                            .await;
+                            let action_config_path = args
+                                .config
+                                .clone()
+                                .unwrap_or_else(|| home.join("freedom.yaml"));
+                            let outcome =
+                                crate::slash::action_dispatch::dispatch_action_with_paths(
+                                    action,
+                                    &cmd_args,
+                                    config,
+                                    crate::slash::CommandSource::Cli,
+                                    home,
+                                    &action_config_path,
+                                )
+                                .await;
                             if outcome.is_failure() {
                                 let failure = outcome.text().to_string();
                                 if args.stream {
@@ -5568,25 +5585,24 @@ async fn run_chat_with_consent(
 
     // GOLD-ADAPT-SKILL-10 — session-start skill-catalog banner (stdout only,
     // no provider tokens). Gated on `config.skills.session_catalog` (default
-    // false — operator opt-in). Prefer the daemon's hot registry (`global()`)
-    // so the daemon path pays zero FS I/O; fall back to a best-effort
-    // `load_all` for one-shot CLI invocations where no daemon was started.
+    // false — operator opt-in). Build against the exact config already chosen
+    // for this chat session. A process-global registry has its own accepted
+    // epoch and cannot safely be paired with this independently loaded config.
     // The catalog is printed right here in the session-start banner chain,
     // AFTER UX-05 and BEFORE the WAL writer opens, matching the research plan.
     if config.skills.session_catalog {
-        let catalog_block = if let Some(reg) = crate::skills::registry::global() {
-            // Daemon path — zero FS I/O: read the hot atomic-swap registry.
-            maybe_skill_catalog_block(&reg.snapshot_owned())
-        } else {
-            // One-shot CLI path — best-effort async load (same FS walk
-            // `build_prompt_bundle` will repeat ~30 ms later anyway).
-            // `run_chat_with` is already async so `.await` is safe here.
-            let skills_dir = first_tour_home.join("skills");
-            let loaded = crate::skills::load_all(&skills_dir)
+        let skills_dir = first_tour_home.join("skills");
+        let accepted = std::sync::Arc::new(crate::config::reload::ReloadController::new(
+            config.clone(),
+            selected_config_path.clone(),
+        ));
+        let accepted_epoch = accepted.accepted_snapshot().epoch();
+        let loaded =
+            crate::skills::SkillRegistry::load_with_reload_controller(&skills_dir, accepted)
                 .await
                 .with_context(|| format!("load skill catalog from {}", skills_dir.display()))?;
-            maybe_skill_catalog_block(&loaded)
-        };
+        let catalog_block =
+            maybe_skill_catalog_block(loaded.snapshot_owned_for_epoch(accepted_epoch).as_slice());
         if let Some(block) = catalog_block {
             write_chat_notice(args.stream, &block).context("write skill catalog notice")?;
         }
@@ -10103,9 +10119,14 @@ fn session_memory_signal(neoth_home: &std::path::Path) -> Option<String> {
 /// — the operator should see `/skill-name` exists even for non-auto-
 /// routed skills. Only `disabled` (`is_enabled() == false`) skills are
 /// suppressed, matching the pre-filter semantics of `build_prompt_bundle`.
-fn maybe_skill_catalog_block(skills: &[crate::skills::schema::Skill]) -> Option<String> {
-    let enabled: Vec<&crate::skills::schema::Skill> =
-        skills.iter().filter(|s| s.is_enabled()).collect();
+fn maybe_skill_catalog_block<S: crate::skills::schema::RuntimeSkillView>(
+    skills: &[S],
+) -> Option<String> {
+    let enabled: Vec<&crate::skills::schema::Skill> = skills
+        .iter()
+        .map(crate::skills::schema::RuntimeSkillView::runtime_skill)
+        .filter(|skill| skill.is_enabled())
+        .collect();
     if enabled.is_empty() {
         return None;
     }

@@ -2,9 +2,9 @@
 //!
 //! The proposal producer, operator review CLI and this consumer all use the
 //! typed `ProposedAction` schema. Explicit `neoth proactive accept` adopts a
-//! skill immediately; this optional cron is the repair/reconciliation path for
-//! approved proposals whose live write previously failed or pre-dates that
-//! direct adoption wiring.
+//! skill package immediately in an inactive state; this optional cron is the
+//! repair/reconciliation path for approved proposals whose package write
+//! previously failed or pre-dates that direct adoption wiring.
 
 use std::path::Path;
 
@@ -15,13 +15,15 @@ use crate::proactive::action_staging::{
     ProposalKind, ProposalStatus, SkillReconciliation, list_proposals, reconcile_approved_skill,
 };
 
-/// Reconcile mature approved Skill proposals into the live skill directory.
+/// Reconcile mature approved Skill proposals into the installed skill directory.
 ///
 /// The age gate uses `ProposedAction::generated_ts_unix`; approval uses the
-/// real `ProposalStatus::Approved`; the live YAML is the producer's
-/// `draft_yaml`. Reconciliation parses the real `SkillManifest`, validates its
-/// id, and publishes a complete cloned package generation only after its
-/// exact curator-origin intent is authenticated in the home-bound WAL.
+/// real `ProposalStatus::Approved`; the installed YAML is a canonicalized,
+/// explicitly inactive form of the producer's `draft_yaml`. Reconciliation
+/// parses the real `SkillManifest`, validates its id, and publishes a complete
+/// cloned package generation only after its exact curator-origin intent is
+/// authenticated in the home-bound WAL. Activation remains a separate
+/// operator decision.
 pub async fn run_skill_curator_tick(home: &Path, cfg: &SkillCuratorConfig) -> anyhow::Result<()> {
     let home = home.to_path_buf();
     let cfg = *cfg;
@@ -165,7 +167,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn producer_schema_approval_and_curator_form_one_live_path() {
+    async fn producer_schema_approval_and_curator_install_one_inactive_package() {
         let dir = tempdir().unwrap();
         let proposal = skill_proposal("curated_skill", 10, ProposalStatus::Pending);
         let proposal_id = proposal.id.clone();
@@ -187,11 +189,16 @@ mod tests {
             .join("skills")
             .join("curated_skill")
             .join("skill.yaml");
-        assert!(dest.exists(), "approved producer proposal must become live");
         assert!(
-            std::fs::read_to_string(dest)
-                .unwrap()
-                .contains("curated_skill")
+            dest.exists(),
+            "approved producer proposal must be installed"
+        );
+        let installed: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&std::fs::read_to_string(dest).unwrap()).unwrap();
+        assert_eq!(installed.id, "curated_skill");
+        assert!(
+            !installed.enabled,
+            "curator installation must remain pending activation"
         );
     }
 

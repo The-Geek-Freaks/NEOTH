@@ -46,8 +46,9 @@ pub enum ModeAction {
 
 pub async fn run_mode(args: ModeArgs) -> Result<()> {
     let skills_dir = FreedomConfig::default_neoth_home().join("skills");
-    let skills = crate::skills::load_all(&skills_dir).await?;
-    let registry = ModeRegistry::from_skills(&skills)?;
+    let skills = crate::skills::SkillRegistry::load(&skills_dir).await?;
+    let snapshot = skills.snapshot_owned();
+    let registry = ModeRegistry::from_skills(snapshot.as_slice())?;
 
     match args.action {
         ModeAction::List => list_modes(&registry, args.output),

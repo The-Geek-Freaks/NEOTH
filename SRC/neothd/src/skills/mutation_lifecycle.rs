@@ -6,6 +6,7 @@
 //! the authenticated audit RPC, and an offline process owns a unique home-bound
 //! WAL segment.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -17,7 +18,7 @@ use sha2::{Digest as _, Sha256};
 
 use super::installer::{
     self, SkillMutationAuditBinding, SkillMutationAuditReceipt, SkillMutationKind,
-    SkillMutationPhase,
+    SkillMutationOrigin, SkillMutationPhase,
 };
 use crate::wal::writer::WalWriterHandle;
 
@@ -64,9 +65,104 @@ fn skill_mutation_subtype(
     }
 }
 
-fn receipt_sha256(receipt: &SkillMutationAuditReceipt) -> Result<String> {
+fn notify_runtime_mutation_transition(
+    home: &Path,
+    binding: &SkillMutationAuditBinding,
+    terminal: bool,
+) {
+    use super::registry::RuntimeAuthorityTransitionKind;
+
+    let kind = match (binding.kind.is_install(), terminal) {
+        (true, false) => RuntimeAuthorityTransitionKind::InstallIntent,
+        (true, true) => RuntimeAuthorityTransitionKind::InstallResult,
+        (false, false) => RuntimeAuthorityTransitionKind::RemovalIntent,
+        (false, true) => RuntimeAuthorityTransitionKind::RemovalResult,
+    };
+    super::registry::notify_runtime_authority_transition(home, kind);
+}
+
+pub(crate) fn receipt_sha256(receipt: &SkillMutationAuditReceipt) -> Result<String> {
     let bytes = serde_json::to_vec(receipt).context("serialize Skill mutation audit receipt")?;
     Ok(hex::encode(Sha256::digest(bytes)))
+}
+
+/// Per-Skill mutation-chain reservation copied into the durable journal before
+/// an intent can be emitted. Fields are not caller supplied: they are derived
+/// from the independently authenticated WAL head while the global Skill
+/// mutation lock is held.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SkillMutationIncarnationBinding {
+    pub(crate) mutation_sequence: u64,
+    pub(crate) previous_terminal_receipt_sha256: Option<String>,
+    pub(crate) prior_install_incarnation: Option<u64>,
+    pub(crate) resulting_install_incarnation: Option<u64>,
+}
+
+/// Opaque proof that one exact package generation is the latest committed
+/// installation incarnation in the authenticated mutation WAL.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AuthenticatedSkillInstallIncarnation {
+    skill_id: String,
+    package_generation_sha256: String,
+    install_incarnation: u64,
+    terminal_receipt_sha256: String,
+    origin: SkillMutationOrigin,
+}
+
+impl AuthenticatedSkillInstallIncarnation {
+    pub(crate) fn skill_id(&self) -> &str {
+        &self.skill_id
+    }
+
+    pub(crate) fn package_generation_sha256(&self) -> &str {
+        &self.package_generation_sha256
+    }
+
+    pub(crate) fn install_incarnation(&self) -> u64 {
+        self.install_incarnation
+    }
+
+    pub(crate) fn terminal_receipt_sha256(&self) -> &str {
+        &self.terminal_receipt_sha256
+    }
+
+    pub(crate) fn origin(&self) -> SkillMutationOrigin {
+        self.origin
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct SkillInstallIncarnationState {
+    high_water_sequence: u64,
+    latest_terminal_receipt_sha256: Option<String>,
+    current: Option<AuthenticatedSkillInstallIncarnation>,
+    pending_sequence: Option<u64>,
+    indeterminate_sequence: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillIncarnationWalEvent {
+    operation_id: String,
+    kind: SkillMutationKind,
+    origin: SkillMutationOrigin,
+    skill_id: String,
+    mutation_sequence: u64,
+    previous_terminal_receipt_sha256: Option<String>,
+    prior_install_incarnation: Option<u64>,
+    resulting_install_incarnation: Option<u64>,
+    source_generation_sha256: Option<String>,
+    prior_generation_sha256: Option<String>,
+    observed_generation_sha256: Option<String>,
+    phase: Option<SkillMutationPhase>,
+    intent_receipt_sha256: Option<String>,
+    receipt: SkillMutationAuditReceipt,
+    receipt_sha256: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct SkillIncarnationOperation {
+    intent: Option<SkillIncarnationWalEvent>,
+    terminal: Option<SkillIncarnationWalEvent>,
 }
 
 fn unsigned_skill_mutation_audit_value(
@@ -93,8 +189,9 @@ fn unsigned_skill_mutation_audit_value(
     if terminal && binding.commit_boundary_sha256.is_none() {
         anyhow::bail!("terminal Skill mutation binding lacks its durable commit boundary");
     }
-    Ok(serde_json::json!({
-        "schema_version": 2,
+    let incarnation_bound = binding.mutation_sequence.is_some();
+    let mut value = serde_json::json!({
+        "schema_version": if incarnation_bound { 3 } else { 2 },
         "audit_event_id": audit_event_id,
         "operation_id": binding.operation_id,
         "mutation": binding.kind.as_str(),
@@ -169,7 +266,33 @@ fn unsigned_skill_mutation_audit_value(
         },
         "source": binding.origin.as_str(),
         "ts_unix": binding.created_at_unix,
-    }))
+    });
+    if incarnation_bound {
+        let object = value
+            .as_object_mut()
+            .context("canonical Skill mutation payload is not an object")?;
+        object.insert(
+            "mutation_sequence".to_string(),
+            serde_json::to_value(binding.mutation_sequence)
+                .context("serialize Skill mutation sequence")?,
+        );
+        object.insert(
+            "previous_terminal_receipt_sha256".to_string(),
+            serde_json::to_value(&binding.previous_terminal_receipt_sha256)
+                .context("serialize Skill mutation predecessor receipt")?,
+        );
+        object.insert(
+            "prior_install_incarnation".to_string(),
+            serde_json::to_value(binding.prior_install_incarnation)
+                .context("serialize prior Skill install incarnation")?,
+        );
+        object.insert(
+            "resulting_install_incarnation".to_string(),
+            serde_json::to_value(binding.resulting_install_incarnation)
+                .context("serialize resulting Skill install incarnation")?,
+        );
+    }
+    Ok(value)
 }
 
 fn skill_audit_payload_hmac(
@@ -214,6 +337,571 @@ fn json_optional_string<'a>(
             .map(Some)
             .with_context(|| format!("Skill mutation WAL field `{field}` is not a string")),
     }
+}
+
+fn json_required_string<'a>(payload: &'a serde_json::Value, field: &str) -> Result<&'a str> {
+    json_optional_string(payload, field)?
+        .with_context(|| format!("Skill mutation WAL field `{field}` is missing"))
+}
+
+fn json_optional_u64(payload: &serde_json::Value, field: &str) -> Result<Option<u64>> {
+    match payload.get(field) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(value) => value.as_u64().map(Some).with_context(|| {
+            format!("Skill mutation WAL field `{field}` is not an unsigned integer")
+        }),
+    }
+}
+
+fn json_required_u64(payload: &serde_json::Value, field: &str) -> Result<u64> {
+    json_optional_u64(payload, field)?
+        .with_context(|| format!("Skill mutation WAL field `{field}` is missing"))
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn parse_mutation_kind(value: &str) -> Result<SkillMutationKind> {
+    match value {
+        "install" => Ok(SkillMutationKind::Install),
+        "replace" => Ok(SkillMutationKind::Replace),
+        "remove" => Ok(SkillMutationKind::Remove),
+        _ => anyhow::bail!("unknown authenticated Skill mutation kind `{value}`"),
+    }
+}
+
+fn parse_mutation_origin(value: &str) -> Result<SkillMutationOrigin> {
+    match value {
+        "cli_install" => Ok(SkillMutationOrigin::CliInstall),
+        "cli_uninstall" => Ok(SkillMutationOrigin::CliUninstall),
+        "cli_create" => Ok(SkillMutationOrigin::CliCreate),
+        "proactive_accept" => Ok(SkillMutationOrigin::ProactiveAccept),
+        "proactive_curator" => Ok(SkillMutationOrigin::ProactiveCurator),
+        "teacher" => Ok(SkillMutationOrigin::Teacher),
+        "self_improve_accept" => Ok(SkillMutationOrigin::SelfImproveAccept),
+        "self_improve_rollback" => Ok(SkillMutationOrigin::SelfImproveRollback),
+        _ => anyhow::bail!("unknown authenticated Skill mutation origin `{value}`"),
+    }
+}
+
+fn parse_terminal_phase(value: &str) -> Result<SkillMutationPhase> {
+    match value {
+        "committed" => Ok(SkillMutationPhase::Committed),
+        "aborted" => Ok(SkillMutationPhase::Aborted),
+        "indeterminate" => Ok(SkillMutationPhase::Indeterminate),
+        _ => anyhow::bail!("invalid authenticated Skill mutation terminal phase `{value}`"),
+    }
+}
+
+fn authenticate_unbound_skill_mutation_payload(
+    payload: &[u8],
+    observed_subtype: crate::wal::events::ExtendedSubtype,
+    keys: &[Vec<u8>],
+) -> Result<serde_json::Value> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(payload).context("parse Skill mutation WAL payload")?;
+    let tag = value
+        .as_object_mut()
+        .context("Skill mutation WAL payload is not a JSON object")?
+        .remove("auth_hmac_sha256")
+        .and_then(|value| value.as_str().map(ToOwned::to_owned))
+        .context("Skill mutation WAL payload lacks its HMAC-SHA256 authentication tag")?;
+    if !valid_sha256(&tag) {
+        anyhow::bail!("Skill mutation WAL authentication tag is not canonical SHA-256 hex");
+    }
+    let tag = hex::decode(&tag).context("decode Skill mutation WAL authentication tag")?;
+    let unsigned =
+        serde_json::to_vec(&value).context("serialize candidate unsigned Skill audit payload")?;
+    let authenticated = keys.iter().any(|key| {
+        let mut mac =
+            Hmac::<Sha256>::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
+        mac.update(SKILL_AUDIT_HMAC_DOMAIN);
+        mac.update(&[observed_subtype as u8]);
+        mac.update(&unsigned);
+        mac.verify_slice(&tag).is_ok()
+    });
+    if !authenticated {
+        anyhow::bail!("Skill mutation WAL payload did not authenticate under any bounded key");
+    }
+    Ok(value)
+}
+
+fn parse_incarnation_event(
+    payload: &serde_json::Value,
+    observed_subtype: crate::wal::events::ExtendedSubtype,
+    terminal: bool,
+    receipt: SkillMutationAuditReceipt,
+) -> Result<SkillIncarnationWalEvent> {
+    if json_required_u64(payload, "schema_version")? != 3 {
+        anyhow::bail!("incarnation event does not use Skill mutation schema v3");
+    }
+    let operation_id = json_required_string(payload, "operation_id")?.to_string();
+    if operation_id.len() != 32
+        || !operation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        anyhow::bail!("authenticated Skill mutation operation id is invalid");
+    }
+    let kind = parse_mutation_kind(json_required_string(payload, "mutation")?)?;
+    if skill_mutation_subtype(kind, terminal) != observed_subtype {
+        anyhow::bail!("authenticated Skill mutation subtype does not match its payload kind");
+    }
+    let origin = parse_mutation_origin(json_required_string(payload, "origin")?)?;
+    let skill_id = json_required_string(payload, "skill_id")?.to_string();
+    super::creator::validate_skill_id(&skill_id)
+        .context("authenticated Skill mutation id is invalid")?;
+    if !valid_sha256(json_required_string(payload, "audit_event_id")?) {
+        anyhow::bail!("authenticated Skill mutation audit id is invalid");
+    }
+    let mutation_sequence = json_required_u64(payload, "mutation_sequence")?;
+    if mutation_sequence == 0 {
+        anyhow::bail!("authenticated Skill mutation sequence must be non-zero");
+    }
+    let previous_terminal_receipt_sha256 =
+        json_optional_string(payload, "previous_terminal_receipt_sha256")?.map(ToOwned::to_owned);
+    if previous_terminal_receipt_sha256
+        .as_deref()
+        .is_some_and(|digest| !valid_sha256(digest))
+    {
+        anyhow::bail!("authenticated Skill mutation predecessor receipt is invalid");
+    }
+    match (
+        mutation_sequence,
+        previous_terminal_receipt_sha256.as_deref(),
+    ) {
+        (1, None) => {}
+        (1, Some(_)) => anyhow::bail!("first Skill mutation must not name a predecessor"),
+        (_, Some(_)) => {}
+        (_, None) => anyhow::bail!("non-first Skill mutation requires a predecessor receipt"),
+    }
+    let prior_install_incarnation = json_optional_u64(payload, "prior_install_incarnation")?;
+    if prior_install_incarnation
+        .is_some_and(|incarnation| incarnation == 0 || incarnation >= mutation_sequence)
+    {
+        anyhow::bail!("authenticated prior Skill install incarnation is invalid");
+    }
+    let resulting_install_incarnation =
+        json_optional_u64(payload, "resulting_install_incarnation")?;
+    match (kind.is_install(), resulting_install_incarnation) {
+        (true, Some(incarnation)) if incarnation == mutation_sequence => {}
+        (false, None) => {}
+        _ => anyhow::bail!(
+            "authenticated resulting Skill install incarnation does not match its mutation"
+        ),
+    }
+    let source_generation_sha256 =
+        json_optional_string(payload, "source_generation_sha256")?.map(ToOwned::to_owned);
+    let prior_generation_sha256 =
+        json_optional_string(payload, "prior_generation_sha256")?.map(ToOwned::to_owned);
+    let observed_generation_sha256 =
+        json_optional_string(payload, "observed_generation_sha256")?.map(ToOwned::to_owned);
+    for (label, value) in [
+        ("source", source_generation_sha256.as_deref()),
+        ("prior", prior_generation_sha256.as_deref()),
+        ("observed", observed_generation_sha256.as_deref()),
+    ] {
+        if value.is_some_and(|digest| !valid_sha256(digest)) {
+            anyhow::bail!("authenticated Skill mutation {label} generation is invalid");
+        }
+    }
+    match kind {
+        SkillMutationKind::Install
+            if source_generation_sha256.is_some() && prior_generation_sha256.is_none() => {}
+        SkillMutationKind::Replace
+            if source_generation_sha256.is_some() && prior_generation_sha256.is_some() => {}
+        SkillMutationKind::Remove
+            if source_generation_sha256.is_none() && prior_generation_sha256.is_some() => {}
+        _ => anyhow::bail!("authenticated Skill mutation generations do not match its kind"),
+    }
+    let (phase, intent_receipt_sha256) = if terminal {
+        if json_required_u64(payload, "chain_sequence")? != 2 {
+            anyhow::bail!("authenticated Skill terminal has an invalid chain sequence");
+        }
+        let phase = parse_terminal_phase(json_required_string(payload, "phase")?)?;
+        if json_required_string(payload, "status")? != phase.as_str() {
+            anyhow::bail!("authenticated Skill terminal status/phase mismatch");
+        }
+        let intent_receipt = json_required_string(payload, "intent_receipt_sha256")?.to_string();
+        if !valid_sha256(&intent_receipt) {
+            anyhow::bail!("authenticated Skill terminal intent receipt is invalid");
+        }
+        (Some(phase), Some(intent_receipt))
+    } else {
+        if json_required_u64(payload, "chain_sequence")? != 1
+            || json_required_string(payload, "phase")? != "intent"
+            || json_optional_string(payload, "status")?.is_some()
+            || json_optional_string(payload, "intent_receipt_sha256")?.is_some()
+            || observed_generation_sha256.is_some()
+        {
+            anyhow::bail!("authenticated Skill intent carries terminal-only state");
+        }
+        (None, None)
+    };
+    let receipt_sha256 = receipt_sha256(&receipt)?;
+    Ok(SkillIncarnationWalEvent {
+        operation_id,
+        kind,
+        origin,
+        skill_id,
+        mutation_sequence,
+        previous_terminal_receipt_sha256,
+        prior_install_incarnation,
+        resulting_install_incarnation,
+        source_generation_sha256,
+        prior_generation_sha256,
+        observed_generation_sha256,
+        phase,
+        intent_receipt_sha256,
+        receipt,
+        receipt_sha256,
+    })
+}
+
+fn incarnation_bindings_match(
+    intent: &SkillIncarnationWalEvent,
+    terminal: &SkillIncarnationWalEvent,
+) -> bool {
+    intent.operation_id == terminal.operation_id
+        && intent.kind == terminal.kind
+        && intent.origin == terminal.origin
+        && intent.skill_id == terminal.skill_id
+        && intent.mutation_sequence == terminal.mutation_sequence
+        && intent.previous_terminal_receipt_sha256 == terminal.previous_terminal_receipt_sha256
+        && intent.prior_install_incarnation == terminal.prior_install_incarnation
+        && intent.resulting_install_incarnation == terminal.resulting_install_incarnation
+        && intent.source_generation_sha256 == terminal.source_generation_sha256
+        && intent.prior_generation_sha256 == terminal.prior_generation_sha256
+}
+
+pub(crate) struct SkillInstallIncarnationIndex {
+    states: BTreeMap<String, SkillInstallIncarnationState>,
+}
+
+impl SkillInstallIncarnationIndex {
+    pub(crate) fn authenticate_current(
+        &self,
+        skill_id: &str,
+        package_generation_sha256: &str,
+    ) -> Result<AuthenticatedSkillInstallIncarnation> {
+        super::creator::validate_skill_id(skill_id).context("validate Skill incarnation id")?;
+        if !valid_sha256(package_generation_sha256) {
+            anyhow::bail!("expected Skill package generation is not a SHA-256 digest");
+        }
+        let state = self.states.get(skill_id).cloned().unwrap_or_default();
+        authenticate_current_from_state(state, skill_id, package_generation_sha256)
+    }
+}
+
+pub(crate) fn scan_skill_install_incarnation_index(
+    home: &Path,
+) -> Result<SkillInstallIncarnationIndex> {
+    #[cfg(test)]
+    record_incarnation_index_scan_for_test(home);
+    let keys = crate::wal::scan::load_home_hmac_keys(home)?;
+    if keys.is_empty() {
+        return Ok(SkillInstallIncarnationIndex {
+            states: BTreeMap::new(),
+        });
+    }
+    let mut operations_by_skill =
+        BTreeMap::<String, BTreeMap<u64, SkillIncarnationOperation>>::new();
+    crate::wal::scan::for_each_frame_at_home(
+        home,
+        crate::wal::scan::HomeWalScanLimits::default(),
+        |location, frame| {
+            if frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED {
+                return Ok(());
+            }
+            let Some(subtype) =
+                crate::wal::events::ExtendedSubtype::from_u8(frame.header.event_subtype)
+            else {
+                return Ok(());
+            };
+            let terminal = match subtype {
+                crate::wal::events::ExtendedSubtype::SkillInstallIntent
+                | crate::wal::events::ExtendedSubtype::SkillRemovalIntent => false,
+                crate::wal::events::ExtendedSubtype::SkillInstallResult
+                | crate::wal::events::ExtendedSubtype::SkillRemovalResult => true,
+                _ => return Ok(()),
+            };
+            // Authenticate before looking at schema or skill id. Otherwise an
+            // attacker could rewrite either discriminator, repair only the CRC,
+            // and make the latest incarnation tail disappear from this scan.
+            let value = authenticate_unbound_skill_mutation_payload(frame.payload, subtype, &keys)?;
+            match json_required_u64(&value, "schema_version")? {
+                2 => return Ok(()),
+                3 => {}
+                version => {
+                    anyhow::bail!("unsupported authenticated Skill mutation schema {version}")
+                }
+            }
+            let segment_name = location
+                .segment_name
+                .to_str()
+                .context("canonical WAL segment name is not UTF-8")?
+                .to_string();
+            let receipt = SkillMutationAuditReceipt {
+                audit_event_id: json_required_string(&value, "audit_event_id")?.to_string(),
+                payload_sha256: hex::encode(Sha256::digest(frame.payload)),
+                segment_name,
+                segment_generation: location.segment_generation,
+                segment_seq: location.segment_seq,
+                segment_start_ts_ns: location.segment_start_ts_ns,
+                segment_node_id_hex: hex::encode(location.segment_node_id),
+                logical_offset: location.logical_offset,
+                event_id: frame.header.event_id.raw(),
+                event_hlc_physical_ns: frame.header.hlc.physical_ns(),
+                event_hlc_logical: frame.header.hlc.logical(),
+                event_node_id_hex: hex::encode(frame.header.node_id.0),
+            };
+            let event = parse_incarnation_event(&value, subtype, terminal, receipt)?;
+            let skill_id = event.skill_id.clone();
+            let sequence = event.mutation_sequence;
+            let operation = operations_by_skill
+                .entry(skill_id.clone())
+                .or_default()
+                .entry(sequence)
+                .or_default();
+            let slot = if event.phase.is_some() {
+                &mut operation.terminal
+            } else {
+                &mut operation.intent
+            };
+            if slot.replace(event).is_some() {
+                anyhow::bail!(
+                    "Skill `{skill_id}` has duplicate authenticated mutation sequence {sequence}"
+                );
+            }
+            Ok(())
+        },
+    )?;
+
+    let mut states = BTreeMap::new();
+    for (skill_id, operations) in operations_by_skill {
+        states.insert(
+            skill_id.clone(),
+            build_skill_install_incarnation_state(&skill_id, operations)?,
+        );
+    }
+    Ok(SkillInstallIncarnationIndex { states })
+}
+
+#[cfg(test)]
+fn incarnation_index_scan_counts() -> &'static std::sync::Mutex<BTreeMap<PathBuf, usize>> {
+    static COUNTS: std::sync::OnceLock<std::sync::Mutex<BTreeMap<PathBuf, usize>>> =
+        std::sync::OnceLock::new();
+    COUNTS.get_or_init(|| std::sync::Mutex::new(BTreeMap::new()))
+}
+
+#[cfg(test)]
+fn record_incarnation_index_scan_for_test(home: &Path) {
+    let mut counts = incarnation_index_scan_counts()
+        .lock()
+        .expect("incarnation scan counter lock poisoned");
+    *counts.entry(home.to_path_buf()).or_default() += 1;
+}
+
+#[cfg(test)]
+pub(crate) fn incarnation_index_scan_count_for_test(home: &Path) -> usize {
+    incarnation_index_scan_counts()
+        .lock()
+        .expect("incarnation scan counter lock poisoned")
+        .get(home)
+        .copied()
+        .unwrap_or_default()
+}
+
+fn build_skill_install_incarnation_state(
+    skill_id: &str,
+    operations: BTreeMap<u64, SkillIncarnationOperation>,
+) -> Result<SkillInstallIncarnationState> {
+    let mut state = SkillInstallIncarnationState::default();
+    for (sequence, operation) in operations {
+        if state.pending_sequence.is_some() || state.indeterminate_sequence.is_some() {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation chain continues past a non-terminal operation"
+            );
+        }
+        let expected_sequence = state
+            .high_water_sequence
+            .checked_add(1)
+            .context("Skill mutation sequence overflow")?;
+        if sequence != expected_sequence {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation chain skips from {} to {sequence}",
+                state.high_water_sequence
+            );
+        }
+        let intent = operation.intent.with_context(|| {
+            format!("Skill `{skill_id}` mutation {sequence} has a terminal without its intent")
+        })?;
+        if intent.previous_terminal_receipt_sha256 != state.latest_terminal_receipt_sha256 {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation {sequence} does not extend the authenticated terminal head"
+            );
+        }
+        let current_incarnation = state
+            .current
+            .as_ref()
+            .map(AuthenticatedSkillInstallIncarnation::install_incarnation);
+        if intent.prior_install_incarnation != current_incarnation {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation {sequence} does not consume the current install incarnation"
+            );
+        }
+        let Some(terminal) = operation.terminal else {
+            state.high_water_sequence = sequence;
+            state.pending_sequence = Some(sequence);
+            continue;
+        };
+        if !incarnation_bindings_match(&intent, &terminal)
+            || terminal.intent_receipt_sha256.as_deref() != Some(intent.receipt_sha256.as_str())
+        {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation {sequence} terminal does not bind its exact intent"
+            );
+        }
+        if !same_segment_terminal_is_after_intent(&intent.receipt, &terminal.receipt) {
+            anyhow::bail!(
+                "Skill `{skill_id}` mutation {sequence} terminal is not physically after its intent"
+            );
+        }
+        let phase = terminal
+            .phase
+            .context("authenticated Skill terminal unexpectedly lacks a phase")?;
+        state.high_water_sequence = sequence;
+        state.latest_terminal_receipt_sha256 = Some(terminal.receipt_sha256.clone());
+        match phase {
+            SkillMutationPhase::Committed if terminal.kind.is_install() => {
+                let generation = terminal
+                    .observed_generation_sha256
+                    .as_deref()
+                    .context("committed Skill installation lacks its observed generation")?;
+                if Some(generation) != terminal.source_generation_sha256.as_deref() {
+                    anyhow::bail!(
+                        "committed Skill installation generation differs from its authenticated source"
+                    );
+                }
+                state.current = Some(AuthenticatedSkillInstallIncarnation {
+                    skill_id: skill_id.to_string(),
+                    package_generation_sha256: generation.to_string(),
+                    install_incarnation: terminal
+                        .resulting_install_incarnation
+                        .context("committed Skill installation lacks its incarnation")?,
+                    terminal_receipt_sha256: terminal.receipt_sha256,
+                    origin: terminal.origin,
+                });
+            }
+            SkillMutationPhase::Committed if terminal.kind == SkillMutationKind::Remove => {
+                if terminal.observed_generation_sha256.is_some() {
+                    anyhow::bail!("committed Skill removal still observes a public generation");
+                }
+                state.current = None;
+            }
+            SkillMutationPhase::Aborted => {}
+            SkillMutationPhase::Indeterminate => {
+                state.indeterminate_sequence = Some(sequence);
+                state.current = None;
+            }
+            _ => anyhow::bail!("non-terminal phase entered Skill incarnation history"),
+        }
+    }
+    Ok(state)
+}
+
+fn scan_skill_install_incarnation_state(
+    home: &Path,
+    skill_id: &str,
+) -> Result<SkillInstallIncarnationState> {
+    super::creator::validate_skill_id(skill_id).context("validate Skill incarnation id")?;
+    Ok(scan_skill_install_incarnation_index(home)?
+        .states
+        .get(skill_id)
+        .cloned()
+        .unwrap_or_default())
+}
+
+pub(crate) fn prepare_skill_mutation_incarnation(
+    skills_dir: &Path,
+    skill_id: &str,
+    kind: SkillMutationKind,
+) -> Result<SkillMutationIncarnationBinding> {
+    let home = skills_dir.parent().with_context(|| {
+        format!(
+            "installed Skill directory {} has no instance-home parent",
+            skills_dir.display()
+        )
+    })?;
+    load_or_init_skill_mutation_audit_key(home)
+        .context("initialize authenticated Skill incarnation key")?;
+    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    if let Some(sequence) = state.pending_sequence {
+        anyhow::bail!(
+            "Skill `{skill_id}` mutation {sequence} is still pending; reconcile it before another mutation"
+        );
+    }
+    if let Some(sequence) = state.indeterminate_sequence {
+        anyhow::bail!(
+            "Skill `{skill_id}` mutation {sequence} is indeterminate; refuse a new incarnation"
+        );
+    }
+    let mutation_sequence = state
+        .high_water_sequence
+        .checked_add(1)
+        .context("Skill mutation sequence overflow")?;
+    Ok(SkillMutationIncarnationBinding {
+        mutation_sequence,
+        previous_terminal_receipt_sha256: state.latest_terminal_receipt_sha256,
+        prior_install_incarnation: state
+            .current
+            .as_ref()
+            .map(AuthenticatedSkillInstallIncarnation::install_incarnation),
+        resulting_install_incarnation: kind.is_install().then_some(mutation_sequence),
+    })
+}
+
+pub(crate) fn authenticate_current_install_incarnation(
+    home: &Path,
+    skill_id: &str,
+    package_generation_sha256: &str,
+) -> Result<AuthenticatedSkillInstallIncarnation> {
+    super::creator::validate_skill_id(skill_id).context("validate Skill incarnation id")?;
+    if !valid_sha256(package_generation_sha256) {
+        anyhow::bail!("expected Skill package generation is not a SHA-256 digest");
+    }
+    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    authenticate_current_from_state(state, skill_id, package_generation_sha256)
+}
+
+fn authenticate_current_from_state(
+    state: SkillInstallIncarnationState,
+    skill_id: &str,
+    package_generation_sha256: &str,
+) -> Result<AuthenticatedSkillInstallIncarnation> {
+    if let Some(sequence) = state.pending_sequence {
+        anyhow::bail!(
+            "Skill `{skill_id}` mutation {sequence} is pending; no current authority is admissible"
+        );
+    }
+    if let Some(sequence) = state.indeterminate_sequence {
+        anyhow::bail!(
+            "Skill `{skill_id}` mutation {sequence} is indeterminate; no current authority is admissible"
+        );
+    }
+    let current = state
+        .current
+        .context("installed Skill has no authenticated current install incarnation")?;
+    if current.skill_id != skill_id
+        || current.package_generation_sha256 != package_generation_sha256
+    {
+        anyhow::bail!("authenticated Skill install incarnation targets a different package");
+    }
+    Ok(current)
 }
 
 fn validate_skill_mutation_wal_payload(
@@ -417,6 +1105,7 @@ fn scan_skill_mutation_audit(
     Ok(observed)
 }
 
+#[cfg(test)]
 pub(crate) fn scan_skill_mutation_audit_count(
     home: &Path,
     binding: &SkillMutationAuditBinding,
@@ -688,6 +1377,7 @@ pub(crate) async fn deliver_intent(
     binding: &SkillMutationAuditBinding,
 ) -> Result<IntentDelivery> {
     if let Some(receipt) = scan_skill_mutation_audit_async(home, binding).await?.intent {
+        notify_runtime_mutation_transition(home, binding, false);
         return Ok(IntentDelivery::Durable(receipt));
     }
     let delivery = emit_skill_mutation_audit(home, writer, binding, false).await;
@@ -704,6 +1394,7 @@ pub(crate) async fn deliver_intent(
         )
     })?;
     if let Some(receipt) = receipt {
+        notify_runtime_mutation_transition(home, binding, false);
         return Ok(IntentDelivery::Durable(receipt));
     }
     Ok(match delivery {
@@ -731,6 +1422,7 @@ pub(crate) async fn deliver_terminal_once(
         .await?
         .terminal
     {
+        notify_runtime_mutation_transition(home, binding, true);
         return Ok(receipt);
     }
     let delivery = emit_skill_mutation_audit(home, writer, binding, true).await;
@@ -744,6 +1436,7 @@ pub(crate) async fn deliver_terminal_once(
             )
         })?;
     if let Some(receipt) = receipt {
+        notify_runtime_mutation_transition(home, binding, true);
         return Ok(receipt);
     }
     match delivery {
@@ -902,7 +1595,7 @@ async fn apply_skill_document_mutation(
     let operation_id = uuid::Uuid::now_v7().simple().to_string();
     let mut prepared = match installer::prepare_skill_document_mutation(&request, &operation_id)? {
         installer::PreparedSkillDocumentMutation::Unchanged(report) => return Ok(report),
-        installer::PreparedSkillDocumentMutation::Prepared(prepared) => prepared,
+        installer::PreparedSkillDocumentMutation::Prepared(prepared) => *prepared,
     };
 
     prepared
@@ -1017,6 +1710,207 @@ pub(crate) fn reconcile_pending_blocking(home: &Path, skills_dir: &Path) -> Resu
 }
 
 #[cfg(test)]
+fn test_incarnation_binding(
+    home: &Path,
+    skill_id: &str,
+    kind: SkillMutationKind,
+    origin: SkillMutationOrigin,
+    source_generation_sha256: Option<String>,
+) -> Result<SkillMutationAuditBinding> {
+    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    if state.pending_sequence.is_some() || state.indeterminate_sequence.is_some() {
+        anyhow::bail!("test incarnation mutation cannot extend a non-terminal head");
+    }
+    let mutation_sequence = state
+        .high_water_sequence
+        .checked_add(1)
+        .context("test Skill mutation sequence overflow")?;
+    let prior = state.current.as_ref();
+    Ok(SkillMutationAuditBinding {
+        operation_id: uuid::Uuid::now_v7().simple().to_string(),
+        kind,
+        origin,
+        skill_id: skill_id.to_string(),
+        mutation_sequence: Some(mutation_sequence),
+        previous_terminal_receipt_sha256: state.latest_terminal_receipt_sha256,
+        prior_install_incarnation: prior
+            .map(AuthenticatedSkillInstallIncarnation::install_incarnation),
+        resulting_install_incarnation: kind.is_install().then_some(mutation_sequence),
+        source_generation_sha256,
+        prior_generation_sha256: prior.map(|proof| proof.package_generation_sha256().to_string()),
+        prior_object_identity_sha256: if kind.is_install() && prior.is_some() {
+            Some("a".repeat(64))
+        } else {
+            None
+        },
+        intent_receipt: None,
+        commit_boundary_sha256: None,
+        phase: SkillMutationPhase::Prepared,
+        observed_generation_sha256: None,
+        error_sha256: None,
+        created_at_unix: crate::time::now_unix_i64(),
+    })
+}
+
+#[cfg(test)]
+async fn append_test_incarnation_mutation(
+    home: &Path,
+    skill_id: &str,
+    kind: SkillMutationKind,
+    origin: SkillMutationOrigin,
+    source_generation_sha256: Option<String>,
+    phase: SkillMutationPhase,
+) -> Result<()> {
+    let mut binding =
+        test_incarnation_binding(home, skill_id, kind, origin, source_generation_sha256)?;
+    let prior_generation_sha256 = binding.prior_generation_sha256.clone();
+    let IntentDelivery::Durable(intent_receipt) = deliver_intent(home, None, &binding).await?
+    else {
+        anyhow::bail!("test Skill mutation intent was not durable");
+    };
+    binding.intent_receipt = Some(intent_receipt);
+    binding.commit_boundary_sha256 = Some("b".repeat(64));
+    binding.phase = phase;
+    binding.observed_generation_sha256 = match (phase, kind.is_install()) {
+        (SkillMutationPhase::Committed, true) => binding.source_generation_sha256.clone(),
+        (SkillMutationPhase::Aborted, _) => prior_generation_sha256,
+        _ => None,
+    };
+    deliver_terminal_once(home, None, &binding).await?;
+    Ok(())
+}
+
+#[cfg(test)]
+async fn append_test_pending_install_incarnation(
+    home: &Path,
+    skill_id: &str,
+    source_generation_sha256: String,
+    origin: SkillMutationOrigin,
+) -> Result<()> {
+    let binding = test_incarnation_binding(
+        home,
+        skill_id,
+        SkillMutationKind::Replace,
+        origin,
+        Some(source_generation_sha256),
+    )?;
+    let IntentDelivery::Durable(_) = deliver_intent(home, None, &binding).await? else {
+        anyhow::bail!("test Skill mutation intent was not durable");
+    };
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn record_committed_install_incarnation_for_test(
+    home: &Path,
+    skill_id: &str,
+    package_generation_sha256: &str,
+    origin: SkillMutationOrigin,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let skill_id = skill_id.to_string();
+    let generation = package_generation_sha256.to_string();
+    std::thread::Builder::new()
+        .name("neoth-test-skill-incarnation".to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build test Skill incarnation runtime")?;
+            let state = scan_skill_install_incarnation_state(&home, &skill_id)?;
+            let kind = if state.current.is_some() {
+                SkillMutationKind::Replace
+            } else {
+                SkillMutationKind::Install
+            };
+            runtime.block_on(append_test_incarnation_mutation(
+                &home,
+                &skill_id,
+                kind,
+                origin,
+                Some(generation),
+                SkillMutationPhase::Committed,
+            ))
+        })
+        .context("spawn test Skill incarnation writer")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("test Skill incarnation writer panicked"))?
+}
+
+#[cfg(test)]
+pub(crate) fn record_committed_removal_incarnation_for_test(
+    home: &Path,
+    skill_id: &str,
+    origin: SkillMutationOrigin,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let skill_id = skill_id.to_string();
+    std::thread::Builder::new()
+        .name("neoth-test-skill-removal-incarnation".to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build test Skill removal-incarnation runtime")?;
+            runtime.block_on(append_test_incarnation_mutation(
+                &home,
+                &skill_id,
+                SkillMutationKind::Remove,
+                origin,
+                None,
+                SkillMutationPhase::Committed,
+            ))
+        })
+        .context("spawn test Skill removal-incarnation writer")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("test Skill removal-incarnation writer panicked"))?
+}
+
+#[cfg(test)]
+async fn recv_runtime_transition_for_test(
+    subscriber: &mut super::registry::RuntimeAuthorityTransitionTestSubscriber,
+    home: &Path,
+) -> super::registry::RuntimeAuthorityTransitionKind {
+    let expected_home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let (observed_home, kind) = subscriber.recv().await.unwrap();
+            if observed_home == expected_home {
+                return kind;
+            }
+        }
+    })
+    .await
+    .expect("durable Skill mutation did not emit a runtime transition")
+}
+
+#[cfg(test)]
+pub(crate) fn record_pending_install_incarnation_for_test(
+    home: &Path,
+    skill_id: &str,
+    package_generation_sha256: &str,
+    origin: SkillMutationOrigin,
+) -> Result<()> {
+    let home = home.to_path_buf();
+    let skill_id = skill_id.to_string();
+    let generation = package_generation_sha256.to_string();
+    std::thread::Builder::new()
+        .name("neoth-test-skill-pending-incarnation".to_string())
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .context("build test pending Skill incarnation runtime")?;
+            runtime.block_on(append_test_pending_install_incarnation(
+                &home, &skill_id, generation, origin,
+            ))
+        })
+        .context("spawn test pending Skill incarnation writer")?
+        .join()
+        .map_err(|_| anyhow::anyhow!("test pending Skill incarnation writer panicked"))?
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1067,6 +1961,97 @@ mod tests {
                 || rendered.contains("regular file")
                 || rendered.contains("safe initialization was refused"),
             "linked key must fail the shared emitter/scanner contract: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn direct_writer_ack_notifies_intent_and_terminal_before_continuation() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let (writer, join) =
+            crate::wal::spawn_for_home(wal_dir.join("direct.wal"), home.path().to_path_buf())
+                .unwrap();
+        let mut transitions = super::registry::subscribe_runtime_authority_transitions_for_test();
+        let generation = "c1".repeat(32);
+        let mut binding = test_incarnation_binding(
+            home.path(),
+            "direct_signal",
+            SkillMutationKind::Install,
+            SkillMutationOrigin::CliInstall,
+            Some(generation.clone()),
+        )
+        .unwrap();
+
+        let IntentDelivery::Durable(intent_receipt) =
+            deliver_intent(home.path(), Some(&writer), &binding)
+                .await
+                .unwrap()
+        else {
+            panic!("direct writer did not durably ACK the intent");
+        };
+        assert_eq!(
+            recv_runtime_transition_for_test(&mut transitions, home.path()).await,
+            super::registry::RuntimeAuthorityTransitionKind::InstallIntent
+        );
+
+        binding.intent_receipt = Some(intent_receipt);
+        binding.commit_boundary_sha256 = Some("d2".repeat(32));
+        binding.phase = SkillMutationPhase::Committed;
+        binding.observed_generation_sha256 = Some(generation);
+        deliver_terminal_once(home.path(), Some(&writer), &binding)
+            .await
+            .unwrap();
+        assert_eq!(
+            recv_runtime_transition_for_test(&mut transitions, home.path()).await,
+            super::registry::RuntimeAuthorityTransitionKind::InstallResult
+        );
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn standalone_ack_notifies_but_pre_ack_failure_stays_silent() {
+        let home = tempfile::tempdir().unwrap();
+        let mut transitions = super::registry::subscribe_runtime_authority_transitions_for_test();
+        let failed = test_incarnation_binding(
+            home.path(),
+            "failed_signal",
+            SkillMutationKind::Install,
+            SkillMutationOrigin::CliInstall,
+            Some("e3".repeat(32)),
+        )
+        .unwrap();
+        fail_next_skill_audit_deliveries(1);
+        assert!(matches!(
+            deliver_intent(home.path(), None, &failed).await.unwrap(),
+            IntentDelivery::DefinitelyNotRecorded(_)
+        ));
+        let expected_home =
+            std::fs::canonicalize(home.path()).unwrap_or_else(|_| home.path().to_path_buf());
+        while let Ok((observed_home, _)) = transitions.try_recv() {
+            assert_ne!(
+                observed_home, expected_home,
+                "a pre-durability failure must not wake its runtime"
+            );
+        }
+
+        let durable = test_incarnation_binding(
+            home.path(),
+            "standalone_signal",
+            SkillMutationKind::Install,
+            SkillMutationOrigin::CliInstall,
+            Some("f4".repeat(32)),
+        )
+        .unwrap();
+        assert!(matches!(
+            deliver_intent(home.path(), None, &durable).await.unwrap(),
+            IntentDelivery::Durable(_)
+        ));
+        assert_eq!(
+            recv_runtime_transition_for_test(&mut transitions, home.path()).await,
+            super::registry::RuntimeAuthorityTransitionKind::InstallIntent
         );
     }
 
@@ -1615,6 +2600,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_identical_replace_advances_install_incarnation() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = "id: writer_reinstall\n\
+                        description: Explicit reinstall fixture\n\
+                        trigger_keywords: [same]\n\
+                        system_prompt: Same.\n";
+        write_generated_writer_fixture(home.path(), "writer_reinstall", manifest);
+        let before =
+            installer::inspect_installed_target(&home.path().join("skills"), "writer_reinstall")
+                .unwrap()
+                .target_generation_sha256
+                .unwrap();
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "writer_reinstall",
+            &before,
+            SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+
+        let report = apply_skill_document_mutation(
+            home.path(),
+            installer::SkillDocumentMutationRequest {
+                target_skills_dir: home.path().join("skills"),
+                id: "writer_reinstall".to_string(),
+                document: installer::SkillPackageDocument::Manifest,
+                replacement: manifest.as_bytes().to_vec(),
+                existing: super::super::creator::ExistingSkillPolicy::Replace,
+                expected_target_generation_sha256: Some(Some(before.clone())),
+                expected_document: None,
+                origin: installer::SkillMutationOrigin::SelfImproveRollback,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(report.replaced_existing);
+        assert_eq!(report.source_generation_sha256, before);
+        let proof =
+            authenticate_current_install_incarnation(home.path(), "writer_reinstall", &before)
+                .unwrap();
+        assert_eq!(proof.install_incarnation(), 2);
+        assert_eq!(proof.origin(), SkillMutationOrigin::SelfImproveRollback);
+    }
+
+    #[tokio::test]
     async fn generated_writer_cannot_audit_one_home_and_mutate_another() {
         let audit_home = tempfile::tempdir().unwrap();
         let target_home = tempfile::tempdir().unwrap();
@@ -1670,7 +2701,7 @@ mod tests {
             expected_document: None,
             origin: installer::SkillMutationOrigin::ProactiveAccept,
         };
-        let installer::PreparedSkillDocumentMutation::Prepared(mut prepared) =
+        let installer::PreparedSkillDocumentMutation::Prepared(prepared) =
             installer::prepare_skill_document_mutation(
                 &request,
                 "cafe0000cafe0000cafe0000cafe0000",
@@ -1679,6 +2710,7 @@ mod tests {
         else {
             panic!("replacement must prepare a real mutation");
         };
+        let mut prepared = *prepared;
         prepared.mark_intent_submitting().unwrap();
         let IntentDelivery::Durable(_) =
             deliver_intent(home.path(), None, &prepared.audit_binding())
@@ -1705,6 +2737,118 @@ mod tests {
                 .path()
                 .join("skills/.neoth-skill-mutation.json")
                 .exists()
+        );
+    }
+
+    #[test]
+    fn install_incarnations_are_monotonic_across_identical_rollback_and_reinstall() {
+        let home = tempfile::tempdir().unwrap();
+        let generation_zero = "a".repeat(64);
+        let generation_one = "b".repeat(64);
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_zero,
+            SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        let first =
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .unwrap();
+        assert_eq!(first.install_incarnation(), 1);
+        assert!(
+            authenticate_current_install_incarnation(home.path(), "beta", &generation_zero)
+                .is_err(),
+            "an authenticated receipt is package-id scoped"
+        );
+
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_one,
+            SkillMutationOrigin::SelfImproveAccept,
+        )
+        .unwrap();
+        assert!(
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .is_err(),
+            "a stale generation cannot reuse its prior receipt"
+        );
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_zero,
+            SkillMutationOrigin::SelfImproveRollback,
+        )
+        .unwrap();
+        let rollback =
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .unwrap();
+        assert_eq!(rollback.install_incarnation(), 3);
+        assert_ne!(
+            rollback.terminal_receipt_sha256(),
+            first.terminal_receipt_sha256()
+        );
+
+        record_committed_removal_incarnation_for_test(
+            home.path(),
+            "alpha",
+            SkillMutationOrigin::CliUninstall,
+        )
+        .unwrap();
+        assert!(
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .is_err()
+        );
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_zero,
+            SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        let reinstalled =
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .unwrap();
+        assert_eq!(reinstalled.install_incarnation(), 5);
+        assert_ne!(
+            reinstalled.terminal_receipt_sha256(),
+            rollback.terminal_receipt_sha256()
+        );
+    }
+
+    #[test]
+    fn pending_replacement_suspends_the_prior_install_incarnation() {
+        let home = tempfile::tempdir().unwrap();
+        let generation_zero = "a".repeat(64);
+        let generation_one = "b".repeat(64);
+        record_committed_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_zero,
+            SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        record_pending_install_incarnation_for_test(
+            home.path(),
+            "alpha",
+            &generation_one,
+            SkillMutationOrigin::SelfImproveAccept,
+        )
+        .unwrap();
+
+        let error =
+            authenticate_current_install_incarnation(home.path(), "alpha", &generation_zero)
+                .unwrap_err();
+        assert!(format!("{error:#}").contains("pending"));
+        assert!(
+            prepare_skill_mutation_incarnation(
+                &home.path().join("skills"),
+                "alpha",
+                SkillMutationKind::Replace
+            )
+            .is_err(),
+            "no later operation may extend a pending incarnation"
         );
     }
 

@@ -15,8 +15,9 @@
 //! A scenario is YAML: `~/.neoth/skills/<id>/tests/<name>.yaml`. Multiple
 //! scenarios per skill — each one targets a different failure mode.
 //!
-//! v0.1 ships the module + types + dispatcher; CLI subcommand
-//! `neoth skills test <skill_id>` wires in as the next follow-up.
+//! `neoth skills --run-tests <skill_id>` loads the authority-admitted runtime
+//! generation and dispatches every scenario through this harness. Raw
+//! manifests remain available only to module tests.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
@@ -25,7 +26,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::providers::{Provider, Request};
-use crate::skills::schema::Skill;
+use crate::skills::schema::{RuntimeSkill, Skill};
 use crate::skills::store::{
     cap_metadata_is_link_like, open_bound_directory, open_real_child_dir, read_regular_file_bounded,
 };
@@ -120,7 +121,16 @@ impl ScenarioOutcome {
 
 /// Run one scenario against a provider, comparing skill-on vs skill-off
 /// behaviour.
+#[cfg(test)]
 pub async fn run_scenario(
+    provider: &dyn Provider,
+    skill: &Skill,
+    scenario: &TestScenario,
+) -> Result<ScenarioOutcome> {
+    run_scenario_inner(provider, skill, scenario).await
+}
+
+async fn run_scenario_inner(
     provider: &dyn Provider,
     skill: &Skill,
     scenario: &TestScenario,
@@ -170,6 +180,7 @@ pub async fn run_scenario(
 /// outcome per scenario file. Missing tests dir → empty vec, not an
 /// error — operators may run `neoth skills test` before writing any
 /// scenarios.
+#[cfg(test)]
 pub async fn run_all_scenarios_for(
     provider: &dyn Provider,
     skill: &Skill,
@@ -177,10 +188,117 @@ pub async fn run_all_scenarios_for(
     let scenarios = load_all_scenarios(skill)?;
     let mut outcomes = Vec::with_capacity(scenarios.len());
     for scenario in scenarios {
-        let outcome = run_scenario(provider, skill, &scenario).await?;
+        let outcome = run_scenario_inner(provider, skill, &scenario).await?;
         outcomes.push(outcome);
     }
     Ok(outcomes)
+}
+
+/// Execute test scenarios only for an authority-admitted runtime Skill.
+///
+/// The complete scenario set is read while holding the Skill mutation lock,
+/// and the package generation is verified both before and after discovery.
+/// Provider calls then use the frozen runtime prompt plus the in-memory
+/// scenarios, so later filesystem edits cannot alter the paid test run.
+pub async fn run_all_scenarios_for_authorized(
+    provider: &dyn Provider,
+    skill: &RuntimeSkill,
+) -> Result<Vec<ScenarioOutcome>> {
+    let scenarios = load_all_scenarios_authorized(skill)?;
+    let mut outcomes = Vec::with_capacity(scenarios.len());
+    for scenario in scenarios {
+        let outcome = run_scenario_inner(provider, skill.as_skill(), &scenario).await?;
+        outcomes.push(outcome);
+    }
+    Ok(outcomes)
+}
+
+fn load_all_scenarios_authorized(skill: &RuntimeSkill) -> Result<Vec<TestScenario>> {
+    if skill.is_trusted_bundled() {
+        return Ok(Vec::new());
+    }
+    let expected_generation = skill
+        .package_generation_sha256()
+        .context("installed runtime Skill is missing its package-generation authority")?;
+    let skill_dir_path = skill
+        .path
+        .parent()
+        .context("installed runtime Skill manifest has no package directory")?;
+    anyhow::ensure!(
+        skill_dir_path.file_name() == Some(OsStr::new(skill.id())),
+        "installed runtime Skill path is not bound to its authority id"
+    );
+    let skills_dir_path = skill_dir_path
+        .parent()
+        .context("installed runtime Skill package has no skills root")?;
+    let skills_root = open_bound_directory(skills_dir_path, false, "authorized skill test root")?
+        .with_context(|| {
+        format!(
+            "authorized Skill root disappeared before test discovery: {}",
+            skills_dir_path.display()
+        )
+    })?;
+    let _mutation_guard = super::installer::lock_skill_mutations(&skills_root)
+        .context("lock Skill store for authorized test discovery")?;
+    super::installer::recover_pending_transactions_locked(&skills_root)
+        .context("recover interrupted Skill transaction before authorized tests")?;
+
+    let snapshot =
+        super::installer::capture_installed_skill_test_snapshot_locked(&skills_root, skill.id())
+            .context("capture authority-bound Skill test snapshot")?;
+    anyhow::ensure!(
+        snapshot.generation_sha256 == expected_generation,
+        "authorized Skill `{}` captured package generation does not match runtime authority",
+        skill.id()
+    );
+    let expected_manifest_sha256 = skill
+        .manifest_sha256()
+        .context("installed runtime Skill is missing its manifest authority")?;
+    anyhow::ensure!(
+        super::authority::manifest_sha256(&snapshot.manifest_bytes) == expected_manifest_sha256,
+        "authorized Skill `{}` captured manifest does not match runtime authority",
+        skill.id()
+    );
+
+    let tests_display = skill_dir_path.join("tests");
+    if snapshot.test_directory_entries > MAX_TEST_DIRECTORY_ENTRIES {
+        anyhow::bail!(
+            "skill test directory exceeds the {MAX_TEST_DIRECTORY_ENTRIES}-entry limit at {}",
+            tests_display.display()
+        );
+    }
+    let mut test_files = snapshot.test_files;
+    test_files.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+    if test_files.len() > MAX_SCENARIO_FILES {
+        anyhow::bail!(
+            "skill test suite exceeds the {MAX_SCENARIO_FILES}-scenario limit at {}",
+            tests_display.display()
+        );
+    }
+    let mut total_bytes = 0usize;
+    let mut scenarios = Vec::with_capacity(test_files.len());
+    for file in test_files {
+        if file.bytes.len() > MAX_SCENARIO_FILE_BYTES {
+            anyhow::bail!(
+                "skill scenario exceeds the {MAX_SCENARIO_FILE_BYTES}-byte limit at {}",
+                tests_display.join(&file.file_name).display()
+            );
+        }
+        total_bytes = total_bytes
+            .checked_add(file.bytes.len())
+            .context("skill scenario aggregate byte count overflow")?;
+        if total_bytes > MAX_SCENARIO_TOTAL_BYTES {
+            anyhow::bail!(
+                "skill test suite exceeds the {MAX_SCENARIO_TOTAL_BYTES}-byte aggregate limit at {}",
+                tests_display.join(&file.file_name).display()
+            );
+        }
+        scenarios.push(parse_scenario_yaml(
+            &file.bytes,
+            &tests_display.join(file.file_name),
+        )?);
+    }
+    Ok(scenarios)
 }
 
 /// Load and validate the complete scenario set before the first provider call.
@@ -375,6 +493,67 @@ mod tests {
             path: PathBuf::from("/tmp/test-skill/skill.yaml"),
             content_hash: String::new(),
         }
+    }
+
+    fn authorize_installed_fixture(home: &Path, id: &str) -> RuntimeSkill {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir).unwrap();
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+
+        let skills_dir = home.join("skills");
+        let current = super::super::installer::inspect_current_install(&skills_dir, id)
+            .unwrap()
+            .expect("installed Skill fixture exists");
+        super::super::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            super::super::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        let reload = crate::config::reload::ReloadController::new(
+            crate::config::FreedomConfig::default(),
+            home.join("freedom.yaml"),
+        );
+        let decision = super::super::authority::SkillAuthorityDecision::new(
+            super::super::authority::SkillAuthorityDecisionSource::OperatorCli,
+            super::super::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .unwrap();
+        super::super::authority::publish_installed_authority_decision(home, id, &reload, decision)
+            .unwrap();
+        let authority =
+            match super::super::authority::validate_installed_authority(home, id, &reload) {
+                super::super::authority::InstalledSkillAuthorityValidation::Active(authority) => {
+                    authority
+                }
+                super::super::authority::InstalledSkillAuthorityValidation::Inactive(reason) => {
+                    panic!("fixture authority is inactive: {}", reason.as_str())
+                }
+            };
+        let manifest_path = skills_dir.join(id).join("skill.yaml");
+        let manifest_bytes = std::fs::read(&manifest_path).unwrap();
+        let manifest_yaml = std::str::from_utf8(&manifest_bytes).unwrap();
+        let manifest_sha256 = super::super::authority::manifest_sha256(&manifest_bytes);
+        let content_hash = crate::skills::versioning::skill_content_hash_hex(
+            manifest_yaml,
+            &authority.manifest().system_prompt,
+        );
+        RuntimeSkill::from_validated_installed(
+            authority,
+            manifest_path,
+            content_hash,
+            &manifest_sha256,
+        )
+        .unwrap()
     }
 
     /// Provider that returns different canned replies depending on whether
@@ -695,6 +874,37 @@ mod tests {
         let error = run_all_scenarios_for(&provider, &skill).await.unwrap_err();
 
         assert!(format!("{error:#}").contains("namespace changed"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn changed_authorized_scenario_generation_aborts_before_provider_dispatch() {
+        let home = tempdir().unwrap();
+        let id = "authorized-test-skill";
+        let skill_dir = home.path().join("skills").join(id);
+        let tests_dir = skill_dir.join("tests");
+        std::fs::create_dir_all(&tests_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            format!(
+                "id: {id}\n\
+                 description: authorized test fixture\n\
+                 system_prompt: AUTHORIZED TEST PROMPT\n\
+                 enabled: true\n"
+            ),
+        )
+        .unwrap();
+        let scenario_path = tests_dir.join("scenario.yaml");
+        std::fs::write(&scenario_path, "id: before\nprompt: before\n").unwrap();
+        let runtime_skill = authorize_installed_fixture(home.path(), id);
+        std::fs::write(&scenario_path, "id: after\nprompt: changed\n").unwrap();
+        let (provider, calls) = counting_provider();
+
+        let error = run_all_scenarios_for_authorized(&provider, &runtime_skill)
+            .await
+            .unwrap_err();
+
+        assert!(format!("{error:#}").contains("captured package generation"));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 

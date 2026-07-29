@@ -5,8 +5,9 @@
 //! [`ProposedAction`] (`kind = Skill`) for operator review. NEOTH never
 //! writes the skill itself — the proposal lands in the proactive review
 //! queue (`neoth proactive review` / `accept` / `reject`); only an
-//! explicit operator accept adopts it. This is the "idle time turns
-//! patterns into reusable skills" loop, gated behind a config flag.
+//! explicit operator accept installs it, still inactive and pending a separate
+//! activation decision. This is the "idle time turns patterns into reusable
+//! skills" loop, gated behind a config flag.
 //!
 //! The forge is a pure adapter `Dream -> Option<ProposedAction>`: it
 //! reuses the shipped skill builder ([`crate::skills::creator::build_manifest`])
@@ -68,8 +69,9 @@ pub fn build_proposal_from_collector_signal(
     let rationale = format!(
         "The self-improvement collector detected a high-frequency topic \"{topic}\" in your \
          recent episodes with no existing skill coverage. The suggestion: {reason}\n\n\
-         Review the draft YAML below; `accept` adopts it into `~/.neoth/skills/`, \
-         `reject` discards it. NEOTH never adds the skill on its own."
+         Review the draft YAML below; `accept` installs it inactive in \
+         `~/.neoth/skills/`, `reject` discards it. Activation remains a separate \
+         operator decision."
     );
     let proposal_id = make_proposal_id(ProposalKind::Skill, &title, &yaml, ts_unix);
 
@@ -180,8 +182,8 @@ pub fn build_proposal_from_distill_pattern(
     let rationale = format!(
         "The nightly self-improvement pass observed this exact tool workflow {occurrences} times \
          across {supporting_sessions}/{eligible_sessions} independent session traces \
-         ({:.1}% confidence). The draft remains pending until explicit operator approval; NEOTH \
-         never activates it automatically.",
+         ({:.1}% confidence). Approval installs the package inactive; NEOTH never activates it \
+         automatically.",
         confidence * 100.0
     );
 
@@ -227,8 +229,9 @@ pub fn build_skill_proposal_from_dream(dream: &Dream) -> Option<ProposedAction> 
     let title = format!("Skill: {theme}");
     let rationale = format!(
         "NEOTH noticed a recurring theme \"{theme}\" on {} (across {} source event(s)) and \
-         drafted a reusable skill from it. Review the YAML below; `accept` adopts it into \
-         `~/.neoth/skills/`, `reject` discards it. NEOTH never adds the skill on its own.\n\n\
+         drafted a reusable skill from it. Review the YAML below; `accept` installs it inactive \
+         in `~/.neoth/skills/`, `reject` discards it. Activation remains a separate operator \
+         decision.\n\n\
          Dream summary:\n{summary}",
         dream.day,
         dream.event_ids.len(),
@@ -276,6 +279,9 @@ mod tests {
         assert!(p.draft_yaml.contains("id:"));
         assert!(p.draft_yaml.contains("dream_wifi_troubleshooting"));
         assert!(p.draft_yaml.contains("system_prompt:"));
+        let manifest: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&p.draft_yaml).unwrap();
+        assert!(!manifest.enabled, "dream-forged draft must be inactive");
         // Rationale carries the operator-facing why + the summary.
         assert!(p.rationale.contains("recurring theme"));
         assert!(p.rationale.contains("router drops"));
@@ -346,6 +352,12 @@ mod tests {
         assert!(p.title.contains("kubernetes"), "title carries the topic");
         assert!(p.draft_yaml.contains("dream_kubernetes"), "slug in yaml");
         assert!(p.draft_yaml.contains("id:"), "yaml has id field");
+        let manifest: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&p.draft_yaml).unwrap();
+        assert!(
+            !manifest.enabled,
+            "collector-forged draft must remain pending activation"
+        );
         assert!(
             p.rationale.contains("self-improvement collector"),
             "rationale mentions source"
@@ -393,6 +405,12 @@ mod tests {
         );
         assert!(proposal.draft_yaml.contains("filesystem/read"));
         assert!(proposal.rationale.contains("5/6"));
+        let manifest: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&proposal.draft_yaml).unwrap();
+        assert!(
+            !manifest.enabled,
+            "distilled workflow draft must remain pending activation"
+        );
 
         let duplicate =
             build_proposal_from_distill_pattern(&sequence, 6, 5, 6, 5.0 / 6.0, 1_800_000_000)

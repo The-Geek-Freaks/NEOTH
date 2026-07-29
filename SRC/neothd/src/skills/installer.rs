@@ -55,13 +55,16 @@ use super::schema::SkillManifest;
 use super::store::{
     BoundChildObject, BoundDirectory, bind_child_object, cap_metadata_is_link_like,
     open_bound_directory, open_real_child_dir, open_regular_file, read_regular_file_bounded,
-    remove_child_file, remove_real_directory_tree, rename_child, valid_child_identity_token,
+    read_regular_file_bounded_observed, remove_child_file, remove_real_directory_tree,
+    rename_child, valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_SKILL_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_SKILL_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_SKILL_ENTRIES: usize = 4096;
+const MAX_RUNTIME_AUTHORITY_TRAVERSAL_BYTES: u64 = 1024 * 1024 * 1024;
+const MAX_RUNTIME_AUTHORITY_TRAVERSAL_ENTRIES: usize = 16_384;
 const MAX_SKILL_TREE_DEPTH: usize = 32;
 const SKILL_MUTATION_LOCK_FILE: &str = ".neoth-skills.lock";
 const SKILL_MUTATION_JOURNAL_FILE: &str = ".neoth-skill-mutation.json";
@@ -241,7 +244,7 @@ pub(crate) struct SkillDocumentMutationRequest {
 
 pub(crate) enum PreparedSkillDocumentMutation {
     Unchanged(InstallReport),
-    Prepared(PreparedSkillInstall),
+    Prepared(Box<PreparedSkillInstall>),
 }
 
 /// Read-only result used before a GUI asks whether an existing skill may be
@@ -401,6 +404,16 @@ struct SkillMutationJournal {
     kind: SkillMutationKind,
     origin: SkillMutationOrigin,
     skill_id: String,
+    /// Present on v3 mutation-audit payloads. Kept optional so an interrupted
+    /// pre-v1.0 v2 journal can still be reconciled without inventing authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mutation_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    previous_terminal_receipt_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    prior_install_incarnation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    resulting_install_incarnation: Option<u64>,
     source_generation_sha256: Option<String>,
     prior_generation_sha256: Option<String>,
     prior_object_identity: Option<String>,
@@ -423,6 +436,10 @@ pub(crate) struct SkillMutationAuditBinding {
     pub(crate) kind: SkillMutationKind,
     pub(crate) origin: SkillMutationOrigin,
     pub(crate) skill_id: String,
+    pub(crate) mutation_sequence: Option<u64>,
+    pub(crate) previous_terminal_receipt_sha256: Option<String>,
+    pub(crate) prior_install_incarnation: Option<u64>,
+    pub(crate) resulting_install_incarnation: Option<u64>,
     pub(crate) source_generation_sha256: Option<String>,
     pub(crate) prior_generation_sha256: Option<String>,
     pub(crate) prior_object_identity_sha256: Option<String>,
@@ -453,6 +470,10 @@ impl SkillMutationJournal {
             kind: self.kind,
             origin: self.origin,
             skill_id: self.skill_id.clone(),
+            mutation_sequence: self.mutation_sequence,
+            previous_terminal_receipt_sha256: self.previous_terminal_receipt_sha256.clone(),
+            prior_install_incarnation: self.prior_install_incarnation,
+            resulting_install_incarnation: self.resulting_install_incarnation,
             source_generation_sha256: self.source_generation_sha256.clone(),
             prior_generation_sha256: self.prior_generation_sha256.clone(),
             prior_object_identity_sha256: self
@@ -502,6 +523,27 @@ fn derive_skill_mutation_audit_event_id(
     hash_optional(&mut digest, binding.source_generation_sha256.as_deref());
     hash_optional(&mut digest, binding.prior_generation_sha256.as_deref());
     hash_optional(&mut digest, binding.prior_object_identity_sha256.as_deref());
+    if let Some(sequence) = binding.mutation_sequence {
+        digest.update(sequence.to_le_bytes());
+        hash_optional(
+            &mut digest,
+            binding.previous_terminal_receipt_sha256.as_deref(),
+        );
+        digest.update(
+            binding
+                .prior_install_incarnation
+                .unwrap_or_default()
+                .to_le_bytes(),
+        );
+        digest.update([u8::from(binding.prior_install_incarnation.is_some())]);
+        digest.update(
+            binding
+                .resulting_install_incarnation
+                .unwrap_or_default()
+                .to_le_bytes(),
+        );
+        digest.update([u8::from(binding.resulting_install_incarnation.is_some())]);
+    }
     if audit_phase != "intent" {
         hash_optional(
             &mut digest,
@@ -550,6 +592,52 @@ fn validate_skill_mutation_journal(record: &SkillMutationJournal) -> Result<()> 
     }
     validate_mutation_operation_id(&record.operation_id)?;
     validate_installed_skill_dir_name(&record.skill_id)?;
+    match record.mutation_sequence {
+        Some(sequence) => {
+            if sequence == 0 {
+                anyhow::bail!("skill mutation sequence must be non-zero");
+            }
+            if sequence == 1 && record.previous_terminal_receipt_sha256.is_some() {
+                anyhow::bail!("first skill mutation sequence must not name a predecessor");
+            }
+            if sequence > 1 && record.previous_terminal_receipt_sha256.is_none() {
+                anyhow::bail!("non-first skill mutation sequence requires a predecessor");
+            }
+            if record
+                .previous_terminal_receipt_sha256
+                .as_deref()
+                .is_some_and(|digest| !valid_sha256(digest))
+            {
+                anyhow::bail!(
+                    "skill mutation predecessor receipt SHA-256 must be 64 lowercase hex characters"
+                );
+            }
+            if record
+                .prior_install_incarnation
+                .is_some_and(|incarnation| incarnation == 0 || incarnation >= sequence)
+            {
+                anyhow::bail!("prior Skill install incarnation is not older than its mutation");
+            }
+            match (
+                record.kind.is_install(),
+                record.resulting_install_incarnation,
+            ) {
+                (true, Some(incarnation)) if incarnation == sequence => {}
+                (false, None) => {}
+                _ => anyhow::bail!(
+                    "resulting Skill install incarnation does not match mutation kind"
+                ),
+            }
+        }
+        None => {
+            if record.previous_terminal_receipt_sha256.is_some()
+                || record.prior_install_incarnation.is_some()
+                || record.resulting_install_incarnation.is_some()
+            {
+                anyhow::bail!("legacy skill mutation carries a partial incarnation binding");
+            }
+        }
+    }
     for (label, digest) in [
         (
             "source generation",
@@ -1119,14 +1207,14 @@ pub(crate) struct SkillRemovalIntentBinding {
 /// exists. Only `Prepared` may enter the intent/terminal WAL lifecycle.
 pub(crate) enum PreparedSkillRemovalOutcome {
     Unchanged(UninstallReport),
-    Prepared(PreparedSkillRemoval),
+    Prepared(Box<PreparedSkillRemoval>),
 }
 
 #[cfg(test)]
 impl PreparedSkillRemovalOutcome {
     fn into_prepared_for_test(self) -> PreparedSkillRemoval {
         match self {
-            Self::Prepared(prepared) => prepared,
+            Self::Prepared(prepared) => *prepared,
             Self::Unchanged(report) => {
                 panic!(
                     "expected prepared removal, got unchanged report for {}",
@@ -1278,14 +1366,24 @@ fn validate_local_source(source_dir: &Path) -> Result<ValidatedInstallSource> {
 }
 
 pub(crate) fn target_generation_locked(root: &BoundDirectory, id: &str) -> Result<Option<String>> {
+    let mut aggregate = RuntimeAuthorityTraversalBudget::unbounded_for_internal();
+    target_generation_locked_with_budget(root, id, &mut aggregate)
+}
+
+pub(crate) fn target_generation_locked_with_budget(
+    root: &BoundDirectory,
+    id: &str,
+    aggregate: &mut RuntimeAuthorityTraversalBudget,
+) -> Result<Option<String>> {
     let target = root.display_path.join(id);
     match root.dir.symlink_metadata(id) {
         Ok(_) => {
             let target_dir = open_real_child_dir(&root.dir, OsStr::new(id), &target)?;
-            Ok(Some(skill_tree_generation_sha256(
+            Ok(Some(skill_tree_generation_sha256_with_aggregate_budget(
                 &target_dir,
                 &target,
                 None,
+                aggregate,
             )?))
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -1621,6 +1719,11 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
     let target_dir = target_root.display_path.join(&manifest.id);
     let replaced_generation_sha256 = target_generation_locked(&target_root, &manifest.id)?;
     let replacing = replaced_generation_sha256.is_some();
+    let kind = if replacing {
+        SkillMutationKind::Replace
+    } else {
+        SkillMutationKind::Install
+    };
     let target_identity = if replacing {
         Some(bind_child_object(
             &target_root.dir,
@@ -1645,6 +1748,11 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
         );
     }
 
+    let incarnation = super::mutation_lifecycle::prepare_skill_mutation_incarnation(
+        target_skills_dir,
+        &manifest.id,
+        kind,
+    )?;
     // Copy into a private sibling first. A parse/read/copy failure never
     // exposes a partial skill directory and never destroys the prior install.
     let (stage_name, backup_candidate, stage_dir) =
@@ -1700,17 +1808,16 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
     };
     sync_directory(&target_root.dir, &target_root.display_path)?;
 
-    let kind = if replacing {
-        SkillMutationKind::Replace
-    } else {
-        SkillMutationKind::Install
-    };
     let journal = SkillMutationJournal {
         version: SKILL_MUTATION_JOURNAL_VERSION,
         operation_id: operation_id.to_string(),
         kind,
         origin,
         skill_id: manifest.id.clone(),
+        mutation_sequence: Some(incarnation.mutation_sequence),
+        previous_terminal_receipt_sha256: incarnation.previous_terminal_receipt_sha256,
+        prior_install_incarnation: incarnation.prior_install_incarnation,
+        resulting_install_incarnation: incarnation.resulting_install_incarnation,
         source_generation_sha256: Some(generation_sha256.clone()),
         prior_generation_sha256: replaced_generation_sha256.clone(),
         prior_object_identity: target_identity
@@ -1818,6 +1925,11 @@ pub(crate) fn prepare_skill_document_mutation(
     recover_pending_transactions_locked(&target_root)?;
     let target_display = target_root.display_path.join(&request.id);
     let replaced_generation_sha256 = installed_entry_generation_locked(&target_root, &request.id)?;
+    let kind = if replaced_generation_sha256.is_some() {
+        SkillMutationKind::Replace
+    } else {
+        SkillMutationKind::Install
+    };
     if let Some(expected) = request.expected_target_generation_sha256.as_ref()
         && expected != &replaced_generation_sha256
     {
@@ -1889,7 +2001,9 @@ pub(crate) fn prepare_skill_document_mutation(
             }
             super::creator::ExistingSkillPolicy::Replace => {}
         }
-        if current == request.replacement {
+        if current == request.replacement
+            && request.existing == super::creator::ExistingSkillPolicy::KeepIfIdentical
+        {
             let manifest_display = target_display.join("skill.yaml");
             let manifest_bytes = read_regular_file_bounded(
                 source_directory,
@@ -1923,6 +2037,11 @@ pub(crate) fn prepare_skill_document_mutation(
         }
     }
 
+    let incarnation = super::mutation_lifecycle::prepare_skill_mutation_incarnation(
+        &request.target_skills_dir,
+        &request.id,
+        kind,
+    )?;
     let (stage_name, backup_candidate, stage_dir) =
         create_install_transaction(&target_root.dir, &request.id, operation_id)?;
     let stage_display = target_root.display_path.join(&stage_name);
@@ -2002,17 +2121,16 @@ pub(crate) fn prepare_skill_document_mutation(
     };
     sync_directory(&target_root.dir, &target_root.display_path)?;
 
-    let kind = if replaced_generation_sha256.is_some() {
-        SkillMutationKind::Replace
-    } else {
-        SkillMutationKind::Install
-    };
     let journal = SkillMutationJournal {
         version: SKILL_MUTATION_JOURNAL_VERSION,
         operation_id: operation_id.to_string(),
         kind,
         origin: request.origin,
         skill_id: request.id.clone(),
+        mutation_sequence: Some(incarnation.mutation_sequence),
+        previous_terminal_receipt_sha256: incarnation.previous_terminal_receipt_sha256,
+        prior_install_incarnation: incarnation.prior_install_incarnation,
+        resulting_install_incarnation: incarnation.resulting_install_incarnation,
         source_generation_sha256: Some(generation_sha256.clone()),
         prior_generation_sha256: replaced_generation_sha256.clone(),
         prior_object_identity: target_identity
@@ -2048,7 +2166,7 @@ pub(crate) fn prepare_skill_document_mutation(
         ));
     }
 
-    Ok(PreparedSkillDocumentMutation::Prepared(
+    Ok(PreparedSkillDocumentMutation::Prepared(Box::new(
         PreparedSkillInstall {
             target_root,
             _mutation_guard: mutation_guard,
@@ -2062,7 +2180,7 @@ pub(crate) fn prepare_skill_document_mutation(
             backup_candidate,
             replaced_generation_sha256,
         },
-    ))
+    )))
 }
 
 fn persist_skill_mutation_failure(
@@ -2504,7 +2622,7 @@ pub(crate) fn uninstall_with_report_and_expectation(
         &operation_id,
     )? {
         PreparedSkillRemovalOutcome::Unchanged(report) => return Ok(report),
-        PreparedSkillRemovalOutcome::Prepared(prepared) => prepared,
+        PreparedSkillRemovalOutcome::Prepared(prepared) => *prepared,
     };
     prepared.mark_intent_submitting()?;
     prepared.mark_intent_durable()?;
@@ -2582,6 +2700,11 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
             warnings: Vec::new(),
         }));
     };
+    let incarnation = super::mutation_lifecycle::prepare_skill_mutation_incarnation(
+        target_skills_dir,
+        id,
+        SkillMutationKind::Remove,
+    )?;
     let target_identity =
         bind_child_object(&root.dir, OsStr::new(id), &root.display_path.join(id))?;
 
@@ -2591,6 +2714,10 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
         kind: SkillMutationKind::Remove,
         origin,
         skill_id: id.to_string(),
+        mutation_sequence: Some(incarnation.mutation_sequence),
+        previous_terminal_receipt_sha256: incarnation.previous_terminal_receipt_sha256,
+        prior_install_incarnation: incarnation.prior_install_incarnation,
+        resulting_install_incarnation: incarnation.resulting_install_incarnation,
         source_generation_sha256: None,
         prior_generation_sha256: Some(target_generation_sha256.clone()),
         prior_object_identity: Some(target_identity.identity_token().to_string()),
@@ -2608,7 +2735,7 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
     };
     persist_skill_mutation_journal(&root, &journal)?;
 
-    Ok(PreparedSkillRemovalOutcome::Prepared(
+    Ok(PreparedSkillRemovalOutcome::Prepared(Box::new(
         PreparedSkillRemoval {
             root,
             _mutation_guard: mutation_guard,
@@ -2617,7 +2744,7 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
             id: id.to_string(),
             target_generation_sha256,
         },
-    ))
+    )))
 }
 
 impl PreparedSkillRemoval {
@@ -3727,6 +3854,9 @@ pub struct InstalledEntry {
     /// use this without re-opening the path outside the mutation-locked
     /// snapshot.
     pub manifest: Option<SkillManifest>,
+    /// Exact package generation captured under the same mutation lock as the
+    /// manifest. Present only for a structurally healthy package.
+    pub generation_sha256: Option<String>,
     /// `Some(message)` when manifest load failed. Empty when the
     /// manifest is healthy.
     pub error: Option<String>,
@@ -3745,12 +3875,48 @@ fn list_installed_with_limit(
     target_skills_dir: &Path,
     max_root_entries: usize,
 ) -> Result<Vec<InstalledEntry>> {
-    let mut out = Vec::new();
     let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
-        return Ok(out);
+        return Ok(Vec::new());
     };
     let _mutation_guard = lock_skill_mutations(&root)?;
     recover_pending_transactions_locked(&root)?;
+    list_installed_locked_with_limit(&root, max_root_entries)
+}
+
+/// Capture the installed tree and its authenticated incarnation index under
+/// one shared mutation lock. Diagnostic/runtime presentation must use this
+/// boundary so an identical-byte reinstall cannot splice a stale WAL
+/// incarnation onto a newer directory snapshot.
+pub(crate) fn list_installed_with_incarnation_index(
+    target_skills_dir: &Path,
+) -> Result<(
+    Vec<InstalledEntry>,
+    super::mutation_lifecycle::SkillInstallIncarnationIndex,
+)> {
+    let home = target_skills_dir
+        .parent()
+        .context("installed Skills root has no instance-home parent")?;
+    let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
+        return Ok((
+            Vec::new(),
+            super::mutation_lifecycle::scan_skill_install_incarnation_index(home)?,
+        ));
+    };
+    let _mutation_guard = lock_skill_mutations(&root)?;
+    recover_pending_transactions_locked(&root)?;
+    let install_incarnations =
+        super::mutation_lifecycle::scan_skill_install_incarnation_index(home)
+            .context("index installed Skill incarnations under inventory mutation lock")?;
+    let entries = list_installed_locked_with_limit(&root, MAX_SKILL_ENTRIES)?;
+    Ok((entries, install_incarnations))
+}
+
+fn list_installed_locked_with_limit(
+    root: &BoundDirectory,
+    max_root_entries: usize,
+) -> Result<Vec<InstalledEntry>> {
+    let mut out = Vec::new();
+    let mut generation_budget = RuntimeAuthorityTraversalBudget::new();
     let entries = root.dir.entries().with_context(|| {
         format!(
             "enumerate installed skills under {}",
@@ -3788,6 +3954,7 @@ fn list_installed_with_limit(
                     path,
                     manifest_id: None,
                     manifest: None,
+                    generation_sha256: None,
                     error: Some(format!("entry inspection error: {error}")),
                     repairability: Some(SkillRepairability::RemoveOnly),
                 });
@@ -3800,6 +3967,7 @@ fn list_installed_with_limit(
                 path,
                 manifest_id: None,
                 manifest: None,
+                generation_sha256: None,
                 error: Some("linked/reparse skill directories are not allowed".to_string()),
                 repairability: Some(SkillRepairability::RemoveOnly),
             });
@@ -3811,6 +3979,7 @@ fn list_installed_with_limit(
                 path,
                 manifest_id: None,
                 manifest: None,
+                generation_sha256: None,
                 error: Some("skill entry is not a directory".to_string()),
                 repairability: Some(SkillRepairability::RemoveOnly),
             });
@@ -3824,6 +3993,7 @@ fn list_installed_with_limit(
                     path,
                     manifest_id: None,
                     manifest: None,
+                    generation_sha256: None,
                     error: Some(format!("unsafe skill directory: {error:#}")),
                     repairability: Some(SkillRepairability::RemoveOnly),
                 });
@@ -3878,13 +4048,46 @@ fn list_installed_with_limit(
             }
             Err(error) => (None, Some(format!("read error: {error:#}"))),
         };
+        let (manifest, error, generation_sha256, generation_invalid) = if manifest.is_some()
+            && error.is_none()
+        {
+            match target_generation_locked_with_budget(&root, &dir_name, &mut generation_budget) {
+                Ok(Some(generation)) => (manifest, None, Some(generation), false),
+                Ok(None) => (
+                    None,
+                    Some("skill package disappeared during inventory".to_string()),
+                    None,
+                    true,
+                ),
+                Err(error) if is_runtime_authority_traversal_limit(&error) => {
+                    return Err(error).context(
+                        "installed Skill inventory exceeded its aggregate generation budget",
+                    );
+                }
+                Err(error) => (
+                    None,
+                    Some(format!("package generation error: {error:#}")),
+                    None,
+                    true,
+                ),
+            }
+        } else {
+            (manifest, error, None, false)
+        };
         let manifest_id = manifest.as_ref().map(|manifest| manifest.id.clone());
-        let repairability = error.as_ref().map(|_| structural_repairability);
+        let repairability = error.as_ref().map(|_| {
+            if generation_invalid {
+                SkillRepairability::RemoveOnly
+            } else {
+                structural_repairability
+            }
+        });
         out.push(InstalledEntry {
             dir_name,
             path,
             manifest_id,
             manifest,
+            generation_sha256,
             error,
             repairability,
         });
@@ -3899,6 +4102,222 @@ struct CopyBudget {
     bytes: u64,
 }
 
+/// One bounded resource budget shared by every installed package and
+/// authority-record namespace traversed during a runtime reload/publication
+/// attempt. A caller must discard the whole candidate snapshot on overflow.
+pub(crate) struct RuntimeAuthorityTraversalBudget {
+    entries: usize,
+    bytes: u64,
+    max_entries: usize,
+    max_bytes: u64,
+}
+
+impl RuntimeAuthorityTraversalBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            entries: 0,
+            bytes: 0,
+            max_entries: MAX_RUNTIME_AUTHORITY_TRAVERSAL_ENTRIES,
+            max_bytes: MAX_RUNTIME_AUTHORITY_TRAVERSAL_BYTES,
+        }
+    }
+
+    pub(crate) fn unbounded_for_internal() -> Self {
+        Self {
+            entries: 0,
+            bytes: 0,
+            max_entries: usize::MAX,
+            max_bytes: u64::MAX,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_limits(max_entries: usize, max_bytes: u64) -> Self {
+        Self {
+            entries: 0,
+            bytes: 0,
+            max_entries,
+            max_bytes,
+        }
+    }
+
+    pub(crate) fn observe_entry(&mut self) -> Result<()> {
+        self.entries = self
+            .entries
+            .checked_add(1)
+            .context("runtime authority traversal entry counter overflow")?;
+        if self.entries > self.max_entries {
+            return Err(RuntimeAuthorityTraversalLimitExceeded.into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn observe_bytes(&mut self, bytes: u64) -> Result<()> {
+        self.bytes = self
+            .bytes
+            .checked_add(bytes)
+            .context("runtime authority traversal byte counter overflow")?;
+        if self.bytes > self.max_bytes {
+            return Err(RuntimeAuthorityTraversalLimitExceeded.into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn ensure_within_limits(&self) -> Result<()> {
+        if self.entries > self.max_entries || self.bytes > self.max_bytes {
+            return Err(RuntimeAuthorityTraversalLimitExceeded.into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("runtime Skill authority aggregate traversal budget exceeded")]
+pub(crate) struct RuntimeAuthorityTraversalLimitExceeded;
+
+pub(crate) fn is_runtime_authority_traversal_limit(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<RuntimeAuthorityTraversalLimitExceeded>()
+            .is_some()
+    })
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstalledSkillAuthorityTreeSnapshot {
+    pub(crate) generation_sha256: String,
+    pub(crate) manifest_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstalledSkillTestFileSnapshot {
+    pub(crate) file_name: String,
+    pub(crate) bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct InstalledSkillTestSnapshot {
+    pub(crate) generation_sha256: String,
+    pub(crate) manifest_bytes: Vec<u8>,
+    pub(crate) test_directory_entries: usize,
+    pub(crate) test_files: Vec<InstalledSkillTestFileSnapshot>,
+}
+
+#[derive(Default)]
+struct SkillTreeSnapshotCollector {
+    capture_manifest: bool,
+    capture_tests: bool,
+    manifest_bytes: Option<Vec<u8>>,
+    test_directory_entries: usize,
+    test_files: Vec<InstalledSkillTestFileSnapshot>,
+}
+
+impl SkillTreeSnapshotCollector {
+    fn capture_tests() -> Self {
+        Self {
+            capture_manifest: true,
+            capture_tests: true,
+            ..Self::default()
+        }
+    }
+
+    fn capture_manifest() -> Self {
+        Self {
+            capture_manifest: true,
+            ..Self::default()
+        }
+    }
+
+    fn observe_directory(&self, relative: &str) -> Result<()> {
+        if self.capture_tests && relative.starts_with("tests/") {
+            anyhow::bail!("installed Skill tests directory contains a nested directory");
+        }
+        Ok(())
+    }
+
+    fn observe_entry(&mut self, relative_prefix: &str) -> Result<()> {
+        if self.capture_tests && relative_prefix == "tests" {
+            self.test_directory_entries = self
+                .test_directory_entries
+                .checked_add(1)
+                .context("installed Skill test-directory entry counter overflow")?;
+        }
+        Ok(())
+    }
+
+    fn observe_file(&mut self, relative: &str, bytes: &[u8]) -> Result<()> {
+        if self.capture_manifest && relative == "skill.yaml" {
+            self.manifest_bytes = Some(bytes.to_vec());
+            return Ok(());
+        }
+        if !self.capture_tests {
+            return Ok(());
+        }
+        if relative == "tests" {
+            anyhow::bail!("installed Skill tests entry is not a directory");
+        }
+        let Some(file_name) = relative.strip_prefix("tests/") else {
+            return Ok(());
+        };
+        if file_name.is_empty() || file_name.contains('/') {
+            return Ok(());
+        }
+        let is_yaml = Path::new(file_name)
+            .extension()
+            .and_then(OsStr::to_str)
+            .is_some_and(|extension| extension == "yaml" || extension == "yml");
+        if is_yaml {
+            self.test_files.push(InstalledSkillTestFileSnapshot {
+                file_name: file_name.to_string(),
+                bytes: bytes.to_vec(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Hash one installed package and freeze its direct `tests/*.yaml|yml` bytes
+/// during the same capability traversal. The returned scenario bytes are
+/// exactly the bytes fed into `generation_sha256`, eliminating pre/post-hash
+/// ABA windows before provider-backed test execution.
+///
+/// The caller must already hold the global installed-Skill mutation lock.
+pub(crate) fn capture_installed_skill_test_snapshot_locked(
+    skills_root: &BoundDirectory,
+    skill_id: &str,
+) -> Result<InstalledSkillTestSnapshot> {
+    validate_installed_skill_dir_name(skill_id)?;
+    let name = OsStr::new(skill_id);
+    let display = skills_root.display_path.join(name);
+    let metadata = skills_root
+        .dir
+        .symlink_metadata(name)
+        .with_context(|| format!("inspect installed Skill test package {}", display.display()))?;
+    if !metadata.is_dir() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "installed Skill test package is linked or not a directory: {}",
+            display.display()
+        );
+    }
+    let directory = open_real_child_dir(&skills_root.dir, name, &display)?;
+    let mut collector = SkillTreeSnapshotCollector::capture_tests();
+    let generation_sha256 = skill_tree_generation_sha256_with_root_override_and_collector(
+        &directory,
+        &display,
+        None,
+        &mut collector,
+    )?;
+    let manifest_bytes = collector
+        .manifest_bytes
+        .context("installed Skill test snapshot lacks skill.yaml")?;
+    Ok(InstalledSkillTestSnapshot {
+        generation_sha256,
+        manifest_bytes,
+        test_directory_entries: collector.test_directory_entries,
+        test_files: collector.test_files,
+    })
+}
+
 pub(crate) fn skill_tree_generation_sha256(
     root: &Dir,
     display_root: &Path,
@@ -3909,6 +4328,53 @@ pub(crate) fn skill_tree_generation_sha256(
         bytes,
     });
     skill_tree_generation_sha256_with_root_override(root, display_root, root_override)
+}
+
+/// Hash one bound installed package under a budget shared by the complete
+/// reload/publication attempt.
+pub(crate) fn skill_tree_generation_sha256_with_aggregate_budget(
+    root: &Dir,
+    display_root: &Path,
+    validated_root_manifest: Option<&[u8]>,
+    aggregate: &mut RuntimeAuthorityTraversalBudget,
+) -> Result<String> {
+    let root_override = validated_root_manifest.map(|bytes| RootFileOverride {
+        name: SkillPackageDocument::Manifest.file_name(),
+        bytes,
+    });
+    skill_tree_generation_sha256_with_root_override_and_collector_and_budget(
+        root,
+        display_root,
+        root_override,
+        &mut SkillTreeSnapshotCollector::default(),
+        aggregate,
+    )
+}
+
+/// Capture the manifest bytes and package generation in the same bounded
+/// traversal, so the authority expectation cannot bind bytes from a different
+/// package instant.
+pub(crate) fn capture_installed_skill_authority_tree_snapshot(
+    root: &Dir,
+    display_root: &Path,
+    aggregate: &mut RuntimeAuthorityTraversalBudget,
+) -> Result<InstalledSkillAuthorityTreeSnapshot> {
+    let mut collector = SkillTreeSnapshotCollector::capture_manifest();
+    let generation_sha256 =
+        skill_tree_generation_sha256_with_root_override_and_collector_and_budget(
+            root,
+            display_root,
+            None,
+            &mut collector,
+            aggregate,
+        )?;
+    let manifest_bytes = collector
+        .manifest_bytes
+        .context("installed Skill authority snapshot lacks skill.yaml")?;
+    Ok(InstalledSkillAuthorityTreeSnapshot {
+        generation_sha256,
+        manifest_bytes,
+    })
 }
 
 /// Compute the exact canonical package generation that would result from
@@ -3952,6 +4418,37 @@ fn skill_tree_generation_sha256_with_root_override(
     display_root: &Path,
     root_override: Option<RootFileOverride<'_>>,
 ) -> Result<String> {
+    skill_tree_generation_sha256_with_root_override_and_collector(
+        root,
+        display_root,
+        root_override,
+        &mut SkillTreeSnapshotCollector::default(),
+    )
+}
+
+fn skill_tree_generation_sha256_with_root_override_and_collector(
+    root: &Dir,
+    display_root: &Path,
+    root_override: Option<RootFileOverride<'_>>,
+    collector: &mut SkillTreeSnapshotCollector,
+) -> Result<String> {
+    let mut aggregate = RuntimeAuthorityTraversalBudget::unbounded_for_internal();
+    skill_tree_generation_sha256_with_root_override_and_collector_and_budget(
+        root,
+        display_root,
+        root_override,
+        collector,
+        &mut aggregate,
+    )
+}
+
+fn skill_tree_generation_sha256_with_root_override_and_collector_and_budget(
+    root: &Dir,
+    display_root: &Path,
+    root_override: Option<RootFileOverride<'_>>,
+    collector: &mut SkillTreeSnapshotCollector,
+    aggregate: &mut RuntimeAuthorityTraversalBudget,
+) -> Result<String> {
     let mut hasher = Sha256::new();
     hasher.update(b"NEOTH_SKILL_PACKAGE_GENERATION\0v2\0");
     let root_metadata = root
@@ -3973,6 +4470,8 @@ fn skill_tree_generation_sha256_with_root_override(
         0,
         &mut budget,
         &mut hasher,
+        collector,
+        aggregate,
     )?;
     Ok(hex::encode(hasher.finalize()))
 }
@@ -3985,6 +4484,8 @@ fn hash_skill_tree_directory(
     depth: usize,
     budget: &mut CopyBudget,
     hasher: &mut Sha256,
+    collector: &mut SkillTreeSnapshotCollector,
+    aggregate: &mut RuntimeAuthorityTraversalBudget,
 ) -> Result<()> {
     if depth > MAX_SKILL_TREE_DEPTH {
         anyhow::bail!(
@@ -4000,6 +4501,7 @@ fn hash_skill_tree_directory(
         .with_context(|| format!("enumerate skill package {}", display_directory.display()))?;
     let mut names = Vec::with_capacity(remaining_entry_budget.min(64));
     for entry in entries {
+        aggregate.observe_entry()?;
         if names.len() >= remaining_entry_budget {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
@@ -4012,6 +4514,7 @@ fn hash_skill_tree_directory(
     if let Some(root_override) = root_override
         && !names.iter().any(|name| name == root_override.name)
     {
+        aggregate.observe_entry()?;
         if names.len() >= remaining_entry_budget {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
@@ -4032,6 +4535,7 @@ fn hash_skill_tree_directory(
             format!("{relative_prefix}/{name_text}")
         };
         let display = display_directory.join(&name);
+        collector.observe_entry(relative_prefix)?;
         budget.entries = budget
             .entries
             .checked_add(1)
@@ -4060,10 +4564,13 @@ fn hash_skill_tree_directory(
                     display.display()
                 );
             }
+            collector.observe_file(&relative, root_override.bytes)?;
+            aggregate.observe_bytes(root_override.bytes.len() as u64)?;
             hash_skill_file_record(hasher, &relative, root_override.bytes, &metadata, budget)?;
             continue;
         }
         if file_type.is_dir() {
+            collector.observe_directory(&relative)?;
             hash_tree_record_header(hasher, b'D', &relative, 0, &metadata)?;
             let child = open_real_child_dir(directory, &name, &display)?;
             hash_skill_tree_directory(
@@ -4074,14 +4581,18 @@ fn hash_skill_tree_directory(
                 depth + 1,
                 budget,
                 hasher,
+                collector,
+                aggregate,
             )?;
         } else if file_type.is_file() {
-            let bytes = read_regular_file_bounded(
+            let bytes = read_regular_file_bounded_observed(
                 directory,
                 &name,
                 &display,
                 usize::try_from(MAX_SKILL_FILE_BYTES).expect("skill file limit fits usize"),
+                |bytes| aggregate.observe_bytes(bytes),
             )?;
+            collector.observe_file(&relative, &bytes)?;
             hash_skill_file_record(hasher, &relative, &bytes, &metadata, budget)?;
         } else {
             anyhow::bail!(
@@ -6492,6 +7003,8 @@ mod tests {
             bytes: 0,
         };
         let mut hasher = Sha256::new();
+        let mut collector = SkillTreeSnapshotCollector::default();
+        let mut aggregate = RuntimeAuthorityTraversalBudget::unbounded_for_internal();
 
         let error = hash_skill_tree_directory(
             &bound.dir,
@@ -6501,11 +7014,51 @@ mod tests {
             0,
             &mut budget,
             &mut hasher,
+            &mut collector,
+            &mut aggregate,
         )
         .unwrap_err();
 
         assert!(format!("{error:#}").contains("exceeds 4096 entries"));
         assert_eq!(budget.entries, MAX_SKILL_ENTRIES);
+    }
+
+    #[test]
+    fn installed_test_snapshot_returns_only_bytes_from_its_generation_walk() {
+        let home = tempdir().unwrap();
+        let skills = home.path().join("skills");
+        let package = skills.join("snapshot_skill");
+        std::fs::create_dir_all(package.join("tests")).unwrap();
+        let manifest = b"id: snapshot_skill\ndescription: Snapshot fixture\n";
+        std::fs::write(package.join("skill.yaml"), manifest).unwrap();
+        std::fs::write(package.join("tests/a.yaml"), b"id: a\nprompt: one\n").unwrap();
+        std::fs::write(package.join("tests/b.yml"), b"id: b\nprompt: two\n").unwrap();
+        std::fs::write(package.join("tests/ignore.txt"), b"ignored").unwrap();
+        let root = open_bound_directory(&skills, false, "test snapshot root")
+            .unwrap()
+            .unwrap();
+        let _guard = lock_skill_mutations(&root).unwrap();
+
+        let snapshot =
+            capture_installed_skill_test_snapshot_locked(&root, "snapshot_skill").unwrap();
+        let directory =
+            open_real_child_dir(&root.dir, OsStr::new("snapshot_skill"), &package).unwrap();
+        let expected_generation = skill_tree_generation_sha256(&directory, &package, None).unwrap();
+
+        assert_eq!(snapshot.generation_sha256, expected_generation);
+        assert_eq!(snapshot.manifest_bytes, manifest);
+        assert_eq!(snapshot.test_directory_entries, 3);
+        assert_eq!(
+            snapshot
+                .test_files
+                .iter()
+                .map(|file| (file.file_name.as_str(), file.bytes.as_slice()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("a.yaml", b"id: a\nprompt: one\n".as_slice()),
+                ("b.yml", b"id: b\nprompt: two\n".as_slice()),
+            ]
+        );
     }
 
     #[test]

@@ -233,6 +233,9 @@ impl Default for CaptureWalLimits {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
+// The no-host build still serializes the stable capture-error vocabulary, but
+// only the feature-gated live host can construct most variants.
+#[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
 enum CaptureWalErrorKind {
     InvalidPath,
     UnsafeFile,

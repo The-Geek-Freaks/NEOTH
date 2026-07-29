@@ -182,6 +182,10 @@ pub enum ExtendedSubtype {
     /// prior_generation_sha256?, observed_generation_sha256?,
     /// removed?, removed_generation_sha256?, error_sha256?, ts_unix}`.
     SkillRemovalResult = 0x18,
+    /// R3-17 — authenticated monotonic head for a durable installed-Skill
+    /// authority decision. While the instance WAL remains intact, this chain
+    /// detects rollback of the mutable anchor plus deletion of newer records.
+    SkillAuthorityDecision = 0x19,
 }
 
 impl ExtendedSubtype {
@@ -212,6 +216,7 @@ impl ExtendedSubtype {
             ExtendedSubtype::SelfImproveJournalDiscarded => "self_improve_journal_discarded",
             ExtendedSubtype::SkillRemovalIntent => "skill_removal_intent",
             ExtendedSubtype::SkillRemovalResult => "skill_removal_result",
+            ExtendedSubtype::SkillAuthorityDecision => "skill_authority_decision",
         }
     }
 
@@ -242,6 +247,7 @@ impl ExtendedSubtype {
             0x16 => Some(ExtendedSubtype::SelfImproveJournalDiscarded),
             0x17 => Some(ExtendedSubtype::SkillRemovalIntent),
             0x18 => Some(ExtendedSubtype::SkillRemovalResult),
+            0x19 => Some(ExtendedSubtype::SkillAuthorityDecision),
             _ => None,
         }
     }
@@ -274,6 +280,7 @@ impl ExtendedSubtype {
             Self::SelfImproveJournalDiscarded,
             Self::SkillRemovalIntent,
             Self::SkillRemovalResult,
+            Self::SkillAuthorityDecision,
         ]
         .into_iter()
         .find(|subtype| subtype.name().eq_ignore_ascii_case(name))
@@ -3645,6 +3652,7 @@ mod tests {
             ExtendedSubtype::SelfImproveJournalDiscarded,
             ExtendedSubtype::SkillRemovalIntent,
             ExtendedSubtype::SkillRemovalResult,
+            ExtendedSubtype::SkillAuthorityDecision,
         ] {
             let byte = st as u8;
             assert_ne!(byte, 0x00, "subtype 0x00 is reserved unset/invalid");

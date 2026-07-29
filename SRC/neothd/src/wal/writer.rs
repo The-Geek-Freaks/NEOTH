@@ -24,6 +24,17 @@ use super::segment_header::{
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
 
+#[cfg(all(test, unix))]
+static TEST_FAIL_SEGMENT_PARENT_SYNC_AT: std::sync::Mutex<Option<PathBuf>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(all(test, unix))]
+pub(crate) fn fail_segment_parent_sync_for_test(parent: &Path) {
+    *TEST_FAIL_SEGMENT_PARENT_SYNC_AT
+        .lock()
+        .expect("segment parent-sync test hook poisoned") = Some(parent.to_path_buf());
+}
+
 /// Allocate a collision-resistant segment namespace for a standalone writer.
 ///
 /// The daemon owns the legacy numeric sequence (`000001.wal`, ...). CLI
@@ -108,7 +119,10 @@ impl Default for RotationPolicy {
 #[derive(Clone, Copy, Debug)]
 enum SegmentPolicy {
     Rotating(RotationPolicy),
-    Fixed { max_bytes: u64 },
+    #[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
+    Fixed {
+        max_bytes: u64,
+    },
 }
 
 /// Reason recorded in the SEGMENT_ROLLOVER WAL event payload.
@@ -726,12 +740,14 @@ pub fn spawn_for_home(
 /// HMAC/recovery setup, write, and final-sync errors would otherwise exist only
 /// in logs and the CLI could report an empty successful capture.
 #[derive(Debug)]
+#[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
 pub(crate) struct WalWriterCompletion {
     join: tokio::task::JoinHandle<()>,
     outcome: oneshot::Receiver<Result<(), WalError>>,
 }
 
 impl WalWriterCompletion {
+    #[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
     pub(crate) async fn wait(self) -> Result<(), WalError> {
         self.join.await.map_err(|error| {
             WalError::Io(std::io::Error::other(format!(
@@ -753,6 +769,7 @@ impl WalWriterCompletion {
 /// interrupted-key-rotation recovery therefore stay inside the throwaway home.
 /// The writer refuses an existing segment and returns a completion result that
 /// surfaces every asynchronous writer failure.
+#[cfg_attr(not(any(test, feature = "wasm-plugin-host")), allow(dead_code))]
 pub(crate) fn spawn_capture(
     segment_path: PathBuf,
     home: PathBuf,
@@ -979,8 +996,36 @@ async fn open_segment_with_lock(
     if is_new && let Some(parent) = path.parent() {
         #[cfg(unix)]
         {
-            if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
+            let parent_sync = (|| -> std::io::Result<()> {
+                let dir = std::fs::File::open(parent)?;
+                #[cfg(test)]
+                let fail_injected = {
+                    let mut target = TEST_FAIL_SEGMENT_PARENT_SYNC_AT
+                        .lock()
+                        .expect("segment parent-sync test hook poisoned");
+                    if target.as_deref() == Some(parent) {
+                        *target = None;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                #[cfg(test)]
+                if fail_injected {
+                    return Err(std::io::Error::other(
+                        "injected WAL segment parent-directory sync failure",
+                    ));
+                }
+                dir.sync_all()
+            })();
+            if let Err(error) = parent_sync {
+                // Do not leave a zero-byte path that a retry could mistake for
+                // an existing initialized segment. No producer receives an
+                // ACK, so cleanup is safe; a crash during cleanup remains
+                // fail-closed and can never manufacture a durable frame.
+                drop(file);
+                let _ = std::fs::remove_file(path);
+                return Err(error.into());
             }
         }
         // Windows: rename+create are durable via NTFS metadata journal.

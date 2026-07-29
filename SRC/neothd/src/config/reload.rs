@@ -378,6 +378,28 @@ impl ReloadController {
         self.inner.load_full()
     }
 
+    /// Execute one synchronous runtime publication only while `expected_epoch`
+    /// is still the accepted config generation.
+    ///
+    /// The same mutex serializes [`Self::try_reload`], so the accepted config
+    /// cannot advance between the epoch check and the caller's ArcSwap store.
+    /// Keep the closure short and non-async; it runs on the publication
+    /// linearization boundary.
+    pub(crate) fn with_accepted_epoch_publication<T>(
+        &self,
+        expected_epoch: u64,
+        publish: impl FnOnce() -> Result<T>,
+    ) -> Result<Option<T>> {
+        let _publication = self
+            .publication_lock
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if self.accepted_snapshot().epoch() != expected_epoch {
+            return Ok(None);
+        }
+        publish().map(Some)
+    }
+
     /// Permanently retire Dream effects during daemon shutdown.
     ///
     /// The publication lock closes the reload-vs-shutdown race: after this
@@ -752,6 +774,30 @@ mod tests {
         let ctrl = ReloadController::new(cfg.clone(), PathBuf::from("/tmp/nope.yaml"));
         let latest = ctrl.latest();
         assert_eq!(latest.operator_id, cfg.operator_id);
+    }
+
+    #[test]
+    fn accepted_epoch_publication_runs_only_for_the_exact_generation() {
+        let ctrl = ReloadController::new(fresh_config(), PathBuf::from("/tmp/nope.yaml"));
+        let mut calls = 0usize;
+
+        let stale = ctrl
+            .with_accepted_epoch_publication(1, || {
+                calls += 1;
+                Ok(())
+            })
+            .unwrap();
+        assert!(stale.is_none());
+        assert_eq!(calls, 0);
+
+        let exact = ctrl
+            .with_accepted_epoch_publication(0, || {
+                calls += 1;
+                Ok("published")
+            })
+            .unwrap();
+        assert_eq!(exact, Some("published"));
+        assert_eq!(calls, 1);
     }
 
     #[test]

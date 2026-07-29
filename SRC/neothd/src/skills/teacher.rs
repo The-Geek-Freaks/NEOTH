@@ -15,10 +15,11 @@
 //! `0x86 TEACHER_ESCALATION_COMPLETE` (both immediate-fsync by default —
 //! not in the `needs_immediate_sync` deny-list).
 //!
-//! **SKILL.md:** on success, a correction manifest is written to
+//! **SKILL.md:** on success, an inactive correction manifest is written to
 //! `~/.neoth/skills/teacher_correction_<xxh3_hex>/skill.yaml`.
-//! The write is best-effort; a disk error is logged and the corrected text
-//! is still returned to the caller.
+//! It remains pending explicit activation for that exact installed generation.
+//! The write is best-effort; a disk error is logged and the corrected text is
+//! still returned to the caller.
 
 use anyhow::{Context, Result};
 use tracing::info;
@@ -246,7 +247,7 @@ where
         .context("join teacher skill filesystem transaction")?
 }
 
-/// Write the teacher correction as a SKILL.md manifest to
+/// Write the teacher correction as an inactive SKILL.md manifest to
 /// `~/.neoth/skills/<skill_id>/skill.yaml`.  Best-effort — the caller logs
 /// and continues on failure.
 fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &str) -> Result<()> {
@@ -265,7 +266,7 @@ fn write_skill_md_at(home: &std::path::Path, skill_id: &str, corrected_text: &st
         homepage: None,
         source: None,
         modes: vec![],
-        enabled: true,
+        enabled: false,
         delegate_to: None,
         model: None,
         paths: vec![],
@@ -360,6 +361,10 @@ mod tests {
         let manifest: crate::skills::schema::SkillManifest = serde_yaml::from_str(&body).unwrap();
         assert_eq!(manifest.id, "teacher_correction_deadbeef");
         assert_eq!(manifest.system_prompt, "Correct answer.");
+        assert!(
+            !manifest.enabled,
+            "teacher-generated skills must await explicit activation"
+        );
     }
 
     #[test]

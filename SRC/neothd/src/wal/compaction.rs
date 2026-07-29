@@ -34,7 +34,6 @@ use anyhow::{Context, Result};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
-use super::compress::decompress_frames;
 use super::segment_header::parse_segment_header;
 
 type HmacSha256 = Hmac<Sha256>;

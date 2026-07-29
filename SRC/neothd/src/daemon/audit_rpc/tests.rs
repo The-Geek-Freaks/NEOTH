@@ -57,6 +57,23 @@ async fn raw_post_path(
     (status, response_body)
 }
 
+async fn recv_runtime_transition_for_home(
+    subscriber: &mut crate::skills::registry::RuntimeAuthorityTransitionTestSubscriber,
+    home: &std::path::Path,
+) -> crate::skills::registry::RuntimeAuthorityTransitionKind {
+    let expected_home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let (observed_home, kind) = subscriber.recv().await.unwrap();
+            if observed_home == expected_home {
+                return kind;
+            }
+        }
+    })
+    .await
+    .expect("runtime authority transition was not emitted after durable ACK")
+}
+
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
     assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 35);
@@ -136,6 +153,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     let skill_install_result = crate::wal::events::ExtendedSubtype::SkillInstallResult as u8;
     let skill_removal_intent = crate::wal::events::ExtendedSubtype::SkillRemovalIntent as u8;
     let skill_removal_result = crate::wal::events::ExtendedSubtype::SkillRemovalResult as u8;
+    let skill_authority_decision =
+        crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
     assert_eq!(
         ALLOWED_CLIENT_EXTENDED_SUBTYPES,
         &[
@@ -149,6 +168,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
             skill_install_result,
             skill_removal_intent,
             skill_removal_result,
+            skill_authority_decision,
         ]
     );
     assert!(is_allowed_client_event_pair(0x00, plugin_removal_intent));
@@ -157,6 +177,7 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     assert!(is_allowed_client_event_pair(0x00, skill_install_result));
     assert!(is_allowed_client_event_pair(0x00, skill_removal_intent));
     assert!(is_allowed_client_event_pair(0x00, skill_removal_result));
+    assert!(is_allowed_client_event_pair(0x00, skill_authority_decision));
     assert!(is_allowed_client_event_pair(0x00, proof_rotation));
     assert!(is_allowed_client_event_pair(0x00, communication_controlled));
     assert!(!is_allowed_client_event_pair(0x00, 0));
@@ -679,6 +700,8 @@ async fn internal_skill_mutation_route_stays_live_when_public_audit_routes_are_d
 #[tokio::test]
 async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
     let segdir = tempdir().unwrap();
+    let mut transitions =
+        crate::skills::registry::subscribe_runtime_authority_transitions_for_test();
     let seg = segdir.path().join("skill-dedup.wal");
     let (writer, wal_join) =
         crate::wal::spawn_for_home(seg.clone(), segdir.path().to_path_buf()).unwrap();
@@ -713,9 +736,18 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
         200
     );
     assert_eq!(
+        recv_runtime_transition_for_home(&mut transitions, segdir.path()).await,
+        crate::skills::registry::RuntimeAuthorityTransitionKind::InstallResult
+    );
+    assert_eq!(
         raw_post(&addr, Some("skill-dedup-token"), &request).await,
         200,
         "retry after a lost response must ACK the existing audit id"
+    );
+    assert_eq!(
+        recv_runtime_transition_for_home(&mut transitions, segdir.path()).await,
+        crate::skills::registry::RuntimeAuthorityTransitionKind::InstallResult,
+        "a duplicate durable ACK must still wake a runtime that missed the first transition"
     );
 
     let conflicting = serde_json::to_vec(&serde_json::json!({
@@ -753,6 +785,76 @@ async fn skill_mutation_audit_id_is_idempotent_and_conflicts_fail_closed() {
     assert_eq!(
         matching_results, 1,
         "one deterministic audit id may produce exactly one terminal frame"
+    );
+}
+
+#[tokio::test]
+async fn unauthenticated_authority_ingress_cannot_poison_unrelated_skill_scans() {
+    let home = tempdir().unwrap();
+    let wal_dir = home.path().join("wal");
+    std::fs::create_dir_all(&wal_dir).unwrap();
+    crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+    crate::skills::authority::initialize_authority_key_for_test(home.path()).unwrap();
+    let segment = wal_dir.join("authority-ingress.wal");
+    let (writer, wal_join) =
+        crate::wal::spawn_for_home(segment.clone(), home.path().to_path_buf()).unwrap();
+    let state = AuditRpcState {
+        token: "authority-ingress-token".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+        fullauto: Arc::new(super::FullAutoTokenStore::new()),
+        #[cfg(feature = "cluster")]
+        membership: None,
+        audit_routes_enabled: true,
+    };
+    let (address, task) = bind_and_serve(home.path(), TEST_ENDPOINT_NONCE, state)
+        .await
+        .unwrap();
+    let subtype = crate::wal::events::ExtendedSubtype::SkillAuthorityDecision as u8;
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "audit_event_id": "a".repeat(64),
+        "operation_id": "b".repeat(32),
+    }))
+    .unwrap();
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(payload);
+    let request =
+        format!("{{\"event_type\":0,\"event_subtype\":{subtype},\"payload_b64\":{payload_b64:?}}}");
+
+    let (status, response) = raw_post_path(
+        &address,
+        "/skill-mutation-audit",
+        Some("authority-ingress-token"),
+        &request,
+    )
+    .await;
+    assert_eq!(status, 400, "{response}");
+    assert!(
+        response.contains("authentication"),
+        "the rejection must identify the missing authority authentication: {response}"
+    );
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&segment).await.unwrap();
+    let header = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+    let mut cursor = header.header_len();
+    while cursor < bytes.len() {
+        let frame = crate::wal::frame::decode_frame(&bytes[cursor..]).unwrap();
+        assert!(
+            frame.header.event_type != crate::wal::events::EVENT_TYPE_EXTENDED
+                || frame.header.event_subtype != subtype,
+            "unauthenticated authority payload reached the durable WAL"
+        );
+        cursor += frame.header.total_len as usize;
+    }
+    assert!(
+        !crate::skills::authority::scan_authority_wal_head_exists_for_test(
+            home.path(),
+            "unrelated"
+        )
+        .unwrap(),
+        "a rejected authority request must leave unrelated Skill scans healthy"
     );
 }
 

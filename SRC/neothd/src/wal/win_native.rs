@@ -31,26 +31,28 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::Security::Authorization::{
     EXPLICIT_ACCESS_W, GRANT_ACCESS, GetNamedSecurityInfoW, GetSecurityInfo, NO_MULTIPLE_TRUSTEE,
-    SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, TRUSTEE_IS_NAME, TRUSTEE_IS_SID,
-    TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
+    SE_FILE_OBJECT, SetEntriesInAclW, SetNamedSecurityInfoW, SetSecurityInfo, TRUSTEE_IS_NAME,
+    TRUSTEE_IS_SID, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
     CONTAINER_INHERIT_ACE, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
     GetLengthSid, GetSecurityDescriptorControl, GetTokenInformation, INHERITED_ACE,
     InitializeSecurityDescriptor, IsValidAcl, IsValidSid, NO_INHERITANCE, OBJECT_INHERIT_ACE,
-    PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED, SECURITY_ATTRIBUTES,
-    SECURITY_DESCRIPTOR, SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY,
-    TOKEN_USER, TokenUser,
+    OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, SE_DACL_PROTECTED,
+    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SetSecurityDescriptorControl,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 // ── E-12 import ────────────────────────────────────────────────────────────
 use windows_sys::Win32::Storage::FileSystem::{
-    CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL,
-    FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FileRenameInfoEx, FlushFileBuffers,
-    SetFileInformationByHandle,
+    BY_HANDLE_FILE_INFORMATION, CREATE_NEW, CreateDirectoryW, CreateFileW, DELETE, FILE_ALL_ACCESS,
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_REPARSE_POINT,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+    FILE_GENERIC_WRITE, FILE_RENAME_INFO, FILE_RENAME_INFO_0, FILE_SHARE_DELETE, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FileRenameInfoEx, FlushFileBuffers, GetFileInformationByHandle,
+    OPEN_EXISTING, READ_CONTROL, SetFileInformationByHandle, WRITE_DAC,
 };
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -154,6 +156,105 @@ pub fn set_private_current_user_directory_dacl(path: &Path) -> io::Result<()> {
         true,
     )?;
     verify_private_dacl_for_sid(path, &sid, inheritance as u8)
+}
+
+/// Replace the DACL on an already-open directory capability with one protected
+/// TokenUser Full Control ACE inherited by both child files and directories.
+///
+/// Both the mutation and its read-back proof use the exact kernel object behind
+/// `directory`, so a concurrent path rename or replacement cannot redirect
+/// either operation. The handle must have `WRITE_DAC | READ_CONTROL` access.
+pub fn set_private_current_user_directory_handle_dacl<H: AsRawHandle + ?Sized>(
+    directory: &H,
+) -> io::Result<()> {
+    let handle = checked_raw_handle(directory)?;
+    let sid = current_process_token_sid()?;
+    set_private_current_user_directory_handle_dacl_for_sid(handle, &sid)
+}
+
+fn set_private_current_user_directory_handle_dacl_for_sid(
+    handle: HANDLE,
+    sid: &[u8],
+) -> io::Result<()> {
+    verify_handle_owner_for_sid(handle, sid)?;
+    let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+    let acl = single_trustee_acl(sid.as_ptr() as *mut u16, TRUSTEE_IS_SID, inheritance)?;
+
+    // SAFETY:
+    // - `handle` is the live handle borrowed from `directory` and was checked
+    //   against both null and INVALID_HANDLE_VALUE.
+    // - `acl` is a valid LocalAlloc-owned ACL and remains live for this call.
+    // - owner, group, and SACL pointers are null because their corresponding
+    //   SECURITY_INFORMATION bits are not requested.
+    // - the caller-provided handle must carry WRITE_DAC, which Win32 verifies.
+    let rc = unsafe {
+        SetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl.0,
+            std::ptr::null_mut(),
+        )
+    };
+    map_win32(rc, "SetSecurityInfo")?;
+    verify_private_directory_handle_for_sid(handle, sid)
+}
+
+/// Harden a path-resolved directory only when it is the exact object behind an
+/// already-open capability directory.
+///
+/// `expected_directory` needs only `READ_CONTROL`, as provided by an ordinary
+/// `cap_std::fs::Dir` on Windows. This function opens a short-lived
+/// `READ_CONTROL | WRITE_DAC` security handle without following a final
+/// reparse point, compares stable volume/file identity with the capability
+/// handle, and mutates only that identity-matched handle. A stale or swapped
+/// display path therefore fails before any DACL is changed.
+pub fn set_private_current_user_directory_dacl_bound<H: AsRawHandle + ?Sized>(
+    path: &Path,
+    expected_directory: &H,
+) -> io::Result<()> {
+    let expected_handle = checked_raw_handle(expected_directory)?;
+    let expected_identity = private_directory_identity(expected_handle)?;
+    let path_w = path_to_wide_nul(path)?;
+
+    // SAFETY:
+    // - `path_w` is a live, null-terminated UTF-16 path.
+    // - READ_CONTROL | WRITE_DAC are exactly the rights needed by the
+    //   handle-bound read-back and DACL mutation.
+    // - OPEN_EXISTING cannot create or truncate an object.
+    // - BACKUP_SEMANTICS permits opening a directory, while OPEN_REPARSE_POINT
+    //   exposes a final reparse point itself so it can be rejected below.
+    // - omitting FILE_SHARE_DELETE pins the resolved namespace object against
+    //   rename/delete for the lifetime of the security handle.
+    let raw_security_handle = unsafe {
+        CreateFileW(
+            path_w.as_ptr(),
+            READ_CONTROL | WRITE_DAC,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if raw_security_handle == INVALID_HANDLE_VALUE {
+        return Err(last_win32_error(
+            "CreateFileW(bound directory security handle)",
+        ));
+    }
+    let security_handle = OwnedHandle(raw_security_handle);
+    let actual_identity = private_directory_identity(security_handle.0)?;
+    if actual_identity != expected_identity {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory display path no longer identifies the bound capability",
+        ));
+    }
+
+    let sid = current_process_token_sid()?;
+    set_private_current_user_directory_handle_dacl_for_sid(security_handle.0, &sid)
 }
 
 fn set_owner_dacl_impl(path: &Path, account: &str, protected: bool) -> io::Result<()> {
@@ -600,6 +701,18 @@ pub fn verify_private_file_handle(file: &File) -> io::Result<()> {
     verify_private_handle_for_sid(file.as_raw_handle() as HANDLE, &expected_sid)
 }
 
+/// Verify owner identity and the protected, inheritable TokenUser DACL through
+/// an already-open directory capability.
+///
+/// The proof is bound to the same kernel object the caller will subsequently
+/// use, rather than resolving its display path again.
+pub fn verify_private_directory_handle_dacl<H: AsRawHandle + ?Sized>(
+    directory: &H,
+) -> io::Result<()> {
+    let expected_sid = current_process_token_sid()?;
+    verify_private_directory_handle_for_sid(checked_raw_handle(directory)?, &expected_sid)
+}
+
 /// Verify the protected, inheritable TokenUser DACL expected on a private
 /// directory.
 pub fn verify_private_directory_dacl(path: &Path) -> io::Result<()> {
@@ -660,26 +773,151 @@ fn verify_private_dacl_for_sid(
 }
 
 fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
+    verify_private_handle_security_for_sid(handle, expected_sid, NO_INHERITANCE as u8, false)
+}
+
+fn verify_private_directory_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
+    verify_private_handle_security_for_sid(
+        handle,
+        expected_sid,
+        (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8,
+        true,
+    )
+}
+
+fn checked_raw_handle<H: AsRawHandle + ?Sized>(object: &H) -> io::Result<HANDLE> {
+    let handle = object.as_raw_handle() as HANDLE;
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "cannot verify a null or invalid file handle",
+            "cannot use a null or invalid file-system handle",
         ));
     }
+    Ok(handle)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PrivateDirectoryIdentity {
+    volume_serial_number: u32,
+    file_index: u64,
+}
+
+fn private_directory_identity(handle: HANDLE) -> io::Result<PrivateDirectoryIdentity> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot identify a null or invalid directory handle",
+        ));
+    }
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY:
+    // - `handle` is a live file-system handle validated above.
+    // - `information` is correctly sized, aligned writable storage and is
+    //   assumed initialized only after Win32 reports success.
+    if unsafe { GetFileInformationByHandle(handle, information.as_mut_ptr()) } == 0 {
+        return Err(last_win32_error("GetFileInformationByHandle"));
+    }
+    // SAFETY: the successful Win32 call initialized the complete structure.
+    let information = unsafe { information.assume_init() };
+    if information.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "bound security object is not a directory",
+        ));
+    }
+    if information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "bound security directory must not be a reparse point",
+        ));
+    }
+    let file_index =
+        (u64::from(information.nFileIndexHigh) << 32) | u64::from(information.nFileIndexLow);
+    if file_index == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "file system did not provide a stable directory file identifier",
+        ));
+    }
+    Ok(PrivateDirectoryIdentity {
+        volume_serial_number: information.dwVolumeSerialNumber,
+        file_index,
+    })
+}
+
+fn verify_handle_owner_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Result<()> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot verify owner on a null or invalid file-system handle",
+        ));
+    }
+    let mut owner: *mut std::ffi::c_void = std::ptr::null_mut();
+    let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
+    // SAFETY:
+    // - `handle` is a live file-system handle with READ_CONTROL access.
+    // - `owner` and `descriptor` are valid out-pointers; unused group, DACL,
+    //   and SACL out-pointers are null.
+    // - any successful descriptor is LocalAlloc-owned and guarded immediately.
+    let rc = unsafe {
+        GetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut descriptor,
+        )
+    };
+    let descriptor = OwnedLocalDescriptor(descriptor);
+    map_win32(rc, "GetSecurityInfo(owner)")?;
+    if descriptor.0.is_null() {
+        return Err(io::Error::other(
+            "GetSecurityInfo(owner) returned a null security descriptor",
+        ));
+    }
+    verify_owner_sid(owner, expected_sid)
+}
+
+fn verify_private_handle_security_for_sid(
+    handle: HANDLE,
+    expected_sid: &[u8],
+    expected_ace_flags: u8,
+    verify_owner: bool,
+) -> io::Result<()> {
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "cannot verify a null or invalid file-system handle",
+        ));
+    }
+    let mut owner: *mut std::ffi::c_void = std::ptr::null_mut();
     let mut dacl: *mut ACL = std::ptr::null_mut();
     let mut descriptor: *mut std::ffi::c_void = std::ptr::null_mut();
 
     // SAFETY:
     // - `handle` is an open file handle with READ_CONTROL access.
-    // - all unused SID/SACL out-pointers are null.
-    // - `dacl` and `descriptor` are valid out-pointers. Any returned
-    //   descriptor is LocalAlloc-owned and immediately guarded below.
+    // - the owner out-pointer is supplied iff OWNER_SECURITY_INFORMATION was
+    //   requested; group and SACL out-pointers are always null.
+    // - `dacl` and `descriptor` are valid out-pointers. Any returned descriptor
+    //   is LocalAlloc-owned and immediately guarded below.
     let rc = unsafe {
         GetSecurityInfo(
             handle,
             SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
+            DACL_SECURITY_INFORMATION
+                | if verify_owner {
+                    OWNER_SECURITY_INFORMATION
+                } else {
+                    0
+                },
+            if verify_owner {
+                &mut owner
+            } else {
+                std::ptr::null_mut()
+            },
             std::ptr::null_mut(),
             &mut dacl,
             std::ptr::null_mut(),
@@ -693,7 +931,35 @@ fn verify_private_handle_for_sid(handle: HANDLE, expected_sid: &[u8]) -> io::Res
             "GetSecurityInfo returned a null security descriptor",
         ));
     }
-    verify_private_descriptor(descriptor.0, dacl, expected_sid, NO_INHERITANCE as u8)
+    if verify_owner {
+        verify_owner_sid(owner, expected_sid)?;
+    }
+    verify_private_descriptor(descriptor.0, dacl, expected_sid, expected_ace_flags)
+}
+
+fn verify_owner_sid(owner: *mut std::ffi::c_void, expected_sid: &[u8]) -> io::Result<()> {
+    if owner.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "private directory has no owner SID",
+        ));
+    }
+    // SAFETY: `owner` points into the live descriptor returned by
+    // GetSecurityInfo and remains valid until its guard is dropped.
+    if unsafe { IsValidSid(owner) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "private directory contains an invalid owner SID",
+        ));
+    }
+    // SAFETY: both SIDs are valid and EqualSid only reads them.
+    if unsafe { EqualSid(owner, expected_sid.as_ptr() as *mut std::ffi::c_void) } == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "private directory is not owned by the current user",
+        ));
+    }
+    Ok(())
 }
 
 const SID_HEADER_LEN: usize = 8;
@@ -1113,6 +1379,7 @@ mod tests {
     use std::fs::{File, OpenOptions};
     use std::io::Write;
     use std::os::windows::ffi::OsStringExt;
+    use std::os::windows::fs::OpenOptionsExt as _;
     use tempfile::tempdir;
 
     // ── shared helper ──────────────────────────────────────────────────────
@@ -1137,6 +1404,12 @@ mod tests {
             checked_access_allowed_sid_len(sid_offset + SID_HEADER_LEN + 4, 1).unwrap(),
             SID_HEADER_LEN + 4
         );
+    }
+
+    #[test]
+    fn cap_std_directory_satisfies_handle_bound_dacl_api() {
+        fn assert_as_raw_handle<T: AsRawHandle>() {}
+        assert_as_raw_handle::<cap_std::fs::Dir>();
     }
 
     // ── E-11: DACL set round-trip ──────────────────────────────────────────
@@ -1185,6 +1458,116 @@ mod tests {
         let child = path.join("child.txt");
         std::fs::write(&child, b"owner can create children").unwrap();
         assert_eq!(std::fs::read(&child).unwrap(), b"owner can create children");
+    }
+
+    #[test]
+    fn private_directory_handle_dacl_remains_bound_across_path_swap() {
+        let root = tempdir().unwrap();
+        let bound_path = root.path().join("bound");
+        let replacement_path = root.path().join("replacement");
+        let moved_path = root.path().join("moved");
+        std::fs::create_dir(&bound_path).unwrap();
+        std::fs::create_dir(&replacement_path).unwrap();
+
+        let directory = OpenOptions::new()
+            .access_mode(READ_CONTROL | WRITE_DAC)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&bound_path)
+            .expect("open directory capability with DACL rights");
+
+        std::fs::rename(&bound_path, &moved_path).expect("rename handle-bound directory");
+        std::fs::rename(&replacement_path, &bound_path).expect("swap original display path");
+
+        set_private_current_user_directory_handle_dacl(&directory)
+            .expect("set DACL through original directory handle");
+        verify_private_directory_handle_dacl(&directory)
+            .expect("same handle must retain owner/DACL proof");
+        verify_private_directory_dacl(&moved_path)
+            .expect("renamed original object must receive the private DACL");
+
+        let sid = current_process_token_sid().unwrap();
+        let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+        set_trustee_dacl(
+            &bound_path,
+            sid.as_ptr() as *mut u16,
+            TRUSTEE_IS_SID,
+            inheritance,
+            false,
+        )
+        .expect("make swapped path deliberately fail the protected-DACL contract");
+        assert!(
+            verify_private_directory_dacl(&bound_path).is_err(),
+            "the replacement at the stale display path must remain unprotected"
+        );
+        verify_private_directory_handle_dacl(&directory)
+            .expect("path replacement must not redirect handle-bound verification");
+    }
+
+    #[test]
+    fn bound_directory_dacl_bridge_upgrades_read_only_capability() {
+        let root = tempdir().unwrap();
+        let path = root.path().join("capability");
+        std::fs::create_dir(&path).unwrap();
+
+        let directory = OpenOptions::new()
+            .access_mode(READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&path)
+            .expect("open read-only directory capability");
+
+        set_private_current_user_directory_dacl_bound(&path, &directory)
+            .expect("identity-matched bridge must harden the capability directory");
+        verify_private_directory_handle_dacl(&directory)
+            .expect("read-only capability must verify the resulting owner/DACL");
+        verify_private_directory_dacl(&path)
+            .expect("path and capability proofs must agree after hardening");
+    }
+
+    #[test]
+    fn bound_directory_dacl_bridge_rejects_swapped_display_path() {
+        let root = tempdir().unwrap();
+        let bound_path = root.path().join("bound");
+        let replacement_path = root.path().join("replacement");
+        let moved_path = root.path().join("moved");
+        std::fs::create_dir(&bound_path).unwrap();
+        std::fs::create_dir(&replacement_path).unwrap();
+
+        let directory = OpenOptions::new()
+            .access_mode(READ_CONTROL)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(&bound_path)
+            .expect("open read-only directory capability");
+
+        let sid = current_process_token_sid().unwrap();
+        let inheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE;
+        for path in [&bound_path, &replacement_path] {
+            set_trustee_dacl(
+                path,
+                sid.as_ptr() as *mut u16,
+                TRUSTEE_IS_SID,
+                inheritance,
+                false,
+            )
+            .expect("start from a deliberately unprotected directory DACL");
+        }
+
+        std::fs::rename(&bound_path, &moved_path).expect("rename handle-bound directory");
+        std::fs::rename(&replacement_path, &bound_path).expect("swap original display path");
+
+        let error = set_private_current_user_directory_dacl_bound(&bound_path, &directory)
+            .expect_err("identity mismatch must fail before changing either DACL");
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            verify_private_directory_dacl(&bound_path).is_err(),
+            "replacement directory must remain unprotected"
+        );
+        assert!(
+            verify_private_directory_dacl(&moved_path).is_err(),
+            "original capability directory must remain unprotected"
+        );
     }
 
     #[test]

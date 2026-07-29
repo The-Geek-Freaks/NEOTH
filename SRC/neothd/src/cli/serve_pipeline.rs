@@ -112,6 +112,37 @@ pub(crate) fn channel_skill_allowlist(
     skill.map(|s| s.manifest.tool_allowlist.clone())
 }
 
+/// Channel turns have no explicit `/skill-id` invocation once they enter the
+/// provider pipeline. Filter the authority-admitted snapshot once and feed the
+/// same view to both ModeRegistry and keyword routing. The generic sealed view
+/// keeps production callers on [`crate::skills::schema::RuntimeSkill`] while
+/// permitting raw fixtures in unit tests.
+fn channel_auto_routing_skills<S>(skills: &[S]) -> std::borrow::Cow<'_, [S]>
+where
+    S: crate::skills::schema::RuntimeSkillView + Clone,
+{
+    if skills.iter().all(|skill| {
+        matches!(
+            skill.runtime_skill().manifest.visibility,
+            crate::config::SkillVisibility::On
+        )
+    }) {
+        return std::borrow::Cow::Borrowed(skills);
+    }
+    std::borrow::Cow::Owned(
+        skills
+            .iter()
+            .filter(|skill| {
+                matches!(
+                    skill.runtime_skill().manifest.visibility,
+                    crate::config::SkillVisibility::On
+                )
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 /// ADV-09: `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a destructive
 /// operator slash-action rejected by the channel privilege ceiling. Carries
 /// only the channel name + numeric sender id + the `SlashAction::as_str()` wire
@@ -1039,13 +1070,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
         // GOLD-ADAPT-GOOSE-03: clone the optional asker Arc into this message's closure.
         let channel_asker = channel_asker_arc.as_ref().map(Arc::clone);
         let confirm_bus_reply = confirm_bus_for_reply.as_ref().map(Arc::clone);
-        // Pick #39 (Session 14, hot-reload live-propagation): snapshot
-        // the live config ONCE at the top of the handler. Tunables
+        // Pick #39 (Session 14, hot-reload live-propagation): retain one
+        // accepted config snapshot at the top of the handler. Tunables
         // reflect any `neoth reload` since the previous message;
         // immutable fields are guaranteed stable by the validator at
-        // reload-time. Single `latest()` call per inbound means
-        // mid-message config-flip is impossible.
-        let config_for_handler = reload_controller.latest();
+        // reload-time. The epoch is carried into Skill acquisition below so
+        // config N can never route with Skill authority N+1 (or vice versa).
+        let accepted_for_handler = reload_controller.accepted_snapshot();
+        let config_epoch_for_handler = accepted_for_handler.epoch();
+        let config_for_handler = accepted_for_handler.config();
         let autonomy_policy = config_for_handler.autonomy_policy();
         let autonomy = autonomy_policy.level();
         let views_conn = views_conn.clone();
@@ -1779,19 +1812,29 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // startup + hot-reloaded by the file watcher); fall back to
             // per-call load when the global wasn't initialised.
             let installed_skills = match crate::skills::registry::global() {
-                Some(reg) => reg.snapshot_owned(),
-                None => crate::skills::SkillRegistry::load(&channel_home.join("skills"))
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "load channel skill registry from {}",
-                            channel_home.join("skills").display()
-                        )
-                    })?
-                    .snapshot_owned(),
+                Some(reg) => reg.snapshot_owned_for_epoch(config_epoch_for_handler),
+                None => crate::skills::SkillRegistry::load_with_reload_controller(
+                    channel_home.join("skills"),
+                    Arc::clone(&reload_controller),
+                )
+                .await
+                .with_context(|| {
+                    format!(
+                        "load channel skill registry from {}",
+                        channel_home.join("skills").display()
+                    )
+                })?
+                .snapshot_owned_for_epoch(config_epoch_for_handler),
             };
+
+            // Channel messages have no explicit `/skill-id` invocation by the
+            // time they reach this pipeline. Apply visibility before BOTH mode
+            // and keyword routing: otherwise a NameOnly/UserInvocableOnly
+            // Skill could still auto-activate through one of its mode trigger
+            // phrases even though the later keyword-only filter rejected it.
+            let routing_skills = channel_auto_routing_skills(installed_skills.as_slice());
             let mode_registry =
-                crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
+                crate::skills::mode_registry::ModeRegistry::from_skills(routing_skills.as_ref())
                     .context("build channel skill mode registry")?;
             let mode_hit = mode_registry.match_trigger(&sanitized_text);
             // SC-11 (Session 28d) — the channel path now threads the
@@ -1829,9 +1872,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 Option<String>,
                 bool,
             ) = if let Some(resolved) = mode_hit {
-                let parent = installed_skills
-                    .iter()
-                    .find(|s| s.id() == resolved.skill_id);
+                let parent = routing_skills.iter().find(|s| s.id() == resolved.skill_id);
                 info!(
                     channel = channel_str,
                     mode = %resolved.mode.id,
@@ -1841,8 +1882,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // GOLD-ADOPT-28 lazy routing: shared primitive — load ONLY the
                 // matched mode's sub-doc + thin parent base (same rule as the
                 // CLI path in cli/chat.rs, so the two can't drift).
-                let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
-                let allowlist = channel_skill_allowlist(parent);
+                let parent_skill = parent.map(|skill| skill.as_skill());
+                let layer = crate::skills::router::compose_mode_skill_layer(parent_skill, resolved);
+                let allowlist = channel_skill_allowlist(parent_skill);
                 // GOLD-CCPARITY-MODEL-02: parent skill's model override applies
                 // when a mode is active (mode inherits parent skill model).
                 let skill_model = parent.and_then(|s| s.manifest.model.clone());
@@ -1850,7 +1892,7 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // when a mode is active (mode inherits parent effort setting).
                 let skill_effort = parent.and_then(|s| s.manifest.effort);
                 let skill_delegate_to = parent.and_then(|s| s.manifest.delegate_to.clone());
-                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(parent);
+                let loop_trigger = crate::cli::chat::routed_skill_loop_trigger(parent_skill);
                 crate::analytics::babel::signals::emit(
                     crate::analytics::babel::signals::SignalKind::SkillMode,
                 );
@@ -1881,28 +1923,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 // `slash_skill_name = None` always: `NameOnly` and
                 // `UserInvocableOnly` skills are never auto-routed here. `Off`
                 // skills were already removed at load time (enabled=false).
-                let channel_vis_filtered: std::sync::Arc<Vec<crate::skills::schema::Skill>>;
-                let routing_skills: &[crate::skills::schema::Skill] = {
-                    let needs_filter = installed_skills.iter().any(|s| {
-                        !matches!(s.manifest.visibility, crate::config::SkillVisibility::On)
-                    });
-                    if needs_filter {
-                        let filtered: Vec<_> = installed_skills
-                            .iter()
-                            .filter(|s| {
-                                matches!(s.manifest.visibility, crate::config::SkillVisibility::On)
-                            })
-                            .cloned()
-                            .collect();
-                        channel_vis_filtered = std::sync::Arc::new(filtered);
-                        &channel_vis_filtered
-                    } else {
-                        &installed_skills
-                    }
-                };
                 let skill_match = crate::skills::router::route_with_min_weight(
                     &sanitized_text,
-                    routing_skills,
+                    routing_skills.as_ref(),
                     stage1_floor,
                     &[], // GOLD-CCPARITY-PATHS-01: channel path has no editor context; empty = always-activate
                 );
@@ -2414,13 +2437,16 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         // return their handler text directly. Either way
                         // the provider call is skipped — return early.
                         if let Some(action) = cmd.action {
-                            let outcome = crate::slash::dispatch_action(
-                                action,
-                                &args,
-                                config_for_handler.as_ref(),
-                                crate::slash::CommandSource::Channel,
-                            )
-                            .await;
+                            let outcome =
+                                crate::slash::action_dispatch::dispatch_action_with_paths(
+                                    action,
+                                    &args,
+                                    config_for_handler.as_ref(),
+                                    crate::slash::CommandSource::Channel,
+                                    &instance_paths.home,
+                                    &instance_paths.config,
+                                )
+                                .await;
                             if outcome.is_channel_blocked() {
                                 emit_channel_privilege_blocked(
                                     &writer,
@@ -4568,6 +4594,63 @@ fn delegated_system_bundle(
 mod tests {
     use super::*;
     use crate::channels::{Channel, ChannelError, ChannelKind, MessageId, PipelineHandler};
+
+    fn channel_visibility_fixture(
+        id: &str,
+        visibility: &str,
+        mode_trigger: &str,
+    ) -> crate::skills::schema::Skill {
+        let manifest = serde_yaml::from_str(&format!(
+            "id: {id}\n\
+             description: {id} fixture\n\
+             visibility: {visibility}\n\
+             trigger_keywords: [{mode_trigger}]\n\
+             modes:\n\
+             - id: {id}-mode\n\
+               description: {id} mode\n\
+               spectrum: balanced\n\
+               oversight: low\n\
+               output:\n\
+                 format: prose\n\
+               trigger_phrases: [{mode_trigger}]\n"
+        ))
+        .expect("valid Skill visibility fixture");
+        crate::skills::schema::Skill {
+            manifest,
+            path: std::path::PathBuf::from(format!("<fixture>/{id}/skill.yaml")),
+            content_hash: format!("{id}-hash"),
+        }
+    }
+
+    #[test]
+    fn channel_visibility_filters_mode_and_keyword_routing_through_one_view() {
+        let skills = vec![
+            channel_visibility_fixture("name-only", "name_only", "hidden-name-mode"),
+            channel_visibility_fixture("user-only", "user_invocable_only", "hidden-user-mode"),
+            channel_visibility_fixture("visible", "on", "visible-mode"),
+        ];
+
+        let routed = channel_auto_routing_skills(&skills);
+
+        assert_eq!(
+            routed.iter().map(|skill| skill.id()).collect::<Vec<_>>(),
+            vec!["visible"]
+        );
+        let modes =
+            crate::skills::mode_registry::ModeRegistry::from_skills(routed.as_ref()).unwrap();
+        assert!(modes.match_trigger("hidden-name-mode").is_none());
+        assert!(modes.match_trigger("hidden-user-mode").is_none());
+        assert_eq!(
+            modes
+                .match_trigger("visible-mode")
+                .map(|resolved| resolved.skill_id.as_str()),
+            Some("visible")
+        );
+        assert!(
+            crate::skills::router::route("hidden-name-mode", routed.as_ref()).is_none(),
+            "the same filtered view must feed keyword routing"
+        );
+    }
 
     #[test]
     fn channel_documents_route_pdf_by_mime_and_stickers_stay_explicit() {

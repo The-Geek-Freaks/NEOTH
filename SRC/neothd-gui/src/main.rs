@@ -9729,31 +9729,64 @@ fn main() -> Result<()> {
     // shows + reports a status line.
     let weak_skill_toggle = window.as_weak();
     window.on_skill_toggle(move |id, enabled| {
-        if let Some(w) = weak_skill_toggle.upgrade() {
-            buddy(&w, GuiActivity::SettingsApplied);
-        }
         let weak = weak_skill_toggle.clone();
         let id = id.to_string();
+        let Some(lease) = acquire_skill_authority_action() else {
+            if let Some(w) = weak.upgrade() {
+                render_skill_index(&w);
+                w.set_status_line(
+                    "Another Skill authority change is still being verified. Try again when it finishes."
+                        .into(),
+                );
+            }
+            return;
+        };
+        let expectation = match verified_skill_authority_expectation_in_cache(&id) {
+            Ok(expectation) => expectation,
+            Err(error) => {
+                drop(lease);
+                if let Some(w) = weak.upgrade() {
+                    render_skill_index(&w);
+                    w.set_status_line(format!("Skill authority change blocked: {error}").into());
+                }
+                return;
+            }
+        };
+        if let Some(w) = weak.upgrade() {
+            w.set_skill_authority_operation_in_flight(true);
+            buddy(&w, GuiActivity::SettingsApplied);
+        }
         std::thread::spawn(move || {
+            let expected_home = default_neoth_home();
             let flag = if enabled { "--enable" } else { "--disable" };
             let expected_state = if enabled { "enabled" } else { "disabled" };
-            // Typed receipt: the daemon must acknowledge the exact skill id and
-            // target state before the GUI reports success — a bare exit code is
-            // no longer trusted for this freedom.yaml::skills mutation.
+            let args = skill_authority_cli_args(flag, &id, expectation.as_ref());
+            let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+            // Typed receipt: the CLI must acknowledge the exact skill id and
+            // durable target state before the GUI reports success — a bare exit
+            // code is no longer trusted. The receipt proves a reload request,
+            // not that a separate daemon has already consumed it.
             let outcome = run_neothd_json_action::<gui_action::SkillToggleAck>(
-                &["skills", flag, id.as_str()],
+                &arg_refs,
                 "Skill toggle",
             )
-            .and_then(|ack| ack.verify(&id, expected_state));
+            .and_then(|ack| ack.verify(&id, expected_state, &expected_home));
             let skills = fetch_skills();
             let _ = slint::invoke_from_event_loop(move || {
+                let _lease = lease;
                 if let Some(w) = weak.upgrade() {
+                    w.set_skill_authority_operation_in_flight(false);
                     let refresh = apply_skills(&w, skills);
                     let verb = if enabled { "enabled" } else { "disabled" };
+                    if outcome.is_err() || refresh.is_err() {
+                        render_skill_index(&w);
+                    }
                     w.set_status_line(match (outcome, refresh) {
-                        (Ok(()), Ok(())) => format!("Skill {id} {verb}.").into(),
+                        (Ok(()), Ok(())) => {
+                            format!("Skill {id} {verb}; live reload requested.").into()
+                        }
                         (Ok(()), Err(error)) => format!(
-                            "Skill {id} {verb}, but inventory refresh failed: {error}. The previous list is still shown."
+                            "Skill {id} {verb}; live reload requested, but inventory refresh failed: {error}. The previous list is still shown."
                         )
                         .into(),
                         (Err(error), Ok(())) => {
@@ -9761,6 +9794,85 @@ fn main() -> Result<()> {
                         }
                         (Err(error), Err(refresh_error)) => format!(
                             "Skill {verb} failed for {id}: {error}. Inventory refresh also failed: {refresh_error}."
+                        )
+                        .into(),
+                    });
+                }
+            });
+        });
+    });
+
+    let weak_skill_revoke = window.as_weak();
+    window.on_skill_revoke(move |id| {
+        let weak = weak_skill_revoke.clone();
+        let id = id.to_string();
+        let Some(lease) = acquire_skill_authority_action() else {
+            if let Some(w) = weak.upgrade() {
+                render_skill_index(&w);
+                w.set_status_line(
+                    "Another Skill authority change is still being verified. Try again when it finishes."
+                        .into(),
+                );
+            }
+            return;
+        };
+        let expectation = match verified_skill_authority_expectation_in_cache(&id) {
+            Ok(Some(expectation)) => expectation,
+            Ok(None) => {
+                drop(lease);
+                if let Some(w) = weak.upgrade() {
+                    render_skill_index(&w);
+                    w.set_status_line(
+                        format!("Bundled Skill {id} cannot be revoked; disable it instead.").into(),
+                    );
+                }
+                return;
+            }
+            Err(error) => {
+                drop(lease);
+                if let Some(w) = weak.upgrade() {
+                    render_skill_index(&w);
+                    w.set_status_line(format!("Skill revocation blocked: {error}").into());
+                }
+                return;
+            }
+        };
+        if let Some(w) = weak.upgrade() {
+            w.set_skill_authority_operation_in_flight(true);
+            buddy(&w, GuiActivity::SettingsApplied);
+        }
+        std::thread::spawn(move || {
+            let expected_home = default_neoth_home();
+            let args = skill_authority_cli_args("--revoke", &id, Some(&expectation));
+            let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+            let outcome = run_neothd_json_action::<gui_action::SkillToggleAck>(
+                &arg_refs,
+                "Skill revocation",
+            )
+            .and_then(|ack| ack.verify(&id, "revoked", &expected_home));
+            let skills = fetch_skills();
+            let _ = slint::invoke_from_event_loop(move || {
+                let _lease = lease;
+                if let Some(w) = weak.upgrade() {
+                    w.set_skill_authority_operation_in_flight(false);
+                    let refresh = apply_skills(&w, skills);
+                    if outcome.is_err() || refresh.is_err() {
+                        render_skill_index(&w);
+                    }
+                    w.set_status_line(match (outcome, refresh) {
+                        (Ok(()), Ok(())) => format!(
+                            "Skill {id} revocation committed; live reload requested."
+                        )
+                        .into(),
+                        (Ok(()), Err(error)) => format!(
+                            "Skill {id} revocation committed; live reload requested, but inventory refresh failed: {error}. The previous list is still shown."
+                        )
+                        .into(),
+                        (Err(error), Ok(())) => {
+                            format!("Skill revocation failed for {id}: {error}").into()
+                        }
+                        (Err(error), Err(refresh_error)) => format!(
+                            "Skill revocation failed for {id}: {error}. Inventory refresh also failed: {refresh_error}."
                         )
                         .into(),
                     });
@@ -17379,6 +17491,10 @@ fn skill_summaries_from_inventory_at(
                     manifest,
                     origin,
                     path,
+                    runtime_state,
+                    package_generation_sha256,
+                    install_incarnation,
+                    install_terminal_receipt_sha256,
                 } => {
                     let id = manifest.id.trim();
                     if !valid_skill_gui_id(id) {
@@ -17392,6 +17508,60 @@ fn skill_summaries_from_inventory_at(
                             "skill inventory row `{id}` has an empty description"
                         ));
                     }
+                    let (
+                        authority_generation,
+                        authority_incarnation,
+                        authority_install_receipt,
+                    ) = match origin {
+                        neothd::skills::loader::SkillInventoryOrigin::Bundled => {
+                            if package_generation_sha256.is_some()
+                                || install_incarnation.is_some()
+                                || install_terminal_receipt_sha256.is_some()
+                            {
+                                return Err(format!(
+                                    "bundled skill inventory row `{id}` carries installed authority"
+                                ));
+                            }
+                            (String::new(), String::new(), String::new())
+                        }
+                        neothd::skills::loader::SkillInventoryOrigin::User => {
+                            let generation = package_generation_sha256.as_deref().ok_or_else(|| {
+                                format!(
+                                    "installed skill inventory row `{id}` lacks its package generation"
+                                )
+                            })?;
+                            if !valid_lower_sha256(generation) {
+                                return Err(format!(
+                                    "installed skill inventory row `{id}` has an invalid package generation"
+                                ));
+                            }
+                            match (
+                                install_incarnation,
+                                install_terminal_receipt_sha256.as_deref(),
+                            ) {
+                                (Some(incarnation), Some(receipt))
+                                    if incarnation > 0 && valid_lower_sha256(receipt) =>
+                                {
+                                    (
+                                        generation.to_string(),
+                                        incarnation.to_string(),
+                                        receipt.to_string(),
+                                    )
+                                }
+                                (None, None)
+                                    if runtime_state
+                                        != neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive =>
+                                {
+                                    (generation.to_string(), String::new(), String::new())
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "installed skill inventory row `{id}` has an incomplete install receipt"
+                                    ));
+                                }
+                            }
+                        }
+                    };
                     let (origin, path) = match (origin, path) {
                         (neothd::skills::loader::SkillInventoryOrigin::Bundled, None) => {
                             ("bundled".to_string(), String::new())
@@ -17414,7 +17584,11 @@ fn skill_summaries_from_inventory_at(
                         id: manifest.id.clone(),
                         operation_id: manifest.id,
                         description: manifest.description,
-                        enabled: manifest.enabled,
+                        enabled: matches!(
+                            runtime_state,
+                            neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive
+                                | neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive
+                        ),
                         keywords: manifest.trigger_keywords.join(", "),
                         tags: manifest.tags,
                         broken: false,
@@ -17422,6 +17596,24 @@ fn skill_summaries_from_inventory_at(
                         path,
                         origin,
                         repairable: false,
+                        runtime_state: match runtime_state {
+                            neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive => {
+                                "trusted_bundled_active"
+                            }
+                            neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive => {
+                                "installed_active"
+                            }
+                            neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive => {
+                                "bundled_fallback_active"
+                            }
+                            neothd::skills::loader::SkillInventoryRuntimeState::Disabled => {
+                                "disabled"
+                            }
+                        }
+                        .to_string(),
+                        authority_generation,
+                        authority_incarnation,
+                        authority_install_receipt,
                     }
                 }
                 neothd::skills::loader::SkillInventoryRow::Broken {
@@ -17429,6 +17621,10 @@ fn skill_summaries_from_inventory_at(
                     error,
                     path,
                     repairability,
+                    runtime_state,
+                    package_generation_sha256: _,
+                    install_incarnation: _,
+                    install_terminal_receipt_sha256: _,
                 } => {
                     if id.is_empty()
                         || error.trim().is_empty()
@@ -17453,6 +17649,16 @@ fn skill_summaries_from_inventory_at(
                         repairable: valid_skill_gui_id(&id)
                             && repairability
                                 == neothd::skills::installer::SkillRepairability::ManifestReplaceable,
+                        runtime_state: match runtime_state {
+                            neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive => {
+                                "bundled_fallback_active"
+                            }
+                            _ => "broken",
+                        }
+                        .to_string(),
+                        authority_generation: String::new(),
+                        authority_incarnation: String::new(),
+                        authority_install_receipt: String::new(),
                     }
                 }
             };
@@ -17510,6 +17716,13 @@ fn valid_skill_gui_id(id: &str) -> bool {
             .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
 }
 
+fn valid_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn diagnostic_skill_display_id(id: &str) -> String {
     diagnostic_skill_display_text(id, 128)
 }
@@ -17538,6 +17751,99 @@ fn fetch_skills() -> std::result::Result<Vec<panel_logic::SkillSummary>, String>
 /// `None` is distinct from a verified empty inventory.
 static SKILLS_CACHE: std::sync::Mutex<Option<Vec<panel_logic::SkillSummary>>> =
     std::sync::Mutex::new(None);
+
+#[derive(Clone, Debug)]
+struct VerifiedSkillAuthorityExpectation {
+    generation_sha256: String,
+    incarnation: String,
+    install_receipt_sha256: String,
+}
+
+fn verified_skill_authority_expectation_in_cache(
+    id: &str,
+) -> std::result::Result<Option<VerifiedSkillAuthorityExpectation>, String> {
+    let cache = SKILLS_CACHE
+        .lock()
+        .map_err(|_| "skill inventory cache is unavailable".to_string())?;
+    let skills = cache.as_ref().ok_or_else(|| {
+        "skill inventory has not completed a verified refresh; authority change is unavailable"
+            .to_string()
+    })?;
+    let skill = skills
+        .iter()
+        .find(|skill| skill.operation_id == id)
+        .ok_or_else(|| format!("skill `{id}` is not present in the verified inventory"))?;
+    if skill.broken && skill.runtime_state == "bundled_fallback_active" {
+        return Ok(None);
+    }
+    if skill.broken {
+        return Err(format!(
+            "installed candidate `{id}` is broken; repair or remove it before changing authority"
+        ));
+    }
+    if skill.origin == "bundled" {
+        return Ok(None);
+    }
+    if skill.origin != "user"
+        || !valid_lower_sha256(&skill.authority_generation)
+        || skill
+            .authority_incarnation
+            .parse::<u64>()
+            .ok()
+            .filter(|&n| n > 0)
+            .is_none()
+        || !valid_lower_sha256(&skill.authority_install_receipt)
+    {
+        return Err(format!(
+            "installed candidate `{id}` has no authenticated install receipt; reinstall it before changing authority"
+        ));
+    }
+    Ok(Some(VerifiedSkillAuthorityExpectation {
+        generation_sha256: skill.authority_generation.clone(),
+        incarnation: skill.authority_incarnation.clone(),
+        install_receipt_sha256: skill.authority_install_receipt.clone(),
+    }))
+}
+
+fn skill_authority_cli_args(
+    flag: &str,
+    id: &str,
+    expectation: Option<&VerifiedSkillAuthorityExpectation>,
+) -> Vec<String> {
+    let mut args = vec!["skills".to_string(), flag.to_string(), id.to_string()];
+    if let Some(expectation) = expectation {
+        args.extend([
+            "--expected-authority-generation-sha256".to_string(),
+            expectation.generation_sha256.clone(),
+            "--expected-authority-incarnation".to_string(),
+            expectation.incarnation.clone(),
+            "--expected-authority-install-receipt-sha256".to_string(),
+            expectation.install_receipt_sha256.clone(),
+        ]);
+    }
+    args
+}
+
+static SKILL_AUTHORITY_ACTION_IN_FLIGHT: std::sync::Mutex<bool> = std::sync::Mutex::new(false);
+
+struct SkillAuthorityActionLease;
+
+impl Drop for SkillAuthorityActionLease {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = SKILL_AUTHORITY_ACTION_IN_FLIGHT.lock() {
+            *in_flight = false;
+        }
+    }
+}
+
+fn acquire_skill_authority_action() -> Option<SkillAuthorityActionLease> {
+    let mut in_flight = SKILL_AUTHORITY_ACTION_IN_FLIGHT.lock().ok()?;
+    if *in_flight {
+        return None;
+    }
+    *in_flight = true;
+    Some(SkillAuthorityActionLease)
+}
 
 fn skill_exists_in_inventory(skills: &[panel_logic::SkillSummary], id: &str) -> bool {
     skills.iter().any(|skill| skill.operation_id == id)
@@ -17666,6 +17972,10 @@ fn render_skill_index(window: &MainWindow) {
             path: s.path.into(),
             origin: s.origin.into(),
             repairable: s.repairable,
+            runtime_state: s.runtime_state.into(),
+            authority_generation: s.authority_generation.into(),
+            authority_incarnation: s.authority_incarnation.into(),
+            authority_install_receipt: s.authority_install_receipt.into(),
         })
         .collect();
     window.set_skills(ModelRc::new(VecModel::from(rows)));
@@ -25139,6 +25449,10 @@ mod tests {
             manifest: Box::new(manifest),
             origin: neothd::skills::loader::SkillInventoryOrigin::User,
             path: Some(skills_dir.join("alpha")),
+            runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::Disabled,
+            package_generation_sha256: Some("a".repeat(64)),
+            install_incarnation: None,
+            install_terminal_receipt_sha256: None,
         }];
 
         let summaries = skill_summaries_from_inventory_at(inventory, &skills_dir).unwrap();
@@ -25155,6 +25469,30 @@ mod tests {
     }
 
     #[test]
+    fn skill_inventory_never_marks_a_bundled_fallback_as_installed_active() {
+        let dir = TempDir::new().unwrap();
+        let skills_dir = dir.path().join("skills");
+        let inventory = vec![neothd::skills::loader::SkillInventoryRow::Healthy {
+            manifest: Box::new(test_skill_manifest(
+                "systematic_debugging",
+                "Installed candidate",
+            )),
+            origin: neothd::skills::loader::SkillInventoryOrigin::User,
+            path: Some(skills_dir.join("systematic_debugging")),
+            runtime_state:
+                neothd::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive,
+            package_generation_sha256: Some("a".repeat(64)),
+            install_incarnation: None,
+            install_terminal_receipt_sha256: None,
+        }];
+
+        let summaries = skill_summaries_from_inventory_at(inventory, &skills_dir).unwrap();
+        assert!(!summaries[0].enabled);
+        assert_eq!(summaries[0].runtime_state, "bundled_fallback_active");
+        assert_eq!(summaries[0].origin, "user");
+    }
+
+    #[test]
     fn skill_inventory_rejects_partial_or_ambiguous_snapshots() {
         let dir = TempDir::new().unwrap();
         let skills_dir = dir.path().join("skills");
@@ -25163,11 +25501,20 @@ mod tests {
                 manifest: Box::new(test_skill_manifest("alpha", "one")),
                 origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
                 path: None,
+                runtime_state:
+                    neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
             neothd::skills::loader::SkillInventoryRow::Healthy {
                 manifest: Box::new(test_skill_manifest("alpha", "two")),
                 origin: neothd::skills::loader::SkillInventoryOrigin::User,
                 path: Some(skills_dir.join("alpha")),
+                runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::InstalledActive,
+                package_generation_sha256: Some("a".repeat(64)),
+                install_incarnation: Some(1),
+                install_terminal_receipt_sha256: Some("b".repeat(64)),
             },
         ];
         assert!(
@@ -25182,6 +25529,10 @@ mod tests {
             manifest: Box::new(empty_manifest),
             origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
             path: None,
+            runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+            package_generation_sha256: None,
+            install_incarnation: None,
+            install_terminal_receipt_sha256: None,
         }];
         assert!(
             skill_summaries_from_inventory_at(empty_description, &skills_dir)
@@ -25193,6 +25544,10 @@ mod tests {
             manifest: Box::new(test_skill_manifest("alpha", "Alpha skill")),
             origin: neothd::skills::loader::SkillInventoryOrigin::User,
             path: Some(skills_dir.join("other")),
+            runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::Disabled,
+            package_generation_sha256: Some("a".repeat(64)),
+            install_incarnation: None,
+            install_terminal_receipt_sha256: None,
         }];
         assert!(
             skill_summaries_from_inventory_at(wrong_path, &skills_dir)
@@ -25210,18 +25565,31 @@ mod tests {
                 manifest: Box::new(test_skill_manifest("bundled", "Bundled skill")),
                 origin: neothd::skills::loader::SkillInventoryOrigin::Bundled,
                 path: None,
+                runtime_state:
+                    neothd::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
             neothd::skills::loader::SkillInventoryRow::Broken {
                 id: "broken-skill".to_string(),
                 error: "missing skill.yaml".to_string(),
                 path: skills_dir.join("broken-skill"),
                 repairability: neothd::skills::installer::SkillRepairability::ManifestReplaceable,
+                runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::Disabled,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
             neothd::skills::loader::SkillInventoryRow::Broken {
                 id: "broken\nskill".to_string(),
                 error: "bad\nmanifest".to_string(),
                 path: skills_dir.join("broken\nskill"),
                 repairability: neothd::skills::installer::SkillRepairability::RemoveOnly,
+                runtime_state: neothd::skills::loader::SkillInventoryRuntimeState::Disabled,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
         ];
         let summaries = skill_summaries_from_inventory_at(inventory, &skills_dir).unwrap();
@@ -25304,6 +25672,10 @@ mod tests {
             repairable: false,
             error: String::new(),
             path: String::new(),
+            runtime_state: "installed_active".to_string(),
+            authority_generation: "a".repeat(64),
+            authority_incarnation: "1".to_string(),
+            authority_install_receipt: "b".repeat(64),
         }];
 
         let error = verify_skill_absent_after_uninstall(&inventory, "alpha").unwrap_err();

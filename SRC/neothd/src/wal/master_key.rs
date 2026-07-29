@@ -17,6 +17,7 @@
 use super::compaction::{maybe_unwrap_dpapi, write_key_securely};
 use super::crypto::{INFO_CONFIG, INFO_WAL_SEGMENT, WalMasterKey, WalSegmentKey, derive_subkey};
 use anyhow::{Context, Result};
+#[cfg(any(test, feature = "wasm-plugin-host"))]
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -24,6 +25,7 @@ use std::sync::OnceLock;
 /// Raw keys are 32 bytes and a DPAPI envelope for that input is small. Keep a
 /// hard ceiling so a capture/read path never follows an unbounded `master.key`
 /// allocation controlled by the filesystem.
+#[cfg(any(test, feature = "wasm-plugin-host"))]
 const MAX_STORED_MASTER_KEY_BYTES: usize = 4 * 1024;
 
 /// Default master-key path: `<home>/wal/master.key`.
@@ -67,6 +69,7 @@ pub fn segment_key_at(home: &Path) -> Option<WalSegmentKey> {
 /// capability-relatively without following symlinks or Windows reparse points.
 /// The leaf must be a real regular file and is read through the validated handle
 /// with [`MAX_STORED_MASTER_KEY_BYTES`] as a hard allocation ceiling.
+#[cfg(any(test, feature = "wasm-plugin-host"))]
 pub(crate) fn segment_key_at_checked(home: &Path) -> Result<Option<WalSegmentKey>> {
     let Some(master) = load_master_key_at_checked(home)? else {
         return Ok(None);
@@ -76,6 +79,7 @@ pub(crate) fn segment_key_at_checked(home: &Path) -> Result<Option<WalSegmentKey
         .map(Some)
 }
 
+#[cfg(any(test, feature = "wasm-plugin-host"))]
 fn load_master_key_at_checked(home: &Path) -> Result<Option<WalMasterKey>> {
     let wal_dir = home.join("wal");
     let Some(parent) =

@@ -12,38 +12,34 @@
 //!
 //! ## What ships in QM-3
 //!
-//! - `ModeRegistry::from_skills(&[Skill])` — flatten every skill's
-//!   `modes:` list into one searchable table. Asserts no duplicate
+//! - `ModeRegistry::from_skills(&[RuntimeSkill])` — flatten every admitted
+//!   skill's `modes:` list into one searchable table. Asserts no duplicate
 //!   mode-id across the whole set (two skills can't claim the same
 //!   mode name).
-//! - `ModeRegistry::get(id)` — O(1) lookup by id.
-//! - `ModeRegistry::match_trigger(prompt)` — finds the first mode
-//!   whose `trigger_phrases` matches the operator's message. Mirrors
-//!   the skill router's keyword-scan, one level deeper.
-//! - `ModeRegistry::all()` / `iter()` — enumerate for `neoth mode
-//!   list` rendering.
+//! - `ModeRegistry::get(id)` — deterministic lookup by id.
+//! - `ModeRegistry::match_trigger(prompt)` — finds the
+//!   lexicographically-first mode whose `trigger_phrases` matches the
+//!   operator's message. Mirrors the skill router's keyword-scan, one level
+//!   deeper without a `HashMap` iteration tie.
+//! - `ModeRegistry::iter()` — deterministic enumeration for `neoth mode list`
+//!   rendering.
 //! - `ResolvedMode` — bundles the matched mode + its parent skill id
 //!   so callers can both inject the mode's prompt delta AND
 //!   subsequently apply the skill's tool_allowlist.
 //!
-//! ## What's wiring (follow-up commits)
+//! ## Runtime wiring
 //!
-//! - `/mode <id>` slash command — operator types `/mode fact-check`
-//!   in chat, daemon writes `freedom.yaml::active_mode` and reloads.
-//! - `neoth mode <id>` CLI — same path, CLI surface.
-//! - Stage-1 keyword scan integration — `cli::chat::run_chat_with`
-//!   calls `match_trigger` BEFORE `skills::route` so mode triggers
-//!   beat broader skill matches.
-//! - WAL `0xB0..=0xBF` band for mode-activation audit frames.
-//!
-//! The primitive is in place + tested today; the wiring lands when
-//! the chat dispatcher integration commit drops.
+//! CLI chat and the channel pipeline both build this registry from the exact
+//! authority-admitted [`super::schema::RuntimeSkill`] snapshot and resolve
+//! mode triggers before broader Skill routing. The `neoth mode` CLI reads the
+//! same admitted layer. Mode checkpoints use the canonical WAL event defined
+//! by the runtime rather than a second mode-only audit path.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use anyhow::Result;
 
-use super::schema::{ModeEntry, Skill};
+use super::schema::{ModeEntry, RuntimeSkillView, Skill};
 
 /// QM-3 process-wide mode lookup. Built once at daemon boot from
 /// the loaded skill set; cheap to share across handlers via Arc.
@@ -51,7 +47,7 @@ use super::schema::{ModeEntry, Skill};
 pub struct ModeRegistry {
     /// Flat `mode_id → (skill_id, mode)` map. Mode ids are unique
     /// across the whole set per the build-time check.
-    entries: HashMap<String, ResolvedMode>,
+    entries: BTreeMap<String, ResolvedMode>,
 }
 
 /// QM-3 resolved mode — the matched `ModeEntry` plus its parent
@@ -75,8 +71,20 @@ impl ModeRegistry {
     /// a config-time error operators should fix before the daemon
     /// boots (two skills both claiming `lit-review` would have
     /// undefined routing).
-    pub fn from_skills(skills: &[Skill]) -> Result<Self> {
-        let mut entries = HashMap::new();
+    pub fn from_skills<S: RuntimeSkillView>(skills: &[S]) -> Result<Self> {
+        Self::from_skill_refs(skills.iter().map(RuntimeSkillView::runtime_skill))
+    }
+
+    /// Validate raw package inventory without granting it runtime mode
+    /// authority. This is intentionally separate from `from_skills`: callers
+    /// may report malformed/duplicate installed manifests, but cannot use this
+    /// path to obtain a routable `ModeRegistry`.
+    pub(crate) fn validate_inventory(skills: &[Skill]) -> Result<()> {
+        Self::from_skill_refs(skills.iter()).map(|_| ())
+    }
+
+    fn from_skill_refs<'a>(skills: impl IntoIterator<Item = &'a Skill>) -> Result<Self> {
+        let mut entries = BTreeMap::new();
         for s in skills {
             if !s.manifest.enabled {
                 continue;
@@ -104,7 +112,7 @@ impl ModeRegistry {
         Ok(Self { entries })
     }
 
-    /// O(1) lookup by mode id.
+    /// Deterministic O(log n) lookup by mode id.
     pub fn get(&self, id: &str) -> Option<&ResolvedMode> {
         self.entries.get(id)
     }
@@ -120,20 +128,16 @@ impl ModeRegistry {
         self.entries.is_empty()
     }
 
-    /// Enumerate every registered mode for `neoth mode list` output.
-    /// Order is non-deterministic (HashMap iteration); the CLI
-    /// renderer sorts by mode id before printing.
+    /// Enumerate every registered mode in stable mode-id order for
+    /// `neoth mode list` and every other consumer.
     pub fn iter(&self) -> impl Iterator<Item = &ResolvedMode> {
         self.entries.values()
     }
 
-    /// Stage-1 trigger matcher. Returns the FIRST mode whose
-    /// trigger_phrases substring-match the operator's prompt
-    /// (case-insensitive). When two modes both match, the iteration
-    /// order is non-deterministic — for the academic skill set
-    /// triggers are designed to be mutually exclusive ("fact-check"
-    /// vs "lit-review" vs "systematic-review") so collisions are
-    /// rare in practice. Future SP-3 work adds priority ordering.
+    /// Stage-1 trigger matcher. Returns the lexicographically-first mode whose
+    /// trigger phrases substring-match the operator's prompt
+    /// (case-insensitive), giving overlapping phrases an explicit stable
+    /// tie-break.
     pub fn match_trigger(&self, prompt: &str) -> Option<&ResolvedMode> {
         let lower = prompt.to_lowercase();
         for resolved in self.entries.values() {
@@ -197,7 +201,7 @@ mod tests {
 
     #[test]
     fn registry_built_from_empty_skill_list_is_empty() {
-        let r = ModeRegistry::from_skills(&[]).unwrap();
+        let r = ModeRegistry::from_skills(&Vec::<Skill>::new()).unwrap();
         assert!(r.is_empty());
         assert_eq!(r.len(), 0);
     }
@@ -307,6 +311,25 @@ mod tests {
         let hit = r.match_trigger("Can you do a Literature Review on transformers?");
         assert!(hit.is_some());
         assert_eq!(hit.unwrap().mode.id, "lit-review");
+    }
+
+    #[test]
+    fn overlapping_mode_triggers_use_stable_mode_id_tie_break() {
+        let later = make_skill(
+            "later-parent",
+            vec![make_mode("zeta-review", &["review this"], Oversight::Low)],
+        );
+        let earlier = make_skill(
+            "earlier-parent",
+            vec![make_mode("alpha-review", &["review this"], Oversight::High)],
+        );
+        let registry = ModeRegistry::from_skills(&[later, earlier]).unwrap();
+
+        let hit = registry
+            .match_trigger("Please review this")
+            .expect("overlapping trigger must resolve deterministically");
+        assert_eq!(hit.mode.id, "alpha-review");
+        assert_eq!(hit.skill_id, "earlier-parent");
     }
 
     #[test]

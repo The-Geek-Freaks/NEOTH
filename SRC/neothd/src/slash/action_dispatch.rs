@@ -56,14 +56,9 @@ pub async fn dispatch_action(
     config: &FreedomConfig,
     source: CommandSource,
 ) -> ActionOutcome {
-    dispatch_action_at(
-        action,
-        args,
-        config,
-        source,
-        &FreedomConfig::default_neoth_home(),
-    )
-    .await
+    let home = FreedomConfig::default_neoth_home();
+    let config_path = home.join("freedom.yaml");
+    dispatch_action_with_paths(action, args, config, source, &home, &config_path).await
 }
 
 async fn dispatch_action_at(
@@ -72,6 +67,28 @@ async fn dispatch_action_at(
     config: &FreedomConfig,
     source: CommandSource,
     home: &Path,
+) -> ActionOutcome {
+    dispatch_action_with_paths(
+        action,
+        args,
+        config,
+        source,
+        home,
+        &home.join("freedom.yaml"),
+    )
+    .await
+}
+
+/// Instance-bound dispatcher used by custom-config chat and daemon surfaces.
+/// `config` is the exact accepted generation and `config_path` is the only
+/// file mutations may update.
+pub(crate) async fn dispatch_action_with_paths(
+    action: SlashAction,
+    args: &str,
+    config: &FreedomConfig,
+    source: CommandSource,
+    home: &Path,
+    config_path: &Path,
 ) -> ActionOutcome {
     let trimmed = args.trim();
     if source.is_channel() && action.is_destructive_with_args(trimmed) {
@@ -89,7 +106,7 @@ async fn dispatch_action_at(
         SlashAction::ProviderSwitch => handle_provider_switch(trimmed, home).await,
         SlashAction::ConnectChannel => handle_connect(trimmed, home).await,
         SlashAction::DisconnectChannel => handle_disconnect(trimmed, home),
-        SlashAction::SkillRegistry => handle_skill(trimmed, home).await,
+        SlashAction::SkillRegistry => handle_skill(trimmed, home, config, config_path).await,
         SlashAction::PluginRegistry => handle_plugin(trimmed, home),
         SlashAction::MemoryView => handle_memory(trimmed, home).await,
         SlashAction::ConsentManage => handle_consent(trimmed, config, home).await,
@@ -514,78 +531,224 @@ fn handle_disconnect(args: &str, home: &Path) -> ActionOutcome {
     }
 }
 
-async fn handle_skill(args: &str, home: &Path) -> ActionOutcome {
+async fn handle_skill(
+    args: &str,
+    home: &Path,
+    accepted_config: &FreedomConfig,
+    config_path: &Path,
+) -> ActionOutcome {
     let tokens: Vec<&str> = args.split_whitespace().collect();
     let sub = tokens.first().copied().unwrap_or("list");
-    let skills = match crate::skills::load_all(&home.join("skills")).await {
-        Ok(skills) => skills,
+    let inventory = match crate::skills::loader::diagnostic_inventory_for_accepted_config(
+        &home.join("skills"),
+        accepted_config.clone(),
+        config_path.to_path_buf(),
+    )
+    .await
+    {
+        Ok(inventory) => inventory,
         Err(error) => return failed("/skill", error),
+    };
+    let runtime_label = |state: crate::skills::loader::SkillInventoryRuntimeState| match state {
+        crate::skills::loader::SkillInventoryRuntimeState::TrustedBundledActive => "bundled-active",
+        crate::skills::loader::SkillInventoryRuntimeState::InstalledActive => "installed-active",
+        crate::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive => {
+            "bundled-fallback-active"
+        }
+        crate::skills::loader::SkillInventoryRuntimeState::Disabled => "disabled/quarantined",
     };
     match sub {
         "list" if tokens.len() <= 1 => {
-            let mut lines = vec![format!("Skills ({}):", skills.len())];
-            for skill in &skills {
-                lines.push(format!(
-                    "  {}  [{}]  {}",
-                    skill.id(),
-                    if skill.is_enabled() {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    },
-                    skill.description()
-                ));
+            let mut lines = vec![format!("Skills and diagnostics ({}):", inventory.len())];
+            for row in &inventory {
+                match row {
+                    crate::skills::loader::SkillInventoryRow::Healthy {
+                        manifest,
+                        origin,
+                        runtime_state,
+                        ..
+                    } => lines.push(format!(
+                        "  {}  [{}]  [{}]  {}",
+                        manifest.id,
+                        runtime_label(*runtime_state),
+                        match origin {
+                            crate::skills::loader::SkillInventoryOrigin::Bundled => "bundled",
+                            crate::skills::loader::SkillInventoryOrigin::User => "installed",
+                        },
+                        manifest.description
+                    )),
+                    crate::skills::loader::SkillInventoryRow::Broken {
+                        id,
+                        error,
+                        runtime_state,
+                        ..
+                    } => lines.push(format!(
+                        "  {id}  [broken candidate; runtime={}]  {error}",
+                        runtime_label(*runtime_state)
+                    )),
+                }
             }
             ActionOutcome::Handled {
                 text: lines.join("\n"),
             }
         }
-        "info" | "enable" | "disable" if tokens.len() == 2 => {
+        "info" | "enable" | "disable" | "revoke" if tokens.len() == 2 => {
             let id = tokens[1];
-            let Some(skill) = skills
+            let Some(row) = inventory
                 .iter()
-                .find(|skill| skill.id().eq_ignore_ascii_case(id))
+                .find(|row| row.id().eq_ignore_ascii_case(id))
             else {
                 return ActionOutcome::InvalidArgs {
                     text: format!("/skill: no installed skill with id `{id}`"),
                 };
             };
+            let (
+                manifest,
+                origin,
+                runtime_state,
+                package_generation_sha256,
+                install_incarnation,
+                install_terminal_receipt_sha256,
+            ) = match row {
+                crate::skills::loader::SkillInventoryRow::Healthy {
+                    manifest,
+                    origin,
+                    runtime_state,
+                    package_generation_sha256,
+                    install_incarnation,
+                    install_terminal_receipt_sha256,
+                    ..
+                } => (
+                    manifest,
+                    origin,
+                    runtime_state,
+                    package_generation_sha256,
+                    install_incarnation,
+                    install_terminal_receipt_sha256,
+                ),
+                crate::skills::loader::SkillInventoryRow::Broken {
+                    error,
+                    runtime_state,
+                    ..
+                } => {
+                    if sub == "info" {
+                        return ActionOutcome::Handled {
+                            text: format!(
+                                "Skill `{id}`\ninstalled candidate: broken\nruntime: {}\nerror: {error}",
+                                runtime_label(*runtime_state)
+                            ),
+                        };
+                    }
+                    if sub == "disable"
+                        && *runtime_state
+                            == crate::skills::loader::SkillInventoryRuntimeState::BundledFallbackActive
+                    {
+                        return match crate::cli::skills::set_skill_authority_at_config_with_expectation(
+                            home,
+                            config_path,
+                            id,
+                            crate::cli::skills::SkillAuthorityTarget::Disabled,
+                            crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(outcome) => ActionOutcome::Handled {
+                                text: format!(
+                                    "Skill `{}` bundled fallback disabled (policy committed; live reload requested).",
+                                    outcome.id
+                                ),
+                            },
+                            Err(error) => failed("/skill", error),
+                        };
+                    }
+                    return ActionOutcome::InvalidArgs {
+                        text: format!(
+                            "/skill: installed candidate `{id}` is broken ({error}); effective runtime is {}",
+                            runtime_label(*runtime_state)
+                        ),
+                    };
+                }
+            };
             if sub == "info" {
                 return ActionOutcome::Handled {
                     text: format!(
-                        "Skill `{}`\nstate: {}\nversion: {}\ndescription: {}\ntriggers: {}\ntools: {}\nmodel: {}",
-                        skill.id(),
-                        if skill.is_enabled() {
+                        "Skill `{}`\nruntime: {}\norigin: {}\npolicy: {}\nversion: {}\ndescription: {}\ntriggers: {}\ntools: {}\nmodel: {}",
+                        manifest.id,
+                        runtime_label(*runtime_state),
+                        match origin {
+                            crate::skills::loader::SkillInventoryOrigin::Bundled => "bundled",
+                            crate::skills::loader::SkillInventoryOrigin::User => "installed",
+                        },
+                        if manifest.enabled {
                             "enabled"
                         } else {
                             "disabled"
                         },
-                        skill.manifest.version,
-                        skill.description(),
-                        skill.trigger_keywords().join(", "),
-                        if skill.manifest.tool_allowlist.is_empty() {
+                        manifest.version,
+                        manifest.description,
+                        manifest.trigger_keywords.join(", "),
+                        if manifest.tool_allowlist.is_empty() {
                             "none".into()
                         } else {
-                            skill.manifest.tool_allowlist.join(", ")
+                            manifest.tool_allowlist.join(", ")
                         },
-                        skill.manifest.model.as_deref().unwrap_or("default"),
+                        manifest.model.as_deref().unwrap_or("default"),
                     ),
                 };
             }
-            let enabled = sub == "enable";
-            match crate::cli::skills::set_skill_enabled_at(home, id, enabled).await {
-                Ok(id) => handled_after_reload(
-                    home,
-                    format!(
-                        "Skill `{id}` {}.",
-                        if enabled { "enabled" } else { "disabled" }
+            let target = match sub {
+                "enable" => crate::cli::skills::SkillAuthorityTarget::Enabled,
+                "disable" => crate::cli::skills::SkillAuthorityTarget::Disabled,
+                "revoke" => crate::cli::skills::SkillAuthorityTarget::Revoked,
+                _ => unreachable!("guarded Skill action"),
+            };
+            let expectation = match origin {
+                crate::skills::loader::SkillInventoryOrigin::Bundled => None,
+                crate::skills::loader::SkillInventoryOrigin::User => {
+                    let (Some(generation), Some(incarnation), Some(receipt)) = (
+                        package_generation_sha256.as_ref(),
+                        *install_incarnation,
+                        install_terminal_receipt_sha256.as_ref(),
+                    ) else {
+                        return ActionOutcome::Failed {
+                            text: format!(
+                                "/skill: installed candidate `{id}` has no authenticated install receipt; reinstall it before changing authority"
+                            ),
+                        };
+                    };
+                    match crate::skills::authority::InstalledSkillDecisionExpectation::new(
+                        generation.clone(),
+                        incarnation,
+                        receipt.clone(),
+                    ) {
+                        Ok(expectation) => Some(expectation),
+                        Err(error) => return failed("/skill", error),
+                    }
+                }
+            };
+            match crate::cli::skills::set_skill_authority_at_config_with_expectation(
+                home,
+                config_path,
+                id,
+                target,
+                crate::skills::authority::SkillAuthorityDecisionSource::OperatorBuddy,
+                expectation,
+            )
+            .await
+            {
+                Ok(outcome) => ActionOutcome::Handled {
+                    text: format!(
+                        "Skill `{}` {} ({} authority; live reload requested).",
+                        outcome.id, outcome.state, outcome.origin
                     ),
-                ),
+                },
                 Err(error) => failed("/skill", error),
             }
         }
         _ => ActionOutcome::InvalidArgs {
-            text: "/skill — use: list | info <id> | enable <id> | disable <id>".into(),
+            text: "/skill — use: list | info <id> | enable <id> | disable <id> | revoke <id>"
+                .into(),
         },
     }
 }
@@ -1186,12 +1349,45 @@ mod tests {
         let config = FreedomConfig::default();
         write_config(dir.path(), &config);
 
-        let out = handle_skill("enable raskal", dir.path()).await;
+        let out = handle_skill(
+            "enable raskal",
+            dir.path(),
+            &config,
+            &dir.path().join("freedom.yaml"),
+        )
+        .await;
 
         assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
         let loaded = FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
         assert!(loaded.skills.enabled.contains(&"raskal".to_string()));
         assert!(!loaded.skills.disabled.contains(&"raskal".to_string()));
+    }
+
+    #[tokio::test]
+    async fn skill_action_mutates_only_the_selected_custom_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut adjacent = FreedomConfig::default();
+        adjacent.skills.disabled.push("raskal".to_string());
+        write_config(dir.path(), &adjacent);
+        let custom_path = dir.path().join("operator-instance.yaml");
+        let custom = FreedomConfig::default();
+        std::fs::write(&custom_path, serde_yaml::to_string(&custom).unwrap()).unwrap();
+
+        let out = handle_skill("enable raskal", dir.path(), &custom, &custom_path).await;
+
+        assert!(matches!(out, ActionOutcome::Handled { .. }), "{out:?}");
+        let adjacent_after =
+            FreedomConfig::load_from_path(&dir.path().join("freedom.yaml")).unwrap();
+        assert!(
+            adjacent_after
+                .skills
+                .disabled
+                .contains(&"raskal".to_string()),
+            "the adjacent default config must not be mutated"
+        );
+        let custom_after = FreedomConfig::load_from_path(&custom_path).unwrap();
+        assert!(custom_after.skills.enabled.contains(&"raskal".to_string()));
+        assert!(!custom_after.skills.disabled.contains(&"raskal".to_string()));
     }
 
     #[test]
@@ -1284,8 +1480,10 @@ mod tests {
         assert!(SlashAction::ConfigGet.is_destructive_with_args("operator_id alex"));
         assert!(!SlashAction::ConfigGet.is_destructive_with_args("operator_id"));
         assert!(SlashAction::SkillRegistry.is_destructive_with_args("enable foo"));
+        assert!(SlashAction::SkillRegistry.is_destructive_with_args("revoke foo"));
         assert!(!SlashAction::SkillRegistry.is_destructive_with_args("info foo"));
         assert!(SlashAction::PluginRegistry.is_destructive_with_args("disable foo"));
+        assert!(!SlashAction::PluginRegistry.is_destructive_with_args("revoke foo"));
         assert!(!SlashAction::PluginRegistry.is_destructive_with_args("list"));
         assert!(SlashAction::MemoryView.is_destructive_with_args("forget x --confirm"));
         assert!(!SlashAction::MemoryView.is_destructive_with_args("tier hot"));
@@ -1300,6 +1498,19 @@ mod tests {
         let out = dispatch_action_at(
             SlashAction::ConfigGet,
             "operator_id attacker",
+            &FreedomConfig::default(),
+            CommandSource::Channel,
+            Path::new("does-not-exist"),
+        )
+        .await;
+        assert!(out.is_channel_blocked());
+    }
+
+    #[tokio::test]
+    async fn channel_skill_revoke_is_blocked_before_disk_access() {
+        let out = dispatch_action_at(
+            SlashAction::SkillRegistry,
+            "revoke attacker-controlled",
             &FreedomConfig::default(),
             CommandSource::Channel,
             Path::new("does-not-exist"),

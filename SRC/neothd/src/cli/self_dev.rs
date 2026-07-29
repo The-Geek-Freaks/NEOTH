@@ -233,6 +233,7 @@ fn review_proposals_json(entries: &[&StoredProposal]) -> Vec<serde_json::Value> 
                     "target":       e.proposal.target,
                     "reason":       e.proposal.reason,
                     "status":       status_str,
+                    "extension_authority": e.proposal.extension_authority,
                     "patch_path":   patch_path.to_string_lossy(),
                     "diff_sha256":  diff_sha256,
                     "target_paths": target_paths,
@@ -244,6 +245,7 @@ fn review_proposals_json(entries: &[&StoredProposal]) -> Vec<serde_json::Value> 
                     "target":       e.proposal.target,
                     "reason":       e.proposal.reason,
                     "status":       status_str,
+                    "extension_authority": e.proposal.extension_authority,
                     "patch_path":   serde_json::Value::Null,
                     "diff_sha256":  serde_json::Value::Null,
                     "target_paths": serde_json::Value::Null,
@@ -284,6 +286,9 @@ fn run_review(home: &Path, min_confidence: f64, output: crate::cli::OutputFormat
         println!("  kind        {}", e.proposal.kind.as_str());
         println!("  confidence  {:.2}", e.proposal.confidence);
         println!("  target      {}", e.proposal.target);
+        if let Some(binding) = &e.proposal.extension_authority {
+            println!("  authority   {binding:?}");
+        }
         println!("  reason      {}", e.proposal.reason);
         println!();
         shown += 1;
@@ -359,7 +364,9 @@ async fn run_accept(
 
 async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Result<()> {
     use crate::cron::schema::{CronRole, JobsFile, classify_role};
-    use crate::profile::self_dev::{ProposalKind, ValidatedProposalTarget};
+    use crate::profile::self_dev::{
+        ExtensionAuthorityBinding, ProposalKind, ValidatedProposalTarget,
+    };
 
     match proposal
         .validate_for_acceptance()
@@ -371,8 +378,31 @@ async fn apply_proposal_effect(home: &Path, proposal: &SelfDevProposal) -> Resul
         ValidatedProposalTarget::Verbosity(verbosity) => {
             crate::cli::profile::set_communication_verbosity_override_at(home, verbosity)?;
         }
-        ValidatedProposalTarget::ExtensionSelector(id) => {
-            crate::cli::skills::set_skill_enabled_at(home, &id, true).await?;
+        ValidatedProposalTarget::ExtensionSelector { id, authority } => {
+            let config_path = home.join("freedom.yaml");
+            let expectation = match authority {
+                ExtensionAuthorityBinding::Bundled => None,
+                ExtensionAuthorityBinding::Installed {
+                    package_generation_sha256,
+                    install_incarnation,
+                    install_terminal_receipt_sha256,
+                } => Some(
+                    crate::skills::authority::InstalledSkillDecisionExpectation::new(
+                        package_generation_sha256,
+                        install_incarnation,
+                        install_terminal_receipt_sha256,
+                    )?,
+                ),
+            };
+            crate::cli::skills::set_skill_authority_at_config_with_expectation(
+                home,
+                &config_path,
+                &id,
+                crate::cli::skills::SkillAuthorityTarget::Enabled,
+                crate::skills::authority::SkillAuthorityDecisionSource::AuthenticatedProposal,
+                expectation,
+            )
+            .await?;
         }
         ValidatedProposalTarget::BriefingTime { hour, minute } => {
             // Reschedule the operator's briefing cron job to the proposed
@@ -594,6 +624,103 @@ pub(crate) async fn store_proposals(
     if proposals.is_empty() {
         return Ok(0);
     }
+    let mut proposals = proposals.to_vec();
+    if proposals
+        .iter()
+        .any(|proposal| proposal.kind == crate::profile::self_dev::ProposalKind::LearnExtension)
+    {
+        let config_path = home.join("freedom.yaml");
+        let config = crate::config::FreedomConfig::load_from_path_or_default(&config_path)
+            .context("load Skill policy while binding extension proposals")?;
+        let inventory = crate::skills::loader::diagnostic_inventory_for_accepted_config(
+            &home.join("skills"),
+            config,
+            config_path,
+        )
+        .await
+        .context("capture exact Skill inventory for extension proposals")?;
+        for proposal in proposals.iter_mut().filter(|proposal| {
+            proposal.kind == crate::profile::self_dev::ProposalKind::LearnExtension
+        }) {
+            // Never trust a caller-supplied/stale proof. Only a fresh match
+            // against this instance's authenticated inventory may become
+            // operator-reviewable.
+            proposal.extension_authority = None;
+            let Some(row) = inventory
+                .iter()
+                .find(|row| row.id().eq_ignore_ascii_case(&proposal.target))
+            else {
+                continue;
+            };
+            let canonical_id = row.id().to_string();
+            let binding = match row {
+                crate::skills::loader::SkillInventoryRow::Healthy {
+                    origin: crate::skills::loader::SkillInventoryOrigin::Bundled,
+                    ..
+                } => Some(crate::profile::self_dev::ExtensionAuthorityBinding::Bundled),
+                crate::skills::loader::SkillInventoryRow::Healthy {
+                    origin: crate::skills::loader::SkillInventoryOrigin::User,
+                    package_generation_sha256: Some(generation),
+                    install_incarnation: Some(incarnation),
+                    install_terminal_receipt_sha256: Some(receipt),
+                    ..
+                } => {
+                    let exact_revoked = match crate::skills::authority::inspect_current_authority(
+                        home,
+                        &canonical_id,
+                    ) {
+                        Ok(Some(status))
+                            if status.record().package_generation_sha256.as_str()
+                                == generation.as_str()
+                                && status.record().install_incarnation == *incarnation
+                                && status.record().install_terminal_receipt_sha256.as_str()
+                                    == receipt.as_str() =>
+                        {
+                            status.record().state
+                                == crate::skills::authority::SkillAuthorityState::Revoked
+                        }
+                        Ok(_) => false,
+                        Err(error) => {
+                            tracing::warn!(
+                                skill_id = %proposal.target,
+                                %error,
+                                "skipping extension proposal whose current authority cannot be authenticated"
+                            );
+                            true
+                        }
+                    };
+                    (!exact_revoked).then(|| {
+                        crate::profile::self_dev::ExtensionAuthorityBinding::Installed {
+                            package_generation_sha256: generation.clone(),
+                            install_incarnation: *incarnation,
+                            install_terminal_receipt_sha256: receipt.clone(),
+                        }
+                    })
+                }
+                _ => None,
+            };
+            if let Some(binding) = binding {
+                proposal
+                    .bind_extension_authority(binding)
+                    .map_err(anyhow::Error::msg)?;
+            }
+        }
+        let before = proposals.len();
+        proposals.retain(|proposal| {
+            proposal.kind != crate::profile::self_dev::ProposalKind::LearnExtension
+                || proposal.extension_authority.is_some()
+        });
+        let unavailable = before.saturating_sub(proposals.len());
+        if unavailable > 0 {
+            tracing::debug!(
+                unavailable,
+                "skipped LearnExtension proposals without a healthy exact Skill target"
+            );
+        }
+        if proposals.is_empty() {
+            return Ok(0);
+        }
+    }
     let mut store = load_store(home)?;
     let ts = now_unix();
     let to_add: Vec<&SelfDevProposal> = proposals
@@ -766,6 +893,7 @@ mod tests {
             reason: "test".into(),
             confidence: conf,
             target: "formal".into(),
+            extension_authority: None,
         }
     }
 
@@ -845,6 +973,7 @@ jobs:
             reason: "operator active later".into(),
             confidence: 0.9,
             target: "08:30".into(),
+            extension_authority: None,
         };
         save_store(dir.path(), &store_with(proposal)).unwrap();
 
@@ -878,6 +1007,7 @@ jobs:
             reason: "test".into(),
             confidence: 0.9,
             target: "07:15".into(),
+            extension_authority: None,
         };
         save_store(dir.path(), &store_with(proposal)).unwrap();
 
@@ -908,6 +1038,7 @@ jobs:
             reason: "test".into(),
             confidence: 0.9,
             target: "src/cli/dummy.rs".into(),
+            extension_authority: None,
         };
         save_store(dir.path(), &store_with(proposal)).unwrap();
 
@@ -979,6 +1110,7 @@ jobs:
             reason: "performance".into(),
             confidence: 0.9,
             target: "src/cli/mod.rs".into(),
+            extension_authority: None,
         };
         let stored = StoredProposal {
             proposal,
@@ -1184,6 +1316,129 @@ jobs:
                 .iter()
                 .all(|e| e.status == ProposalStatus::Pending)
         );
+    }
+
+    #[tokio::test]
+    async fn store_filters_unavailable_extension_instead_of_publishing_dead_accept_action() {
+        let dir = tempdir().unwrap();
+        let mut proposal = SelfDevProposal {
+            id: "learn_extension-deadbeef".into(),
+            kind: ProposalKind::LearnExtension,
+            reason: "missing target".into(),
+            confidence: 0.8,
+            target: "definitely-not-a-bundled-or-installed-skill".into(),
+            extension_authority: None,
+        };
+        proposal
+            .bind_extension_authority(crate::profile::self_dev::ExtensionAuthorityBinding::Bundled)
+            .unwrap();
+
+        assert_eq!(
+            store_proposals(dir.path(), &[proposal], None)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(load_store(dir.path()).unwrap().entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn store_binds_available_bundled_extension_before_operator_review() {
+        let dir = tempdir().unwrap();
+        let target = crate::skills::bundled::BUNDLED_SKILLS[0].0.to_string();
+        let proposal = SelfDevProposal {
+            id: "learn_extension-unbound".into(),
+            kind: ProposalKind::LearnExtension,
+            reason: "available target".into(),
+            confidence: 0.8,
+            target: target.clone(),
+            extension_authority: None,
+        };
+
+        assert_eq!(
+            store_proposals(dir.path(), &[proposal], None)
+                .await
+                .unwrap(),
+            1
+        );
+        let store = load_store(dir.path()).unwrap();
+        assert_eq!(store.entries.len(), 1);
+        assert_eq!(store.entries[0].proposal.target, target);
+        assert_eq!(
+            store.entries[0].proposal.extension_authority,
+            Some(crate::profile::self_dev::ExtensionAuthorityBinding::Bundled)
+        );
+        assert_eq!(
+            store.entries[0].proposal.id.len(),
+            "learn_extension-".len() + 64
+        );
+    }
+
+    #[tokio::test]
+    async fn store_filters_exactly_revoked_installed_extension() {
+        let dir = tempdir().unwrap();
+        let id = "self-dev-revoked";
+        let skill_dir = dir.path().join("skills").join(id);
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("skill.yaml"),
+            "id: self-dev-revoked\n\
+             description: revoked SelfDev target\n\
+             system_prompt: never reactivate this incarnation\n\
+             trigger_keywords: [revoked]\n\
+             enabled: true\n",
+        )
+        .unwrap();
+        let config_path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &config_path,
+            serde_yaml::to_string(&crate::config::FreedomConfig::default()).unwrap(),
+        )
+        .unwrap();
+        let current =
+            crate::skills::installer::inspect_current_install(&dir.path().join("skills"), id)
+                .unwrap()
+                .unwrap();
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            dir.path(),
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+        crate::cli::skills::set_skill_authority_at_config(
+            dir.path(),
+            &config_path,
+            id,
+            crate::cli::skills::SkillAuthorityTarget::Revoked,
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            crate::skills::authority::inspect_current_authority(dir.path(), id)
+                .unwrap()
+                .unwrap()
+                .record()
+                .state,
+            crate::skills::authority::SkillAuthorityState::Revoked
+        );
+        let proposal = SelfDevProposal {
+            id: "learn_extension-revoked".into(),
+            kind: ProposalKind::LearnExtension,
+            reason: "must stay terminal".into(),
+            confidence: 0.8,
+            target: id.into(),
+            extension_authority: None,
+        };
+
+        assert_eq!(
+            store_proposals(dir.path(), &[proposal], None)
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(load_store(dir.path()).unwrap().entries.is_empty());
     }
 
     #[tokio::test]

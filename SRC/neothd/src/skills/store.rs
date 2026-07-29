@@ -12,6 +12,8 @@ use std::io::{Read as _, Write as _};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, Result};
+#[cfg(windows)]
+use cap_fs_ext::MetadataExt as _;
 use cap_fs_ext::{DirExt as _, FollowSymlinks, OpenOptionsFollowExt as _};
 #[cfg(unix)]
 use cap_std::fs::DirBuilder;
@@ -86,7 +88,6 @@ fn child_identity_token(metadata: &cap_std::fs::Metadata) -> Result<String> {
     }
     #[cfg(windows)]
     {
-        use cap_std::fs::MetadataExt as _;
         let volume = metadata
             .volume_serial_number()
             .context("opened Windows Skill object has no volume identity")?;
@@ -340,6 +341,20 @@ pub(crate) fn read_regular_file_bounded(
     display_path: &Path,
     max_bytes: usize,
 ) -> Result<Vec<u8>> {
+    read_regular_file_bounded_observed(parent, name, display_path, max_bytes, |_| Ok(()))
+}
+
+/// The same bounded no-follow read while reporting the exact number of bytes
+/// consumed from the opened handle, including bytes read before an oversize or
+/// I/O failure. Aggregate runtime budgets use this callback so rejected files
+/// cannot make their read work disappear from accounting.
+pub(crate) fn read_regular_file_bounded_observed(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    max_bytes: usize,
+    observe: impl FnOnce(u64) -> Result<()>,
+) -> Result<Vec<u8>> {
     validate_child_name(name)?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
@@ -360,7 +375,7 @@ pub(crate) fn read_regular_file_bounded(
     if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
         anyhow::bail!("expected a real regular file at {}", display_path.display());
     }
-    read_bounded(file, display_path, max_bytes)
+    read_bounded_observed(file, display_path, max_bytes, observe)
 }
 
 /// Same no-follow leaf open used by recursive copies. The caller streams from
@@ -1188,14 +1203,19 @@ pub(crate) fn cap_metadata_is_link_like(metadata: &cap_std::fs::Metadata) -> boo
     }
 }
 
-fn read_bounded(file: File, display_path: &Path, max_bytes: usize) -> Result<Vec<u8>> {
+fn read_bounded_observed(
+    file: File,
+    display_path: &Path,
+    max_bytes: usize,
+    observe: impl FnOnce(u64) -> Result<()>,
+) -> Result<Vec<u8>> {
     let limit = u64::try_from(max_bytes)
         .unwrap_or(u64::MAX)
         .saturating_add(1);
     let mut bytes = Vec::with_capacity(max_bytes.min(64 * 1024));
-    file.take(limit)
-        .read_to_end(&mut bytes)
-        .with_context(|| format!("read {}", display_path.display()))?;
+    let read = file.take(limit).read_to_end(&mut bytes);
+    observe(bytes.len() as u64)?;
+    read.with_context(|| format!("read {}", display_path.display()))?;
     if bytes.len() > max_bytes {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,

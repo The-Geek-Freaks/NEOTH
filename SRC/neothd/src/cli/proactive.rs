@@ -48,9 +48,9 @@ pub enum ProactiveAction {
         status: String,
     },
     /// Mark a proposal Approved. For a **Skill** proposal (KF-04 idle
-    /// forge) this ADOPTS it — the draft manifest is written live to
-    /// `~/.neoth/skills/<id>/skill.yaml` (the operator's accept is the
-    /// per-command GO; the skill system still gates loading). For
+    /// forge) this installs it — a canonical `enabled: false` manifest is
+    /// written to `~/.neoth/skills/<id>/skill.yaml`. Approval permits package
+    /// installation only; routing requires a separate activation decision. For
     /// config/cron proposals NEOTH never edits operator config: the
     /// operator copy-pastes the draft YAML into the live config + runs
     /// `neoth reload`.
@@ -138,9 +138,9 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             let updated = set_proposal_status(&home, &id, ProposalStatus::Approved, &note)
                 .with_context(|| format!("approve proposal {id}"))?;
             print_status_change(&updated);
-            // KF-04: accepting a Skill proposal ADOPTS it — write the draft
-            // manifest live so the forge -> propose -> accept loop produces a
-            // usable skill, not just a flag flip. The acceptance is already
+            // KF-04: accepting a Skill proposal installs it INACTIVE so the
+            // forge -> propose -> accept loop produces a reviewable package,
+            // never implicit routing authority. The acceptance is already
             // recorded above; a write failure therefore returns a non-zero
             // command result with explicit partial-state context. Re-running
             // `accept` retries the idempotent transactional write.
@@ -148,7 +148,7 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
                 match crate::proactive::action_staging::adopt_approved_skill(&home, &updated) {
                     Ok(report) => {
                         println!(
-                            "  skill written → {} (live on next `neoth reload` or hot-watch)",
+                            "  skill installed inactive → {} (pending explicit activation)",
                             report.path.display(),
                         );
                         for warning in crate::skills::operator_skill_warnings(&report.warnings) {
@@ -546,7 +546,7 @@ mod tests {
         assert!(expected.exists(), "expected vault file: {expected:?}");
     }
 
-    // ── KF-04: accepting a Skill proposal adopts it (writes the manifest) ─
+    // ── KF-04: accepting a Skill proposal installs it inactive ────────────
 
     /// Build a Skill `ProposedAction` whose `draft_yaml` is a real,
     /// loader-compatible manifest (same path the forge uses).
@@ -572,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn accept_skill_proposal_writes_live_loader_compatible_skill() {
+    fn accept_skill_proposal_installs_loader_compatible_inactive_skill() {
         let home = tempfile::tempdir().unwrap();
         let id = make_proposal_id(ProposalKind::Skill, "skill", "y", 100);
         save_proposal(home.path(), &skill_proposal(&id)).unwrap();
@@ -591,18 +591,22 @@ mod tests {
             load_proposal(home.path(), &id).unwrap().status,
             ProposalStatus::Approved,
         );
-        // ...AND the manifest landed live at <home>/skills/<id>/skill.yaml,
-        // re-parseable by the loader (closes the forge->accept loop).
+        // ...AND the manifest landed at <home>/skills/<id>/skill.yaml,
+        // re-parseable but inactive until a separate activation decision.
         let skill_path = home
             .path()
             .join("skills")
             .join("dream_kf04_test")
             .join("skill.yaml");
-        assert!(skill_path.exists(), "expected live skill at {skill_path:?}");
+        assert!(
+            skill_path.exists(),
+            "expected installed skill at {skill_path:?}"
+        );
         let body = std::fs::read_to_string(&skill_path).unwrap();
         let m: crate::skills::schema::SkillManifest =
             serde_yaml::from_str(&body).expect("written skill must be loader-parseable");
         assert_eq!(m.id, "dream_kf04_test");
+        assert!(!m.enabled, "proposal acceptance must not grant routing");
     }
 
     #[test]

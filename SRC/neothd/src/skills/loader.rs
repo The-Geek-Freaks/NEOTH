@@ -8,10 +8,13 @@
 //!    is `include_str!`-baked into the binary at compile time (see
 //!    [`super::bundled::BUNDLED_SKILLS`]). Fresh operator boot has the full
 //!    library active — no install step required. R3 P0 fix.
-//! 2. **User**: anything under `~/.neoth/skills/<id>/skill.yaml` LAYERS on
-//!    top. Same id as a bundled skill → user wins. New id → adds to the set.
-//!    The user file's full directory becomes the canonical path (so
-//!    multi-file skills referencing sibling assets work as expected).
+//! 2. **User inventory**: anything under
+//!    `~/.neoth/skills/<id>/skill.yaml` appears as an installed candidate.
+//!    Raw inventory views layer a same-id candidate over the bundled row for
+//!    diagnostics and mutation workflows only. Executable runtime snapshots
+//!    never inherit bundled trust: the exact installed package must consume a
+//!    current [`super::authority::ValidatedInstalledSkillAuthority`] before it
+//!    can replace the bundled Skill or route at all.
 //!
 //! Layout convention for user-installed skills:
 //! ```text
@@ -31,18 +34,28 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use super::schema::{Skill, SkillManifest};
+use super::schema::{RuntimeSkill, Skill, SkillManifest};
 use super::store::{open_bound_directory, open_real_child_dir, read_regular_file_bounded};
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
+const MAX_INSTALLED_SKILL_ROOT_ENTRIES: usize = 512;
+const MAX_INSTALLED_SKILL_MANIFEST_WORK_BYTES: usize = 64 * 1024 * 1024;
 
-/// Load every available skill — bundled-in-binary defaults plus
-/// user-installed overrides from `<skills_dir>` if it exists.
+pub(crate) struct AuthorizedRuntimeSkillSnapshot {
+    pub(crate) skills: Vec<RuntimeSkill>,
+    pub(crate) accepted_config_epoch: u64,
+}
+
+/// Load every available skill into a raw diagnostic/mutation inventory —
+/// bundled-in-binary defaults plus user-installed candidates from
+/// `<skills_dir>` if it exists.
 ///
-/// Bundled skills always load. User skills override bundled ids
-/// (operator's customised version of `systematic_debugging` wins over
-/// the shipped default). A missing user dir is a normal fresh-install
-/// state; an existing unreadable user dir is an error.
+/// This function does **not** grant runtime authority and its output must not
+/// route, inject prompts, select models, or execute tests. Runtime consumers
+/// use [`load_authorized_from_reload_controller`]. In this inventory only,
+/// user candidates override bundled ids so operators can inspect or repair the
+/// candidate they actually installed. A missing user dir is a normal
+/// fresh-install state; an existing unreadable user dir is an error.
 ///
 /// A missing user directory is the normal fresh-install state. Once the
 /// directory or an individual `skill.yaml` exists, read/parse/schema failures
@@ -83,6 +96,264 @@ pub(crate) async fn load_all_from_skills_config(
     .await
 }
 
+/// Build the routing snapshot from the exact config generation accepted by
+/// the runtime reload controller.
+///
+/// Bundled Skills have an explicit compile-time trust origin. Installed
+/// packages are candidates only: each one must consume a
+/// [`super::authority::ValidatedInstalledSkillAuthority`] for its exact live
+/// generation before it can replace a bundled Skill or enter the returned
+/// registry. Missing, stale, revoked, mismatched, or policy-disabled authority
+/// leaves the candidate absent; an installed same-id package never inherits
+/// the bundled package's trust.
+pub(crate) async fn load_authorized_from_reload_controller(
+    skills_dir: &Path,
+    reload: &crate::config::reload::ReloadController,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    load_authorized_with_budget_override(skills_dir, reload, None).await
+}
+
+async fn load_authorized_with_budget_override(
+    skills_dir: &Path,
+    reload: &crate::config::reload::ReloadController,
+    authority_budget_override: Option<(usize, u64)>,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    let installed_store_ready = match super::mutation_lifecycle::reconcile_for_runtime(skills_dir)
+        .await
+    {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                dir = %skills_dir.display(),
+                error = %error,
+                "installed Skill store reconciliation failed; publishing trusted bundled-only runtime snapshot"
+            );
+            false
+        }
+    };
+
+    let home = skills_dir.parent().map(Path::to_path_buf);
+    if home.is_none() {
+        tracing::warn!(
+            dir = %skills_dir.display(),
+            "authorized Skill directory has no NEOTH home parent; publishing trusted bundled-only runtime snapshot"
+        );
+    }
+    let skills_dir = skills_dir.to_path_buf();
+    let skills_dir_display = skills_dir.display().to_string();
+    let reload = reload.clone();
+    let accepted = reload.accepted_snapshot();
+    let accepted_epoch = accepted.epoch();
+    let accepted_config = accepted.config();
+    let policy = SkillPolicy::from_config(&accepted_config.skills);
+
+    tokio::task::spawn_blocking(move || {
+        let bundled_only = load_trusted_bundled_with_policy(&policy)?;
+        let mut by_id: HashMap<String, RuntimeSkill> = bundled_only
+            .iter()
+            .cloned()
+            .map(|skill| (skill.id().to_string(), skill))
+            .collect();
+
+        let candidates = if installed_store_ready {
+            match load_user_skills_with_mode(&skills_dir, UserSkillLoadMode::Quarantine) {
+                Ok(candidates) => candidates,
+                Err(error) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        error = %error,
+                        "installed Skill store is unavailable; publishing trusted bundled-only runtime snapshot"
+                    );
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let Some(home) = home.as_deref() else {
+            return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+        };
+        let mut authority_batch = if candidates.is_empty() {
+            None
+        } else {
+            match super::authority::begin_installed_authority_validation_batch(home, &reload) {
+                Ok(batch) => {
+                    #[cfg(test)]
+                    let batch = {
+                        let mut batch = batch;
+                        if let Some((max_entries, max_bytes)) = authority_budget_override {
+                            batch.set_traversal_limits_for_test(max_entries, max_bytes);
+                        }
+                        batch
+                    };
+                    #[cfg(not(test))]
+                    debug_assert!(
+                        authority_budget_override.is_none(),
+                        "runtime authority budget overrides are test-only"
+                    );
+                    Some(batch)
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        error = %error,
+                        "installed Skill authority batch is unavailable; publishing trusted bundled-only runtime snapshot"
+                    );
+                    return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+                }
+            }
+        };
+        for candidate in candidates {
+            let id = candidate.skill.id().to_string();
+            let Some(authority_batch) = authority_batch.as_mut() else {
+                break;
+            };
+            match authority_batch.validate(&id, &reload) {
+                Ok(super::authority::InstalledSkillAuthorityValidation::Active(authority)) => {
+                    let skill = match RuntimeSkill::from_validated_installed(
+                        authority,
+                        candidate.skill.path,
+                        candidate.skill.content_hash,
+                        &candidate.manifest_sha256,
+                    )
+                    .with_context(|| format!("materialize authorized installed Skill `{id}`"))
+                    {
+                        Ok(skill) => skill,
+                        Err(error) => {
+                            tracing::warn!(
+                                id = %id,
+                                error = %error,
+                                "quarantining installed Skill whose authority and loaded bytes do not match"
+                            );
+                            continue;
+                        }
+                    };
+                    let overrode_bundled = by_id.contains_key(&id);
+                    debug!(
+                        id = %id,
+                        overrode_bundled,
+                        content_hash = %skill.content_hash,
+                        "admitted installed Skill with validated runtime authority"
+                    );
+                    by_id.insert(id, skill);
+                }
+                Ok(super::authority::InstalledSkillAuthorityValidation::Inactive(reason)) => {
+                    if matches!(
+                        reason,
+                        super::authority::SkillAuthorityInactiveReason::DecisionInactive
+                            | super::authority::SkillAuthorityInactiveReason::DecisionRevoked
+                    ) {
+                        by_id.remove(&id);
+                    }
+                    debug!(
+                        id = %id,
+                        authority_reason = reason.as_str(),
+                        "installed Skill is inactive at the runtime authority boundary"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        dir = %skills_dir.display(),
+                        id = %id,
+                        error = %error,
+                        "installed Skill authority batch exceeded its aggregate validation boundary; publishing trusted bundled-only runtime snapshot"
+                    );
+                    return finish_authorized_snapshot(&reload, accepted_epoch, bundled_only);
+                }
+            }
+        }
+
+        anyhow::ensure!(
+            reload.accepted_snapshot().epoch() == accepted_epoch,
+            "accepted Skill policy changed while building authorized runtime registry"
+        );
+        let mut out: Vec<RuntimeSkill> = by_id.into_values().collect();
+        out.sort_by(|left, right| left.id().cmp(right.id()));
+        if let Err(error) = super::mode_registry::ModeRegistry::from_skills(&out) {
+            tracing::warn!(
+                error = %error,
+                "authorized installed Skill modes conflict; publishing trusted bundled-only runtime snapshot"
+            );
+            return Ok(AuthorizedRuntimeSkillSnapshot {
+                skills: bundled_only,
+                accepted_config_epoch: accepted_epoch,
+            });
+        }
+        Ok(AuthorizedRuntimeSkillSnapshot {
+            skills: out,
+            accepted_config_epoch: accepted_epoch,
+        })
+    })
+    .await
+    .with_context(|| format!("authorized Skill loader worker failed for {skills_dir_display}"))?
+}
+
+/// Build a complete bundled-only runtime layer from one stable accepted policy
+/// epoch. Used by the registry's last-resort fail-closed path: filtering an old
+/// mixed snapshot would both preserve stale enablement and lose bundled ids
+/// that an installed package had replaced.
+pub(crate) async fn load_trusted_bundled_from_reload_controller(
+    reload: &crate::config::reload::ReloadController,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    const MAX_ACCEPTED_EPOCH_RETRIES: usize = 8;
+
+    let reload = reload.clone();
+    for attempt in 1..=MAX_ACCEPTED_EPOCH_RETRIES {
+        let accepted = reload.accepted_snapshot();
+        let accepted_epoch = accepted.epoch();
+        let policy = SkillPolicy::from_config(&accepted.config().skills);
+        let bundled =
+            tokio::task::spawn_blocking(move || load_trusted_bundled_with_policy(&policy))
+                .await
+                .context("trusted bundled Skill fallback worker failed")??;
+        if reload.accepted_snapshot().epoch() == accepted_epoch {
+            return Ok(AuthorizedRuntimeSkillSnapshot {
+                skills: bundled,
+                accepted_config_epoch: accepted_epoch,
+            });
+        }
+        debug!(
+            attempt,
+            accepted_epoch,
+            "accepted Skill policy changed while building bundled-only fallback; retrying"
+        );
+        tokio::task::yield_now().await;
+    }
+    anyhow::bail!(
+        "accepted Skill policy did not stabilize across {MAX_ACCEPTED_EPOCH_RETRIES} bundled fallback attempts"
+    )
+}
+
+fn load_trusted_bundled_with_policy(policy: &SkillPolicy) -> Result<Vec<RuntimeSkill>> {
+    let mut bundled = parse_bundled_skills()?;
+    for skill in bundled.values_mut() {
+        policy.apply_to_bundled_manifest(&mut skill.manifest);
+    }
+    let mut runtime = bundled
+        .into_values()
+        .map(RuntimeSkill::from_trusted_bundled)
+        .collect::<Result<Vec<_>>>()?;
+    runtime.sort_by(|left, right| left.id().cmp(right.id()));
+    super::mode_registry::ModeRegistry::from_skills(&runtime)
+        .context("validate trusted bundled Skill modes")?;
+    Ok(runtime)
+}
+
+fn finish_authorized_snapshot(
+    reload: &crate::config::reload::ReloadController,
+    accepted_epoch: u64,
+    skills: Vec<RuntimeSkill>,
+) -> Result<AuthorizedRuntimeSkillSnapshot> {
+    anyhow::ensure!(
+        reload.accepted_snapshot().epoch() == accepted_epoch,
+        "accepted Skill policy changed while building authorized runtime registry"
+    );
+    Ok(AuthorizedRuntimeSkillSnapshot {
+        skills,
+        accepted_config_epoch: accepted_epoch,
+    })
+}
+
 async fn load_all_from_policy_source(
     skills_dir: &Path,
     config_path: Option<&Path>,
@@ -120,7 +391,12 @@ async fn load_all_from_policy_source(
     })
     .await
     .with_context(|| format!("skill loader worker failed for {}", skills_dir.display()))??;
-    for skill in user_skills {
+    for skill in by_id.values_mut() {
+        policy.apply_to_bundled_manifest(&mut skill.manifest);
+    }
+    for mut candidate in user_skills {
+        policy.apply_to_manifest(&mut candidate.skill.manifest);
+        let skill = candidate.skill;
         let overrode = by_id.contains_key(&skill.manifest.id);
         debug!(
             id = %skill.manifest.id,
@@ -131,13 +407,6 @@ async fn load_all_from_policy_source(
             "loaded user skill"
         );
         by_id.insert(skill.manifest.id.clone(), skill);
-    }
-
-    // Apply manifest defaults and every operator override at one chokepoint.
-    // The updater calls the same method before any source probe, preventing
-    // routing policy and network-egress policy from drifting apart.
-    for skill in by_id.values_mut() {
-        policy.apply_to_manifest(&mut skill.manifest);
     }
 
     let mut out: Vec<Skill> = by_id.into_values().collect();
@@ -155,12 +424,20 @@ pub enum SkillInventoryRow {
         manifest: Box<SkillManifest>,
         origin: SkillInventoryOrigin,
         path: Option<PathBuf>,
+        runtime_state: SkillInventoryRuntimeState,
+        package_generation_sha256: Option<String>,
+        install_incarnation: Option<u64>,
+        install_terminal_receipt_sha256: Option<String>,
     },
     Broken {
         id: String,
         error: String,
         path: PathBuf,
         repairability: super::installer::SkillRepairability,
+        runtime_state: SkillInventoryRuntimeState,
+        package_generation_sha256: Option<String>,
+        install_incarnation: Option<u64>,
+        install_terminal_receipt_sha256: Option<String>,
     },
 }
 
@@ -169,6 +446,63 @@ pub enum SkillInventoryRow {
 pub enum SkillInventoryOrigin {
     Bundled,
     User,
+}
+
+/// Execution truth for an inventory row. `manifest.enabled` is only the
+/// effective policy bit and must never be presented as installed-Skill
+/// authority. A same-id installed candidate can be quarantined while the
+/// trusted bundled implementation remains active.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillInventoryRuntimeState {
+    TrustedBundledActive,
+    InstalledActive,
+    BundledFallbackActive,
+    Disabled,
+}
+
+impl SkillInventoryRuntimeState {
+    pub const fn is_active(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    pub const fn installed_candidate_is_active(self) -> bool {
+        matches!(self, Self::InstalledActive)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct InventoryRuntimeEvidence {
+    state: SkillInventoryRuntimeState,
+    package_generation_sha256: Option<String>,
+    install_incarnation: Option<u64>,
+    install_terminal_receipt_sha256: Option<String>,
+}
+
+fn installed_candidate_runtime_state(
+    evidence: Option<&InventoryRuntimeEvidence>,
+    package_generation_sha256: Option<&str>,
+    install_incarnation: Option<u64>,
+    install_terminal_receipt_sha256: Option<&str>,
+) -> SkillInventoryRuntimeState {
+    match evidence {
+        Some(InventoryRuntimeEvidence {
+            state: SkillInventoryRuntimeState::InstalledActive,
+            package_generation_sha256: Some(runtime_generation),
+            install_incarnation: Some(runtime_incarnation),
+            install_terminal_receipt_sha256: Some(runtime_receipt),
+        }) if package_generation_sha256 == Some(runtime_generation.as_str())
+            && install_incarnation == Some(*runtime_incarnation)
+            && install_terminal_receipt_sha256 == Some(runtime_receipt.as_str()) =>
+        {
+            SkillInventoryRuntimeState::InstalledActive
+        }
+        Some(InventoryRuntimeEvidence {
+            state: SkillInventoryRuntimeState::TrustedBundledActive,
+            ..
+        }) => SkillInventoryRuntimeState::BundledFallbackActive,
+        _ => SkillInventoryRuntimeState::Disabled,
+    }
 }
 
 impl SkillInventoryRow {
@@ -181,28 +515,98 @@ impl SkillInventoryRow {
 }
 
 pub async fn diagnostic_inventory(skills_dir: &Path) -> Result<Vec<SkillInventoryRow>> {
-    let skills_dir = skills_dir.to_path_buf();
-    tokio::task::spawn_blocking(move || diagnostic_inventory_blocking(&skills_dir))
-        .await
-        .context("skill diagnostic inventory worker failed")?
+    let home = skills_dir
+        .parent()
+        .context("Skill inventory directory has no NEOTH home parent")?;
+    let config_path = home.join("freedom.yaml");
+    let config = crate::config::FreedomConfig::load_from_path_or_default(&config_path)
+        .with_context(|| format!("load Skill inventory policy from {}", config_path.display()))?;
+    diagnostic_inventory_for_accepted_config(skills_dir, config, config_path).await
 }
 
-fn diagnostic_inventory_blocking(skills_dir: &Path) -> Result<Vec<SkillInventoryRow>> {
-    let policy = load_skill_policy(skills_dir)?;
+/// Instance-bound inventory using the exact config generation already accepted
+/// by the caller. Daemons with a custom config filename must use this entry
+/// point; reconstructing `<home>/freedom.yaml` would render authority from a
+/// different policy generation.
+pub(crate) async fn diagnostic_inventory_for_accepted_config(
+    skills_dir: &Path,
+    config: crate::config::FreedomConfig,
+    config_path: PathBuf,
+) -> Result<Vec<SkillInventoryRow>> {
+    let policy = SkillPolicy::from_config(&config.skills);
+    let reload = crate::config::reload::ReloadController::new(config, config_path);
+    let runtime = load_authorized_from_reload_controller(skills_dir, &reload)
+        .await
+        .with_context(|| {
+            format!(
+                "build authority-admitted Skill inventory from {}",
+                skills_dir.display()
+            )
+        })?;
+    let runtime_states = runtime
+        .skills
+        .into_iter()
+        .map(|skill| {
+            let state = if !skill.is_enabled() {
+                SkillInventoryRuntimeState::Disabled
+            } else if skill.is_trusted_bundled() {
+                SkillInventoryRuntimeState::TrustedBundledActive
+            } else {
+                SkillInventoryRuntimeState::InstalledActive
+            };
+            (
+                skill.id().to_lowercase(),
+                InventoryRuntimeEvidence {
+                    state,
+                    package_generation_sha256: skill
+                        .package_generation_sha256()
+                        .map(str::to_string),
+                    install_incarnation: skill.install_incarnation(),
+                    install_terminal_receipt_sha256: skill
+                        .install_terminal_receipt_sha256()
+                        .map(str::to_string),
+                },
+            )
+        })
+        .collect();
+    let skills_dir = skills_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        diagnostic_inventory_blocking(&skills_dir, &policy, &runtime_states)
+    })
+    .await
+    .context("skill diagnostic inventory worker failed")?
+}
+
+fn diagnostic_inventory_blocking(
+    skills_dir: &Path,
+    policy: &SkillPolicy,
+    runtime_states: &HashMap<String, InventoryRuntimeEvidence>,
+) -> Result<Vec<SkillInventoryRow>> {
+    let (installed_entries, install_incarnations) =
+        super::installer::list_installed_with_incarnation_index(skills_dir)
+            .context("capture installed Skill inventory and incarnations atomically")?;
     let mut rows = std::collections::BTreeMap::<String, SkillInventoryRow>::new();
     for (_, mut skill) in parse_bundled_skills()? {
-        policy.apply_to_manifest(&mut skill.manifest);
+        policy.apply_to_bundled_manifest(&mut skill.manifest);
+        let runtime_state = runtime_states
+            .get(&skill.manifest.id.to_lowercase())
+            .map(|evidence| evidence.state)
+            .unwrap_or(SkillInventoryRuntimeState::Disabled);
         rows.insert(
             skill.manifest.id.to_lowercase(),
             SkillInventoryRow::Healthy {
                 manifest: Box::new(skill.manifest),
                 origin: SkillInventoryOrigin::Bundled,
                 path: None,
+                runtime_state,
+                package_generation_sha256: None,
+                install_incarnation: None,
+                install_terminal_receipt_sha256: None,
             },
         );
     }
 
-    for entry in super::installer::list_installed(skills_dir)? {
+    for entry in installed_entries {
         let key = entry.dir_name.to_lowercase();
         let repairability = entry
             .repairability
@@ -210,16 +614,45 @@ fn diagnostic_inventory_blocking(skills_dir: &Path) -> Result<Vec<SkillInventory
         match (entry.manifest, entry.error) {
             (Some(mut manifest), None) => {
                 policy.apply_to_manifest(&mut manifest);
+                let install_proof = entry.generation_sha256.as_deref().and_then(|generation| {
+                    install_incarnations
+                        .authenticate_current(&key, generation)
+                        .ok()
+                });
+                let runtime_state = installed_candidate_runtime_state(
+                    runtime_states.get(&key),
+                    entry.generation_sha256.as_deref(),
+                    install_proof
+                        .as_ref()
+                        .map(|proof| proof.install_incarnation()),
+                    install_proof
+                        .as_ref()
+                        .map(|proof| proof.terminal_receipt_sha256()),
+                );
                 rows.insert(
                     key,
                     SkillInventoryRow::Healthy {
                         manifest: Box::new(manifest),
                         origin: SkillInventoryOrigin::User,
                         path: Some(entry.path),
+                        runtime_state,
+                        package_generation_sha256: entry.generation_sha256,
+                        install_incarnation: install_proof
+                            .as_ref()
+                            .map(|proof| proof.install_incarnation()),
+                        install_terminal_receipt_sha256: install_proof
+                            .as_ref()
+                            .map(|proof| proof.terminal_receipt_sha256().to_string()),
                     },
                 );
             }
             (_, error) => {
+                let runtime_state = installed_candidate_runtime_state(
+                    runtime_states.get(&key),
+                    entry.generation_sha256.as_deref(),
+                    None,
+                    None,
+                );
                 rows.insert(
                     key,
                     SkillInventoryRow::Broken {
@@ -229,6 +662,10 @@ fn diagnostic_inventory_blocking(skills_dir: &Path) -> Result<Vec<SkillInventory
                         ),
                         path: entry.path,
                         repairability,
+                        runtime_state,
+                        package_generation_sha256: entry.generation_sha256,
+                        install_incarnation: None,
+                        install_terminal_receipt_sha256: None,
                     },
                 );
             }
@@ -258,7 +695,63 @@ fn sanitize_inventory_error(error: &str) -> String {
     clean
 }
 
-fn load_user_skills(skills_dir: &Path) -> Result<Vec<Skill>> {
+struct LoadedUserSkill {
+    skill: Skill,
+    manifest_sha256: String,
+}
+
+fn load_user_skills(skills_dir: &Path) -> Result<Vec<LoadedUserSkill>> {
+    load_user_skills_with_mode(skills_dir, UserSkillLoadMode::Strict)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum UserSkillLoadMode {
+    /// Inventory and operator-facing validation must expose a broken package
+    /// as an error instead of silently pretending it is absent.
+    Strict,
+    /// Runtime authority reloads quarantine each broken candidate so one
+    /// poisoned package cannot retain an older, already-revoked routing
+    /// snapshot by aborting the complete ArcSwap replacement.
+    Quarantine,
+}
+
+fn load_user_skills_with_mode(
+    skills_dir: &Path,
+    mode: UserSkillLoadMode,
+) -> Result<Vec<LoadedUserSkill>> {
+    load_user_skills_with_limits(
+        skills_dir,
+        mode,
+        MAX_INSTALLED_SKILL_ROOT_ENTRIES,
+        MAX_INSTALLED_SKILL_MANIFEST_WORK_BYTES,
+    )
+}
+
+fn charge_manifest_work(
+    total: &mut usize,
+    charge: usize,
+    max_manifest_work_bytes: usize,
+    skills_dir: &Path,
+) -> Result<()> {
+    let next = total
+        .checked_add(charge)
+        .context("installed Skill manifest-work counter overflow")?;
+    anyhow::ensure!(
+        next <= max_manifest_work_bytes,
+        "installed Skill manifests under {} exceed the \
+         {max_manifest_work_bytes}-byte runtime work limit",
+        skills_dir.display()
+    );
+    *total = next;
+    Ok(())
+}
+
+fn load_user_skills_with_limits(
+    skills_dir: &Path,
+    mode: UserSkillLoadMode,
+    max_root_entries: usize,
+    max_manifest_work_bytes: usize,
+) -> Result<Vec<LoadedUserSkill>> {
     let mut out = Vec::new();
     let root = open_bound_directory(skills_dir, false, "skills root")
         .with_context(|| format!("read skills directory {}", skills_dir.display()))?;
@@ -271,99 +764,153 @@ fn load_user_skills(skills_dir: &Path) -> Result<Vec<Skill>> {
             .dir
             .entries()
             .with_context(|| format!("enumerate skills directory {}", skills_dir.display()))?;
+        let mut root_entry_count = 0usize;
+        let mut manifest_work_bytes = 0usize;
         for entry in entries {
-            let entry = entry
-                .with_context(|| format!("enumerate skills directory {}", skills_dir.display()))?;
-            let name = entry.file_name();
-            let path = root.display_path.join(&name);
-            if name.as_encoded_bytes().first() == Some(&b'.') {
-                continue;
-            }
-            // A directory whose NAME cannot be a skill id is not loaded — but it
-            // must not take the other skills down with it. `validate_skill_id`
-            // was tightened to lowercase-only after installs already existed, so
-            // one legacy `MySkill/` would otherwise fail the whole registry
-            // build and with it `neoth serve` and `neoth chat`. Skipping is
-            // equally fail-closed for authority (the skill is never loaded) and
-            // the entry still surfaces as a Broken row in `diagnostic_inventory`,
-            // which is the operator's repair path.
-            let Some(dir_name) = name.to_str() else {
-                tracing::warn!(
-                    path = %path.display(),
-                    "skipping installed skill: directory name is not valid UTF-8"
-                );
-                continue;
-            };
-            if let Err(error) = super::creator::validate_skill_id(dir_name) {
-                tracing::warn!(
-                    path = %path.display(),
-                    %error,
-                    "skipping installed skill: directory id is not canonical \
-                     (see `neoth skills --list` for the repair path)"
-                );
-                continue;
-            }
-            let file_type = entry
-                .file_type()
-                .with_context(|| format!("inspect skill entry {}", path.display()))?;
-            if file_type.is_symlink() {
-                anyhow::bail!(
-                    "installed skill must be a real directory, not a symlink or reparse point: {}",
-                    path.display()
-                );
-            }
-            if !file_type.is_dir() {
-                anyhow::bail!(
-                    "installed skill entry must be a real directory: {}",
-                    path.display()
-                );
-            }
-            let skill_dir = open_real_child_dir(&root.dir, &name, &path)?;
-            let yaml_path = path.join("skill.yaml");
-            let raw = match read_regular_file_bounded(
-                &skill_dir,
-                OsStr::new("skill.yaml"),
-                &yaml_path,
-                MAX_SKILL_MANIFEST_BYTES,
-            ) {
-                Ok(raw) => raw,
-                Err(error) if error_is_not_found(&error) => {
+            root_entry_count = root_entry_count
+                .checked_add(1)
+                .context("installed Skill root-entry counter overflow")?;
+            anyhow::ensure!(
+                root_entry_count <= max_root_entries,
+                "installed Skill root under {} exceeds the {max_root_entries}-entry runtime limit",
+                skills_dir.display()
+            );
+            let mut load_budget_failed = false;
+            let loaded = (|| -> Result<Option<LoadedUserSkill>> {
+                let entry = entry.with_context(|| {
+                    format!("enumerate skills directory {}", skills_dir.display())
+                })?;
+                let name = entry.file_name();
+                let path = root.display_path.join(&name);
+                if name.as_encoded_bytes().first() == Some(&b'.') {
+                    return Ok(None);
+                }
+                // A directory whose NAME cannot be a skill id is not loaded — but it
+                // must not take the other skills down with it. `validate_skill_id`
+                // was tightened to lowercase-only after installs already existed, so
+                // one legacy `MySkill/` would otherwise fail the whole registry
+                // build and with it `neoth serve` and `neoth chat`. Skipping is
+                // equally fail-closed for authority (the skill is never loaded) and
+                // the entry still surfaces as a Broken row in `diagnostic_inventory`,
+                // which is the operator's repair path.
+                let Some(dir_name) = name.to_str() else {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "skipping installed skill: directory name is not valid UTF-8"
+                    );
+                    return Ok(None);
+                };
+                if let Err(error) = super::creator::validate_skill_id(dir_name) {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %error,
+                        "skipping installed skill: directory id is not canonical \
+                         (see `neoth skills --list` for the repair path)"
+                    );
+                    return Ok(None);
+                }
+                let file_type = entry
+                    .file_type()
+                    .with_context(|| format!("inspect skill entry {}", path.display()))?;
+                if file_type.is_symlink() {
                     anyhow::bail!(
-                        "no skill.yaml in installed skill directory {}",
+                        "installed skill must be a real directory, not a symlink or reparse point: {}",
                         path.display()
                     );
                 }
-                Err(error) => {
-                    return Err(error).with_context(|| format!("read {}", yaml_path.display()));
+                if !file_type.is_dir() {
+                    anyhow::bail!(
+                        "installed skill entry must be a real directory: {}",
+                        path.display()
+                    );
                 }
-            };
+                let skill_dir = open_real_child_dir(&root.dir, &name, &path)?;
+                let yaml_path = path.join("skill.yaml");
+                let raw = match read_regular_file_bounded(
+                    &skill_dir,
+                    OsStr::new("skill.yaml"),
+                    &yaml_path,
+                    MAX_SKILL_MANIFEST_BYTES,
+                ) {
+                    Ok(raw) => raw,
+                    Err(error) if error_is_not_found(&error) => {
+                        anyhow::bail!(
+                            "no skill.yaml in installed skill directory {}",
+                            path.display()
+                        );
+                    }
+                    Err(error) => {
+                        // A bounded read can consume MAX+1 bytes before proving
+                        // that a hostile file is oversized. Charge that worst
+                        // case even though no Vec is returned, otherwise many
+                        // oversized candidates bypass the aggregate work cap.
+                        if let Err(budget_error) = charge_manifest_work(
+                            &mut manifest_work_bytes,
+                            MAX_SKILL_MANIFEST_BYTES.saturating_add(1),
+                            max_manifest_work_bytes,
+                            skills_dir,
+                        ) {
+                            load_budget_failed = true;
+                            return Err(budget_error);
+                        }
+                        return Err(error).with_context(|| format!("read {}", yaml_path.display()));
+                    }
+                };
+                if let Err(error) = charge_manifest_work(
+                    &mut manifest_work_bytes,
+                    raw.len(),
+                    max_manifest_work_bytes,
+                    skills_dir,
+                ) {
+                    load_budget_failed = true;
+                    return Err(error);
+                }
 
-            let (manifest, raw_yaml) = parse_one(&yaml_path, raw)?;
-            super::creator::validate_skill_id(&manifest.id).with_context(|| {
-                format!(
-                    "skill manifest id is not canonical at {}",
-                    yaml_path.display()
-                )
-            })?;
-            if manifest.id != dir_name {
-                anyhow::bail!(
-                    "skill id mismatch at {}: directory `{dir_name}` contains manifest id `{}`",
-                    yaml_path.display(),
-                    manifest.id
+                let manifest_sha256 = super::authority::manifest_sha256(&raw);
+                let (manifest, raw_yaml) = parse_one(&yaml_path, raw)?;
+                super::creator::validate_skill_id(&manifest.id).with_context(|| {
+                    format!(
+                        "skill manifest id is not canonical at {}",
+                        yaml_path.display()
+                    )
+                })?;
+                if manifest.id != dir_name {
+                    anyhow::bail!(
+                        "skill id mismatch at {}: directory `{dir_name}` contains manifest id `{}`",
+                        yaml_path.display(),
+                        manifest.id
+                    );
+                }
+                // ARCH-07 — content_hash = SHA-256(yaml || template).
+                let content_hash = crate::skills::versioning::skill_content_hash_hex(
+                    &raw_yaml,
+                    &manifest.system_prompt,
                 );
+                Ok(Some(LoadedUserSkill {
+                    skill: Skill {
+                        manifest,
+                        path: yaml_path,
+                        content_hash,
+                    },
+                    manifest_sha256,
+                }))
+            })();
+
+            match loaded {
+                Ok(Some(skill)) => out.push(skill),
+                Ok(None) => {}
+                Err(error) if load_budget_failed => return Err(error),
+                Err(error) if mode == UserSkillLoadMode::Quarantine => {
+                    tracing::warn!(
+                        error = %error,
+                        "quarantining invalid installed Skill during authorized runtime reload"
+                    );
+                }
+                Err(error) => return Err(error),
             }
-            // ARCH-07 — content_hash = SHA-256(yaml || template).
-            let content_hash = crate::skills::versioning::skill_content_hash_hex(
-                &raw_yaml,
-                &manifest.system_prompt,
-            );
-            out.push(Skill {
-                manifest,
-                path: yaml_path,
-                content_hash,
-            });
         }
     }
+    out.sort_by(|left, right| left.skill.id().cmp(right.skill.id()));
     Ok(out)
 }
 
@@ -409,13 +956,12 @@ impl SkillPolicy {
         }
     }
 
-    /// Apply the canonical effective-state precedence. Full-auto and the
-    /// allowlist may enable a skill; the blocklist and `visibility: off` win.
+    /// Apply installed-Skill policy without granting bundled-only full-auto
+    /// trust. A positive allowlist controls effective behavior but never
+    /// creates installed authority; runtime admission still requires the
+    /// exact authenticated package decision.
     pub(crate) fn apply_to_manifest(&self, manifest: &mut SkillManifest) {
         let id = manifest.id.to_lowercase();
-        if self.enable_all_bundled {
-            manifest.enabled = true;
-        }
         if self.enabled.contains(&id) {
             manifest.enabled = true;
         }
@@ -428,6 +974,15 @@ impl SkillPolicy {
         if manifest.visibility == crate::config::SkillVisibility::Off {
             manifest.enabled = false;
         }
+    }
+
+    /// Apply policy to a compile-time bundled Skill. Only this explicit origin
+    /// may inherit `enable_all_bundled`.
+    pub(crate) fn apply_to_bundled_manifest(&self, manifest: &mut SkillManifest) {
+        if self.enable_all_bundled {
+            manifest.enabled = true;
+        }
+        self.apply_to_manifest(manifest);
     }
 }
 
@@ -514,14 +1069,11 @@ fn parse_bundled_skills() -> Result<HashMap<String, Skill>> {
             crate::skills::versioning::skill_content_hash_hex(yaml_body, &manifest.system_prompt);
         out.insert(
             manifest.id.clone(),
-            Skill {
+            Skill::from_trusted_bundled(
                 manifest,
-                // Bundled skills have no on-disk path; use a
-                // marker path so downstream consumers can tell
-                // bundled from user-installed.
-                path: PathBuf::from(format!("<bundled>/{expected_id}/skill.yaml")),
+                PathBuf::from(format!("<bundled>/{expected_id}/skill.yaml")),
                 content_hash,
-            },
+            ),
         );
     }
     Ok(out)
@@ -600,6 +1152,54 @@ mod tests {
         let sd = dir.join(id);
         create_dir_all(&sd).await.unwrap();
         write(sd.join("skill.yaml"), body).await.unwrap();
+    }
+
+    fn install_test_wal_key(home: &Path) {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir).unwrap();
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+    }
+
+    fn record_test_install_incarnation(home: &Path, id: &str) {
+        let current = super::super::installer::inspect_current_install(&home.join("skills"), id)
+            .unwrap()
+            .expect("installed Skill fixture exists");
+        super::super::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            super::super::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+    }
+
+    fn test_reload_controller(home: &Path) -> crate::config::reload::ReloadController {
+        let config = crate::config::FreedomConfig::default();
+        let config_path = home.join("freedom.yaml");
+        std::fs::write(&config_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        crate::config::reload::ReloadController::new(config, config_path)
+    }
+
+    fn activate_test_skill(
+        home: &Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+    ) {
+        let decision = super::super::authority::SkillAuthorityDecision::new(
+            super::super::authority::SkillAuthorityDecisionSource::OperatorCli,
+            super::super::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .unwrap();
+        super::super::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .unwrap();
     }
 
     #[tokio::test]
@@ -813,6 +1413,189 @@ system_prompt: |
     }
 
     #[tokio::test]
+    async fn authorized_quarantine_never_swallows_root_entry_budget_exhaustion() {
+        let dir = tempdir().unwrap();
+        write_manifest(dir.path(), "alpha", "id: alpha\ndescription: alpha\n").await;
+        write_manifest(dir.path(), "beta", "id: beta\ndescription: beta\n").await;
+
+        let error =
+            load_user_skills_with_limits(dir.path(), UserSkillLoadMode::Quarantine, 1, usize::MAX)
+                .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("1-entry runtime limit"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorized_quarantine_never_swallows_manifest_work_budget_exhaustion() {
+        let dir = tempdir().unwrap();
+        write_manifest(dir.path(), "alpha", "id: alpha\ndescription: alpha\n").await;
+
+        let error = load_user_skills_with_limits(dir.path(), UserSkillLoadMode::Quarantine, 1, 1)
+            .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("1-byte runtime work limit"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_read_errors_are_charged_to_authorized_work_budget() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("alpha");
+        create_dir_all(&skill_dir).await.unwrap();
+        write(
+            skill_dir.join("skill.yaml"),
+            vec![b'x'; MAX_SKILL_MANIFEST_BYTES + 1],
+        )
+        .await
+        .unwrap();
+
+        let error = load_user_skills_with_limits(
+            dir.path(),
+            UserSkillLoadMode::Quarantine,
+            1,
+            MAX_SKILL_MANIFEST_BYTES,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("runtime work limit"),
+            "{error:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn aggregate_authority_overflow_discards_partially_admitted_snapshot() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "alpha",
+            "id: alpha\n\
+             description: authorized first candidate\n\
+             system_prompt: AUTHORIZED-ALPHA\n\
+             trigger_keywords: [alpha]\n",
+        )
+        .await;
+        write_manifest(
+            &skills_dir,
+            "beta",
+            "id: beta\n\
+             description: rejected second candidate\n\
+             system_prompt: INACTIVE-BETA\n\
+             trigger_keywords: [beta]\n",
+        )
+        .await;
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), "alpha");
+        record_test_install_incarnation(home.path(), "beta");
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), "alpha", &reload);
+
+        // Candidate order is canonical by id. Alpha consumes one package
+        // entry plus its one authority-record entry and is admitted. Beta's
+        // first package entry then crosses the shared limit. The loader must
+        // discard that partial map and return the complete bundled-only layer.
+        let snapshot =
+            load_authorized_with_budget_override(&skills_dir, &reload, Some((2, u64::MAX)))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            snapshot.skills.len(),
+            super::super::bundled::BUNDLED_SKILLS.len()
+        );
+        assert!(
+            snapshot.skills.iter().all(RuntimeSkill::is_trusted_bundled),
+            "an aggregate traversal failure must discard every installed candidate"
+        );
+        assert!(
+            snapshot
+                .skills
+                .iter()
+                .all(|skill| skill.id() != "alpha" && skill.id() != "beta"),
+            "no partially admitted installed Skill may survive aggregate overflow"
+        );
+        assert_eq!(
+            snapshot.accepted_config_epoch,
+            reload.accepted_snapshot().epoch()
+        );
+    }
+
+    #[tokio::test]
+    async fn physical_topic_forget_cannot_destroy_installed_authority_proofs() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let id = "physical-proof";
+        write_manifest(
+            &skills_dir,
+            id,
+            "id: physical-proof\n\
+             description: physical redaction proof fixture\n\
+             system_prompt: AUTHORITY-SURVIVES-PHYSICAL-FORGET\n\
+             trigger_keywords: [physical]\n",
+        )
+        .await;
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), id, &reload);
+
+        let before = load_authorized_from_reload_controller(&skills_dir, &reload)
+            .await
+            .unwrap();
+        assert!(
+            before
+                .skills
+                .iter()
+                .any(|skill| skill.id() == id && !skill.is_trusted_bundled())
+        );
+
+        let mut protected_refusals = 0usize;
+        for entry in std::fs::read_dir(home.path().join("wal")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(OsStr::to_str) != Some("wal") {
+                continue;
+            }
+            match crate::wal::redact::scan_and_redact(
+                &path,
+                crate::wal::redact::payload_contains_topic(id),
+            ) {
+                Ok(report) => assert!(
+                    report.frames_redacted.is_empty(),
+                    "physical forget redacted an unexpected frame in {}",
+                    path.display()
+                ),
+                Err(error)
+                    if format!("{error:#}").contains("protected installed-Skill runtime proof") =>
+                {
+                    protected_refusals += 1;
+                }
+                Err(error) => panic!(
+                    "physical forget returned an unrelated error for {}: {error:#}",
+                    path.display()
+                ),
+            }
+        }
+        assert!(
+            protected_refusals >= 2,
+            "both mutation and authority proof segments must reject topic redaction"
+        );
+
+        let after = load_authorized_from_reload_controller(&skills_dir, &reload)
+            .await
+            .unwrap();
+        assert!(
+            after
+                .skills
+                .iter()
+                .any(|skill| skill.id() == id && !skill.is_trusted_bundled()),
+            "authenticated installed authority must remain valid after physical forget refusal"
+        );
+    }
+
+    #[tokio::test]
     async fn missing_description_rejected() {
         let dir = tempdir().unwrap();
         write_manifest(dir.path(), "broke", "id: broke\ndescription: \"\"\n").await;
@@ -898,6 +1681,101 @@ system_prompt: |
     }
 
     #[tokio::test]
+    async fn diagnostic_inventory_reports_authority_and_bundled_fallback_truth() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "standalone-candidate",
+            "id: standalone-candidate\n\
+             description: manifest enablement is not runtime authority\n\
+             enabled: true\n",
+        )
+        .await;
+        write_manifest(
+            &skills_dir,
+            "systematic_debugging",
+            "id: systematic_debugging\n\
+             description: installed same-id candidate without authority\n\
+             enabled: true\n",
+        )
+        .await;
+
+        let rows = diagnostic_inventory(&skills_dir).await.unwrap();
+        let standalone = rows
+            .iter()
+            .find(|row| row.id() == "standalone-candidate")
+            .unwrap();
+        assert!(matches!(
+            standalone,
+            SkillInventoryRow::Healthy {
+                runtime_state: SkillInventoryRuntimeState::Disabled,
+                ..
+            }
+        ));
+        let override_row = rows
+            .iter()
+            .find(|row| row.id() == "systematic_debugging")
+            .unwrap();
+        assert!(matches!(
+            override_row,
+            SkillInventoryRow::Healthy {
+                origin: SkillInventoryOrigin::User,
+                runtime_state: SkillInventoryRuntimeState::BundledFallbackActive,
+                ..
+            }
+        ));
+
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), "standalone-candidate");
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), "standalone-candidate", &reload);
+        let rows = diagnostic_inventory(&skills_dir).await.unwrap();
+        assert!(matches!(
+            rows.iter()
+                .find(|row| row.id() == "standalone-candidate")
+                .unwrap(),
+            SkillInventoryRow::Healthy {
+                runtime_state: SkillInventoryRuntimeState::InstalledActive,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn diagnostic_runtime_truth_rejects_identical_bytes_from_a_new_incarnation() {
+        let generation = "a".repeat(64);
+        let prior_receipt = "b".repeat(64);
+        let replacement_receipt = "c".repeat(64);
+        let evidence = InventoryRuntimeEvidence {
+            state: SkillInventoryRuntimeState::InstalledActive,
+            package_generation_sha256: Some(generation.clone()),
+            install_incarnation: Some(7),
+            install_terminal_receipt_sha256: Some(prior_receipt.clone()),
+        };
+
+        assert_eq!(
+            installed_candidate_runtime_state(
+                Some(&evidence),
+                Some(&generation),
+                Some(7),
+                Some(&prior_receipt),
+            ),
+            SkillInventoryRuntimeState::InstalledActive
+        );
+        assert_eq!(
+            installed_candidate_runtime_state(
+                Some(&evidence),
+                Some(&generation),
+                Some(8),
+                Some(&replacement_receipt),
+            ),
+            SkillInventoryRuntimeState::Disabled,
+            "an identical-byte reinstall is a new authority incarnation"
+        );
+    }
+
+    #[tokio::test]
     async fn exact_custom_config_filename_owns_skill_policy() {
         let home = tempdir().unwrap();
         let skills_dir = home.path().join("skills");
@@ -932,6 +1810,26 @@ system_prompt: |
                 .is_enabled(),
             "a custom config filename must not inherit adjacent freedom.yaml policy"
         );
+
+        let exact_config = crate::config::FreedomConfig::load_from_path(&custom_config).unwrap();
+        let inventory = diagnostic_inventory_for_accepted_config(
+            &skills_dir,
+            exact_config,
+            custom_config.clone(),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            inventory
+                .iter()
+                .find(|row| row.id() == "systematic_debugging")
+                .unwrap(),
+            SkillInventoryRow::Healthy {
+                manifest,
+                runtime_state: SkillInventoryRuntimeState::TrustedBundledActive,
+                ..
+            } if manifest.enabled
+        ));
     }
 
     #[tokio::test]
@@ -1247,6 +2145,37 @@ system_prompt: |
         assert!(
             !pm.is_enabled(),
             "without enable_all_bundled a pm-* skill must stay disabled (gated default)"
+        );
+    }
+
+    #[tokio::test]
+    async fn enable_all_bundled_never_enables_an_installed_candidate() {
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "external-disabled",
+            "id: external-disabled\n\
+             description: installed authority fixture\n\
+             system_prompt: never route without authority\n\
+             trigger_keywords: [external]\n\
+             enabled: false\n",
+        )
+        .await;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enable_all_bundled: true\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let external = skills
+            .iter()
+            .find(|skill| skill.id() == "external-disabled")
+            .expect("raw inventory retains installed candidate");
+        assert!(
+            !external.is_enabled(),
+            "bundled-only full-auto policy must not grant installed behavior"
         );
     }
 

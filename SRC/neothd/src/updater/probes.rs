@@ -749,6 +749,7 @@ pub const NO_REGISTRY_RESOLVER_MSG: &str =
 pub const DISABLED_SKILL_PROBE_MSG: &str = "upstream probe skipped without network: skill is disabled by effective manifest/operator policy";
 pub const UPDATE_PROBE_DENIED_MSG: &str =
     "upstream probe skipped without network: updater gate denied this component";
+pub const SKILL_AUTHORITY_REQUIRED_MSG: &str = "upstream probe skipped without network: installed Skill has no active exact-generation authority";
 
 fn invalid_source_probe_status(source: &str) -> Option<String> {
     crate::updater::skill_resolver::parse_git_source(source)
@@ -756,6 +757,7 @@ fn invalid_source_probe_status(source: &str) -> Option<String> {
         .map(|error| format!("upstream probe skipped before network: {error}"))
 }
 
+#[cfg(test)]
 fn revalidate_skill_at_resolver_sink(
     home: &Path,
     accepted_policy: &crate::config::SkillsConfig,
@@ -790,6 +792,7 @@ fn revalidate_skill_at_resolver_sink(
 /// capability walks and allowing unrelated broken entries to influence a
 /// single skill's decision. This keeps the exact config/policy and full package
 /// generation checks while making sink work O(1) per resolver call.
+#[cfg(test)]
 fn read_exact_skill_row_at_sink(
     home: &Path,
     accepted_policy: &crate::config::SkillsConfig,
@@ -872,17 +875,7 @@ fn read_exact_skill_row_at_sink(
     })
 }
 
-async fn resolve_skill_latest_at_sink(
-    home: &Path,
-    accepted_policy: &crate::config::SkillsConfig,
-    row: &InstalledSkillRow,
-) -> Result<String, String> {
-    resolve_skill_latest_at_sink_with_resolver(home, accepted_policy, row, |source| async move {
-        crate::updater::skill_resolver::resolve_latest_version(&source).await
-    })
-    .await
-}
-
+#[cfg(test)]
 async fn resolve_skill_latest_at_sink_with_resolver<R, Fut>(
     home: &Path,
     accepted_policy: &crate::config::SkillsConfig,
@@ -902,6 +895,84 @@ where
     .await
     .map_err(|_| {
         "upstream probe skipped without network: skill revalidation worker failed".to_string()
+    })??;
+    if let Some(error) = invalid_source_probe_status(&source) {
+        return Err(error);
+    }
+    resolver(source).await
+}
+
+fn revalidate_authorized_skill_at_resolver_sink(
+    home: &Path,
+    reload: &crate::config::reload::ReloadController,
+    row: &InstalledSkillRow,
+) -> Result<String, String> {
+    if !row.enabled {
+        return Err(DISABLED_SKILL_PROBE_MSG.to_string());
+    }
+    let authority =
+        match crate::skills::authority::validate_installed_authority(home, &row.id, reload) {
+            crate::skills::authority::InstalledSkillAuthorityValidation::Active(authority) => {
+                authority
+            }
+            crate::skills::authority::InstalledSkillAuthorityValidation::Inactive(reason) => {
+                return Err(format!(
+                    "{SKILL_AUTHORITY_REQUIRED_MSG} ({})",
+                    reason.as_str()
+                ));
+            }
+        };
+    if authority.package_generation_sha256() != row.generation_sha256 {
+        return Err(
+            "upstream probe skipped without network: skill package generation changed after scan"
+                .to_string(),
+        );
+    }
+    let manifest = authority.manifest();
+    if !manifest.enabled {
+        return Err(DISABLED_SKILL_PROBE_MSG.to_string());
+    }
+    let source = manifest.source.clone().ok_or_else(|| {
+        "upstream probe skipped without network: skill source disappeared after scan".to_string()
+    })?;
+    if row.source.as_deref() != Some(source.as_str()) {
+        return Err(
+            "upstream probe skipped without network: skill source changed after scan".to_string(),
+        );
+    }
+    Ok(source)
+}
+
+async fn resolve_authorized_skill_latest_at_sink(
+    home: &Path,
+    reload: &crate::config::reload::ReloadController,
+    row: &InstalledSkillRow,
+) -> Result<String, String> {
+    resolve_authorized_skill_latest_at_sink_with_resolver(home, reload, row, |source| async move {
+        crate::updater::skill_resolver::resolve_latest_version(&source).await
+    })
+    .await
+}
+
+async fn resolve_authorized_skill_latest_at_sink_with_resolver<R, Fut>(
+    home: &Path,
+    reload: &crate::config::reload::ReloadController,
+    row: &InstalledSkillRow,
+    resolver: R,
+) -> Result<String, String>
+where
+    R: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<String, String>>,
+{
+    let home = home.to_path_buf();
+    let reload = reload.clone();
+    let row = row.clone();
+    let source = tokio::task::spawn_blocking(move || {
+        revalidate_authorized_skill_at_resolver_sink(&home, &reload, &row)
+    })
+    .await
+    .map_err(|_| {
+        "upstream probe skipped without network: Skill authority worker failed".to_string()
     })??;
     if let Some(error) = invalid_source_probe_status(&source) {
         return Err(error);
@@ -993,23 +1064,21 @@ where
 /// Compose installed skills + plugins into a single
 /// `skill_plugin_specs` list.
 ///
-/// U-02b (Session 26) updated this from the original "always
-/// `Err(NO_REGISTRY_RESOLVER_MSG)`" stub: skills that declare a
-/// `source: git+https://…` field in their manifest now go through
-/// [`crate::updater::skill_resolver::resolve_latest_version`] —
-/// `git ls-remote --tags <url>` + highest-semver pick. Skills WITHOUT
-/// a source declaration still surface the sentinel so the cron audit
-/// chain captures "operator hasn't opted into auto-update probes yet"
-/// distinctly from a real resolver failure.
+/// This detached-policy inventory API performs no installed-Skill network
+/// egress. A `SkillsConfig` value and manifest `enabled` bit are not runtime
+/// authority; source-bearing Skills return [`SKILL_AUTHORITY_REQUIRED_MSG`].
+/// The daemon uses [`skill_plugin_specs_for_home_authorized_async`], which
+/// validates the exact live package/authority generation before its resolver.
+/// Skills without a source declaration keep the no-registry sentinel.
 ///
 /// Plugins (`~/.neoth/plugins/<id>/plugin.toml`) get the same
 /// treatment as of Session 27 parity work: a `source` field on the
 /// `PluginManifest` routes through the resolver; plugins without
 /// the field keep the sentinel so the audit chain still
 /// distinguishes "operator hasn't opted in" from "resolver failed". The
-/// caller must pass the daemon's immutable accepted skill and plugin policy
-/// snapshots. Raw config files are deliberately not consulted: the file may
-/// already contain a newer candidate rejected by `ReloadController`.
+/// The caller must pass immutable skill and plugin policy snapshots. Raw config
+/// files are deliberately not consulted: the file may already contain a newer
+/// candidate rejected by `ReloadController`.
 pub async fn skill_plugin_specs_for_home_async(
     home: PathBuf,
     skills_policy: crate::config::SkillsConfig,
@@ -1021,6 +1090,32 @@ pub async fn skill_plugin_specs_for_home_async(
         skills_policy,
         plugin_policy,
         gate,
+        None,
+        |source| async move {
+            crate::updater::skill_resolver::resolve_latest_version(&source).await
+        },
+    )
+    .await
+}
+
+/// Runtime updater view. Installed Skill sources are resolved only after the
+/// exact package generation consumes the same active authority record used by
+/// the loader/router. The inventory-only API above deliberately performs no
+/// Skill network egress because a detached `SkillsConfig` is not proof of an
+/// accepted runtime generation.
+pub(crate) async fn skill_plugin_specs_for_home_authorized_async(
+    home: PathBuf,
+    reload: std::sync::Arc<crate::config::reload::ReloadController>,
+    plugin_policy: crate::config::WasmPluginsConfig,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
+    let skills_policy = reload.accepted_snapshot().config().skills.clone();
+    skill_plugin_specs_for_home_async_with_plugin_resolver(
+        home,
+        skills_policy,
+        plugin_policy,
+        gate,
+        Some(reload),
         |source| async move {
             crate::updater::skill_resolver::resolve_latest_version(&source).await
         },
@@ -1033,6 +1128,7 @@ async fn skill_plugin_specs_for_home_async_with_plugin_resolver<R, Fut>(
     skills_policy: crate::config::SkillsConfig,
     plugin_policy: crate::config::WasmPluginsConfig,
     gate: GateDecision,
+    skill_reload: Option<std::sync::Arc<crate::config::reload::ReloadController>>,
     plugin_resolver: R,
 ) -> Vec<ComponentSpec>
 where
@@ -1080,7 +1176,12 @@ where
             Err(DISABLED_SKILL_PROBE_MSG.to_string())
         } else {
             match row.source.as_deref() {
-                Some(_) => resolve_skill_latest_at_sink(&home, &skills_policy, &row).await,
+                Some(_) => match skill_reload.as_deref() {
+                    Some(reload) => {
+                        resolve_authorized_skill_latest_at_sink(&home, reload, &row).await
+                    }
+                    None => Err(SKILL_AUTHORITY_REQUIRED_MSG.to_string()),
+                },
                 None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
             }
         };
@@ -1189,12 +1290,10 @@ pub fn skill_plugin_specs_for_home(
 /// rescanned each tick, while policy is taken only from the immutable config
 /// generation accepted by `ReloadController` for that tick.
 ///
-/// U-02b: when invoked from the cron's `spawn_blocking` context the
-/// builder hands control to `skill_plugin_specs_for_home_async` via
-/// `Handle::try_current().block_on()` so source-declaring skills
-/// reach the git ls-remote resolver. Outside a tokio runtime the
-/// sync fallback emits the sentinel error for every skill — same
-/// shape the cron-audit chain saw before U-02b.
+/// Detached callers cannot authorize installed-Skill egress. The daemon uses
+/// [`skill_plugin_specs_authorized_blocking`] with its live
+/// `ReloadController`; this compatibility wrapper reports an authority-required
+/// status for every source-bearing Skill.
 pub fn skill_plugin_specs_blocking(
     home: PathBuf,
     skills_policy: crate::config::SkillsConfig,
@@ -1209,6 +1308,34 @@ pub fn skill_plugin_specs_blocking(
             gate,
         )),
         Err(_) => skill_plugin_specs_for_home(&home, &skills_policy, &plugin_policy, gate),
+    }
+}
+
+/// Runtime counterpart of [`skill_plugin_specs_blocking`]. The live
+/// `ReloadController` is mandatory so source probes cannot mistake a detached
+/// config struct or manifest `enabled` bit for execution authority.
+/// Blocking-thread-only adapter for the updater cron.
+///
+/// Async callers must use [`skill_plugin_specs_for_home_authorized_async`].
+/// Calling this function from a Tokio worker can panic because it enters the
+/// current runtime with `Handle::block_on`.
+pub(crate) fn skill_plugin_specs_authorized_blocking(
+    home: PathBuf,
+    reload: std::sync::Arc<crate::config::reload::ReloadController>,
+    plugin_policy: crate::config::WasmPluginsConfig,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_authorized_async(
+            home,
+            reload,
+            plugin_policy,
+            gate,
+        )),
+        Err(_) => {
+            let skills_policy = reload.accepted_snapshot().config().skills.clone();
+            skill_plugin_specs_for_home(&home, &skills_policy, &plugin_policy, gate)
+        }
     }
 }
 
@@ -1285,6 +1412,56 @@ mod tests {
         let installed = home.join("skills").join(id);
         std::fs::create_dir_all(&installed).unwrap();
         std::fs::write(installed.join("skill.yaml"), manifest_body).unwrap();
+    }
+
+    fn install_test_wal_key(home: &Path) {
+        let wal_dir = home.join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            std::fs::set_permissions(&wal_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        #[cfg(windows)]
+        crate::wal::win_native::set_private_current_user_directory_dacl(&wal_dir).unwrap();
+        crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key")).unwrap();
+    }
+
+    fn record_test_install_incarnation(home: &Path, id: &str) {
+        let current = crate::skills::installer::inspect_current_install(&home.join("skills"), id)
+            .unwrap()
+            .expect("installed Skill fixture exists");
+        crate::skills::mutation_lifecycle::record_committed_install_incarnation_for_test(
+            home,
+            id,
+            &current.generation_sha256,
+            crate::skills::installer::SkillMutationOrigin::CliInstall,
+        )
+        .unwrap();
+    }
+
+    fn test_reload_controller(
+        home: &Path,
+    ) -> std::sync::Arc<crate::config::reload::ReloadController> {
+        let config = crate::config::FreedomConfig::default();
+        let path = config_path(home);
+        std::fs::write(&path, serde_yaml::to_string(&config).unwrap()).unwrap();
+        std::sync::Arc::new(crate::config::reload::ReloadController::new(config, path))
+    }
+
+    fn activate_test_skill(
+        home: &Path,
+        id: &str,
+        reload: &crate::config::reload::ReloadController,
+    ) {
+        let decision = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            crate::skills::authority::SkillAuthorityState::Active,
+            None,
+        )
+        .unwrap();
+        crate::skills::authority::publish_installed_authority_decision(home, id, reload, decision)
+            .unwrap();
     }
 
     fn config_path(home: &Path) -> PathBuf {
@@ -1365,7 +1542,7 @@ mod tests {
     {
         let (skills, plugins) = accepted_policies_at(&path);
         super::skill_plugin_specs_for_home_async_with_plugin_resolver(
-            home, skills, plugins, gate, resolver,
+            home, skills, plugins, gate, None, resolver,
         )
         .await
     }
@@ -1789,6 +1966,252 @@ mod tests {
             ),
             Ok(_) => panic!("source-less skill must NOT report a real version"),
         }
+    }
+
+    #[tokio::test]
+    async fn detached_policy_source_skill_never_gains_network_authority() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill(
+            home.path(),
+            "detached",
+            "id: detached\n\
+             description: detached policy cannot authorize egress\n\
+             version: 1.0.0\n\
+             source: git+https://127.0.0.1/authority-bypass\n",
+        );
+
+        let specs = skill_plugin_specs_for_home_async(
+            home.path().to_path_buf(),
+            config_path(home.path()),
+            GateDecision::Allow,
+        )
+        .await;
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(
+            specs[0].latest_version.as_ref().unwrap_err(),
+            SKILL_AUTHORITY_REQUIRED_MSG
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_rejects_installed_skill_without_exact_authority() {
+        let home = tempfile::tempdir().unwrap();
+        write_skill(
+            home.path(),
+            "unapproved-source",
+            "id: unapproved-source\n\
+             description: no authority means no source probe\n\
+             version: 1.0.0\n\
+             source: git+https://github.com/example/unapproved-source\n",
+        );
+        let reload = test_reload_controller(home.path());
+        let row = super::scan_installed_skills_checked(
+            home.path(),
+            &reload.accepted_snapshot().config().skills,
+        )
+        .rows
+        .pop()
+        .expect("source-bearing installed candidate");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let result = super::resolve_authorized_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &reload,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with(SKILL_AUTHORITY_REQUIRED_MSG)
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_consumes_active_exact_generation_authority() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "approved-source";
+        write_skill(
+            home.path(),
+            id,
+            "id: approved-source\n\
+             description: exact authority permits this source probe\n\
+             version: 1.0.0\n\
+             source: git+https://github.com/example/approved-source\n",
+        );
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), id, &reload);
+        let row = super::scan_installed_skills_checked(
+            home.path(),
+            &reload.accepted_snapshot().config().skills,
+        )
+        .rows
+        .pop()
+        .expect("authorized installed Skill row");
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let result = super::resolve_authorized_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &reload,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(result.as_deref(), Ok("v9.9.9"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_rejects_post_authority_package_edit() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "edited-source";
+        write_skill(
+            home.path(),
+            id,
+            "id: edited-source\n\
+             description: later bytes invalidate authority\n\
+             version: 1.0.0\n\
+             source: git+https://github.com/example/edited-source\n",
+        );
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), id, &reload);
+        let row = super::scan_installed_skills_checked(
+            home.path(),
+            &reload.accepted_snapshot().config().skills,
+        )
+        .rows
+        .pop()
+        .expect("authorized installed Skill row");
+        std::fs::write(
+            home.path().join("skills").join(id).join("changed.txt"),
+            b"changed after authority",
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let result = super::resolve_authorized_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &reload,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with(SKILL_AUTHORITY_REQUIRED_MSG)
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_rejects_revocation_after_scan_without_calling_resolver() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "revoked-source";
+        write_skill(
+            home.path(),
+            id,
+            "id: revoked-source\n\
+             description: revocation wins at the resolver sink\n\
+             version: 1.0.0\n\
+             source: git+https://github.com/example/revoked-source\n",
+        );
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), id, &reload);
+        let row = super::scan_installed_skills_checked(
+            home.path(),
+            &reload.accepted_snapshot().config().skills,
+        )
+        .rows
+        .pop()
+        .expect("authorized installed Skill row");
+        let revoke = crate::skills::authority::SkillAuthorityDecision::new(
+            crate::skills::authority::SkillAuthorityDecisionSource::OperatorCli,
+            crate::skills::authority::SkillAuthorityState::Revoked,
+            Some("test revocation before resolver dispatch".to_string()),
+        )
+        .unwrap();
+        crate::skills::authority::publish_installed_authority_decision(
+            home.path(),
+            id,
+            &reload,
+            revoke,
+        )
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let result = super::resolve_authorized_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &reload,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with(SKILL_AUTHORITY_REQUIRED_MSG)
+        );
+    }
+
+    #[tokio::test]
+    async fn resolver_sink_rejects_identical_reinstall_incarnation_without_network() {
+        let home = tempfile::tempdir().unwrap();
+        let id = "reinstalled-source";
+        write_skill(
+            home.path(),
+            id,
+            "id: reinstalled-source\n\
+             description: identical bytes still form a new install incarnation\n\
+             version: 1.0.0\n\
+             source: git+https://github.com/example/reinstalled-source\n",
+        );
+        install_test_wal_key(home.path());
+        record_test_install_incarnation(home.path(), id);
+        let reload = test_reload_controller(home.path());
+        activate_test_skill(home.path(), id, &reload);
+        let row = super::scan_installed_skills_checked(
+            home.path(),
+            &reload.accepted_snapshot().config().skills,
+        )
+        .rows
+        .pop()
+        .expect("authorized installed Skill row");
+
+        // A committed reinstall mints a fresh incarnation even when every
+        // package byte is identical. The prior activation must not ride across
+        // that ABA boundary.
+        record_test_install_incarnation(home.path(), id);
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let result = super::resolve_authorized_skill_latest_at_sink_with_resolver(
+            home.path(),
+            &reload,
+            &row,
+            counting_resolver(calls.clone()),
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert!(
+            result
+                .unwrap_err()
+                .starts_with(SKILL_AUTHORITY_REQUIRED_MSG)
+        );
     }
 
     #[tokio::test]

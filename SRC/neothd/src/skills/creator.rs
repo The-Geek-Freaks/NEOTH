@@ -4,6 +4,8 @@
 //! few fields (id / description / trigger keywords / system prompt),
 //! build a validated [`SkillManifest`], and write
 //! `~/.neoth/skills/<id>/skill.yaml` — the same shape the loader reads.
+//! Newly authored manifests are deliberately installed with `enabled: false`;
+//! creation and activation are separate operator decisions.
 //!
 //! The pure builder ([`build_manifest`]) and audited package writer are fully
 //! testable without a TTY; the interactive dialoguer wrapper is gated
@@ -106,7 +108,9 @@ pub fn validate_skill_id(id: &str) -> Result<()> {
 
 /// Build a [`SkillManifest`] from raw params + round-trip it through
 /// `serde_yaml` to prove the YAML we're about to write re-parses
-/// cleanly. Returns `(manifest, yaml_string)`. Pure — no I/O.
+/// cleanly. Every newly authored manifest is inactive by construction; an
+/// explicit activation step must bind the installed generation before routing.
+/// Returns `(manifest, yaml_string)`. Pure — no I/O.
 pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> {
     validate_skill_id(&params.id)?;
     if params.description.trim().is_empty() {
@@ -133,7 +137,7 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
         homepage: None,
         source: None,
         modes: vec![],
-        enabled: true,
+        enabled: false,
         delegate_to: None,
         model: None,
         paths: vec![],
@@ -147,6 +151,33 @@ pub fn build_manifest(params: &CreateParams) -> Result<(SkillManifest, String)> 
     let _back: SkillManifest = serde_yaml::from_str(&yaml)
         .context("round-trip parse failed — serde_yaml produced unreadable YAML")?;
     Ok((manifest, yaml))
+}
+
+/// Canonicalize an externally supplied or legacy generated manifest while
+/// forcing the install/activation split. This is the final defense-in-depth
+/// boundary shared by generated writers and proposal adoption: no caller can
+/// turn a package write into routing authority by supplying `enabled: true` or
+/// relying on the schema's legacy default.
+pub(crate) fn canonical_inactive_manifest_yaml(yaml: &str) -> Result<(SkillManifest, String)> {
+    let _: SkillManifest =
+        serde_yaml::from_str(yaml).context("parse generated SkillManifest YAML")?;
+    let mut document: serde_yaml::Value =
+        serde_yaml::from_str(yaml).context("parse generated SkillManifest YAML document")?;
+    let mapping = document
+        .as_mapping_mut()
+        .ok_or_else(|| anyhow::anyhow!("generated SkillManifest YAML root is not a mapping"))?;
+    mapping.insert(
+        serde_yaml::Value::String("enabled".to_string()),
+        serde_yaml::Value::Bool(false),
+    );
+    let inactive_yaml =
+        serde_yaml::to_string(&document).context("serialize inactive SkillManifest YAML")?;
+    let reparsed: SkillManifest =
+        serde_yaml::from_str(&inactive_yaml).context("round-trip inactive SkillManifest YAML")?;
+    if reparsed.enabled {
+        anyhow::bail!("inactive SkillManifest canonicalization failed closed");
+    }
+    Ok((reparsed, inactive_yaml))
 }
 
 /// Write `<skills_dir>/<id>/skill.yaml` transactionally, creating the id
@@ -686,11 +717,18 @@ pub(crate) fn write_skill_yaml_audited(
     expectation: Option<&CreateExpectation>,
     origin: super::installer::SkillMutationOrigin,
 ) -> Result<CreateReport> {
+    let (manifest, inactive_yaml) = canonical_inactive_manifest_yaml(yaml)?;
+    if manifest.id != id {
+        anyhow::bail!(
+            "generated skill manifest id `{}` does not match target directory `{id}`",
+            manifest.id
+        );
+    }
     let request = super::installer::SkillDocumentMutationRequest {
         target_skills_dir: skills_dir.to_path_buf(),
         id: id.to_string(),
         document: super::installer::SkillPackageDocument::Manifest,
-        replacement: yaml.as_bytes().to_vec(),
+        replacement: inactive_yaml.into_bytes(),
         existing,
         expected_target_generation_sha256: expectation
             .map(|expectation| expectation.target_generation_sha256.clone()),
@@ -865,7 +903,7 @@ mod tests {
         let (m, yaml) = build_manifest(&good_params()).expect("build");
         assert_eq!(m.id, "morning-news");
         assert_eq!(m.trigger_keywords, vec!["news", "briefing", "headlines"]);
-        assert!(m.enabled);
+        assert!(!m.enabled, "newly authored skills must start inactive");
         let back: SkillManifest = serde_yaml::from_str(&yaml).expect("round-trip");
         assert_eq!(back.id, m.id);
         assert_eq!(back.trigger_keywords, m.trigger_keywords);
@@ -881,6 +919,32 @@ mod tests {
         };
         let (m, _) = build_manifest(&p).expect("build");
         assert_eq!(m.trigger_keywords, vec!["news", "briefing"]);
+    }
+
+    #[test]
+    fn generated_manifest_boundary_forces_explicit_and_legacy_defaults_inactive() {
+        for input in [
+            "id: generated\n\
+             description: generated\n\
+             system_prompt: test\n\
+             enabled: true\n\
+             future_metadata: preserve-me\n",
+            "id: generated\n\
+             description: generated\n\
+             system_prompt: test\n",
+        ] {
+            let (manifest, yaml) = canonical_inactive_manifest_yaml(input).unwrap();
+            assert!(!manifest.enabled);
+            assert!(yaml.contains("enabled: false"));
+            let roundtrip: SkillManifest = serde_yaml::from_str(&yaml).unwrap();
+            assert!(!roundtrip.enabled);
+            if input.contains("future_metadata") {
+                assert!(
+                    yaml.contains("future_metadata: preserve-me"),
+                    "canonicalization must retain forward-compatible metadata"
+                );
+            }
+        }
     }
 
     #[test]
@@ -937,6 +1001,7 @@ mod tests {
         let m: SkillManifest = serde_yaml::from_str(&body).expect("loader-parseable");
         assert_eq!(m.id, "morning-news");
         assert!(!m.trigger_keywords.is_empty());
+        assert!(!m.enabled, "created skill must await explicit activation");
     }
 
     #[test]
