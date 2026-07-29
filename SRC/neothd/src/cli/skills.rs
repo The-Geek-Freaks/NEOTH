@@ -561,6 +561,7 @@ async fn verify_skill_decision_commit(
 /// config CAS, and final Active authority under one package mutation lock.
 /// Disable/revoke commit policy denial before reducing authority. Same-id
 /// bundled fallback therefore cannot appear at an intermediate boundary.
+#[cfg(test)]
 pub(crate) async fn set_skill_authority_at(
     home: &Path,
     id: &str,
@@ -577,6 +578,7 @@ pub(crate) async fn set_skill_authority_at(
     .await
 }
 
+#[cfg(test)]
 pub(crate) async fn set_skill_authority_at_config(
     home: &Path,
     config_path: &Path,

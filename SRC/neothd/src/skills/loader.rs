@@ -81,21 +81,6 @@ pub(crate) async fn load_all_from_config_path(
     load_all_from_policy_source(skills_dir, Some(config_path), None).await
 }
 
-/// Load the full skill set from an already accepted runtime policy snapshot.
-/// This is the daemon hot-reload path: a rejected freedom.yaml generation can
-/// never leak its skill enable/disable decisions into the routing registry.
-pub(crate) async fn load_all_from_skills_config(
-    skills_dir: &Path,
-    skills_config: &crate::config::SkillsConfig,
-) -> Result<Vec<Skill>> {
-    load_all_from_policy_source(
-        skills_dir,
-        None,
-        Some(SkillPolicy::from_config(skills_config)),
-    )
-    .await
-}
-
 /// Build the routing snapshot from the exact config generation accepted by
 /// the runtime reload controller.
 ///
@@ -211,7 +196,7 @@ async fn load_authorized_with_budget_override(
             match authority_batch.validate(&id, &reload) {
                 Ok(super::authority::InstalledSkillAuthorityValidation::Active(authority)) => {
                     let skill = match RuntimeSkill::from_validated_installed(
-                        authority,
+                        *authority,
                         candidate.skill.path,
                         candidate.skill.content_hash,
                         &candidate.manifest_sha256,
@@ -985,17 +970,6 @@ impl SkillPolicy {
         }
         self.apply_to_manifest(manifest);
     }
-}
-
-/// Read the skill-specific operator policy adjacent to `<skills_dir>` without
-/// coupling the loader to provider credentials or unrelated config sections.
-/// Missing `freedom.yaml` is optional; any error after the file exists is
-/// propagated so policy cannot silently relax to defaults.
-pub(crate) fn load_skill_policy(skills_dir: &Path) -> Result<SkillPolicy> {
-    let Some(home) = skills_dir.parent() else {
-        return Ok(SkillPolicy::default());
-    };
-    load_skill_policy_from_config_path(&home.join("freedom.yaml"))
 }
 
 /// Load only the Skill policy from the daemon's exact active config path.

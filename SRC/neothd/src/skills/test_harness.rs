@@ -19,18 +19,23 @@
 //! generation and dispatches every scenario through this harness. Raw
 //! manifests remain available only to module tests.
 
-use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+#[cfg(test)]
+use std::ffi::OsString;
+use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::providers::{Provider, Request};
 use crate::skills::schema::{RuntimeSkill, Skill};
-use crate::skills::store::{
-    cap_metadata_is_link_like, open_bound_directory, open_real_child_dir, read_regular_file_bounded,
-};
+#[cfg(test)]
+use crate::skills::store::{cap_metadata_is_link_like, open_real_child_dir};
+use crate::skills::store::{open_bound_directory, read_regular_file_bounded};
 
+#[cfg(test)]
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_SCENARIO_FILES: usize = 128;
 const MAX_TEST_DIRECTORY_ENTRIES: usize = 256;
@@ -38,7 +43,9 @@ const MAX_SCENARIO_FILE_BYTES: usize = 256 * 1024;
 const MAX_SCENARIO_TOTAL_BYTES: usize = 2 * 1024 * 1024;
 // The contract is intentionally flat: `<skill>/tests/<scenario>.yaml`.
 // Rejecting nested directories makes the traversal depth exactly one.
+#[cfg(test)]
 const MAX_SCENARIO_DEPTH: usize = 1;
+#[cfg(test)]
 const MAX_TEST_DISCOVERY_WORK: usize = 1 + MAX_TEST_DIRECTORY_ENTRIES + MAX_SCENARIO_FILES;
 
 /// One operator-authored test scenario for a skill.
@@ -303,6 +310,7 @@ fn load_all_scenarios_authorized(skill: &RuntimeSkill) -> Result<Vec<TestScenari
 
 /// Load and validate the complete scenario set before the first provider call.
 /// No traversal or parse error can therefore produce a partial paid run.
+#[cfg(test)]
 fn load_all_scenarios(skill: &Skill) -> Result<Vec<TestScenario>> {
     if skill.path.starts_with(Path::new("<bundled>")) {
         return Ok(Vec::new());
@@ -436,6 +444,7 @@ fn load_all_scenarios(skill: &Skill) -> Result<Vec<TestScenario>> {
     Ok(scenarios)
 }
 
+#[cfg(test)]
 fn charge_discovery_work(current: usize, display_path: &Path) -> Result<usize> {
     let next = current
         .checked_add(1)
@@ -449,6 +458,7 @@ fn charge_discovery_work(current: usize, display_path: &Path) -> Result<usize> {
     Ok(next)
 }
 
+#[cfg(test)]
 fn error_is_not_found(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
         source
@@ -547,7 +557,7 @@ mod tests {
             &authority.manifest().system_prompt,
         );
         RuntimeSkill::from_validated_installed(
-            authority,
+            *authority,
             manifest_path,
             content_hash,
             &manifest_sha256,

@@ -61,6 +61,7 @@ pub async fn dispatch_action(
     dispatch_action_with_paths(action, args, config, source, &home, &config_path).await
 }
 
+#[cfg(test)]
 async fn dispatch_action_at(
     action: SlashAction,
     args: &str,

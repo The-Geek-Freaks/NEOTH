@@ -4051,7 +4051,7 @@ fn list_installed_locked_with_limit(
         let (manifest, error, generation_sha256, generation_invalid) = if manifest.is_some()
             && error.is_none()
         {
-            match target_generation_locked_with_budget(&root, &dir_name, &mut generation_budget) {
+            match target_generation_locked_with_budget(root, &dir_name, &mut generation_budget) {
                 Ok(Some(generation)) => (manifest, None, Some(generation), false),
                 Ok(None) => (
                     None,
@@ -4462,18 +4462,21 @@ fn skill_tree_generation_sha256_with_root_override_and_collector_and_budget(
     }
     hash_tree_record_header(&mut hasher, b'D', "", 0, &root_metadata)?;
     let mut budget = CopyBudget::default();
-    hash_skill_tree_directory(
-        root,
-        display_root,
-        "",
-        root_override,
-        0,
-        &mut budget,
-        &mut hasher,
+    let mut context = SkillTreeHashContext {
+        budget: &mut budget,
+        hasher: &mut hasher,
         collector,
         aggregate,
-    )?;
+    };
+    hash_skill_tree_directory(root, display_root, "", root_override, 0, &mut context)?;
     Ok(hex::encode(hasher.finalize()))
+}
+
+struct SkillTreeHashContext<'a> {
+    budget: &'a mut CopyBudget,
+    hasher: &'a mut Sha256,
+    collector: &'a mut SkillTreeSnapshotCollector,
+    aggregate: &'a mut RuntimeAuthorityTraversalBudget,
 }
 
 fn hash_skill_tree_directory(
@@ -4482,10 +4485,7 @@ fn hash_skill_tree_directory(
     relative_prefix: &str,
     root_override: Option<RootFileOverride<'_>>,
     depth: usize,
-    budget: &mut CopyBudget,
-    hasher: &mut Sha256,
-    collector: &mut SkillTreeSnapshotCollector,
-    aggregate: &mut RuntimeAuthorityTraversalBudget,
+    context: &mut SkillTreeHashContext<'_>,
 ) -> Result<()> {
     if depth > MAX_SKILL_TREE_DEPTH {
         anyhow::bail!(
@@ -4494,14 +4494,14 @@ fn hash_skill_tree_directory(
         );
     }
     let remaining_entry_budget = MAX_SKILL_ENTRIES
-        .checked_sub(budget.entries)
+        .checked_sub(context.budget.entries)
         .context("skill package entry budget already exceeded")?;
     let entries = directory
         .entries()
         .with_context(|| format!("enumerate skill package {}", display_directory.display()))?;
     let mut names = Vec::with_capacity(remaining_entry_budget.min(64));
     for entry in entries {
-        aggregate.observe_entry()?;
+        context.aggregate.observe_entry()?;
         if names.len() >= remaining_entry_budget {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
@@ -4514,7 +4514,7 @@ fn hash_skill_tree_directory(
     if let Some(root_override) = root_override
         && !names.iter().any(|name| name == root_override.name)
     {
-        aggregate.observe_entry()?;
+        context.aggregate.observe_entry()?;
         if names.len() >= remaining_entry_budget {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
@@ -4535,12 +4535,13 @@ fn hash_skill_tree_directory(
             format!("{relative_prefix}/{name_text}")
         };
         let display = display_directory.join(&name);
-        collector.observe_entry(relative_prefix)?;
-        budget.entries = budget
+        context.collector.observe_entry(relative_prefix)?;
+        context.budget.entries = context
+            .budget
             .entries
             .checked_add(1)
             .context("skill package entry counter overflow")?;
-        if budget.entries > MAX_SKILL_ENTRIES {
+        if context.budget.entries > MAX_SKILL_ENTRIES {
             anyhow::bail!("skill tree exceeds {MAX_SKILL_ENTRIES} entries");
         }
 
@@ -4564,36 +4565,36 @@ fn hash_skill_tree_directory(
                     display.display()
                 );
             }
-            collector.observe_file(&relative, root_override.bytes)?;
-            aggregate.observe_bytes(root_override.bytes.len() as u64)?;
-            hash_skill_file_record(hasher, &relative, root_override.bytes, &metadata, budget)?;
+            context
+                .collector
+                .observe_file(&relative, root_override.bytes)?;
+            context
+                .aggregate
+                .observe_bytes(root_override.bytes.len() as u64)?;
+            hash_skill_file_record(
+                context.hasher,
+                &relative,
+                root_override.bytes,
+                &metadata,
+                context.budget,
+            )?;
             continue;
         }
         if file_type.is_dir() {
-            collector.observe_directory(&relative)?;
-            hash_tree_record_header(hasher, b'D', &relative, 0, &metadata)?;
+            context.collector.observe_directory(&relative)?;
+            hash_tree_record_header(context.hasher, b'D', &relative, 0, &metadata)?;
             let child = open_real_child_dir(directory, &name, &display)?;
-            hash_skill_tree_directory(
-                &child,
-                &display,
-                &relative,
-                None,
-                depth + 1,
-                budget,
-                hasher,
-                collector,
-                aggregate,
-            )?;
+            hash_skill_tree_directory(&child, &display, &relative, None, depth + 1, context)?;
         } else if file_type.is_file() {
             let bytes = read_regular_file_bounded_observed(
                 directory,
                 &name,
                 &display,
                 usize::try_from(MAX_SKILL_FILE_BYTES).expect("skill file limit fits usize"),
-                |bytes| aggregate.observe_bytes(bytes),
+                |bytes| context.aggregate.observe_bytes(bytes),
             )?;
-            collector.observe_file(&relative, &bytes)?;
-            hash_skill_file_record(hasher, &relative, &bytes, &metadata, budget)?;
+            context.collector.observe_file(&relative, &bytes)?;
+            hash_skill_file_record(context.hasher, &relative, &bytes, &metadata, context.budget)?;
         } else {
             anyhow::bail!(
                 "skill package contains unsupported special entry: {}",
@@ -7006,18 +7007,16 @@ mod tests {
         let mut collector = SkillTreeSnapshotCollector::default();
         let mut aggregate = RuntimeAuthorityTraversalBudget::unbounded_for_internal();
 
-        let error = hash_skill_tree_directory(
-            &bound.dir,
-            &bound.display_path,
-            "",
-            None,
-            0,
-            &mut budget,
-            &mut hasher,
-            &mut collector,
-            &mut aggregate,
-        )
-        .unwrap_err();
+        let error = {
+            let mut context = SkillTreeHashContext {
+                budget: &mut budget,
+                hasher: &mut hasher,
+                collector: &mut collector,
+                aggregate: &mut aggregate,
+            };
+            hash_skill_tree_directory(&bound.dir, &bound.display_path, "", None, 0, &mut context)
+                .unwrap_err()
+        };
 
         assert!(format!("{error:#}").contains("exceeds 4096 entries"));
         assert_eq!(budget.entries, MAX_SKILL_ENTRIES);

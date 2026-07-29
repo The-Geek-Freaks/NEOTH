@@ -865,6 +865,7 @@ pub(crate) fn prepare_skill_mutation_incarnation(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn authenticate_current_install_incarnation(
     home: &Path,
     skill_id: &str,

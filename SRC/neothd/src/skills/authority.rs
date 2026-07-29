@@ -61,6 +61,7 @@ const AUTHORITY_RECORD_PREFIX: &str = "record-";
 const AUTHORITY_JSON_SUFFIX: &str = ".json";
 const AUTHORITY_STAGE_PREFIX: &str = ".stage-";
 const WAL_DIRECTORY_NAME: &str = "wal";
+#[cfg(test)]
 const WAL_HMAC_KEY_NAME: &str = "hmac.key";
 
 const RECORD_HMAC_DOMAIN: &[u8] = b"neoth.skill.authority.record.v1";
@@ -787,11 +788,12 @@ impl SkillAuthorityInactiveReason {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SkillAuthorityValidation {
-    Active(ValidatedSkillAuthority),
+    Active(Box<ValidatedSkillAuthority>),
     Inactive(SkillAuthorityInactiveReason),
 }
 
 impl SkillAuthorityValidation {
+    #[cfg(test)]
     pub fn inactive_reason(&self) -> Option<SkillAuthorityInactiveReason> {
         match self {
             Self::Active(_) => None,
@@ -802,7 +804,7 @@ impl SkillAuthorityValidation {
 
 #[derive(Debug)]
 pub enum InstalledSkillAuthorityValidation {
-    Active(ValidatedInstalledSkillAuthority),
+    Active(Box<ValidatedInstalledSkillAuthority>),
     Inactive(SkillAuthorityInactiveReason),
 }
 
@@ -1299,7 +1301,7 @@ impl InstalledAuthorityValidationBatch {
             Some(&self.authority_wal_heads),
             Some(&mut self.traversal_budget),
         ) {
-            Ok(authority) => SkillAuthorityValidation::Active(authority),
+            Ok(authority) => SkillAuthorityValidation::Active(Box::new(authority)),
             Err(reason) => SkillAuthorityValidation::Inactive(reason),
         };
         self.traversal_budget.ensure_within_limits()?;
@@ -1343,8 +1345,8 @@ fn materialize_installed_authority_validation(
 ) -> InstalledSkillAuthorityValidation {
     match validation {
         SkillAuthorityValidation::Active(authority) => {
-            InstalledSkillAuthorityValidation::Active(ValidatedInstalledSkillAuthority {
-                authority,
+            InstalledSkillAuthorityValidation::Active(Box::new(ValidatedInstalledSkillAuthority {
+                authority: *authority,
                 effective_manifest: effective_manifest.clone(),
                 package_generation_sha256: expectation.package_generation_sha256.clone(),
                 manifest_sha256: expectation.manifest_sha256.clone(),
@@ -1352,7 +1354,7 @@ fn materialize_installed_authority_validation(
                 install_terminal_receipt_sha256: expectation
                     .install_terminal_receipt_sha256
                     .clone(),
-            })
+            }))
         }
         SkillAuthorityValidation::Inactive(reason) => {
             InstalledSkillAuthorityValidation::Inactive(reason)
@@ -2109,7 +2111,7 @@ fn validate_current_authority(
         );
     }
     match validate_current_authority_inner(home, expected) {
-        Ok(authority) => SkillAuthorityValidation::Active(authority),
+        Ok(authority) => SkillAuthorityValidation::Active(Box::new(authority)),
         Err(reason) => SkillAuthorityValidation::Inactive(reason),
     }
 }
