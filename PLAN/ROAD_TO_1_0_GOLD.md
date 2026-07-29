@@ -66,6 +66,18 @@ edit wastes hours and does not increase confidence when later slices still
 touch the same frontend. Use this dependency-aware cadence without weakening
 the release gates:
 
+**Workflow enforcement (2026-07-29):** `.github/workflows/preflight.yml` is the
+only workflow in this contract that runs on every `main` push; it performs
+format, locked no-dependency metadata and offline static contracts without
+compiling or linking the workspace. Full CI runs on pull requests, its weekly
+integration schedule and explicit milestone/release-candidate dispatches.
+Privileged Security/CodeQL runs only on its trusted weekly schedule or explicit
+dispatch, never in a pull-request-controlled context. `release.yml` still
+rejects a tag unless both full workflows are fresh and green for the exact
+unchanged tag head. The artifact-reuse and support-class matrix is specified in
+`PLAN/BUILD_AND_RELEASE_CADENCE.md`; `packaging/tests/test_ci_cadence_contract.py`
+prevents the fast path from silently replacing the final evidence.
+
 1. Freeze ownership and source boundaries for the wave. Each independent slice
    gets cheap static checks plus its smallest real unit/contract filter; do not
    run concurrent Cargo processes against the shared target directory.

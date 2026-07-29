@@ -23,16 +23,16 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: '17 2 * * 1'       # weekly integration proof, Monday 02:17 UTC
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 concurrency:
-  # A newer commit supersedes every older branch run.  This keeps rapid Gold
-  # integration waves from queuing multiple full workspaces while preserving
-  # the only verdict that can authorize a release: the exact current HEAD.
+  # Rapid Gold pushes use preflight.yml and do not enqueue this full matrix.
+  # A newer PR, scheduled, or milestone run supersedes an older run for the
+  # same ref. release.yml still requires a fresh green exact-HEAD verdict.
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 

@@ -2,7 +2,11 @@
 # NEOTH — Security Scanning
 #
 # Runs Rust and shipped JavaScript dependency audits, CodeQL, and Trivy on a
-# weekly schedule and on every push to main.
+# weekly schedule and explicit release-candidate dispatches. This privileged
+# workflow uploads and queries repository security state, so it never executes
+# in a pull-request-controlled context.
+# Fast main-push checks live in preflight.yml; release.yml still requires a
+# fresh successful Security run for the exact release HEAD.
 # SARIF results are uploaded to GitHub Security tab (requires Advanced Security).
 # Fails on HIGH or CRITICAL severity findings.
 # =============================================================================
@@ -12,12 +16,10 @@ name: Security
 on:
   schedule:
     - cron: '0 6 * * 1'        # every Monday 06:00 UTC
-  push:
-    branches: [main]
   workflow_dispatch:
 
 # Security evidence is release-relevant only for the current branch HEAD.
-# Superseded push runs waste scanners and delay the exact-head verdict.
+# Superseded branch runs waste scanners and delay the exact-head verdict.
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
@@ -29,7 +31,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  trusted-main:
+    name: Require trusted main ref
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Reject non-main manual dispatch
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Privileged Security must run from refs/heads/main"
+            exit 1
+          fi
+
   audit:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: cargo-audit (RUSTSEC)
     runs-on: ubuntu-24.04
 
@@ -80,6 +97,8 @@ jobs:
         run: cargo audit
 
   deny:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: cargo-deny (license + supply chain)
     runs-on: ubuntu-24.04
 
@@ -116,6 +135,8 @@ jobs:
           rust-version: '1.91'
 
   bridge-audit:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: pnpm audit / ${{ matrix.bridge }}
     runs-on: ubuntu-24.04
     strategy:
@@ -175,6 +196,8 @@ jobs:
         run: node ../../scripts/npm_bulk_audit.mjs --prod --audit-level high
 
   codeql:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: CodeQL / Rust
     runs-on: ubuntu-24.04
     permissions:
@@ -206,6 +229,8 @@ jobs:
           category: /language:rust
 
   codeql-javascript:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: CodeQL / JavaScript
     runs-on: ubuntu-24.04
     permissions:
@@ -232,8 +257,9 @@ jobs:
           category: /language:javascript-typescript
 
   codeql-gate:
+    if: github.ref == 'refs/heads/main'
     name: CodeQL / unresolved high-critical gate
-    needs: [codeql, codeql-javascript]
+    needs: [trusted-main, codeql, codeql-javascript]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -264,6 +290,8 @@ jobs:
           fi
 
   trivy:
+    if: github.ref == 'refs/heads/main'
+    needs: trusted-main
     name: trivy (filesystem vuln scan)
     runs-on: ubuntu-24.04
     permissions:

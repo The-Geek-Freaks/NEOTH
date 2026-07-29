@@ -1,0 +1,84 @@
+# =============================================================================
+# NEOTH — Fast push preflight
+#
+# This workflow intentionally does not compile or link the Rust workspace.
+# Feature waves land in small reviewed commits, while the expensive cross-OS
+# matrix runs on pull requests, the weekly integration cadence, and explicit
+# milestone dispatches. release.yml still requires fresh successful full CI
+# and Security runs for the exact release HEAD.
+# =============================================================================
+
+name: Preflight
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: preflight-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static-contracts:
+    name: Format, metadata and static contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Rust with rustfmt
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.91.0'
+          components: rustfmt
+
+      - name: Validate locked workspace metadata without dependencies
+        working-directory: SRC
+        run: cargo metadata --locked --no-deps --format-version 1 > /dev/null
+
+      - name: Check Rust formatting without compiling
+        working-directory: SRC
+        run: cargo fmt --all -- --check
+
+      - name: Deny transitive build tools in static contracts
+        shell: bash
+        run: |
+          deny_dir="$RUNNER_TEMP/neoth-preflight-deny"
+          mkdir -p "$deny_dir"
+          for tool in cargo rustc rustup cc gcc clang c++ ld cmake make ninja npm npx pnpm yarn bun docker podman; do
+            printf '%s\n' '#!/usr/bin/env sh' \
+              'echo "build tool denied by NEOTH push preflight" >&2' \
+              'exit 97' > "$deny_dir/$tool"
+            chmod 0755 "$deny_dir/$tool"
+          done
+          echo "$deny_dir" >> "$GITHUB_PATH"
+
+      - name: Run offline packaging and release contracts
+        run: |
+          python3 packaging/tests/test_ci_cadence_contract.py
+          python3 packaging/tests/test_generate_release_manifests.py
+          python3 packaging/tests/test_openclaw_provider_parity.py
+          python3 packaging/tests/test_release_asset_contract.py
+          python3 packaging/tests/test_release_capability_contract.py
+          python3 packaging/tests/test_release_gate_contract.py
+          python3 packaging/test_bootstrap_verifier.py
+          python3 .github/release-tools/test-release-isolation.py
+          python3 scripts/test_lost_feature_integrity.py
+
+      - name: Validate checked-in shell syntax
+        shell: bash
+        run: |
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(git ls-files -z '*.sh')
