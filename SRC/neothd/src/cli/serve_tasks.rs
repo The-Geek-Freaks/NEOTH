@@ -3093,124 +3093,21 @@ pub(crate) fn spawn_bg_monitor_task(
     Some(handle)
 }
 
-// ── Region-7 updater lanes (U-04 + MV-01b). Each probe supervisor reads the
-// accepted ReloadController generation for enablement, cadence, autonomy, and
-// self-update repo/ring. The builders receive a policy-derived gate; they never
-// fabricate Allow. All are WAL-emitting and retain the same shutdown handles. ──
+// ── Region-7 recurring update lifecycle (U-04 + MV-01b + GOLD-R3-18). One
+// accepted-generation supervisor owns all three probes, CLI auto-apply and
+// self-stage. No startup-snapshot update task remains. ─────────────────────
 
-/// Shared type of the `ComponentSpec` builder closure each updater probe cron
-/// hands to `spawn_updater_cron_loop`.
-type UpdaterSpecBuilder = Arc<
-    dyn Fn(
-            Arc<FreedomConfig>,
-            crate::updater::pipeline::GateDecision,
-        ) -> Vec<crate::updater::pipeline::ComponentSpec>
-        + Send
-        + Sync
-        + 'static,
->;
-
-/// U-01 — neoth-self GitHub-Releases update probe cron (`0x44`/`0x45`).
-pub(crate) fn spawn_updater_self_cron(
-    reload_controller: Arc<ReloadController>,
-    writer: WalWriterHandle,
-) -> Option<JoinHandle<()>> {
-    let builder: UpdaterSpecBuilder = Arc::new(move |config, gate| {
-        crate::updater::probes::neoth_self_specs_blocking_for(
-            &config.auto_update.repo,
-            config.auto_update.channel,
-            gate,
-        )
-    });
-    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        crate::wal::payloads_u04::UpdaterTaskKind::NeothSelf,
-        builder,
-        reload_controller,
-        writer,
-    );
-    info!("live updater cron supervisor spawned: neoth_self (U-01)");
-    Some(handle)
-}
-
-/// U-03 — CLI-version npm-registry update probe cron (claude/codex/gemini).
-pub(crate) fn spawn_updater_cli_cron(
-    reload_controller: Arc<ReloadController>,
-    writer: WalWriterHandle,
-) -> Option<JoinHandle<()>> {
-    let builder: UpdaterSpecBuilder =
-        Arc::new(|_config, gate| crate::updater::probes::cli_version_specs_blocking(gate));
-    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        crate::wal::payloads_u04::UpdaterTaskKind::CliVersions,
-        builder,
-        reload_controller,
-        writer,
-    );
-    info!("live updater cron supervisor spawned: cli_version (U-03)");
-    Some(handle)
-}
-
-/// U-02 — skill/plugin update probe cron (captures `home` for the spec scan).
-pub(crate) fn spawn_updater_skill_cron(
+pub(crate) fn spawn_updater_supervisor(
     home: &std::path::Path,
-    _config_path: &std::path::Path,
     reload_controller: Arc<ReloadController>,
     writer: WalWriterHandle,
-) -> Option<JoinHandle<()>> {
-    let home_for_skills = home.to_path_buf();
-    let reload_for_skills = Arc::clone(&reload_controller);
-    let builder: UpdaterSpecBuilder = Arc::new(move |config, gate| {
-        crate::updater::probes::skill_plugin_specs_authorized_blocking(
-            home_for_skills.clone(),
-            Arc::clone(&reload_for_skills),
-            config.plugins.wasm.clone(),
-            gate,
-        )
-    });
-    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-        crate::wal::payloads_u04::UpdaterTaskKind::SkillPlugin,
-        builder,
-        reload_controller,
-        writer,
-    );
-    info!("live updater cron supervisor spawned: skill_plugin (U-02)");
-    Some(handle)
-}
-
-/// MV-01b — CLI auto-apply loop. Internally `None` at autonomy below
-/// elevated/full (notify-only); emits `0x13 UPDATE_RAN` per applied CLI.
-pub(crate) fn spawn_cli_autoupdate(
-    config: &FreedomConfig,
-    writer: WalWriterHandle,
-) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::auto_update::spawn(
-        config.autonomy,
-        config.updater.enabled,
-        config.updater.interval_secs,
-        config.security.clone(),
-        writer,
-    );
-    if handle.is_some() {
-        info!("CLI auto-apply loop spawned (MV-01b; autonomy elevated/full)");
-    }
-    handle
-}
-
-/// MV-01b #5 — neoth-self STAGING loop (stage-only — downloads + verifies +
-/// stages newer releases; the operator applies via `neoth update --self --apply`).
-pub(crate) fn spawn_self_stage(
-    config: &FreedomConfig,
-    home: &std::path::Path,
-    writer: WalWriterHandle,
-) -> Option<JoinHandle<()>> {
-    let handle = crate::daemon::auto_update::spawn_self_stage(
-        config.autonomy,
-        config.auto_update.clone(),
+) -> crate::daemon::updater_cron::UpdaterSupervisorHandle {
+    let handle = crate::daemon::updater_cron::spawn_updater_supervisor(
         home.to_path_buf(),
+        reload_controller,
         writer,
     );
-    if handle.is_some() {
-        info!("neoth-self staging loop spawned (MV-01b #5; stage-only)");
-    }
+    info!("reload-owned recurring updater supervisor spawned (GOLD-R3-18 containment)");
     handle
 }
 
@@ -6657,12 +6554,8 @@ pub(crate) struct BackgroundHandles {
     pub reload_controller: Arc<ReloadController>,
     pub snapshot_refresh_handle: Option<JoinHandle<()>>,
     pub omi_handle: Option<JoinHandle<()>>,
-    pub updater_self_task: Option<JoinHandle<()>>,
-    // ── 4 deferred crons (not fleet-managed) ───────────────────────────────
-    pub updater_cli_task: Option<JoinHandle<()>>,
-    pub updater_skill_task: Option<JoinHandle<()>>,
-    pub cli_autoupdate_task: Option<JoinHandle<()>>,
-    pub self_stage_task: Option<JoinHandle<()>>,
+    pub updater_supervisor: crate::daemon::updater_cron::UpdaterSupervisorHandle,
+    // ── deferred crons (not fleet-managed) ─────────────────────────────────
     pub catalog_task: JoinHandle<()>,
     #[cfg(feature = "cluster")]
     pub cluster_audit_task: JoinHandle<()>,
@@ -6779,11 +6672,7 @@ pub(crate) async fn shutdown_background_tasks(
         reload_controller,
         snapshot_refresh_handle,
         omi_handle,
-        updater_self_task,
-        updater_cli_task,
-        updater_skill_task,
-        cli_autoupdate_task,
-        self_stage_task,
+        updater_supervisor,
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,
@@ -6925,18 +6814,9 @@ pub(crate) async fn shutdown_background_tasks(
     crate::cli::serve_tasks::abort_optional(snapshot_refresh_handle).await;
     crate::cli::serve_tasks::abort_optional(omi_handle).await;
 
-    // Abort the U-04 updater cron loops (neoth_self + cli_version).
-    // Drain before the WAL writer closes so any in-flight tick's
-    // result-frame doesn't get dropped mid-append.
-    crate::cli::serve_tasks::abort_optional(updater_self_task).await;
-    crate::cli::serve_tasks::abort_optional(updater_cli_task).await;
-    crate::cli::serve_tasks::abort_optional(updater_skill_task).await;
-    // MV-01b CLI auto-apply loop. A mid-pass abort at worst drops one
-    // component's UPDATE_RAN frame; the install itself already completed.
-    crate::cli::serve_tasks::abort_optional(cli_autoupdate_task).await;
-    // MV-01b #5 neoth-self staging loop. Mid-pass abort at worst drops a
-    // partial staged archive (re-staged next boot); never swaps.
-    crate::cli::serve_tasks::abort_optional(self_stage_task).await;
+    // GOLD-R3-18: one ordered shutdown cancels and joins every probe/apply/stage
+    // lane before the WAL writer closes.
+    updater_supervisor.shutdown().await;
 
     // Abort the catalog refresh task. May be in the middle of an HTTPS
     // round-trip; aborting drops the connection, which is fine — the

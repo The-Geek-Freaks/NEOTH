@@ -952,11 +952,11 @@ pub struct FreedomConfig {
     /// (or similar).
     #[serde(default)]
     pub code_map: CodeMapConfig,
-    /// Daemon self-update policy. `enabled: false` keeps both background
-    /// check and staging silent. Check-only mode probes the configured release
-    /// ring; `auto_apply: true` additionally permits verified stage-and-notify
-    /// at Elevated/Full autonomy. The running binary is replaced only by the
-    /// operator-initiated `neoth update --self --apply` path.
+    /// Daemon self-update intent. `enabled: false` creates no self-update lane.
+    /// Enabled recurring lanes currently terminalize as `SkippedByGate` before
+    /// network/process/staging effects; `auto_apply` records future verified-
+    /// staging intent only. Manual checks remain active, and the running binary
+    /// is replaced only by `neoth update --self --apply`.
     #[serde(default)]
     pub auto_update: AutoUpdateConfig,
     /// Pick #6 Phase 4 (2026-05-21): coding-workflow runtime knobs.
@@ -993,11 +993,9 @@ pub struct FreedomConfig {
     /// the tick entirely flip this without recompiling.
     #[serde(default)]
     pub doctor: DoctorConfig,
-    /// U-04 follow-up (Session 26): operator-tunable interval for the
-    /// three updater cron lanes (neoth_self, cli_version, skill_plugin).
-    /// Default mirrors the hardcoded `DEFAULT_UPDATER_INTERVAL_SECS =
-    /// 6h tick`. All three lanes share the interval today; per-lane
-    /// override lands when an operator asks for it.
+    /// Canonical global enable/interval input for the reload-owned updater
+    /// supervisor. CLI and Skill/Plugin probes share this interval; neoth-self
+    /// uses `auto_update.check_interval_secs`. The default remains six hours.
     #[serde(default)]
     pub updater: UpdaterConfig,
     /// MV-01b prereq #3 — process-supervisor install state. When the

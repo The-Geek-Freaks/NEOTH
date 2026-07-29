@@ -1476,61 +1476,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     )
     .await?;
 
-    // ── 5d.c. Updater cron loops — U-04 + probes (Session 25) ────────────
-    //
-    // Three parallel updater lanes: NeothSelf (GitHub Releases), CliVersion
-    // (npm/vendor probes for managed CLIs), and SkillPlugin. Each lane has its
-    // own task; neoth-self takes its cadence from `auto_update`, while the
-    // other two use the generic updater interval.
-    // 0x44 UPDATER_TASK_FIRED + 0x45 UPDATER_TASK_RESULT WAL frames
-    // fire per tick — operators audit via `neoth updater status`.
-    // `updater.enabled` remains the global probe master switch. The self-update
-    // lane additionally uses auto_update.{enabled,check_interval_secs,repo,channel}.
-    // All values and autonomy are resolved from the accepted ReloadController
-    // generation on every wake; no updater lane freezes this startup snapshot.
-
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_self_task = crate::cli::serve_tasks::spawn_updater_self_cron(
-        std::sync::Arc::clone(&reload_controller),
-        writer.clone(),
-    );
-
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_cli_task = crate::cli::serve_tasks::spawn_updater_cli_cron(
-        std::sync::Arc::clone(&reload_controller),
-        writer.clone(),
-    );
-
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let updater_skill_task = crate::cli::serve_tasks::spawn_updater_skill_cron(
-        &neoth_home,
-        &config_path,
-        std::sync::Arc::clone(&reload_controller),
-        writer.clone(),
-    );
-
-    // ── 5d.c. CLI auto-apply loop — MV-01b (Session 28c) ─────────────────
-    //
-    // Operator policy "Option A": auto-apply CLI updates (claude-cli /
-    // antigravity-cli / codex) when autonomy is elevated/full. At standard
-    // or below this returns None (notify-only — the probe crons above
-    // already surface availability). Emits `0x13 UPDATE_RAN` per applied
-    // CLI. The `neoth` daemon's own self-replacement stays manual
-    // (`neoth update --self --apply`).
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let cli_autoupdate_task =
-        crate::cli::serve_tasks::spawn_cli_autoupdate(&config, writer.clone());
-
-    // ── 5d.d. neoth-self STAGING loop — MV-01b #5 (Session 28c) ──────────
-    //
-    // Stage-only (never swaps — the SelfBinaryReplace gate is
-    // Confirm-always): at elevated/full it downloads + verifies (sha256 +
-    // minisig) + stages newer releases to ~/.neoth/staged/ + notifies.
-    // The operator applies via `neoth update --self --apply`.
-    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
-    let self_stage_task =
-        crate::cli::serve_tasks::spawn_self_stage(&config, &neoth_home, writer.clone());
-
     // ── 5d.b  ZF-06 Cron Fleet supervisor ────────────────────────────────
     //
     // All config-gated fleet crons (DoctorCron, ResourceWatch, MonitorCron,
@@ -1948,62 +1893,6 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // SkillCurator, SynthesisCron, ConsolidationSweep, SelfWiki,
     // SelfImprovementCollector are now fleet-managed (ZF-06).
 
-    // ── MONITOR-02 worker-watch ───────────────────────────────────────────
-    // Real-time death detection for the long-running cron/worker loops: hold a
-    // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
-    // `0x4D WORKER_DIED` (naming the task) the moment one panics/exits — lower
-    // latency + attribution than the HO-07 crash.log scan. Gated on the same
-    // `monitor.enabled` as the HO-07 cron. Holds only abort-handle clones, so the
-    // shutdown-abort of the original handles (below) is entirely unaffected.
-    let worker_watch_handle: Option<tokio::task::JoinHandle<()>> = if config.monitor.enabled {
-        use crate::daemon::worker_watch::WatchedWorker;
-        // ZF-06: fleet-managed crons (doctor_cron, resource_watch,
-        // monitor_cron, babel_cron, profile_adapt, ecology, pattern,
-        // bg_monitor, watchdog, etc.) are supervised by cron_supervisor_task.
-        // worker_watch now covers the non-fleet long-running handles only.
-        let watched: Vec<WatchedWorker> = [
-            cron_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
-            updater_self_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("updater_self", h.abort_handle())),
-            updater_cli_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("updater_cli", h.abort_handle())),
-            updater_skill_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("updater_skill", h.abort_handle())),
-            cli_autoupdate_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("cli_autoupdate", h.abort_handle())),
-            self_stage_task
-                .as_ref()
-                .map(|h| WatchedWorker::new("self_stage", h.abort_handle())),
-            omi_handle
-                .as_ref()
-                .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
-            snapshot_refresh_handle
-                .as_ref()
-                .map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
-        let watched_count = watched.len();
-        let handle = crate::daemon::worker_watch::spawn_worker_watch(
-            watched,
-            writer.clone(),
-            config.monitor.interval_secs,
-        );
-        if handle.is_some() {
-            info!(watched = watched_count, "MONITOR-02 worker-watch spawned");
-        }
-        handle
-    } else {
-        None
-    };
-
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -2051,6 +1940,56 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         std::sync::Arc::clone(&cluster_live_sessions),
     )
     .await?;
+
+    // ── 5d.c. Reload-owned recurring updater supervisor — GOLD-R3-18 ──────
+    //
+    // Spawn only after the last fallible startup constructor above. This keeps
+    // an early cluster-start failure from dropping a JoinHandle and detaching a
+    // recurring updater generation. The handle also has a fail-closed RAII
+    // abort fallback; normal shutdown explicitly cancels and joins all lanes.
+    let mut updater_supervisor = crate::cli::serve_tasks::spawn_updater_supervisor(
+        &neoth_home,
+        std::sync::Arc::clone(&reload_controller),
+        writer.clone(),
+    );
+
+    // ── MONITOR-02 worker-watch ───────────────────────────────────────────
+    // Real-time death detection for the long-running cron/worker loops: hold a
+    // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
+    // `0x4D WORKER_DIED` (naming the task) the moment one panics/exits.
+    let worker_watch_handle: Option<tokio::task::JoinHandle<()>> = if config.monitor.enabled {
+        use crate::daemon::worker_watch::WatchedWorker;
+        let watched: Vec<WatchedWorker> = [
+            cron_task
+                .as_ref()
+                .map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
+            Some(WatchedWorker::new(
+                "updater_supervisor",
+                updater_supervisor.abort_handle(),
+            )),
+            omi_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
+            snapshot_refresh_handle
+                .as_ref()
+                .map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let watched_count = watched.len();
+        let handle = crate::daemon::worker_watch::spawn_worker_watch(
+            watched,
+            writer.clone(),
+            config.monitor.interval_secs,
+        );
+        if handle.is_some() {
+            info!(watched = watched_count, "MONITOR-02 worker-watch spawned");
+        }
+        handle
+    } else {
+        None
+    };
 
     // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
     // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
@@ -2193,6 +2132,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
             true
         }
+        reason = updater_supervisor.wait_for_failure() => {
+            error!(
+                %reason,
+                "required updater supervisor boundary failed — treating recurring-update lifecycle loss as fatal"
+            );
+            true
+        }
         result = async {
             audit_rpc_task
                 .as_mut()
@@ -2330,11 +2276,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         reload_controller,
         snapshot_refresh_handle,
         omi_handle,
-        updater_self_task,
-        updater_cli_task,
-        updater_skill_task,
-        cli_autoupdate_task,
-        self_stage_task,
+        updater_supervisor,
         catalog_task,
         #[cfg(feature = "cluster")]
         cluster_audit_task,
@@ -2384,7 +2326,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     crate::cli::serve_tasks::shutdown_background_tasks(&neoth_home, bg, writer, writer_join).await;
     anyhow::ensure!(
         !required_boundary_died,
-        "required daemon persistence/authority boundary exited unexpectedly"
+        "required daemon persistence/authority/update boundary exited unexpectedly"
     );
     Ok(())
 }

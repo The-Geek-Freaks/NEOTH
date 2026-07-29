@@ -67,6 +67,10 @@
 > compatible signed release is published; `cargo install neoth --locked --features release-desktop`
 > becomes valid
 > only after the ordered SDK + core crates.io publication completes.
+> Until that first signed tag and publication, the `neothd` Rust-library API is
+> not frozen; daemon-internal modules may still be narrowed or removed. The
+> separately versioned `neoth-plugin-sdk` is the intended external extension
+> boundary. The v1 API compatibility promise begins with the published release.
 
 Current install (source checkout):
 

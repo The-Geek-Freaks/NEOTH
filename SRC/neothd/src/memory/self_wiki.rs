@@ -105,11 +105,6 @@ static DAEMON_CRONS: &[DaemonCron] = &[
         gate: Some("freedom.yaml::audit_rpc.enabled"),
     },
     DaemonCron {
-        id: "auto-update",
-        description: "Daemon CLI auto-apply loop: applies updates for NEOTH-managed CLIs at Elevated/Full autonomy.",
-        gate: None,
-    },
-    DaemonCron {
         id: "backup",
         description: "Periodic WAL + SQLite backup to the operator-configured destination.",
         gate: None,
@@ -203,8 +198,8 @@ static DAEMON_CRONS: &[DaemonCron] = &[
     },
     DaemonCron {
         id: "updater",
-        description: "NEOTH self-update checker: polls for new binary releases per the configured update policy.",
-        gate: None,
+        description: "Single reload-owned Self/CLI/Skill update supervisor. Configured lanes currently emit SkippedByGate before inventory, process, network, install, or staging effects; manual updates remain available.",
+        gate: Some("freedom.yaml::updater.enabled + per-lane auto_update switches"),
     },
     DaemonCron {
         id: "watchdog",

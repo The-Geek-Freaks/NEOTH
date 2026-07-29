@@ -18,11 +18,10 @@ pub mod arxiv_skill_scan_cron;
 /// event-type allowlist). The internal Skill-mutation route is mandatory;
 /// `freedom.yaml::audit_rpc.enabled` gates only optional audit/token routes.
 pub mod audit_rpc;
-/// MV-01b (Session 28c) — daemon CLI auto-apply loop. At
-/// `AutonomyLevel::Elevated`/`Full` it periodically applies updates for
-/// the NEOTH-managed CLIs (claude-cli / antigravity-cli / codex) and
-/// emits `0x13 UPDATE_RAN`; notify-only below that tier.
-pub mod auto_update;
+/// Reload-supervisor pass executors for CLI apply and verified self-stage.
+/// The sole recurring owner lives in `updater_cron`; production admission is
+/// currently hard-denied before inventory, process, network or mutation work.
+pub(crate) mod auto_update;
 /// GOLD-DELTA-04 — Babel-Index observer cron: scans the WAL for derived
 /// metrics, closes rolling windows, persists B_d scores to `views.db`
 /// (SQLite only — the WAL byte space is exhausted).
@@ -212,7 +211,7 @@ pub mod synthesis_cron;
 /// GOLD-ADAPT-JV-PRO-02 — token-anomaly security tripwire cron (scans WAL usage
 /// frames over a rolling baseline; emits `0x6E TOKEN_ANOMALY_DETECTED`).
 pub mod token_anomaly_cron;
-pub mod updater_cron;
+pub(crate) mod updater_cron;
 /// GOLD-FEAT-09 — daemon watchdog/auto-recovery cron. Probes supervised local
 /// services (n8n / Ollama) every `watchdog.interval_secs`, restarts them at
 /// `Elevated`+ autonomy after `consecutive_failures_before_restart` down ticks

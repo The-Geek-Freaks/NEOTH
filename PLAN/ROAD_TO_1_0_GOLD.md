@@ -1234,7 +1234,8 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   package rollback are now completed mutation-lifecycle substrate and must no
   longer be listed as missing authority work.
 
-  **R3-18 recurring-egress correction 2026-07-22:** forensic leaf tracing found
+  **R3-18 recurring-egress correction 2026-07-22, containment completed
+  2026-07-29:** forensic leaf tracing found
   that the GUI's `auto_update.*` controls do not govern the older generic
   `updater.enabled` CLI auto-apply loop, whose default is enabled at elevated/
   full autonomy. A user can therefore see both GUI update switches off while
@@ -1245,12 +1246,23 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   credential/config state or accept automatic redirects; the npm installer
   pipes child output without concurrent drains. Release assets are byte- and
   signature-checked, but an untrusted metadata URL can still reach persisted
-  state/audit before credential-free origin validation. Required closure:
-  remove the parallel frozen loops, put apply/stage behind the accepted live
-  reload generation, add one exact remote-update authorizer/audit contract,
-  consume it at every HTTP/Git/npm leaf, bound and sanitize all transport
-  diagnostics, and make CLI/GUI/Cron expose the same typed per-lane state.
-  R3-18 remains OPEN.
+  state/audit before credential-free origin validation. The 2026-07-29 slice
+  closes the first lifecycle half: one required reload-owned supervisor now
+  governs every lane, contradictory switches are reconciled, Strict/Custom
+  remain fail-closed, queued revoked work never starts, admitted work is
+  terminally joined, same-kind WAL pairs serialize and all production
+  recurring work remains inert before inventory/network/process/mutation. A
+  terminal-result append failure after durable `FIRED` now tears down the lane,
+  supervisor and Serve boundary; the daemon cannot continue with an orphaned
+  recurring audit pair. The old standalone updater spawn symbols were never
+  published under a signed tag or crates.io release and are deliberately
+  internalized before the v1 API freeze documented in README.
+  Required closure is now the leaf half: add one exact remote-update
+  authorizer/audit contract, consume its generation-bound permit at every
+  HTTP/Git/npm/install leaf, emit mandatory pre-effect intent plus terminal
+  result, disable inherited proxy/credential/config state and unsafe redirects,
+  bound/sanitize transport diagnostics, own child cancellation/reaping, and
+  expose the same typed state in CLI/GUI/Cron. R3-18 remains OPEN.
 
 - [x] **GOLD-R3-19 Endpoint-bound remote/configurable-provider consent and
   interface parity:** every configurable remote route now binds authority to

@@ -379,13 +379,19 @@ passes a bounded, version-bound verification pipeline before any binary swap:
   builder performs no GitHub/npm/`git ls-remote` request. Automatic discovery
   and staging therefore do not run today. Request-bound authorization and
   mandatory intent/result WAL must land at each concrete transport leaf before
-  this gate may become an operator-derived allow decision.
-- **Dormant unattended apply boundary** (`daemon/auto_update::spawn_self_stage`,
-  `require=true`) — still hard-bails any non-`Verified` status and additionally
-  requires the Confirm-at-every-level `Action::SelfBinaryReplace` decision.
-  The recurring discovery gate above currently prevents a daemon probe from
-  reaching this boundary. The operator uses the manual path to confirm and
-  swap.
+  this gate may become an operator-derived allow decision. Once `FIRED` is
+  durable, failure to persist its terminal `RESULT` closes the updater
+  supervisor and daemon boundary; recurring work cannot continue across that
+  audit gap.
+- **Dormant unattended apply boundary**
+  (`daemon/auto_update::run_self_stage_pass`, `require=true`) — is owned by the
+  same reload-bound supervisor and hard-bails any non-`Verified` status before
+  writing a staged archive. The recurring supervisor currently rejects `Allow`
+  before inventory, network, process, install or staging work, so this
+  implementation cannot be reached by a production recurring pass. Staging
+  alone never replaces the running binary; the operator's later manual swap
+  still requires the Confirm-at-every-level `Action::SelfBinaryReplace`
+  decision.
 
 Public-download **provenance** (separate from self-update verify) is
 provided by **cosign keyless** (Sigstore OIDC) — every release publishes

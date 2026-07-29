@@ -531,10 +531,13 @@ profile:
 
 # ── 19. Signed release-bundle self-update (off by default) ──────────────────
 #
-# `enabled` permits the daemon's periodic GitHub release check. With
-# `auto_apply: true`, Elevated/Full autonomy may also download, verify, and
-# stage the selected bundle; replacement still requires the explicit
-# `neoth update --self --apply` command.
+# `enabled` arms the daemon's recurring self-update intent. Until the
+# request-bound transport/effect authority and WAL contract lands, production
+# recurring passes terminate as `SkippedByGate` before GitHub, process,
+# download, install, or staging work. `auto_apply: true` records the operator's
+# future verified-stage intent; it does not bypass that deny gate. Manual
+# `neoth update --self` and explicit `neoth update --self --apply` remain the
+# active paths, and replacement always requires the latter command.
 #
 # Channels are strict release rings:
 #   stable  — final SemVer releases only

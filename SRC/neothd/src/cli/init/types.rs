@@ -682,12 +682,12 @@ pub struct WizardState {
     /// path, so an aborted wizard still writes a sane freedom.yaml.
     #[serde(default)]
     pub inference: crate::config::inference::InferenceTopology,
-    /// Operator-facing self-update policy. `enabled: false` (default) keeps the
-    /// daemon silent; `auto_apply` permits verified stage-and-notify only.
-    /// step7b_auto_update toggles this based on the operator's
-    /// answer. Lives in freedom.yaml under `auto_update:` so the
-    /// reload + read paths see the same shape as the rest of the
-    /// FreedomConfig surface.
+    /// Operator-facing self-update intent. `enabled: false` (default) creates
+    /// no recurring self-update lane; enabled lanes currently terminalize as
+    /// `SkippedByGate` before effects, and `auto_apply` records future verified
+    /// staging intent only. `step7b_auto_update` toggles this based on the
+    /// operator's answer. Lives in freedom.yaml under `auto_update:` so reload
+    /// and read paths see the same shape as the rest of `FreedomConfig`.
     #[serde(default)]
     pub auto_update: crate::config::AutoUpdateConfig,
     /// MV-01b prereq #3 (Session 28c): process-supervisor install state.

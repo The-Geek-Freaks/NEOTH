@@ -1,11 +1,10 @@
-//! MV-01b — daemon auto-apply for NEOTH-managed CLI updates.
+//! MV-01b — daemon mutation primitives for NEOTH-managed updates.
 //!
-//! Operator policy (Option A, 2026-05-29): NEOTH auto-applies CLI updates
-//! when the operator runs at `AutonomyLevel::Elevated` or `Full`. At
-//! `Standard` / `Strict` / `Custom` the daemon stays **notify-only** — the
-//! probe cron ([`crate::daemon::updater_cron`]) already emits `0x44/0x45`
-//! frames so the operator sees "an update is available" and applies it via
-//! `neoth update --apply`.
+//! Elevated/Full plus the operator update switches select the mutation lanes,
+//! but recurring execution currently remains fail-closed for every tier. The
+//! reload-owned supervisor passes an explicit denied gate until the concrete
+//! npm/GitHub/install leaves consume request-bound authority and emit mandatory
+//! intent/result WAL. Manual `neoth update` commands are unaffected.
 //!
 //! Scope: the three NEOTH-managed CLIs (claude-cli, antigravity-cli, codex)
 //! via [`crate::updater::check_all`] + [`crate::updater::apply_one`]. Each
@@ -18,73 +17,60 @@
 //! daemon is a separate, more delicate slice. Operators apply it via
 //! `neoth update --self --apply` (which emits `0xD2`).
 //!
-//! Every failure (probe error, npm/install failure, WAL emit failure) logs
-//! and the loop continues — an auto-update task must never crash the daemon.
+//! The pre-release standalone loop entry points were removed instead of kept
+//! as silent no-ops. Embedders get a compile error rather than believing an
+//! update loop is active when the daemon supervisor is not running.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use crate::permissions::AutonomyLevel;
 use crate::updater;
+use crate::updater::pipeline::GateDecision;
 use crate::wal::events::{EVENT_TYPE_SELF_UPDATE_APPLIED, EVENT_TYPE_UPDATE_RAN};
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 
-/// Default cadence between auto-apply passes. Matches the probe cron's 6h
-/// default so the two stay aligned. Floored at 60s to protect against a
-/// misconfigured `0`.
-pub const DEFAULT_INTERVAL_SECS: u64 = 6 * 3600;
-
 /// Auto-apply runs only at the two highest autonomy tiers. Everything else
 /// is notify-only (the probe cron surfaces availability; the operator
-/// applies). Pure — the gate the spawn decision turns on.
+/// applies). Pure — the reload-owned supervisor uses this to derive its exact
+/// accepted-generation lane set.
 pub fn auto_apply_enabled(autonomy: AutonomyLevel) -> bool {
     matches!(autonomy, AutonomyLevel::Elevated | AutonomyLevel::Full)
 }
 
-/// Spawn the CLI auto-apply loop. Returns `None` (no task) unless BOTH the
-/// updater is enabled AND the autonomy tier permits auto-apply — so
-/// notify-only operators accumulate no idle task.
-pub fn spawn(
-    autonomy: AutonomyLevel,
-    updater_enabled: bool,
-    interval_secs: u64,
-    security_policy: crate::config::SecurityPolicy,
-    writer: WalWriterHandle,
-) -> Option<tokio::task::JoinHandle<()>> {
-    if !updater_enabled {
-        return None;
-    }
-    if !auto_apply_enabled(autonomy) {
-        tracing::info!(
-            autonomy = autonomy.as_str(),
-            "CLI auto-apply disabled at this autonomy tier (notify-only); \
-             use `neoth update --apply` or raise autonomy to elevated/full"
-        );
-        return None;
-    }
-    let interval = Duration::from_secs(interval_secs.max(60));
-    Some(tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        tracing::info!(
-            autonomy = autonomy.as_str(),
-            interval_secs = interval.as_secs(),
-            "CLI auto-apply loop online (MV-01b)"
-        );
-        // Burn the immediate tick — a fresh boot's first pass is the probe
-        // cron's job; auto-apply waits one interval so it doesn't race the
-        // wizard's first-install on startup.
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            run_pass(&writer, &security_policy).await;
+/// Result of one reload-owned mutating lane pass.
+#[allow(dead_code)] // `Completed` becomes reachable with request-bound leaf permits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RecurringMutationOutcome {
+    BlockedByGate,
+    Completed,
+}
+
+/// One CLI auto-apply pass. The denied recurring-egress gate is consumed before
+/// any npm/OSV/install probe. A later transport-authority slice may pass Allow
+/// only after every concrete leaf owns its request-bound intent/result WAL.
+pub(crate) async fn run_cli_auto_apply_pass(
+    gate: GateDecision,
+    writer: &WalWriterHandle,
+    security_policy: &crate::config::SecurityPolicy,
+) -> RecurringMutationOutcome {
+    match gate {
+        GateDecision::Deny { reason } => {
+            tracing::debug!(%reason, "CLI auto-apply blocked before recurring egress");
         }
-    }))
+        GateDecision::Allow => {
+            tracing::error!(
+                "rejected unexpected recurring CLI auto-apply Allow before leaf authority wiring"
+            );
+        }
+    }
+    let _ = (writer, security_policy);
+    RecurringMutationOutcome::BlockedByGate
 }
 
 /// One auto-apply pass: probe all CLIs, apply each flagged update, emit a
 /// `0x13 UPDATE_RAN` frame per component actually updated.
+#[allow(dead_code)] // Activated only with request-bound authority at every leaf.
 async fn run_pass(writer: &WalWriterHandle, security_policy: &crate::config::SecurityPolicy) {
     let statuses = updater::check_all().await;
     for status in statuses {
@@ -163,48 +149,34 @@ fn now_unix_secs() -> u64 {
 // notification. The actual swap stays operator-initiated (`neoth update
 // --self --apply`), which keeps prereq #1's gate intact.
 
-/// Spawn the unattended neoth-self STAGING loop. Same gate as the CLI
-/// auto-apply lane (autonomy elevated/full + `auto_update.enabled` +
-/// `auto_update.auto_apply`). `check_interval_secs = 0` also disables the
-/// periodic task. Returns `None` otherwise so check-only operators accumulate
-/// no staging task.
-pub fn spawn_self_stage(
-    autonomy: AutonomyLevel,
-    config: crate::config::AutoUpdateConfig,
-    home: PathBuf,
-    writer: WalWriterHandle,
-) -> Option<tokio::task::JoinHandle<()>> {
-    if !config.enabled || !config.auto_apply || config.check_interval_secs == 0 {
-        return None;
-    }
-    if !auto_apply_enabled(autonomy) {
-        return None;
-    }
-    let interval = Duration::from_secs(config.check_interval_secs.max(60));
-    Some(tokio::spawn(async move {
-        let mut ticker = tokio::time::interval(interval);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        tracing::info!(
-            autonomy = autonomy.as_str(),
-            interval_secs = interval.as_secs(),
-            repo = %config.repo,
-            channel = %config.channel,
-            target = config.target_triple.as_deref().unwrap_or("host"),
-            "neoth-self staging loop online (MV-01b #5; stage-only, never auto-swaps)"
-        );
-        ticker.tick().await; // burn immediate tick
-        loop {
-            ticker.tick().await;
-            run_self_stage_pass(&home, &config, &writer).await;
+/// One unattended neoth-self staging pass. The denied recurring-egress gate is
+/// consumed before release metadata, asset download, verification or staging.
+pub(crate) async fn run_self_stage_pass(
+    gate: GateDecision,
+    home: &Path,
+    config: &crate::config::AutoUpdateConfig,
+    writer: &WalWriterHandle,
+) -> RecurringMutationOutcome {
+    match gate {
+        GateDecision::Deny { reason } => {
+            tracing::debug!(%reason, "neoth-self staging blocked before recurring egress");
         }
-    }))
+        GateDecision::Allow => {
+            tracing::error!(
+                "rejected unexpected recurring self-stage Allow before leaf authority wiring"
+            );
+        }
+    }
+    let _ = (home, config, writer);
+    RecurringMutationOutcome::BlockedByGate
 }
 
 /// One staging pass: probe GitHub, and if a newer release exists,
 /// download + verify + stage it + emit `0xD2 (staged_pending)` + notify.
 /// Every failure logs + the loop retries next tick — never crashes the
 /// daemon, never swaps the binary.
-async fn run_self_stage_pass(
+#[allow(dead_code)] // Activated only with request-bound authority at every leaf.
+async fn run_self_stage_pass_allowed(
     home: &Path,
     config: &crate::config::AutoUpdateConfig,
     writer: &WalWriterHandle,
@@ -349,76 +321,41 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_none_when_updater_disabled() {
+    async fn denied_recurring_gate_blocks_cli_apply_and_self_stage_before_work() {
         let dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("a.wal")).unwrap();
-        // Even at Full autonomy, a disabled updater spawns no task.
-        assert!(spawn(AutonomyLevel::Full, false, 3600, Default::default(), writer).is_none());
-    }
+        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("blocked.wal")).unwrap();
+        let gate = || GateDecision::Deny {
+            reason: "test denied".to_string(),
+        };
 
-    #[tokio::test]
-    async fn spawn_none_at_standard_autonomy() {
-        let dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("b.wal")).unwrap();
-        assert!(
-            spawn(
-                AutonomyLevel::Standard,
-                true,
-                3600,
-                Default::default(),
-                writer
-            )
-            .is_none()
+        assert_eq!(
+            run_cli_auto_apply_pass(gate(), &writer, &Default::default()).await,
+            RecurringMutationOutcome::BlockedByGate
         );
-    }
 
-    #[tokio::test]
-    async fn spawn_some_at_elevated_with_updater_enabled() {
-        let dir = tempfile::tempdir().unwrap();
-        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("c.wal")).unwrap();
-        let handle = spawn(
-            AutonomyLevel::Elevated,
-            true,
-            3600,
-            Default::default(),
-            writer,
-        )
-        .expect("expected a task at elevated autonomy with updater enabled");
-        handle.abort();
-    }
-
-    #[tokio::test]
-    async fn self_stage_spawn_gated_like_cli_lane() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = dir.path().to_path_buf();
-        let enabled = crate::config::AutoUpdateConfig {
+        let config = crate::config::AutoUpdateConfig {
             enabled: true,
             auto_apply: true,
-            check_interval_secs: 3_600,
+            check_interval_secs: 60,
             repo: "owner/repo".into(),
             ..Default::default()
         };
-        // Standard autonomy → no staging task (notify-only tier).
-        let (w1, _j1) = crate::wal::writer::spawn(dir.path().join("s1.wal")).unwrap();
-        assert!(
-            spawn_self_stage(AutonomyLevel::Standard, enabled.clone(), home.clone(), w1).is_none()
+        assert_eq!(
+            run_self_stage_pass(gate(), dir.path(), &config, &writer).await,
+            RecurringMutationOutcome::BlockedByGate
         );
-        // Self-update disabled → no staging task even at Full.
-        let (w2, _j2) = crate::wal::writer::spawn(dir.path().join("s2.wal")).unwrap();
-        let mut disabled = enabled.clone();
-        disabled.enabled = false;
-        assert!(spawn_self_stage(AutonomyLevel::Full, disabled, home.clone(), w2).is_none());
-        // Check-only policy never downloads/stages.
-        let (w_check, _j_check) =
-            crate::wal::writer::spawn(dir.path().join("s-check.wal")).unwrap();
-        let mut check_only = enabled.clone();
-        check_only.auto_apply = false;
-        assert!(spawn_self_stage(AutonomyLevel::Full, check_only, home.clone(), w_check).is_none());
-        // Elevated + enabled → task spawns.
-        let (w3, _j3) = crate::wal::writer::spawn(dir.path().join("s3.wal")).unwrap();
-        let handle = spawn_self_stage(AutonomyLevel::Elevated, enabled, home, w3)
-            .expect("staging task at elevated autonomy");
-        handle.abort();
+        assert_eq!(
+            run_cli_auto_apply_pass(GateDecision::Allow, &writer, &Default::default()).await,
+            RecurringMutationOutcome::BlockedByGate,
+            "an accidental Allow must remain inert until leaf permits land"
+        );
+        assert_eq!(
+            run_self_stage_pass(GateDecision::Allow, dir.path(), &config, &writer).await,
+            RecurringMutationOutcome::BlockedByGate,
+            "an accidental Allow must remain inert until leaf permits land"
+        );
+        assert!(!dir.path().join("staged").exists());
+        assert!(!dir.path().join("notifications").exists());
     }
 
     #[test]

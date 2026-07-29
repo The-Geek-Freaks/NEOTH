@@ -145,13 +145,12 @@ impl Default for DoctorConfig {
     }
 }
 
-/// U-04 follow-up (Session 26): operator-tunable updater cron knobs.
-/// Mirrors the daemon-side `UpdaterCronConfig` shape; same circular-
-/// dep reason for living in the config crate.
+/// U-04 follow-up: canonical operator input for the reload-owned updater
+/// supervisor. The daemon deliberately has no second snapshot/config type.
 ///
-/// Default mirrors `daemon::updater_cron::DEFAULT_UPDATER_INTERVAL_SECS`
-/// (6h tick). `enabled` is the global background-probe switch. CLI and skill
-/// probes use `interval_secs`; the neoth-self probe uses the more specific
+/// The default remains the historical six-hour tick. `enabled` is the global
+/// recurring-lane master switch. CLI and Skill/Plugin probes use
+/// `interval_secs`; the neoth-self probe uses the more specific
 /// `auto_update.check_interval_secs` so checks and staging stay aligned.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct UpdaterConfig {
@@ -478,19 +477,20 @@ impl Default for TaskEngineConfig {
 /// Operator-facing self-update policy.
 ///
 /// Field semantics:
-///   - `enabled` — master switch. Default `false` so a stock
-///     contributor build (or a daemon running behind a
-///     restricted-egress firewall) never reaches out to GitHub
-///     for releases. Operators flip to `true` during onboarding.
-///   - `auto_apply` — `true` allows an Elevated/Full daemon to download,
-///     authenticate, and stage a release. The daemon never swaps the running
-///     binary; the operator completes that step with
-///     `neoth update --self --apply`. `false` (default) is check-only.
+///   - `enabled` — arms the recurring self-update lane. Default `false` creates
+///     no lane. Production recurring passes currently terminalize as
+///     `SkippedByGate` before GitHub, process, download or staging effects;
+///     manual update commands remain available.
+///   - `auto_apply` — records the operator's future verified-stage intent.
+///     It does not bypass the current recurring deny gate. Once leaf authority
+///     is complete, an allowed Elevated/Full daemon may authenticate and stage
+///     a release, but never swap the running binary; the operator completes
+///     that step with `neoth update --self --apply`.
 ///   - `channel` — release channel. `stable` selects final releases only;
 ///     `rc` also accepts release candidates; `nightly` accepts final, RC, and
 ///     nightly-tagged SemVer releases. Alpha/beta tags belong to no ring.
-///     The selected channel is shared by checks, unattended staging, and
-///     operator-initiated apply.
+///     The selected channel is shared by recurring intent and operator-
+///     initiated checks/apply.
 ///   - `check_interval_secs` — how often the background check
 ///     fires. Defaults to 24h (86400s). `0` disables the
 ///     periodic task even when `enabled: true` (operator runs

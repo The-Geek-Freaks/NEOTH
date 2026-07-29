@@ -646,6 +646,25 @@
 > same exact permit/audit binding, and CLI/GUI/Cron must expose typed sanitized
 > outcomes. R3-18 remains OPEN; no count changes.
 >
+> **R3-18 lifecycle-containment checkpoint 2026-07-29 (R3-18 remains OPEN):**
+> one required reload-owned supervisor now owns all five Self-, CLI-,
+> Skill/Plugin-probe, CLI-auto-apply and Self-stage lanes from one accepted
+> generation. The older frozen MV-01b owners are removed. Reload disable or
+> policy downgrade retires queued work before admission and terminally joins
+> admitted work. Strict and Custom create no standing lanes. Every production
+> lane remains hard-denied before inventory, subprocess, network, install or
+> staging and requires an exact `FIRED` plus typed terminal result. A failed
+> terminal append after durable `FIRED` now closes the supervisor and daemon
+> boundary instead of continuing with an orphan audit pair. The remaining
+> leaf half is release-blocking: request/generation-bound authority, mandatory
+> pre-effect intent and terminal result WAL, credential-free transport,
+> redirect/diagnostic bounds, cancellation/process reaping, and typed
+> CLI/GUI/Cron projection. Current counts remain **WS-R3 19 total / 13 done /
+> 6 open** and **WS-R4 14 total / 1 done / 13 open**.
+> The removed standalone updater spawn symbols were never published in a signed
+> tag or crates.io package and are intentionally internalized before the v1 API
+> freeze; README now states that pre-release compatibility boundary explicitly.
+>
 > **R3-11..R3-16 forensic correction 2026-07-22:** none of these six boxes is
 > yet closable. R3-11's main capability-bound store is real, but the capability
 > evolver deployment probe and Dreaming baseline still use ambient path reads,

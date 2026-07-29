@@ -1067,8 +1067,7 @@ where
 /// This detached-policy inventory API performs no installed-Skill network
 /// egress. A `SkillsConfig` value and manifest `enabled` bit are not runtime
 /// authority; source-bearing Skills return [`SKILL_AUTHORITY_REQUIRED_MSG`].
-/// The daemon uses [`skill_plugin_specs_for_home_authorized_async`], which
-/// validates the exact live package/authority generation before its resolver.
+/// This detached diagnostic path cannot authorize recurring daemon egress.
 /// Skills without a source declaration keep the no-registry sentinel.
 ///
 /// Plugins (`~/.neoth/plugins/<id>/plugin.toml`) get the same
@@ -1091,31 +1090,6 @@ pub async fn skill_plugin_specs_for_home_async(
         plugin_policy,
         gate,
         None,
-        |source| async move {
-            crate::updater::skill_resolver::resolve_latest_version(&source).await
-        },
-    )
-    .await
-}
-
-/// Runtime updater view. Installed Skill sources are resolved only after the
-/// exact package generation consumes the same active authority record used by
-/// the loader/router. The inventory-only API above deliberately performs no
-/// Skill network egress because a detached `SkillsConfig` is not proof of an
-/// accepted runtime generation.
-pub(crate) async fn skill_plugin_specs_for_home_authorized_async(
-    home: PathBuf,
-    reload: std::sync::Arc<crate::config::reload::ReloadController>,
-    plugin_policy: crate::config::WasmPluginsConfig,
-    gate: GateDecision,
-) -> Vec<ComponentSpec> {
-    let skills_policy = reload.accepted_snapshot().config().skills.clone();
-    skill_plugin_specs_for_home_async_with_plugin_resolver(
-        home,
-        skills_policy,
-        plugin_policy,
-        gate,
-        Some(reload),
         |source| async move {
             crate::updater::skill_resolver::resolve_latest_version(&source).await
         },
@@ -1290,10 +1264,10 @@ pub fn skill_plugin_specs_for_home(
 /// rescanned each tick, while policy is taken only from the immutable config
 /// generation accepted by `ReloadController` for that tick.
 ///
-/// Detached callers cannot authorize installed-Skill egress. The daemon uses
-/// [`skill_plugin_specs_authorized_blocking`] with its live
-/// `ReloadController`; this compatibility wrapper reports an authority-required
-/// status for every source-bearing Skill.
+/// Detached callers cannot authorize installed-Skill egress. This compatibility
+/// wrapper reports an authority-required status for every source-bearing Skill;
+/// the recurring daemon remains denied until its concrete resolver consumes a
+/// generation- and request-bound permit.
 pub fn skill_plugin_specs_blocking(
     home: PathBuf,
     skills_policy: crate::config::SkillsConfig,
@@ -1308,34 +1282,6 @@ pub fn skill_plugin_specs_blocking(
             gate,
         )),
         Err(_) => skill_plugin_specs_for_home(&home, &skills_policy, &plugin_policy, gate),
-    }
-}
-
-/// Runtime counterpart of [`skill_plugin_specs_blocking`]. The live
-/// `ReloadController` is mandatory so source probes cannot mistake a detached
-/// config struct or manifest `enabled` bit for execution authority.
-/// Blocking-thread-only adapter for the updater cron.
-///
-/// Async callers must use [`skill_plugin_specs_for_home_authorized_async`].
-/// Calling this function from a Tokio worker can panic because it enters the
-/// current runtime with `Handle::block_on`.
-pub(crate) fn skill_plugin_specs_authorized_blocking(
-    home: PathBuf,
-    reload: std::sync::Arc<crate::config::reload::ReloadController>,
-    plugin_policy: crate::config::WasmPluginsConfig,
-    gate: GateDecision,
-) -> Vec<ComponentSpec> {
-    match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(skill_plugin_specs_for_home_authorized_async(
-            home,
-            reload,
-            plugin_policy,
-            gate,
-        )),
-        Err(_) => {
-            let skills_policy = reload.accepted_snapshot().config().skills.clone();
-            skill_plugin_specs_for_home(&home, &skills_policy, &plugin_policy, gate)
-        }
     }
 }
 
