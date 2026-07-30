@@ -17,6 +17,21 @@ use crate::config::FreedomConfig;
 use crate::config::inference::{HemisphereRole, InferenceProvider};
 use crate::providers::Provider;
 
+fn exact_known_compat_profile(
+    provider: InferenceProvider,
+    endpoint: Option<&str>,
+) -> Option<crate::config::inference::OpenAiCompatibleProfile> {
+    if provider != InferenceProvider::OpenAiCompat {
+        return None;
+    }
+    let endpoint = endpoint?;
+    crate::providers::known_endpoints::KNOWN_ENDPOINTS
+        .iter()
+        .find(|known| known.endpoint == endpoint)
+        .map(|known| known.profile)
+        .filter(|profile| *profile != crate::config::inference::OpenAiCompatibleProfile::Generic)
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct HemispheresArgs {
     #[command(subcommand)]
@@ -182,6 +197,7 @@ pub(crate) fn build_preset_topology(
                 model: None,
                 key: None,
                 endpoint: None,
+                openai_compat_profile: None,
                 region: None,
                 api_version: None,
                 voice: None,
@@ -410,11 +426,13 @@ fn apply_single_mode_update(
         credentials.inference_default_slot_key = cfg.inference.default_slot.key.clone();
     }
     cfg.inference.mode = crate::config::inference::TopologyMode::Single;
+    let openai_compat_profile = exact_known_compat_profile(provider, endpoint);
     cfg.inference.default_slot = crate::config::inference::HemisphereSlot {
         provider: Some(provider),
         model: model.map(str::to_owned),
         key: None,
         endpoint: endpoint.map(str::to_owned),
+        openai_compat_profile,
         region: None,
         api_version: None,
         voice: prior_voice,
@@ -678,6 +696,10 @@ pub(crate) async fn rebind_at(
                     model: model.clone(),
                     key: None,
                     endpoint: endpoint.clone(),
+                    openai_compat_profile: exact_known_compat_profile(
+                        provider,
+                        endpoint.as_deref(),
+                    ),
                     region: None,
                     api_version: None,
                     voice: prior.voice,
@@ -1045,6 +1067,34 @@ mod tests {
     }
 
     #[test]
+    fn single_mode_persists_profile_only_for_exact_known_endpoint() {
+        let mut cfg = FreedomConfig::default();
+        let mut credentials = crate::config::credentials::Credentials::default();
+        let reviewed = apply_single_mode_update(
+            &mut cfg,
+            &mut credentials,
+            InferenceProvider::OpenAiCompat,
+            Some("model"),
+            None,
+            Some("https://openrouter.ai/api/v1"),
+        );
+        assert_eq!(
+            reviewed.inference.default_slot.openai_compat_profile,
+            Some(crate::config::inference::OpenAiCompatibleProfile::OpenRouter)
+        );
+
+        let custom = apply_single_mode_update(
+            &mut cfg,
+            &mut credentials,
+            InferenceProvider::OpenAiCompat,
+            Some("model"),
+            None,
+            Some("https://gateway.example.test/v1"),
+        );
+        assert_eq!(custom.inference.default_slot.openai_compat_profile, None);
+    }
+
+    #[test]
     fn parse_role_accepts_canonical_names() {
         assert_eq!(parse_role("left").unwrap(), HemisphereRole::Left);
         assert_eq!(parse_role("right").unwrap(), HemisphereRole::Right);
@@ -1180,6 +1230,7 @@ mod tests {
             req: crate::providers::Request,
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: format!("echo: {}", req.prompt),
                 identity: Default::default(),
                 model: "echo-1".to_string(),
@@ -1323,6 +1374,7 @@ inference:
             model: Some("claude-opus-4-7".into()),
             key: None,
             endpoint: None,
+            openai_compat_profile: None,
             region: None,
             api_version: None,
             voice: None,
@@ -1332,6 +1384,7 @@ inference:
             model: Some("gemini-2.5-pro".into()),
             key: None,
             endpoint: None,
+            openai_compat_profile: None,
             region: None,
             api_version: None,
             voice: None,
@@ -1384,6 +1437,7 @@ inference:
             model: None,
             key: None,
             endpoint: None,
+            openai_compat_profile: None,
             region: None,
             api_version: None,
             voice: None,
@@ -1393,6 +1447,7 @@ inference:
             model: Some("Qwen/Qwen2.5-3B-Instruct".into()),
             key: None,
             endpoint: None,
+            openai_compat_profile: None,
             region: None,
             api_version: None,
             voice: None,

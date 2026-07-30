@@ -696,6 +696,7 @@ mod tests {
                 .cloned()
                 .unwrap_or_default();
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 identity: Default::default(),
                 model: "test".into(),

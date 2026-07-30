@@ -38,6 +38,7 @@ use tracing::debug;
 use super::aws_credentials::{AwsCredentials, ResolvedCredentials, env_var_getter, resolve_chain};
 use super::aws_sigv4::sign;
 use super::quota::{QuotaError, parse_retry_after};
+use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 
 /// AWS service name used in the SigV4 credential scope. **Not**
@@ -293,19 +294,26 @@ impl Provider for AwsBedrockAdapter {
                 .await
                 .with_context(|| "parse aws_bedrock Converse response JSON".to_string())?;
 
+            let termination = bedrock_termination(parsed.stop_reason.clone());
             let text = parsed
                 .output
                 .and_then(|o| o.message)
-                .and_then(|m| m.content.into_iter().next())
-                .map(|c| c.text)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "aws_bedrock returned 200 OK but the response has no \
-                     output.message.content[].text — likely a content-filter \
-                     refusal or guardrail block. Inspect the raw HTTP body via \
-                     NEOTH_LOG_LEVEL=debug."
-                    )
-                })?;
+                .map(|m| {
+                    m.content
+                        .into_iter()
+                        .map(|content| content.text)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            if text.is_empty() && !termination.is_refusal() {
+                anyhow::bail!(
+                    "aws_bedrock returned 200 OK but the response has no \
+                     output.message.content[].text and stopReason {:?} is not a \
+                     guardrail/content-filter refusal. Inspect the raw HTTP body via \
+                     NEOTH_LOG_LEVEL=debug.",
+                    termination.finish_reason
+                );
+            }
 
             let latency = started.elapsed();
             debug!(
@@ -321,6 +329,7 @@ impl Provider for AwsBedrockAdapter {
                 text,
                 identity: Default::default(),
                 model,
+                termination,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
@@ -329,6 +338,20 @@ impl Provider for AwsBedrockAdapter {
             })
         })
         .await
+    }
+}
+
+fn bedrock_termination(stop_reason: Option<String>) -> ProviderTermination {
+    match stop_reason.as_deref() {
+        Some(reason @ ("guardrail_intervened" | "content_filtered")) => {
+            ProviderTermination::refused(
+                stop_reason.clone(),
+                RefusalOrigin::FinishReason,
+                reason,
+                None,
+            )
+        }
+        _ => ProviderTermination::finished(stop_reason),
     }
 }
 
@@ -514,6 +537,8 @@ struct ConverseResponse {
     output: Option<ConverseOutput>,
     #[serde(default)]
     usage: Option<ConverseUsage>,
+    #[serde(rename = "stopReason", default)]
+    stop_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -862,5 +887,29 @@ mod tests {
             "us-east-1",
         );
         assert!(err.to_string().contains("HTTP 500"));
+    }
+
+    #[test]
+    fn converse_stop_reason_fixture_preserves_finish_and_refusal_outcomes() {
+        for (reason, refused) in [
+            ("end_turn", false),
+            ("max_tokens", false),
+            ("stop_sequence", false),
+            ("guardrail_intervened", true),
+            ("content_filtered", true),
+        ] {
+            let parsed: ConverseResponse = serde_json::from_value(serde_json::json!({
+                "stopReason": reason,
+                "output": {"message": {"content": []}}
+            }))
+            .expect("valid Converse fixture");
+            let termination = bedrock_termination(parsed.stop_reason);
+            assert_eq!(termination.finish_reason.as_deref(), Some(reason));
+            assert_eq!(termination.is_refusal(), refused, "reason={reason}");
+            if let Some(refusal) = termination.refusal {
+                assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
+                assert_eq!(refusal.reason, reason);
+            }
+        }
     }
 }

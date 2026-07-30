@@ -487,6 +487,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "must not execute".into(),
                 identity: Default::default(),
                 model: req.model.unwrap_or_default(),
@@ -513,6 +514,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "local summary".into(),
                 identity: Default::default(),
                 model: req.model.unwrap_or_default(),

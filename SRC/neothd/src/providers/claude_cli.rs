@@ -28,13 +28,13 @@
 //! defangs each before the wrap so the system block is text-only.
 
 use std::process::Stdio;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::stream::StreamExt;
 use serde::Deserialize;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
@@ -47,6 +47,7 @@ use tracing::{debug, info, warn};
 /// fresh session. Default cap matches bridge.py (10).
 const COMPACTION_MARKER: &str = "Memory was condensed";
 
+use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{
     ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
@@ -405,41 +406,8 @@ fn join_args_for_shell(args: &[String]) -> String {
 /// env is treated as immutable post-startup — operators who flip
 /// HTTP_PROXY mid-daemon need to restart; the explicit "scan once"
 /// contract is documented at `cached_scrubbed_env()`.
-fn spawn_claude(binary: &str, args: &[String]) -> std::io::Result<tokio::process::Child> {
-    let scrubbed = cached_scrubbed_env()?;
-    #[cfg(windows)]
-    {
-        // cmd /C "<binary>" arg1 arg2 ... — quotes around the binary path so
-        // spaces in `C:\Program Files\...` survive cmd's word-splitting.
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/C").arg(binary);
-        for a in args {
-            cmd.arg(a);
-        }
-        cmd.env_clear();
-        for (k, v) in scrubbed.iter() {
-            cmd.env(k, v);
-        }
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    }
-    #[cfg(not(windows))]
-    {
-        let mut cmd = Command::new(binary);
-        for a in args {
-            cmd.arg(a);
-        }
-        cmd.env_clear();
-        for (k, v) in scrubbed.iter() {
-            cmd.env(k, v);
-        }
-        cmd.stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-    }
+fn spawn_claude(binary: &str, args: &[String]) -> std::io::Result<ManagedClaudeChild> {
+    spawn_claude_with_env(binary, args, cached_scrubbed_env()?)
 }
 
 /// B-6 / Agent 5 perf wedge: return a reference to the
@@ -480,41 +448,376 @@ fn spawn_claude_with_extra_env(
     binary: &str,
     args: &[String],
     extra_overrides: &[(&str, String)],
-) -> std::io::Result<tokio::process::Child> {
+) -> std::io::Result<ManagedClaudeChild> {
     let mut env: Vec<(String, String)> = cached_scrubbed_env()?.to_vec();
     for (key, value) in extra_overrides {
         inject_or_override(&mut env, key, value);
     }
+    spawn_claude_with_env(binary, args, &env)
+}
+
+fn spawn_claude_with_env(
+    binary: &str,
+    args: &[String],
+    env: &[(String, String)],
+) -> std::io::Result<ManagedClaudeChild> {
     #[cfg(windows)]
-    {
-        let mut cmd = tokio::process::Command::new("cmd");
-        cmd.arg("/C").arg(binary);
-        for a in args {
-            cmd.arg(a);
-        }
-        cmd.env_clear();
-        for (k, v) in &env {
-            cmd.env(k, v);
-        }
-        cmd.stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-    }
+    let mut cmd = {
+        // cmd /C "<binary>" arg1 arg2 ... — quotes around the binary path so
+        // spaces in `C:\Program Files\...` survive cmd's word-splitting.
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(binary);
+        command
+    };
     #[cfg(not(windows))]
-    {
-        let mut cmd = tokio::process::Command::new(binary);
-        for a in args {
-            cmd.arg(a);
+    let mut cmd = Command::new(binary);
+
+    for argument in args {
+        cmd.arg(argument);
+    }
+    cmd.env_clear();
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let setup = ClaudeContainmentSetup::configure(&mut cmd)?;
+    let mut child = cmd.spawn()?;
+    match setup.activate(&child) {
+        Ok(containment) => Ok(ManagedClaudeChild {
+            child: Some(child),
+            containment: Some(containment),
+        }),
+        Err(error) => {
+            let _ = child.start_kill();
+            Err(error)
         }
-        cmd.env_clear();
-        for (k, v) in &env {
-            cmd.env(k, v);
+    }
+}
+
+struct ManagedClaudeChild {
+    child: Option<tokio::process::Child>,
+    containment: Option<ClaudeContainment>,
+}
+
+impl ManagedClaudeChild {
+    fn take_stdin(&mut self) -> Option<tokio::process::ChildStdin> {
+        self.child.as_mut()?.stdin.take()
+    }
+
+    fn take_stdout(&mut self) -> Option<tokio::process::ChildStdout> {
+        self.child.as_mut()?.stdout.take()
+    }
+
+    async fn wait_with_output(mut self) -> std::io::Result<std::process::Output> {
+        let mut stdout = self.child.as_mut().and_then(|child| child.stdout.take());
+        let mut stderr = self.child.as_mut().and_then(|child| child.stderr.take());
+        let mut stdout_bytes = Vec::new();
+        let mut stderr_bytes = Vec::new();
+        let status = {
+            let child = self
+                .child
+                .as_mut()
+                .expect("managed Claude child is present until reaped");
+            let read_stdout = async {
+                if let Some(stdout) = stdout.as_mut() {
+                    stdout.read_to_end(&mut stdout_bytes).await?;
+                }
+                Ok::<(), std::io::Error>(())
+            };
+            let read_stderr = async {
+                if let Some(stderr) = stderr.as_mut() {
+                    stderr.read_to_end(&mut stderr_bytes).await?;
+                }
+                Ok::<(), std::io::Error>(())
+            };
+            let (status, (), ()) = tokio::try_join!(child.wait(), read_stdout, read_stderr)?;
+            status
+        };
+        if let Some(containment) = self.containment.as_mut() {
+            containment.disarm_after_reap();
         }
-        cmd.stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
+        self.containment.take();
+        self.child.take();
+        Ok(std::process::Output {
+            status,
+            stdout: stdout_bytes,
+            stderr: stderr_bytes,
+        })
+    }
+
+    #[cfg(test)]
+    fn id(&self) -> Option<u32> {
+        self.child.as_ref()?.id()
+    }
+}
+
+impl Drop for ManagedClaudeChild {
+    fn drop(&mut self) {
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        let mut containment = self.containment.take();
+        if let Some(containment) = containment.as_mut()
+            && let Err(error) = containment.request_tree_termination()
+        {
+            tracing::error!(error = %error, "terminate abandoned Claude CLI process tree");
+        }
+        if let Err(error) = child.start_kill()
+            && child.try_wait().ok().flatten().is_none()
+        {
+            tracing::error!(error = %error, "terminate abandoned Claude CLI leader");
+        }
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    match tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+                        Ok(Ok(status)) => {
+                            tracing::debug!(?status, "reaped abandoned Claude CLI leader");
+                        }
+                        Ok(Err(error)) => {
+                            tracing::error!(error = %error, "reap abandoned Claude CLI leader");
+                        }
+                        Err(_) => {
+                            tracing::error!(
+                                "abandoned Claude CLI leader was not reaped within 5 seconds"
+                            );
+                        }
+                    }
+                    drop(containment);
+                });
+            }
+            Err(error) => {
+                // `kill_on_drop(true)` and the platform containment still
+                // request termination. Without a runtime there is no honest
+                // way to claim the leader was asynchronously reaped.
+                tracing::error!(
+                    error = %error,
+                    "abandoned Claude CLI process dropped outside a Tokio runtime; reaping unconfirmed"
+                );
+                drop(containment);
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+struct ClaudeContainmentSetup;
+
+#[cfg(unix)]
+impl ClaudeContainmentSetup {
+    fn configure(command: &mut Command) -> std::io::Result<Self> {
+        command.process_group(0);
+        Ok(Self)
+    }
+
+    fn activate(self, child: &tokio::process::Child) -> std::io::Result<ClaudeContainment> {
+        let pid = child.id().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Claude CLI exited before process-group activation",
+            )
+        })?;
+        let pgid = libc::pid_t::try_from(pid).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Claude CLI PID does not fit a POSIX process-group id",
+            )
+        })?;
+        Ok(ClaudeContainment { pgid, armed: true })
+    }
+}
+
+#[cfg(unix)]
+struct ClaudeContainment {
+    pgid: libc::pid_t,
+    armed: bool,
+}
+
+#[cfg(unix)]
+impl ClaudeContainment {
+    fn request_tree_termination(&mut self) -> std::io::Result<()> {
+        if !self.armed {
+            return Ok(());
+        }
+        self.armed = false;
+        // SAFETY: the child was spawned with process_group(0), so its positive
+        // PID is the dedicated group id. Negating it targets only that tree.
+        if unsafe { libc::kill(-self.pgid, libc::SIGKILL) } == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    }
+
+    fn disarm_after_reap(&mut self) {
+        self.armed = false;
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ClaudeContainment {
+    fn drop(&mut self) {
+        if let Err(error) = self.request_tree_termination() {
+            tracing::error!(error = %error, "terminate dropped Claude CLI process group");
+        }
+    }
+}
+
+#[cfg(windows)]
+struct ClaudeContainmentSetup {
+    job: WindowsClaudeJob,
+}
+
+#[cfg(windows)]
+impl ClaudeContainmentSetup {
+    fn configure(command: &mut Command) -> std::io::Result<Self> {
+        use std::os::windows::process::CommandExt as _;
+
+        // The shell shim must not run before it belongs to KILL_ON_JOB_CLOSE.
+        // Tokio exposes the process handle but not the primary thread handle,
+        // so resume the suspended process through NtResumeProcess after assign.
+        const CREATE_SUSPENDED: u32 = 0x0000_0004;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command
+            .as_std_mut()
+            .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
+        Ok(Self {
+            job: WindowsClaudeJob::create()?,
+        })
+    }
+
+    fn activate(self, child: &tokio::process::Child) -> std::io::Result<ClaudeContainment> {
+        self.job.assign(child)?;
+        self.job.resume(child)?;
+        Ok(ClaudeContainment { job: self.job })
+    }
+}
+
+#[cfg(windows)]
+struct ClaudeContainment {
+    job: WindowsClaudeJob,
+}
+
+#[cfg(windows)]
+impl ClaudeContainment {
+    fn request_tree_termination(&mut self) -> std::io::Result<()> {
+        self.job.terminate()
+    }
+
+    fn disarm_after_reap(&mut self) {
+        // Dropping the job after the leader is reaped closes the containment
+        // boundary and kills any descendant the CLI failed to join itself.
+    }
+}
+
+#[cfg(windows)]
+struct WindowsClaudeJob {
+    handle: std::os::windows::io::OwnedHandle,
+}
+
+#[cfg(windows)]
+#[link(name = "ntdll")]
+unsafe extern "system" {
+    #[link_name = "NtResumeProcess"]
+    fn nt_resume_claude_process(process_handle: windows_sys::Win32::Foundation::HANDLE) -> i32;
+}
+
+#[cfg(windows)]
+impl WindowsClaudeJob {
+    fn create() -> std::io::Result<Self> {
+        use std::os::windows::io::FromRawHandle as _;
+        use windows_sys::Win32::System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        };
+
+        // SAFETY: null security attributes and name request a fresh unnamed job.
+        let raw_handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+        if raw_handle.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: ownership of the fresh handle moves exactly once.
+        let handle =
+            unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(raw_handle.cast()) };
+        // SAFETY: all-zero is a valid base for this Win32 POD structure.
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if unsafe {
+            SetInformationJobObject(
+                Self::raw_handle(&handle),
+                JobObjectExtendedLimitInformation,
+                (&raw const info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+        } == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(Self { handle })
+    }
+
+    fn raw_handle(
+        handle: &std::os::windows::io::OwnedHandle,
+    ) -> windows_sys::Win32::Foundation::HANDLE {
+        use std::os::windows::io::AsRawHandle as _;
+
+        handle.as_raw_handle().cast()
+    }
+
+    fn assign(&self, child: &tokio::process::Child) -> std::io::Result<()> {
+        use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
+
+        let child_handle = child.raw_handle().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Claude CLI exited before Job Object assignment",
+            )
+        })?;
+        // SAFETY: both kernel handles are live for this synchronous call.
+        if unsafe { AssignProcessToJobObject(Self::raw_handle(&self.handle), child_handle.cast()) }
+            == 0
+        {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    fn resume(&self, child: &tokio::process::Child) -> std::io::Result<()> {
+        let child_handle = child.raw_handle().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Claude CLI exited before suspended-process resume",
+            )
+        })?;
+        // SAFETY: the process handle is live and belongs to this configured job.
+        let status = unsafe { nt_resume_claude_process(child_handle.cast()) };
+        if status < 0 {
+            return Err(std::io::Error::other(format!(
+                "resume Claude CLI after Job Object assignment: NTSTATUS {status:#x}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn terminate(&self) -> std::io::Result<()> {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        // SAFETY: the owned job handle is live for this synchronous call.
+        if unsafe { TerminateJobObject(Self::raw_handle(&self.handle), 1) } == 0 {
+            let error = std::io::Error::last_os_error();
+            // ERROR_ACCESS_DENIED can mean every process already exited. Do
+            // not guess here; callers retain the indeterminate audit outcome.
+            return Err(error);
+        }
+        Ok(())
     }
 }
 
@@ -790,7 +1093,7 @@ impl Provider for ClaudeCliAdapter {
             })?;
 
             // Write prompt to stdin, close so the CLI sees EOF and starts generating.
-            if let Some(mut stdin) = child.stdin.take() {
+            if let Some(mut stdin) = child.take_stdin() {
                 stdin
                     .write_all(prompt.as_bytes())
                     .await
@@ -802,8 +1105,7 @@ impl Provider for ClaudeCliAdapter {
             }
 
             let stdout = child
-                .stdout
-                .take()
+                .take_stdout()
                 .context("claude CLI stdout pipe missing for stream")?;
             let reader = BufReader::new(stdout);
             let mut lines = reader.lines();
@@ -814,6 +1116,8 @@ impl Provider for ClaudeCliAdapter {
             let s = async_stream::try_stream! {
                 let mut input_tokens: Option<u32> = None;
                 let mut output_tokens: Option<u32> = None;
+                let mut stop_reason: Option<String> = None;
+                let mut visible_text = String::new();
 
                 while let Some(line) = lines.next_line().await.transpose() {
                     let line = line.context("read claude stdout line")?;
@@ -823,9 +1127,11 @@ impl Provider for ClaudeCliAdapter {
                     }
                     match parse_stream_event(trimmed) {
                         StreamEvent::TextDelta(text) => {
+                            visible_text.push_str(&text);
                             yield CompletionChunk {
                                 delta: text,
                                 done: false,
+                                termination: Default::default(),
                                 identity: Default::default(),
                                 input_tokens: None,
                                 output_tokens: None,
@@ -833,9 +1139,16 @@ impl Provider for ClaudeCliAdapter {
                                 cache_read_tokens: None,
                             };
                         }
-                        StreamEvent::Usage { input, output } => {
+                        StreamEvent::Metadata {
+                            input,
+                            output,
+                            stop_reason: event_stop_reason,
+                        } => {
                             if let Some(v) = input { input_tokens = Some(v); }
                             if let Some(v) = output { output_tokens = Some(v); }
+                            if event_stop_reason.is_some() {
+                                stop_reason = event_stop_reason;
+                            }
                         }
                         StreamEvent::Ignore => {}
                         StreamEvent::ParseError(err) => {
@@ -869,6 +1182,10 @@ impl Provider for ClaudeCliAdapter {
                 yield CompletionChunk {
                     delta: String::new(),
                     done: true,
+                    termination: claude_termination(
+                        stop_reason,
+                        (!visible_text.is_empty()).then_some(visible_text),
+                    ),
                     identity: Default::default(),
                     input_tokens,
                     output_tokens,
@@ -933,8 +1250,7 @@ async fn complete_uncached(
 
     {
         let mut stdin = child
-            .stdin
-            .take()
+            .take_stdin()
             .context("claude CLI stdin pipe missing")?;
         stdin
             .write_all(payload.as_bytes())
@@ -969,16 +1285,38 @@ async fn complete_uncached(
         )
     })?;
 
-    if envelope.is_error {
+    let latency = started.elapsed();
+    let completion = completion_from_claude_envelope(envelope, model, latency)?;
+    debug!(
+        model = %completion.model,
+        response_bytes = completion.text.len(),
+        latency_ms = latency.as_millis(),
+        input_tokens = completion.input_tokens,
+        output_tokens = completion.output_tokens,
+        "claude_cli completion"
+    );
+
+    Ok(completion)
+}
+
+fn completion_from_claude_envelope(
+    envelope: ClaudeJsonEnvelope,
+    model: String,
+    latency: std::time::Duration,
+) -> Result<Completion> {
+    let text = envelope.result;
+    let termination = claude_termination(
+        envelope.stop_reason.clone(),
+        (!text.trim().is_empty()).then(|| text.clone()),
+    );
+    if !termination.is_refusal() && envelope.is_error {
         anyhow::bail!(
             "claude CLI reported is_error=true: stop_reason={:?}, api_error_status={:?}",
             envelope.stop_reason,
             envelope.api_error_status
         );
     }
-
-    let text = envelope.result.clone();
-    if text.is_empty() {
+    if text.is_empty() && !termination.is_refusal() {
         // This happens when the operator's claude-code setup runs the
         // model in a tool-calling loop (Memory injection, agents, hooks)
         // and `stop_reason: end_turn` fires before any text is produced.
@@ -1002,27 +1340,37 @@ async fn complete_uncached(
             envelope.stop_reason
         );
     }
-
-    let latency = started.elapsed();
-    debug!(
-        model = %model,
-        response_bytes = text.len(),
-        latency_ms = latency.as_millis(),
-        input_tokens = envelope.usage.as_ref().map(|u| u.input_tokens),
-        output_tokens = envelope.usage.as_ref().map(|u| u.output_tokens),
-        "claude_cli completion"
-    );
-
     Ok(Completion {
         text,
         identity: Default::default(),
         model,
+        termination,
         latency,
-        input_tokens: envelope.usage.as_ref().map(|u| u.input_tokens),
-        output_tokens: envelope.usage.as_ref().map(|u| u.output_tokens),
+        input_tokens: envelope.usage.as_ref().map(|usage| usage.input_tokens),
+        output_tokens: envelope.usage.as_ref().map(|usage| usage.output_tokens),
         cache_creation_tokens: None,
         cache_read_tokens: None,
     })
+}
+
+fn claude_termination(
+    stop_reason: Option<String>,
+    refusal_message: Option<String>,
+) -> ProviderTermination {
+    if let Some(reason) = stop_reason
+        .as_deref()
+        .filter(|reason| reason.eq_ignore_ascii_case("refusal"))
+    {
+        ProviderTermination::refused(
+            stop_reason.clone(),
+            RefusalOrigin::FinishReason,
+            reason,
+            refusal_message,
+        )
+        .with_retryability(Retryability::DifferentProvider)
+    } else {
+        ProviderTermination::finished(stop_reason)
+    }
 }
 
 /// Drive a completion through the warm tmux session. Locks the
@@ -1349,6 +1697,7 @@ async fn complete_tmux_uncached(
     // guaranteed non-empty at this point.
 
     Ok(Completion {
+        termination: Default::default(),
         text: response,
         identity: Default::default(),
         model,
@@ -1371,9 +1720,10 @@ async fn complete_tmux_uncached(
 #[derive(Debug, PartialEq)]
 enum StreamEvent {
     TextDelta(String),
-    Usage {
+    Metadata {
         input: Option<u32>,
         output: Option<u32>,
+        stop_reason: Option<String>,
     },
     Ignore,
     ParseError(String),
@@ -1425,10 +1775,9 @@ fn parse_stream_event(line: &str) -> StreamEvent {
             }
         }
         "message_delta" | "result" => {
-            // Both shapes carry the same usage block: { usage:
-            // {input_tokens:N, output_tokens:N} }. `result` is the
-            // claude-cli-specific terminator; `message_delta` is the
-            // upstream Anthropic event. Either suffices.
+            // Both shapes can carry usage and a terminal stop reason.
+            // `message_delta` nests stop_reason under `delta`; claude-cli's
+            // `result` event exposes it at the top level.
             let usage = value.get("usage");
             let input = usage
                 .and_then(|u| u.get("input_tokens"))
@@ -1438,10 +1787,19 @@ fn parse_stream_event(line: &str) -> StreamEvent {
                 .and_then(|u| u.get("output_tokens"))
                 .and_then(|v| v.as_u64())
                 .map(|n| n as u32);
-            if input.is_none() && output.is_none() {
+            let stop_reason = value
+                .pointer("/delta/stop_reason")
+                .or_else(|| value.get("stop_reason"))
+                .and_then(serde_json::Value::as_str)
+                .map(ToOwned::to_owned);
+            if input.is_none() && output.is_none() && stop_reason.is_none() {
                 StreamEvent::Ignore
             } else {
-                StreamEvent::Usage { input, output }
+                StreamEvent::Metadata {
+                    input,
+                    output,
+                    stop_reason,
+                }
             }
         }
         _ => StreamEvent::Ignore,
@@ -1524,6 +1882,102 @@ use StreamExt as _;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn test_process_group_is_live(pgid: u32) -> bool {
+        let Ok(pgid) = libc::pid_t::try_from(pgid) else {
+            return false;
+        };
+        if unsafe { libc::kill(-pgid, 0) } == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+
+    #[cfg(windows)]
+    fn test_process_is_live(pid: u32) -> bool {
+        use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+        use windows_sys::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        // SAFETY: OpenProcess consumes a scalar PID and returns an owned handle.
+        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if handle.is_null() {
+            return false;
+        }
+        let mut exit_code = 0_u32;
+        // SAFETY: `handle` is live and `exit_code` is writable for this call.
+        let queried = unsafe { GetExitCodeProcess(handle, &mut exit_code) } != 0;
+        // SAFETY: this function owns the handle returned above.
+        unsafe { CloseHandle(handle) };
+        queried && exit_code == STILL_ACTIVE as u32
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn dropping_managed_child_terminates_its_posix_process_group() {
+        let child = spawn_claude("sh", &["-c".to_string(), "sleep 30 & wait".to_string()]).unwrap();
+        let pgid = child.id().expect("managed shell child pid");
+        assert!(test_process_group_is_live(pgid));
+        drop(child);
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while test_process_group_is_live(pgid) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("Claude CLI process group survived managed-child drop");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn dropping_managed_child_terminates_job_leader_and_descendant() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("descendant.pid");
+        let escaped_pid_file = pid_file.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "$p=Start-Process -WindowStyle Hidden -FilePath ping.exe \
+             -ArgumentList '-n','30','127.0.0.1' -PassThru; \
+             [System.IO.File]::WriteAllText('{escaped_pid_file}',[string]$p.Id); \
+             Wait-Process -Id $p.Id"
+        );
+        let child = spawn_claude(
+            "powershell.exe",
+            &[
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-Command".to_string(),
+                script,
+            ],
+        )
+        .unwrap();
+        let leader_pid = child.id().expect("managed PowerShell child pid");
+        let descendant_pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(raw) = tokio::fs::read_to_string(&pid_file).await
+                    && let Ok(pid) = raw.trim().parse::<u32>()
+                {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("managed PowerShell did not publish its descendant pid");
+        assert!(test_process_is_live(leader_pid));
+        assert!(test_process_is_live(descendant_pid));
+        drop(child);
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while test_process_is_live(leader_pid) || test_process_is_live(descendant_pid) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("Claude CLI Job Object survived managed-child drop");
+    }
 
     // ── GOLD-WIRE-06: claude_retry-driven tmux retry policy ───────────────
 
@@ -1824,9 +2278,10 @@ mod tests {
         let line = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":42,"output_tokens":17}}"#;
         assert_eq!(
             parse_stream_event(line),
-            StreamEvent::Usage {
+            StreamEvent::Metadata {
                 input: Some(42),
                 output: Some(17),
+                stop_reason: Some("end_turn".into()),
             }
         );
     }
@@ -1836,12 +2291,13 @@ mod tests {
         // claude-cli's terminator event also carries usage in the same
         // shape — accept it so token counts survive the stream when
         // upstream Anthropic format drops `message_delta`.
-        let line = r#"{"type":"result","result":"final text","usage":{"input_tokens":10,"output_tokens":3}}"#;
+        let line = r#"{"type":"result","result":"final text","stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":3}}"#;
         assert_eq!(
             parse_stream_event(line),
-            StreamEvent::Usage {
+            StreamEvent::Metadata {
                 input: Some(10),
                 output: Some(3),
+                stop_reason: Some("end_turn".into()),
             }
         );
     }
@@ -1893,11 +2349,57 @@ mod tests {
     }
 
     #[test]
-    fn parse_stream_event_message_delta_without_usage_ignored() {
-        // Some message_delta events carry only the stop_reason; no usage.
-        // Should not falsely surface a Usage{None,None} chunk.
+    fn parse_stream_event_message_delta_without_usage_preserves_stop_reason() {
+        // A stop-only message_delta is still authoritative terminal metadata.
         let line = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"}}"#;
-        assert_eq!(parse_stream_event(line), StreamEvent::Ignore);
+        assert_eq!(
+            parse_stream_event(line),
+            StreamEvent::Metadata {
+                input: None,
+                output: None,
+                stop_reason: Some("end_turn".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_stream_event_preserves_native_refusal_stop_reason() {
+        for line in [
+            r#"{"type":"message_delta","delta":{"stop_reason":"refusal"}}"#,
+            r#"{"type":"result","stop_reason":"refusal","usage":{"output_tokens":2}}"#,
+        ] {
+            let StreamEvent::Metadata { stop_reason, .. } = parse_stream_event(line) else {
+                panic!("expected terminal metadata");
+            };
+            let termination = claude_termination(stop_reason, Some("provider refusal text".into()));
+            let refusal = termination.refusal.expect("typed refusal");
+            assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
+            assert_eq!(refusal.retryability, Retryability::DifferentProvider);
+            assert_eq!(refusal.message.as_deref(), Some("provider refusal text"));
+        }
+    }
+
+    #[test]
+    fn nonstream_refusal_fixture_is_a_typed_completion_even_when_cli_sets_is_error() {
+        let envelope: ClaudeJsonEnvelope = serde_json::from_value(serde_json::json!({
+            "result": "",
+            "is_error": true,
+            "stop_reason": "refusal",
+            "api_error_status": "policy",
+            "usage": {"input_tokens": 9, "output_tokens": 1}
+        }))
+        .expect("valid claude fixture");
+        let completion = completion_from_claude_envelope(
+            envelope,
+            "claude-sonnet".into(),
+            std::time::Duration::from_millis(5),
+        )
+        .expect("native refusal is a typed provider outcome");
+        assert!(completion.text.is_empty());
+        assert_eq!(completion.input_tokens, Some(9));
+        let refusal = completion.termination.refusal.expect("typed refusal");
+        assert_eq!(refusal.reason, "refusal");
+        assert_eq!(refusal.retryability, Retryability::DifferentProvider);
     }
 
     // ── B-6 Item 3: env scrub + model normalisation ──────────────────────

@@ -124,6 +124,20 @@ impl Provider for TokenCappedProvider<'_> {
             .await
     }
 
+    async fn complete_authorized_pinned(
+        &self,
+        mut req: Request,
+        expected: &crate::providers::CompletionIdentity,
+        authorizer: &ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        req.model = Some(expected.wire_model.clone());
+        ensure_request_fits(&req, self.cap)?;
+        self.inner
+            .complete_authorized_pinned(req, expected, authorizer, call_scope)
+            .await
+    }
+
     async fn stream_authorized(
         &self,
         req: Request,
@@ -140,6 +154,31 @@ impl Provider for TokenCappedProvider<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingProvider {
+        calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for CountingProvider {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("m")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &crate::providers::ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(Completion::default())
+        }
+    }
 
     #[test]
     fn exact_cap_passes_and_one_token_over_blocks() {
@@ -152,6 +191,35 @@ mod tests {
         ensure_request_fits(&exact, bound).expect("exact cap is valid");
         let error = ensure_request_fits(&exact, bound - 1).expect_err("over cap must fail closed");
         assert!(error.to_string().contains("dispatch refused"));
+    }
+
+    #[tokio::test]
+    async fn pinned_retry_caps_the_exact_fallback_wire_model() {
+        let inner = CountingProvider {
+            calls: AtomicUsize::new(0),
+        };
+        let request = Request {
+            prompt: "payload".into(),
+            model: Some("m".into()),
+            ..Request::default()
+        };
+        let cap = request_token_upper_bound(&request);
+        let provider = TokenCappedProvider::new(&inner, cap);
+        let expected = crate::providers::CompletionIdentity {
+            provider: "counting".into(),
+            wire_model: "a-much-longer-fallback-wire-model".into(),
+            dispatch_route: Vec::new(),
+        };
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+
+        let error = provider
+            .complete_authorized_pinned(request, &expected, &authorizer, "test.pinned_cap")
+            .await
+            .expect_err("longer pinned model must be counted before dispatch");
+        assert!(error.to_string().contains("above the effective cap"));
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

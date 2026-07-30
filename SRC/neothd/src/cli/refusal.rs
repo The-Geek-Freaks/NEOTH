@@ -6,7 +6,7 @@
 //!   - `classify <text>` — Schicht-0 detector (surface class).
 //!   - `patterns` — dump the static pattern dictionaries.
 //!   - `cause <text>` (R-06) — RefusalCause classifier (WHY refused).
-//!   - `reframings` (R-06) — list the 6 LOWKEY reframings + per-id
+//!   - `reframings` (R-06) — list the truthful context reframings + per-id
 //!     enabled/disabled status from `freedom.yaml::refusal_recovery`.
 //!   - `disable <id>` (R-06) — atomically add to
 //!     `refusal_recovery.disabled_reframings` so a specific LOWKEY
@@ -72,18 +72,16 @@ pub enum RefusalAction {
         /// The text to classify.
         text: String,
     },
-    /// R-06: list the 6 LOWKEY reframings with their description,
+    /// R-06: list the truthful context reframings with their description,
     /// applicable causes, and per-id enabled/disabled status from
     /// `freedom.yaml::refusal_recovery.disabled_reframings`.
     Reframings,
-    /// R-06: disable a specific LOWKEY reframing. Atomically rewrites
+    /// R-06: disable a specific truthful context reframing. Atomically rewrites
     /// `freedom.yaml::refusal_recovery.disabled_reframings`. Use for
-    /// third-party deployments where e.g. `operator_authority`
-    /// (LOWKEY pentester-context prepend) is not appropriate.
+    /// deployments where the `operator_authority` context prepend is
+    /// not appropriate.
     Disable {
-        /// Reframing id (snake_case): `operator_authority`,
-        /// `narrow_scope`, `step_decomposition`, `meta_discussion`,
-        /// `academic_framing`, `historical_framing`.
+        /// Reframing id (snake_case): `operator_authority`.
         id: String,
     },
     /// R-06: re-enable a previously-disabled reframing. Removes the
@@ -506,7 +504,7 @@ fn run_cause(text: &str, output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-/// R-06: list every LOWKEY reframing + enabled/disabled per the
+/// R-06: list every truthful context reframing + enabled/disabled per the
 /// operator's current freedom.yaml. Missing freedom.yaml (e.g. pre-init) uses
 /// the compiled default; an existing invalid file is an operator-visible error.
 fn run_reframings(output: &OutputFormat) -> Result<()> {
@@ -756,16 +754,7 @@ mod tests {
 
     #[test]
     fn validate_reframing_id_accepts_known_ids() {
-        for id in [
-            "operator_authority",
-            "narrow_scope",
-            "step_decomposition",
-            "meta_discussion",
-            "academic_framing",
-            "historical_framing",
-        ] {
-            assert!(validate_reframing_id(id).is_ok(), "{id} should be valid");
-        }
+        assert!(validate_reframing_id("operator_authority").is_ok());
     }
 
     #[test]
@@ -774,7 +763,7 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("unknown reframing id"));
         assert!(msg.contains("neoth refusal reframings"));
-        // Names of all 6 catalogue entries should appear in the pointer.
+        // The current truthful catalogue entry should appear in the pointer.
         assert!(msg.contains("operator_authority"));
     }
 

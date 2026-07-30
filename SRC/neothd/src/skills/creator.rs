@@ -31,8 +31,9 @@ use sha2::{Digest as _, Sha256};
 use crate::skills::schema::SkillManifest;
 #[cfg(test)]
 use crate::skills::store::{
-    cap_metadata_is_link_like, open_bound_directory, open_real_child_dir, open_regular_file,
-    read_regular_file_bounded, remove_child_file, remove_real_directory_tree, rename_child,
+    cap_metadata_is_link_like, open_bound_directory, open_bound_directory_from_trusted_anchor,
+    open_real_child_dir, open_regular_file, read_regular_file_bounded, remove_child_file,
+    remove_real_directory_tree, rename_child,
 };
 
 #[cfg(test)]
@@ -240,8 +241,19 @@ pub(crate) fn write_skill_yaml_with_expectation(
         }
     }
 
-    let root = open_bound_directory(skills_dir, true, "skills root")?
-        .context("created skills root is unexpectedly absent")?;
+    let absolute_skills_dir = std::path::absolute(skills_dir)
+        .with_context(|| format!("resolve absolute skills root {}", skills_dir.display()))?;
+    let instance_home = absolute_skills_dir
+        .parent()
+        .context("skills root has no NEOTH-home parent")?;
+    let trusted_anchor = instance_home.parent().unwrap_or(instance_home);
+    let root = open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &absolute_skills_dir,
+        true,
+        "skills root",
+    )?
+    .context("created skills root is unexpectedly absent")?;
     let _mutation_guard = super::installer::lock_skill_mutations(&root)?;
     // Installer and creator share one namespace and lock. Recover any
     // interrupted install before deciding whether this id exists or whether

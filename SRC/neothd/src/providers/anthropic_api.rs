@@ -32,6 +32,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::termination::{ProviderTermination, RefusalOrigin, Retryability};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
@@ -233,9 +234,10 @@ impl Provider for AnthropicAdapter {
 
             // Concatenate every text block (a normal reply is a single text
             // block; tool-use / multi-block replies still yield the prose).
-            // Empty/absent text → error (CDX-07 silent-fail-to-empty guard):
-            // a 200 with no text is a refusal / stop-reason oddity the
-            // operator should SEE, not a blank reply.
+            // Empty/absent text remains an error unless Anthropic explicitly
+            // returned `stop_reason=refusal`. A native 200 refusal is a valid
+            // response envelope and must reach downstream recovery as typed
+            // termination metadata.
             let text: String = parsed
                 .content
                 .iter()
@@ -243,13 +245,28 @@ impl Provider for AnthropicAdapter {
                 .filter_map(|b| b.text.as_deref())
                 .collect::<Vec<_>>()
                 .join("");
-            if text.is_empty() {
+            let refused = parsed.stop_reason.as_deref() == Some("refusal");
+            if text.is_empty() && !refused {
                 anyhow::bail!(
                     "anthropic_api returned 200 OK but no text content block (stop_reason \
-                     {:?}) — likely a refusal or a non-text reply. Inspect the raw body via \
+                     {:?}) and no native refusal — likely a non-text reply. Inspect the raw body via \
                      NEOTH_LOG=debug.",
                     parsed.stop_reason
                 );
+            }
+            let mut termination = if refused {
+                ProviderTermination::refused(
+                    parsed.stop_reason.clone(),
+                    RefusalOrigin::FinishReason,
+                    "refusal",
+                    (!text.is_empty()).then(|| text.clone()),
+                )
+                .with_retryability(Retryability::DifferentProvider)
+            } else {
+                ProviderTermination::finished(parsed.stop_reason.clone())
+            };
+            if let Some(stop_details) = parsed.stop_details.clone() {
+                termination = termination.with_native_detail("stop_details", stop_details);
             }
 
             let latency = started.elapsed();
@@ -265,6 +282,7 @@ impl Provider for AnthropicAdapter {
                 text,
                 identity: Default::default(),
                 model,
+                termination,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
@@ -367,6 +385,8 @@ struct MessagesResponse {
     usage: Option<AnthropicUsage>,
     #[serde(default)]
     stop_reason: Option<String>,
+    #[serde(default)]
+    stop_details: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -578,6 +598,67 @@ mod tests {
         assert_eq!(completion.input_tokens, Some(9));
         assert_eq!(completion.output_tokens, Some(4));
         assert_eq!(completion.model, "claude-mock");
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("end_turn")
+        );
+        assert!(!completion.termination.is_refusal());
+    }
+
+    #[tokio::test]
+    async fn mock_200_refusal_retains_stop_reason_details_and_text() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_refusal_1",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-mock",
+                "content": [{
+                    "type": "text",
+                    "text": "I cannot help with that request."
+                }],
+                "stop_reason": "refusal",
+                "stop_details": {
+                    "type": "refusal",
+                    "reason": "policy"
+                },
+                "usage": { "input_tokens": 6, "output_tokens": 8 }
+            })))
+            .mount(&mock)
+            .await;
+
+        let completion = build_adapter_against(&mock.uri())
+            .complete(Request {
+                prompt: "fixture".into(),
+                ..Default::default()
+            })
+            .await
+            .expect("native 200 refusal is a typed completion outcome");
+        assert_eq!(completion.text, "I cannot help with that request.");
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("refusal")
+        );
+        let refusal = completion
+            .termination
+            .refusal
+            .expect("stop_reason=refusal must be retained");
+        assert_eq!(refusal.origin, RefusalOrigin::FinishReason);
+        assert_eq!(refusal.reason, "refusal");
+        assert_eq!(refusal.retryability, Retryability::DifferentProvider);
+        assert_eq!(
+            refusal.message.as_deref(),
+            Some("I cannot help with that request.")
+        );
+        assert_eq!(
+            completion.termination.native_details.get("stop_details"),
+            Some(&serde_json::json!({
+                "type": "refusal",
+                "reason": "policy"
+            }))
+        );
     }
 
     #[tokio::test]

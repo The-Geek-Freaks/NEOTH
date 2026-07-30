@@ -8,8 +8,8 @@ use anyhow::Result;
 use tracing::{debug, info, warn};
 
 use super::{
-    InitArgs, WizardState, WizardStep, collect_ollama_model_refs, inference_uses_local_qwen,
-    parse_topology_mode_arg, render_council_depth_cost_warning,
+    InitArgs, ProviderKind, WizardState, WizardStep, collect_ollama_model_refs,
+    inference_uses_local_qwen, parse_topology_mode_arg, render_council_depth_cost_warning,
 };
 #[cfg(feature = "wizard")]
 use super::{
@@ -61,11 +61,25 @@ pub(crate) fn step5b_inference_topology(
         model: state.provider_model.clone(),
         key: state.provider_key.clone(),
         endpoint: state.provider_endpoint.clone(),
+        openai_compat_profile: state
+            .provider_kind
+            .filter(|kind| *kind == ProviderKind::OpenaiCompat)
+            .and(state.provider_endpoint.as_deref())
+            .and_then(|endpoint| {
+                crate::providers::known_endpoints::KNOWN_ENDPOINTS
+                    .iter()
+                    .find(|known| known.endpoint == endpoint)
+                    .map(|known| known.profile)
+            })
+            .filter(|profile| {
+                *profile != crate::config::inference::OpenAiCompatibleProfile::Generic
+            }),
         region: state.provider_region.clone(),
         api_version: state.provider_api_version.clone(),
         // GOLD-WIRE-04: the single-mode default slot carries no council voice.
         voice: None,
     };
+    state.inference.openai_compat_profile = state.inference.default_slot.openai_compat_profile;
 
     // Non-interactive: honour CLI overrides, otherwise stay in single mode.
     if !interactive {
@@ -321,6 +335,7 @@ pub(crate) fn step5b_inference_topology(
                     model,
                     key: state.inference.default_slot.key.clone(),
                     endpoint: state.inference.default_slot.endpoint.clone(),
+                    openai_compat_profile: state.inference.default_slot.openai_compat_profile,
                     region: state.inference.default_slot.region.clone(),
                     api_version: state.inference.default_slot.api_version.clone(),
                     // GOLD-WIRE-04: mirror the default slot's voice onto each
@@ -1247,6 +1262,7 @@ mod tests {
                 crate::installers::ollama::DEFAULT_OLLAMA_PORT,
             )),
             key: None,
+            openai_compat_profile: None,
             region: None,
             api_version: None,
             voice: None,

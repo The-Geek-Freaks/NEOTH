@@ -311,6 +311,7 @@ fn configured_provider_slot(
             model: config.provider_model.clone(),
             key: config.provider_key.clone(),
             endpoint: config.provider_endpoint.clone(),
+            openai_compat_profile: config.inference.openai_compat_profile,
             region: config.provider_region.clone(),
             api_version: config.provider_api_version.clone(),
             voice: None,
@@ -1101,6 +1102,7 @@ async fn complete_cron_request(
     )
     .await?;
     Ok(crate::providers::Completion {
+        termination: Default::default(),
         text: outcome.final_text,
         ..Default::default()
     })
@@ -1455,6 +1457,7 @@ mod workstream_c_tests {
                 model: Some("gemini-job-model".into()),
                 key: Some(crate::secret::SecretString::from("gemini-slot-secret")),
                 endpoint: Some("https://gemini.example".into()),
+                openai_compat_profile: None,
                 region: Some("eu".into()),
                 api_version: Some("v2".into()),
                 voice: None,
@@ -1651,6 +1654,7 @@ mod workstream_c_tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "ok".into(),
                 identity: Default::default(),
                 model: "mock".into(),
@@ -1685,6 +1689,7 @@ mod workstream_c_tests {
                 .pop_front()
                 .expect("test provider output exhausted");
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 identity: Default::default(),
                 model: "mock".into(),
@@ -1712,6 +1717,7 @@ mod workstream_c_tests {
             let call = self.calls.fetch_add(1, Ordering::SeqCst);
             tokio::time::sleep(self.delay).await;
             Ok(Completion {
+                termination: Default::default(),
                 text: if call == 0 {
                     "too short".into()
                 } else {
@@ -2585,6 +2591,7 @@ mod workstream_c_tests {
                 More placeholder words to satisfy the 80-word minimum gate check here.\n"
                 .to_string();
             Ok(Completion {
+                termination: Default::default(),
                 text: long_text,
                 identity: Default::default(),
                 model: "mock".into(),

@@ -2089,6 +2089,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock".to_string(),

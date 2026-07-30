@@ -26,6 +26,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use super::termination::ProviderTermination;
 use super::{
     ChunkStream, Completion, CompletionChunk, Provider, ProviderDispatchPermit,
     ProviderRequestControls, Request,
@@ -155,6 +156,7 @@ impl Provider for OllamaAdapter {
                 .await
                 .with_context(|| format!("parse {provider_name} /api/chat response JSON"))?;
 
+            let termination = ProviderTermination::finished(parsed.done_reason.clone());
             let text = parsed.message.content;
             let latency = started.elapsed();
             debug!(
@@ -169,6 +171,7 @@ impl Provider for OllamaAdapter {
                 text,
                 identity: Default::default(),
                 model,
+                termination,
                 latency,
                 input_tokens: parsed.prompt_eval_count,
                 output_tokens: parsed.eval_count,
@@ -225,6 +228,7 @@ impl Provider for OllamaAdapter {
                 let mut buf = String::new();
                 let mut input_tokens: Option<u32> = None;
                 let mut output_tokens: Option<u32> = None;
+                let mut finish_reason: Option<String> = None;
 
                 tokio::pin!(byte_stream);
                 while let Some(chunk_result) = byte_stream.next().await {
@@ -263,6 +267,7 @@ impl Provider for OllamaAdapter {
                             yield CompletionChunk {
                                 delta: String::new(),
                                 done: true,
+                                termination: ProviderTermination::finished(chunk.done_reason),
                                 identity: Default::default(),
                                 input_tokens,
                                 output_tokens,
@@ -277,6 +282,7 @@ impl Provider for OllamaAdapter {
                             yield CompletionChunk {
                                 delta,
                                 done: false,
+                                termination: Default::default(),
                                 identity: Default::default(),
                                 input_tokens: None,
                                 output_tokens: None,
@@ -298,10 +304,12 @@ impl Provider for OllamaAdapter {
                         if chunk.done {
                             input_tokens = chunk.prompt_eval_count;
                             output_tokens = chunk.eval_count;
+                            finish_reason = chunk.done_reason;
                         } else if !chunk.message.content.is_empty() {
                             yield CompletionChunk {
                                 delta: chunk.message.content,
                                 done: false,
+                                termination: Default::default(),
                                 identity: Default::default(),
                                 input_tokens: None,
                                 output_tokens: None,
@@ -323,6 +331,7 @@ impl Provider for OllamaAdapter {
                 yield CompletionChunk {
                     delta: String::new(),
                     done: true,
+                    termination: ProviderTermination::finished(finish_reason),
                     identity: Default::default(),
                     input_tokens,
                     output_tokens,
@@ -386,6 +395,9 @@ struct OllamaOptions {
 struct OllamaChatChunk {
     message: OllamaResponseMessage,
     done: bool,
+    /// Provider-native reason for the final line (for example `stop` or `length`).
+    #[serde(default)]
+    done_reason: Option<String>,
     /// Present only on the final done=true line.
     #[serde(default)]
     prompt_eval_count: Option<u32>,
@@ -548,6 +560,7 @@ mod tests {
                 "created_at": "2026-06-29T00:00:00Z",
                 "message": { "role": "assistant", "content": "hello from ollama" },
                 "done": true,
+                "done_reason": "stop",
                 "prompt_eval_count": 8,
                 "eval_count": 4
             })))
@@ -565,6 +578,10 @@ mod tests {
         assert_eq!(completion.text, "hello from ollama");
         assert_eq!(completion.input_tokens, Some(8));
         assert_eq!(completion.output_tokens, Some(4));
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("stop")
+        );
     }
 
     /// Streaming stream(): mock returns three NDJSON lines + a done line;
@@ -574,7 +591,7 @@ mod tests {
         let ndjson_body = concat!(
             "{\"model\":\"llama3.2-mock\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n",
             "{\"model\":\"llama3.2-mock\",\"message\":{\"role\":\"assistant\",\"content\":\" there\"},\"done\":false}\n",
-            "{\"model\":\"llama3.2-mock\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":5,\"eval_count\":3}\n",
+            "{\"model\":\"llama3.2-mock\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"stop\",\"prompt_eval_count\":5,\"eval_count\":3}\n",
         );
 
         let mock = MockServer::start().await;
@@ -616,6 +633,7 @@ mod tests {
         let done = done_chunks[0];
         assert_eq!(done.input_tokens, Some(5));
         assert_eq!(done.output_tokens, Some(3));
+        assert_eq!(done.termination.finish_reason.as_deref(), Some("stop"));
     }
 
     /// EOF residual (review P2): a server may end the FINAL NDJSON line without a
@@ -627,7 +645,7 @@ mod tests {
         let ndjson_body = concat!(
             "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"done\":false}\n",
             // final done line — deliberately NO trailing newline:
-            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"prompt_eval_count\":7,\"eval_count\":4}",
+            "{\"model\":\"m\",\"message\":{\"role\":\"assistant\",\"content\":\"\"},\"done\":true,\"done_reason\":\"length\",\"prompt_eval_count\":7,\"eval_count\":4}",
         );
         let mock = MockServer::start().await;
         Mock::given(method("POST"))
@@ -665,6 +683,7 @@ mod tests {
             "newline-less final done line tokens must be captured"
         );
         assert_eq!(done.output_tokens, Some(4));
+        assert_eq!(done.termination.finish_reason.as_deref(), Some("length"));
     }
 
     /// stream:true must be in the request body (not false like complete()).

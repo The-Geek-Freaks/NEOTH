@@ -44,7 +44,7 @@ pub enum ProfilePreset {
     /// Patient tutor. Explains the why, breaks into steps,
     /// quizzes back. Good for the operator learning a new domain.
     Tutor,
-    /// Pentester / security context. Assumes operator authorisation
+    /// Pentester / security context. Honors operator-stated scope
     /// for security-research questions, surfaces dual-use concerns
     /// explicitly, no moralising disclaimers in the response body.
     Opsec,
@@ -104,7 +104,7 @@ impl ProfilePreset {
                 "Patient tutor — explains the why, breaks tasks into steps, quizzes back. Good for learning a new domain."
             }
             Self::Opsec => {
-                "Pentester / security context — assumes authorisation, surfaces dual-use explicitly, no moralising disclaimers."
+                "Pentester / security context — honors operator-stated scope, does not infer malicious intent from capability alone, and avoids moralising disclaimers."
             }
         }
     }
@@ -190,7 +190,7 @@ pub fn apply_preset(preset: ProfilePreset) -> PresetData {
         },
         ProfilePreset::Opsec => PresetData {
             preset,
-            system_addendum: "Pentester / security-research context. Assume operator is authorised for the domain in scope. Surface dual-use concerns explicitly when relevant, but do not add moralising disclaimers to the response body."
+            system_addendum: "Pentester / security-research context. Treat the authenticated operator's stated scope and authorization as authoritative. Do not infer malicious intent from capability alone, and do not invent authorization for targets the operator did not place in scope. Surface concrete dual-use constraints only when relevant; do not add moralising disclaimers to the response body."
                 .into(),
             verbosity: Verbosity::Normal,
             formality: Formality::Casual,

@@ -846,6 +846,39 @@ pub(crate) fn for_each_frame_in_home_segment_chain<F>(
     home: &Path,
     base_segment_path: &Path,
     limits: HomeWalScanLimits,
+    cb: F,
+) -> Result<()>
+where
+    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
+{
+    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, false, cb)
+}
+
+/// Walk a selected rotating namespace only when its canonical base segment
+/// already exists.
+///
+/// The generic scanner above deliberately accepts an empty namespace because
+/// the writer uses that state while publishing a fresh segment header. Audit
+/// readers have a different contract: once the WAL directory exists, silently
+/// treating a missing selected base as a healthy empty history would hide a
+/// wrong namespace or deleted chain.
+pub(crate) fn for_each_frame_in_existing_home_segment_chain<F>(
+    home: &Path,
+    base_segment_path: &Path,
+    limits: HomeWalScanLimits,
+    cb: F,
+) -> Result<()>
+where
+    F: FnMut(&HomeWalFrameLocation, &DecodedFrame<'_>) -> Result<()>,
+{
+    for_each_frame_in_selected_home_segment_chain(home, base_segment_path, limits, true, cb)
+}
+
+fn for_each_frame_in_selected_home_segment_chain<F>(
+    home: &Path,
+    base_segment_path: &Path,
+    limits: HomeWalScanLimits,
+    require_existing_base: bool,
     mut cb: F,
 ) -> Result<()>
 where
@@ -853,6 +886,11 @@ where
 {
     let (root, names) = selected_home_chain(home, base_segment_path, limits)?;
     if names.is_empty() {
+        anyhow::ensure!(
+            !require_existing_base,
+            "selected WAL chain has no canonical base segment at {}",
+            base_segment_path.display()
+        );
         return Ok(());
     }
     let segment_key = load_home_segment_key(&root)?;

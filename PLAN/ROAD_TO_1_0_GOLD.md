@@ -141,27 +141,27 @@ already-gated release workflow itself.
 | WS-HR Headroom token-compression port (native Rust) | 16 | 1 (HR-00, operator-only) | 15 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE + 2026-06-17 DAU batch + 2026-06-17b batch-2 + 2026-06-18 batch-3 GRAPH/DRAW/PONY/HANDY/IMPR/TUDU/IGNIS/SPEAKR/TERMIX/REPOW/TRAIL/OMNI + GRAPH-04..07 self-knowledge + DESIGN-01..03 taste-skills + 2026-07-06 L6 vault preload + 2026-07-07 opthash spike) | 308 unique ids (370 raw entries) | 0 | **308 ✅ COMPLETE** |
 | WS-R3 Forensic Gold correction (2026-07-14, resumed 2026-07-22) | 19 | **6** | **13** |
-| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 14 | **13** | **1** |
+| WS-R4 Zero-friction install, GUI parity and public launch (2026-07-14) | 15 | **14** | **1** |
 | WS-LF Confirmed lost-feature recovery (2026-07-18) | 118 materialized (52 recovered source rows + 65 plan leaves + 1 inventory-integrity gate) | **116** | **2** |
 | WS-NCT Cognitive Transport + selective Buzz coordination (2026-07-27) | 29 (`GOLD-NCT-00..27` + `GOLD-ADOPT-BUZZ-01`) | **28** | **1** |
 
-`GOLD-R4-13a..l` are twelve mandatory acceptance subcontracts inside the
-already-open `GOLD-R4-13` rollup and therefore are not added a second time to
-the WS-R4 top-level total.
+`GOLD-R4-13a..l` and `GOLD-R4-15a..l` are mandatory acceptance subcontracts
+inside their already-open parent rollups and therefore are not added a second
+time to the WS-R4 top-level total.
 
-**Current count semantics (machine-recomputed 2026-07-29):** the dashboard
-tracks broad/workstream rollups, whose current OPEN column sums to **164**
-(`1 + 6 + 13 + 116 + 28`). The release workflow uses a different and stricter
+**Current count semantics (machine-recomputed 2026-07-30):** the dashboard
+tracks broad/workstream rollups, whose current OPEN column sums to **165**
+(`1 + 6 + 14 + 116 + 28`). The release workflow uses a different and stricter
 contract: `packaging/roadmap_release_gate.py` counts every Markdown task outside
 fenced code, including mandatory child contracts. Its current whole-file result
-from `python packaging/roadmap_release_gate.py --summary-json` is **1,208 total
-/ 988 done / 220 raw open / 0 partial**. A release tag therefore has **219
+from `python packaging/roadmap_release_gate.py --summary-json` is **1,221 total
+/ 988 done / 233 raw open / 0 partial**. A release tag therefore has **232
 pre-tag blockers**, because only the single
 `GOLD-RELEASE-ARTIFACTS` task may remain open while that workflow creates its
-evidence. The values 164, 220 and 219 answer different questions and must not be
+evidence. The values 165, 233 and 232 answer different questions and must not be
 substituted for one another in release-readiness claims.
 
-<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1208 complete=988 open=220 partial=0 raw_blockers=220 release_tag_blockers=219 release_generated_items=1 -->
+<!-- ROADMAP-RELEASE-GATE-SUMMARY total=1221 complete=988 open=233 partial=0 raw_blockers=233 release_tag_blockers=232 release_generated_items=1 -->
 
 _¹ Counts mechanically recomputed 2026-06-19 from the plan's checkboxes (unique bold GOLD-ids per workstream). WS-V's 44 residual findings are tracked in the gitignored `REVIEWS/_gold_audit/` triage file, not as in-plan checkboxes. WS-I figures differ from earlier hand-curated totals due to dedup of repeated deep-read batch listings + the bold-id method, not lost work. **WS-I recomputed 2026-06-21** (dedup by unique `GOLD-ADAPT-` id, an id is DONE if any entry is `[x]`): **304 total / 130 open / 174 done** — reflects the parallel-loop ships + this session's wirings (LOWKEY-04/07, SPEAKR-01, OH-09, AWE-AIDER-01) since the 2026-06-19 recompute. **Re-recomputed 2026-06-21 (partials loop): 304/122/182** — + ODY-27/ODY-19/ODY-13 wired + parallel ships. **Re-recomputed 2026-06-22 (followups loop): 299/118/181** — KB-02 re-UPGRADED [~]→[x] (wired into self-improve execute stop gate); total drift 304→299 = parallel-instance dedup of repeated batch listings, not lost work. **Re-recomputed 2026-06-22 (followups loop B): 299/112/187** — CBM-02 re-UPGRADED [~]→[x] (verify-then-register), + ~5 parallel-instance WS-I closures since the last recompute. Non-WS-I ships this loop: ODY-23b (`neoth fetch --goal`), ODY-07b parts 1+2, FEAT-07b 0xDF audit, HERMES-03b channel clarification, FEAT-08b jailbreak retry. **Re-recomputed 2026-06-22 (SPEAKR-02b/c + NN-MEM-05 followup): 298/106/192** — mechanical re-count (`uv run` script over all `**GOLD-ADAPT-<id>**` checkboxes, an id DONE if any entry `[x]`): SPEAKR-02 confirmed DONE (matcher SPEAKR-02 + stt_dispatch wire SPEAKR-02b both shipped; stale duplicate `[ ]` at the WS-I-tail flipped to `[x]`), NN-MEM-05 confirmed DONE; total 299→298 = one more dedup of a repeated batch listing, done 187→192 = +5 parallel-instance WS-I closures + this loop, open 112→106. Non-WS-I ship this followup: forget-cascade-txn (atomic erasure). In progress: SPEAKR-02c (candle speaker-embedding encoder filling the `utterance_embeddings()` seam). **Re-recomputed 2026-07-03 (B3 session)**: section-checkbox count for WS-A..H (WS-E 24/1/23 — the open box is the GOLD-ARCH-07 rest line; WS-F 26/5/21 — the 6 GOLD-LOOP ids live physically in the WS-I batch-2 listing and count there; WS-G incl. Batch C 28/1/27 — open = GOLD-ADOPT-25; WS-H 19/3/16 — open = PROG-06 + operator-parked PROG-13/15), WS-DELTA row added (16/16 complete 2026-07-02), WS-I unique-`GOLD-ADAPT-` id dedup **299 total / 37 open / 262 done**. Raw file truth at recompute: 70 open boxes / 0 partial / 743 done (the 70 includes repeated batch listings + the 11 Definition-of-GOLD roll-up boxes in §5). **Re-recomputed 2026-07-03b (post B3/B4/B5 + error-hunt #1):** raw 58 open; WS-E COMPLETE (ARCH-07b), WS-H 19/2/17 (PROG-06 shipped; rest = operator-parked PROG-13/15), WS-I unique-id 299/32/267 (GRILL-02/04, ODY-26, PRO-08, HR-06, G-02+QUEUE-01, SPEAKR-01-dup, LOOP-02/04/05/06/07 flipped; +G02-COUNCIL-01/G02-CLUSTER-01 new). **Re-recomputed 2026-07-10 (ChatGPT-R3 gold-tag-blocker session, `8892255f`), mechanical raw checkbox scan over the whole file: 901 `[x]` / 3 `[ ]` / 1 `[~]` = 905 total.** The 3 open `[ ]` are all operator/v1.1, NOT code-blockers: GOLD-HR-00 (operator-machine headroom install), signed-release-artifacts (operator runs the signed release build — no longer blocked on PROG-13 provisioning, which is done), OMI-MULTIMODAL-01 (v1.1 multi-week). The 1 `[~]` is DES-13 (mesh-failover, weitgehend geschlossen; only the foreign→recall auto-merge-restore is honestly deferred). This session flipped `[~]`→`[x]`: SELF-IMPROVE-SAFETY-01 (both residuals closed) + FEAT-06 (real swarm resource values), and `[ ]`→`[x]`: the stale DES-11 GUI duplicate. No `[~]` remain except DES-13; the earlier "no partials" header claim is now nearly true (1 honest partial). **Re-recomputed 2026-07-11 (B17-B25 audit wave + ChatGPT-review follow-up), mechanical raw whole-file scan: `910 [x] / 3 [ ] / 1 [~]` = 914 total.** The header-row "226/8/218" at line 75 is the WS-A..H+DELTA section subtotal (per footnote ¹), NOT the whole-file raw count — do not read it as the global total. Deltas since the 901/3/1 recount: +9 raw `[x]` (B17-B25 audit residuals all shipped across W0 `116d8921` / W1 `44d61cb1` / W2 `17135237` / W3 `25c6702c`, +B19 cross-process follow-up `c7d32de4`; **B07 CHANNEL-CREDENTIAL-ATOMICITY-01 flipped `[~]`→`[x]`** — its startup-fail-open residual was batched into B17 and is verified closed: `serve.rs:666-676` is now fail-closed `load_or_default(…).with_context(…)?`). The lone remaining `[~]` is DES-13 (mesh-failover foreign→recall auto-merge, honestly deferred). **Forensic adoption-completeness re-audit 2026-07-11** (workflow `wf_4f848c23-f2b`, 9 find→classify pipelines over the REAL Hermes/OpenClaw/OpenHuman sources vs the old deep-reads → adversarial verify; full data `REVIEWS/_gold_audit/forensic_adoption_completeness_2026-07-11.md`): **VERDICT — adoptions are COMPLETE, nothing high-value missed.** The workflow's ~90 raw `confirmed_gap` items are ~90% false-positive (its verify layer couldn't tell "absent under this exact name" from "genuinely missing"); every high-plausibility hit was hand-verified as already-built (15/15 channels shipped; Signal rate-limiter `signal.rs:114-124` + `channels/rate_limit.rs`; Discord gateway heartbeat/identify/resume; Nostr/Matrix dedup+E2EE), an intentional FEAT-10 SKIP (msteams/feishu/google-meet/tlon/twilio/simplex/ntfy), or a **documented** low-marginal Matrix/Signal follow-up already superseded by a NEOTH equivalent (sender-allowlist ≥ `MATRIX_IGNORE_USER_PATTERNS`; always-on-E2EE ≥ `E2EE_MODE`). Building the raw list would be bloat, not completeness — no adoption build is required for v1.0. The 3 `[ ]` are unchanged and all genuinely not-agent-performable: HR-00 (reroutes operator's live `ANTHROPIC_BASE_URL`), signed-release (CI complete — only the operator `v*` tag push materializes the public artifacts), OMI-MULTIMODAL-01 (v1.1 multi-week, heavy live-capture dep + new consent-boundary system — half-building it would be a degrade). **Re-recomputed 2026-07-12 (ChatGPT-9.89-review follow-up session), mechanical raw whole-file scan: `911 [x] / 3 [ ] / 0 [~]` — ZERO partials.** The stale DES-13 `[~]` was resolved (its deferred remainder shipped 2026-07-10 as DES-13-AUTO-RESTORE-01, whose own entry states „DES-13 damit KOMPLETT"), so the §0 „No `[~]`" governance rule is mechanically true again. Per-section mechanical recount same date: WS-A..H, WS-DELTA, WS-DES, WS-ZF, WS-V all **0 open**; **WS-I unique-`GOLD-ADAPT-` id dedup 308 total / 0 open / 308 done — WS-I COMPLETE** (370 raw section entries incl. repeated batch listings, every one `[x]`). Dashboard rows above updated to these mechanical values; the only 3 open boxes in the entire file are the operator/v1.1 trio (WS-HR line ~1345, §5 line ~1446, §6 line ~1578)._
 
@@ -1344,23 +1344,56 @@ This additive workstream supersedes the earlier "zero code gaps" conclusion. Ext
   active by this substrate.
 
   The current dirty tree closes the original default-namespace status defects
-  at source level and lands a durable schema-v2 outer-pass identity: `0x44
-  FIRED` and `0x45 RESULT` share `pass_id`, concrete lane and accepted config
-  epoch; `neoth updater status` scans the complete canonical rotating chain,
-  fails closed on chain/decode corruption, and projects one latest state per
-  lane plus explicit open, failed, interrupted and indeterminate evidence.
+  at source level and lands a durable schema-v3 outer-pass identity: `0x44
+  FIRED` binds `run_id`, the concrete lane, `accepted_config_epoch`, and
+  `accepted_policy_sha256`. Only after the FIRED append is acknowledged does
+  the authority expose a domain-separated digest over the exact persisted
+  FIRED payload bytes. `0x45 RESULT` must bind that receipt and carries one
+  typed terminal outcome (`completed`, `failed`, `skipped_by_gate`,
+  `interrupted`, `cancelled`, `timed_out`, or `indeterminate`). Schema-v1/v2
+  records remain readable, but are never presented as securely correlated.
+  `neoth updater status` scans the complete canonical rotating chain, fails
+  closed as `UPDATER_AUDIT_UNAVAILABLE` when an initialized `wal/` directory
+  lacks its selected canonical base, or when that chain is corrupt or
+  unverifiable. A genuinely fresh home with no `wal/` directory remains the
+  truthful never-run/bootstrap state. Receipt, identity, lane, or terminal
+  conflicts become `indeterminate`; forbidden schema-v3 WAL flags invalidate
+  the audit scan and therefore return `UPDATER_AUDIT_UNAVAILABLE`, never a
+  fabricated healthy result.
 
-  This is not full R3-18 closure. Status now accepts the same explicit
-  `--config` home rule as Serve plus a complete rotating `--wal-chain-base`,
-  but it cannot yet discover a live daemon's custom base automatically.
-  Startup/shutdown reconciliation terminalizes updater Leaf Intent/Result
-  pairs only, not outer `0x44`/`0x45` passes; the status projection uses a
-  later daemon BOOT boundary to classify a crash-stranded FIRED as interrupted,
-  but no synthetic outer RESULT is durably published for other consumers. The
-  outer identity also lacks accepted-policy/snapshot and exact-FIRED-frame
-  digest provenance, and GUI/Buddy/Cron do not consume this typed projection.
-  R3-18A, R3-18B, every still-denied Git/npm/OSV/installer/Skill leaf, and
-  complete exact-head gates keep R3-18 OPEN.
+  Startup and ordered shutdown now reconcile both updater Leaf Intent/Result
+  pairs and outer schema-v3 FIRED/RESULT passes. Each receipt-bound orphan gets
+  exactly one durable synthetic `Interrupted` result; replay is idempotent.
+  Production probe and mutation emitters use the bound identity and typed
+  terminal outcomes, including `Cancelled` for generation retirement and
+  `SkippedByGate` for authority rejection.
+
+  **OPEN outer-to-leaf receipt binding:** schema-v3 outer `0x45 RESULT` still
+  carries no bounded list/root of the concrete Updater Leaf Intent/Result
+  receipts it summarizes. `RecurringSelfUpdateAuthority` also creates an
+  independent `operation_id`; the outer `run_id` is not propagated into those
+  leaf records. This cannot be closed by copying an ID alone: the authority
+  execution result must return a durable terminal-leaf receipt, the outer
+  result must bind an ordered bounded set or Merkle root of those receipts,
+  reconciliation must validate the same relation, and cancellation/error paths
+  must not omit a durably written leaf terminal. Keep every recurring effect
+  lane denied until that end-to-end proof exists.
+
+  This is not full R3-18 closure. Status accepts the same explicit `--config`
+  home rule as Serve plus a complete rotating `--wal-chain-base`, but it cannot
+  yet discover a live daemon's custom base automatically. CLI is the only
+  implemented typed status consumer; GUI and Buddy still have no updater-status
+  projection. `Scheduled`, `NeverRun`, and `AuditUnavailable` are also not yet
+  represented as shared typed states: never-run is currently a CLI bootstrap
+  rendering and audit unavailability is a fail-closed command error. More
+  importantly, production recurring lanes remain denied until
+  one inherited absolute pass deadline covers HTTP, binary/npm/Git/process,
+  installer, stage-prepare/publish, terminal-WAL ACK and generation quiesce;
+  blocking work must cooperate with cancellation and every descendant process
+  must be killed and reaped before a terminal state is published. R3-18A,
+  R3-18B, those bounded-leaf contracts, every still-denied
+  Git/npm/OSV/installer/Skill leaf, and complete exact-head gates keep R3-18
+  OPEN.
 
   - [ ] **GOLD-R3-18A Bounded standalone-WAL namespace lifecycle:** replace
     unbounded UUID-per-command accumulation with one cross-process-owned,
@@ -1975,6 +2008,260 @@ Operator directive 2026-07-14: v1.0 is not complete merely because source code c
   registry; and (8) ship typed setup/probe/progress, OpenClaw migration and the
   clean-machine/mock/live release matrix. Do not solve this by adding forty
   more duplicated enum arms.
+
+- [ ] **GOLD-R4-15 Operator-sovereign explicit secret and sensitive-data
+  operations:** NEOTH treats an authenticated operator's explicit request as
+  the intent boundary. It may warn once about the named destination, but it
+  must not invent malicious intent, moralise, demand a second approval, or
+  refuse a local read/copy/move/import/export or an explicitly addressed
+  transfer merely because the payload is a credential, login, password store,
+  token, key or other sensitive operator-owned data. Ambiguous operands cause
+  one concise clarification, not a policy refusal. Operator-authored technical
+  denies remain authoritative, and an upstream provider's own refusal is
+  attributed to that provider/model rather than misreported as a NEOTH rule.
+  This is not a prompt-only exception: secret bytes stay in a typed local data
+  plane and by default never enter an LLM, generic tool transcript, ordinary
+  Channel snapshot, WAL body, log, profile, memory, session title or crash
+  report. Provider exposure requires a separate exact `expose_to_provider`
+  grant bound to the selected provider leaf; it is never inferred from a
+  generic chat turn.
+  Exact source, exact destination/account/recipient/thread, operation, digest,
+  expiry and nonce are bound to a single-use permit; crash/retry/move behavior
+  is receipt-driven and idempotent. CLI, GUI, Buddy and authenticated Channels
+  consume the same plan, progress, warning, error and receipt contract.
+  - [ ] **GOLD-R4-15a Authenticated explicit-intent authority:** model local
+    CLI/GUI/Buddy principals and exact authenticated Channel subject/account/
+    device/session origins. An explicit complete command executes at Strict,
+    Standard, Elevated, Full and Custom with at most one non-blocking,
+    destination-specific warning; missing source or target clarifies. Spoofed,
+    forwarded, attachment-borne and unauthenticated third-party text gains no
+    authority.
+  - [ ] **GOLD-R4-15b Complete source and destination resolvers:** support the
+    NEOTH credential store, supported OS credential stores, browser/password
+    manager exports or integrations, arbitrary named file/path and explicitly
+    selected clipboard input, plus local file/vault and every capable Channel
+    destination. Wizard credential discovery must persist through a real
+    secret-store sink or truthfully remain discovery-only; no discovered
+    secret may be silently dropped.
+  - [ ] **GOLD-R4-15c Exact single-use binding and TOCTOU resistance:** bind the
+    permit to principal, origin, stable no-follow source handle/identity,
+    generation, content digest/length, destination adapter/instance/account/
+    endpoint/recipient/thread, operation, format, expiry and nonce. Source
+    swaps, symlinks/junctions/hardlinks, destination alias collisions,
+    configuration reloads and account/thread/endpoint mutations invalidate the
+    permit before effect.
+  - [ ] **GOLD-R4-15d Whole-product no-leak sentinel:** a test secret must be
+    absent from provider prompts, tool calls/results, RAW_TEXT, WAL, SQLite/FTS,
+    hindsight, profile/ground-truth, recall, logs/tracing, receipts, stdout/
+    stderr, argv/environment, temp files, GUI widget/history/toast state,
+    clipboard unless explicitly targeted, and crash diagnostics. Secret
+    payloads are bounded, move-only, zeroizing, non-Clone, non-Serialize and
+    redacted for Debug/Display; low-entropy audit bindings use a keyed MAC.
+  - [ ] **GOLD-R4-15e Durable replay/crash reconciliation:** persist only
+    metadata-safe `planned -> executing -> delivered -> source_deleted` and
+    `failed|indeterminate` transitions. Duplicate commands, retries, lost ACK,
+    crash before/after network effect and restart reconciliation cannot
+    duplicate delivery, reinterpret operands or erase evidence.
+  - [ ] **GOLD-R4-15f Correct move ordering:** copy/send first, authenticate a
+    destination receipt when the transport can provide one, then delete the
+    exact unchanged source and publish a deletion receipt. Unknown delivery or
+    deletion failure is surfaced as indeterminate/partial and retains the
+    source; no transport without a verifiable receipt may claim a destructive
+    move.
+  - [ ] **GOLD-R4-15g CLI private-input and receipt parity:** typed commands and
+    JSON output accept secret values only through private TTY/stdin/FD/handle
+    or source reference, never argv/environment. Preview shows source and
+    destination classes/bindings but no value; execution emits the same
+    operation/progress/terminal receipt schema used by every other surface.
+  - [ ] **GOLD-R4-15h GUI and Buddy parity:** provide source/destination
+    selectors with exact account/recipient/thread, one warning, progress,
+    cancel-before-network, retry/reconcile and truthful partial states. Secret
+    fields are private in-process/IPC values, wiped after use, excluded from
+    subprocess argv and UI history, and never handed to a provider.
+  - [ ] **GOLD-R4-15i Channel capability and subject parity:** bind "send to
+    me" only to the current authenticated inbound route; aliases with multiple
+    matches require a choice. Text/file/media transfer uses a dedicated
+    secret-safe adapter path rather than generic clone/snapshot machinery.
+    Unsupported adapters return an actionable disposition or require an
+    explicitly selected recipient-key sealed bundle; no silent drop or fake
+    parity.
+  - [ ] **GOLD-R4-15j Provider-refusal parity:** the compiled operator
+    sovereignty directive is applied to every authenticated operator prompt,
+    while a separate typed operation context carries only actually verified
+    ownership/administration/scope facts. Authentication to NEOTH must never be
+    promoted into invented authority over an arbitrary third-party target.
+    Privacy/Safety over-refusals use one shared audited recovery coordinator.
+    That coordinator must:
+    1. retain native per-call outcomes before text heuristics: OpenAI
+       `message.refusal`/refusal content/`content_filter`; Anthropic
+       `stop_reason`/`stop_details`; Gemini Developer `promptFeedback` and
+       candidate `finishReason`/`safetyRatings`; Vertex-specific safety/model-
+       armor signals; Kimi `content_filter`; Qwen
+       `data_inspection_failed`; DeepSeek `content_filter`; OpenRouter router
+       `error_type`, native reason, actual provider and actual model; and
+       documented Azure/Bedrock/CLI/local equivalents;
+    2. select an explicit wire profile for OpenAI Chat/Responses, Anthropic,
+       Gemini Developer, Vertex, Moonshot/Kimi, Qwen Chat/Responses, DeepSeek,
+       OpenRouter, Groq, Mistral, xAI, generic OpenAI-compatible, CLI and local
+       leaves. Endpoint compatibility alone must not erase native semantics;
+    3. lower the same privacy-preserving instance-bound subject and authority
+       context through each provider's documented request fields/roles only.
+       Vendor identity, Enterprise membership, API keys and NEOTH authentication
+       are never described as moderation exemptions;
+    4. distinguish transient retry from policy recovery. Defaults are at most
+       two bounded availability retries, one truthful context re-evaluation,
+       one separately authorized alternate leaf and three total provider
+       attempts. Native Anthropic refusals skip an identical-model retry;
+       partial streamed output is never transparently replayed;
+    5. compile retry context only from typed verified facts, preserve the
+       original request verbatim and never fabricate academic, historical,
+       fictional, owned-target, pentest or authorization claims. The cloud
+       jailbreak-harness loop is not a provider-recovery mechanism;
+    6. attribute the terminal state as NEOTH technical deny, missing operands,
+       local capability/OS/transport failure, router guardrail, provider
+       prompt/output filter, model-authored refusal or unknown provider text.
+       Cost remains tied to every actually attempted concrete leaf.
+    Mock OpenAI, Anthropic, Gemini/Vertex, Kimi, Qwen, DeepSeek, OpenRouter,
+    generic-compatible, CLI and local fixtures prove native-signal precedence,
+    actual-leaf attribution, retry budgets and alternate/local recovery. A fully
+    specified local transfer executes without invoking a provider or exposing
+    secret bytes to prompts, recovery frames or telemetry.
+    **Checkpoint 2026-07-30 (parent and box remain OPEN):**
+    `ProviderTermination` is preserved through the non-streaming CLI and
+    Channel post-reply paths. OpenAI Chat retains `message.refusal`, refusal
+    content parts and `content_filter`; Anthropic retains `stop_reason=refusal`
+    plus `stop_details`; Gemini retains prompt/candidate filter reasons,
+    messages and safety ratings. Azure OpenAI retains 200-response
+    `message.refusal`, `content_filter` and policy envelopes; AWS Bedrock
+    retains guardrail/content-filter stop reasons; Claude CLI retains
+    non-streaming and streaming refusals; Cohere retains finish reasons and
+    fails explicit error/timeout outcomes; Ollama retains `done_reason`. The
+    OpenAI-compatible adapter recognizes the documented
+    Kimi/Qwen/DeepSeek/OpenRouter-style policy codes
+    `content_filter`, `data_inspection_failed`, `content_policy_violation` and
+    `refusal`; the exact official OpenRouter endpoint additionally opts into
+    router metadata so a router guardrail is not mislabeled as a model refusal.
+    OpenRouter non-streaming and SSE completions now retain bounded observed
+    upstream provider/model evidence separately from the immutable authorized
+    router leaf; conflicting SSE observations fail explicitly instead of
+    rewriting authorization or audit identity.
+    Named OpenRouter, DeepSeek, Moonshot/Kimi and Qwen profiles are persisted
+    per default/role/fallback/sub-role slot and survive the provider factory.
+    CLI, wizard and GUI raw-endpoint save paths auto-tag only exact reviewed
+    catalogue origins and clear stale profile metadata for arbitrary endpoints;
+    named-profile/endpoint mismatches and unimplemented Qwen surfaces fail
+    closed.
+    Native signals precede text heuristics, and recovery accepts
+    explicit typed provenance only from the local interactive or pinned
+    operator-Channel authentication boundary. The default catalogue performs
+    at most one truthful `operator_authority` retry; fabricated academic,
+    historical, fictional, pentest and generic cloud-jailbreak retries were
+    removed from production dispatch. Provider-default streams now carry the
+    non-streaming termination into their final chunk; OpenAI SSE additionally
+    retains `delta.refusal`, `finish_reason`, embedded policy errors and
+    policy-blocked handshakes through the CLI and Channel aggregators. A live
+    CLI stream whose deltas/boundary already crossed stdout is attributed but
+    never transparently retried or replaced; buffered/gated streams may use the
+    same bounded recovery path before release. Successful truthful,
+    local-abliterated and teacher recovery now preserve the final concrete leaf,
+    native termination and aggregate reported attempt usage instead of swapping
+    text under the rejected leaf's identity. Native empty-text refusals reach
+    the Tier-3/teacher gates; refusals from the local shadow, cloud re-ask or
+    teacher keep the original visible response while accounting completed
+    attempts, and teacher refusals cannot become correction skills. The private
+    crash-recovery journal retains the accepted final termination. One shared
+    turn budget starts immediately after the initial completion: that original
+    leaf is attempt one, at most two further provider factories can be
+    constructed, and the 30-second wall clock includes initial-call latency plus
+    intervening hooks, audit and route selection. Truthful, local-shadow,
+    cloud-continuation and teacher tiers cannot each reset the budget. Exact
+    retries carry an opaque decorator route and the final
+    provider/wire-model identity. Nested fallback chains replay only that leaf,
+    honor its durable backoff, never hop on a pinned 429, and must pass a fresh
+    Council/cost/WAL/policy authorization lifecycle. Cross-provider local
+    shadow dispatch rejects unsupported controls before any call rather than
+    silently changing semantics. Negative tests pin route absence/range,
+    identity drift, nested quota ownership, denied paid calls and distinct
+    retry lifecycle IDs. The exact official OpenAI Chat leaf now receives a
+    stable privacy-preserving `safety_identifier` derived from a dedicated
+    installation-local key and authenticated operator ID. It is computed before
+    Cost/Consent authorization, included in request binding and carried only by
+    the non-constructible dispatch permit; custom, compatible, Azure,
+    OpenRouter, incognito and delegated calls omit it. WAL retains only
+    presence/binding evidence and a one-way operator-ID digest. OpenAI-
+    compatible HTTP, quota and non-policy SSE failures retain the status/error
+    class plus domain-separated response-body digest, never the raw upstream
+    body; refusal-recovery WAL and tracing likewise retain only a bounded class
+    and digest. Provider-authored typed refusal text remains visible as the
+    actual completion outcome rather than being mislabeled as transport
+    diagnostics.
+    Still release-blocking: OpenAI Responses and Vertex wire profiles;
+    remaining provider-native/mock streaming fixtures; remaining CLI/local
+    native outcomes; a complete typed verified-operation context rather than
+    only the compiled sovereignty directive; complete alternate/local selection
+    UX; and GUI/Buddy/all-Channel end-to-end parity.
+  - [ ] **GOLD-R4-15k Policy and failure truth:** distinguish operator-authored
+    technical deny rules, missing/ambiguous operands, OS/keychain/transport
+    failure and upstream-provider refusal. Only the first is an intentional
+    NEOTH policy block. Docs, starter config, onboarding and prompt contracts
+    say the same thing and never promise that NEOTH can override a vendor's
+    remote policy.
+    - [ ] **GOLD-R4-15k1 Bounded successful provider envelopes:** cap and
+      incrementally parse every provider's successful JSON response and each
+      SSE residual/frame before allocation can grow without bound. Oversize or
+      newline-free frames must fail with bounded, secret-safe digest evidence;
+      focused fixtures must cover huge `choices[].error`, refusal and malformed
+      2xx bodies plus endless newline-free streams. Ordinary provider-authored
+      completion/refusal text remains visible output and is not reclassified as
+      transport diagnostics.
+  - [ ] **GOLD-R4-15l Installed clean-machine evidence:** exercise file-to-file,
+    OS-vault-to-NEOTH-vault and password-store/file-to-named-Channel journeys
+    through equivalent CLI, GUI/Buddy and authenticated Channel commands on
+    installed Windows, macOS and Linux artifacts, including duplicate, crash,
+    restart, destination mutation, delivery-unknown and safe-uninstall cases.
+
+  **Credential-copy checkpoint 2026-07-30 (parent and boxes remain OPEN):**
+  `neoth credential copy --source <PATH> --destination <PATH>` now provides the
+  first provider-free typed data-plane leaf. It opens the exact source without
+  namespace-mutation rights, rejects links/races/unsafe destination identity,
+  creates a private destination before the first secret byte, never overwrites,
+  preserves the source and emits metadata-only output. An owner-private
+  authenticated journal binds the transfer plan, source/destination identity,
+  keyed content binding, length and nonce across
+  `planned -> executing -> delivered|failed|indeterminate`; restart
+  reconciliation accepts only the exact unchanged authenticated destination,
+  not an unrelated same-content file or tombstone replay. Windows applies the
+  exact current-TokenUser DACL at `CreateFileW(CREATE_NEW)` and publishes the
+  same capability-bound handle before writing payload bytes; Unix uses
+  capability-relative exclusive creation and owner-private mode. Crash, race,
+  source-hardlink, tamper and plaintext-stage canaries cover this leaf. The
+  instance home is now opened from its explicit existing parent rather than
+  inferred from the requested state path; journal, replay and authority-key
+  descendants are walked no-follow and hardened owner-private. The stable
+  `secret-transfers/authority.key` is capability-bound, bounded and
+  read-rechecked; first creation is create-new plus read-back comparison. It is
+  deliberately independent of `wal/hmac.key`, so WAL key rotation cannot make
+  an interrupted transfer unrecoverable or silently mint a second transfer
+  authority. Permit issue, journal creation, permit consumption, execution,
+  failure and delivery each sample the injected clock at their own boundary;
+  expiry is rechecked at consumption rather than inferred from the earlier
+  issue time. Normal completion rechecks the HMAC destination-object binding
+  and durability of the exact published object, so an independent same-content
+  replacement cannot become a delivery receipt.
+  Unix name-based stage publication is verified against the open inode before
+  and after rename and journal bytes are read back/authenticated before success;
+  this contract relies on the enforced owner-private directory and does not
+  claim isolation from a hostile process running as the same UID. Windows
+  flushes and live-verifies the exact private file handle, while the versioned
+  journal records `destination_namespace_durability=unsupported`; Windows has
+  no portable directory-fsync implementation here, so clean-machine power-loss
+  evidence remains release-blocking and must not be described as proven.
+  Still release-blocking: move/delete receipts, typed previews and a common
+  cross-surface receipt schema, NEOTH/OS/browser/password-store/clipboard
+  resolvers, Channel destinations, GUI/Buddy/natural-language routing,
+  provider-exposure permits, the whole-product no-leak sentinel and installed
+  Windows/macOS/Linux parity. Therefore R4-15c/e/g gain implementation evidence
+  but remain open, and no other R4-15 box is claimed complete.
 
 **Current Keet slice (2026-07-14; boxes remain open):** `bridges/keet/` now
 implements a repository-owned, full-duplex Keet-identity Pear/Hyperswarm text

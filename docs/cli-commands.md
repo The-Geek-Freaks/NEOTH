@@ -797,7 +797,7 @@ Inspect the memory-routing weights. Each row records a `(topic_hash, hemisphere_
 
 ## `neoth credential`
 
-Manage `credentials.yaml`: `list` shows which credential keys are set (NAMES only, never values); `import --file <path>` merges a credentials.yaml-shaped file in (set fields overwrite; absent fields untouched). Never prints secret values
+Manage local credentials and secret-bearing files. `list` shows which credential keys are set (NAMES only, never values); `import --file <path>` merges a credentials.yaml-shaped file in (set fields overwrite; absent fields untouched); `copy` transfers one exact local file through NEOTH's typed secret data plane. Secret values never appear in terminal output
 
 ### `neoth credential import`
 
@@ -809,6 +809,13 @@ Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set field
 ### `neoth credential list`
 
 List which credential keys are currently set. Prints KEY NAMES ONLY — never the secret values
+
+### `neoth credential copy`
+
+Copy one exact local secret-bearing file to a new private destination without putting its payload in a prompt, command-line argument, replay record, journal, or terminal report. The source is preserved, the destination parent must already exist, and an existing destination is never overwritten. The authenticated private journal reconciles interrupted transfers without treating an unrelated same-content file as successful delivery. NEOTH opens its state root from an explicit existing parent, rejects linked/reparse-point state and key paths, hardens journal/replay/key directories to the current OS user, and read-verifies each journal transition before reporting success. Transfer authority lives in the dedicated capability-bound `~/.neoth/secret-transfers/authority.key`; it is independent of `wal/hmac.key`, so WAL-key rotation does not invalidate an interrupted transfer. Permit expiry is checked against a fresh clock sample at durable consumption, and issue, journal creation, execution, failure and delivery retain their own timestamps. Unix publication relies on the enforced owner-private directory and does not claim isolation from a hostile process already running as the same UID. Windows flushes and live-verifies the exact private file object and records namespace durability as `unsupported`; clean-machine power-loss durability of the directory entry remains open release evidence because this implementation has no portable Windows directory-fsync equivalent
+
+- `--source <PATH>` — Exact local source file; only the path enters argv
+- `--destination <PATH>` — Exact new local destination file; the destination must not already exist
 
 ### `neoth credential migrate`
 
@@ -2964,9 +2971,9 @@ Classify `<text>` against the refusal detector. Prints the classification + conf
 
 ### `neoth refusal disable`
 
-R-06: disable a specific LOWKEY reframing. Atomically rewrites `freedom.yaml::refusal_recovery.disabled_reframings`. Use for third-party deployments where e.g. `operator_authority` (LOWKEY pentester-context prepend) is not appropriate
+R-06: disable a specific truthful context reframing. Atomically rewrites `freedom.yaml::refusal_recovery.disabled_reframings`. Use for deployments where the authenticated `operator_authority` context prepend is not appropriate
 
-- `<ID>` — Reframing id (snake_case): `operator_authority`, `narrow_scope`, `step_decomposition`, `meta_discussion`, `academic_framing`, `historical_framing`
+- `<ID>` — Reframing id (snake_case): `operator_authority`
 
 ### `neoth refusal enable`
 
@@ -3609,7 +3616,9 @@ Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, code
 
 ## `neoth updater`
 
-U-01..U-04 updater status + compatibility check entry. `status` renders recent `UpdaterTaskResultPayload` WAL frames; `check` delegates to the live `neoth update --check` component probe
+U-01..U-04 updater status + compatibility check entry. `status` verifies the
+complete canonical WAL chain and correlates receipt-bound FIRED/RESULT frames;
+`check` delegates to the live `neoth update --check` component probe
 
 ### `neoth updater check`
 
@@ -3617,12 +3626,14 @@ Run the canonical component update check (`neoth update --check`)
 
 ### `neoth updater status`
 
-Print the most recent updater task results in a readable table
+Print the latest correlated updater state per concrete lane and task class.
+Missing, corrupt, or unverifiable canonical audit evidence fails closed as
+`UPDATER_AUDIT_UNAVAILABLE`; it is never rendered as an empty healthy state.
 
 - `--config <PATH>` — Instance freedom.yaml. Its parent is the authoritative home, using the same rule as `neoth serve --config`
 - `--wal-chain-base <PATH>` — First segment of the complete rotating namespace to scan. Must be a canonical direct child of the selected instance home's `wal` directory. Unlike `--wal-segment`, rotations are followed
 - `--wal-segment <PATH>` — Path to one specific WAL segment. This is diagnostic mode and does not follow rotations. Omit it for the complete canonical home chain
-- `--from-jsonl <PATH>` — Path to a JSONL file containing one `UpdaterTaskResultPayload` per line. Overrides the WAL scan when set; used by tests + operator dry-runs
+- `--from-jsonl <PATH>` — Path to a JSONL file containing one `UpdaterTaskResultPayload` per line. Overrides the WAL scan when set; this compatibility/test input cannot prove the persisted FIRED receipt and is not equivalent to canonical WAL verification
 
 ## `neoth usage`
 

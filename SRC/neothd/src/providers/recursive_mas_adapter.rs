@@ -235,6 +235,7 @@ impl Provider for RecursiveMasAdapter {
 
         let text = parse_response_line(&reply)?;
         Ok(Completion {
+            termination: Default::default(),
             text,
             identity: Default::default(),
             model: "recursive-mas".to_string(),

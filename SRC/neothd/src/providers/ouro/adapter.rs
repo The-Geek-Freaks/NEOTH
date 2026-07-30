@@ -691,6 +691,7 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         .decode(&new_tokens, true)
         .map_err(|e| anyhow::anyhow!("decode generated tokens: {e}"))?;
     Ok(Completion {
+        termination: Default::default(),
         text,
         identity: Default::default(),
         model: req.model.clone().unwrap_or_else(|| adapter.repo.clone()),
@@ -792,6 +793,7 @@ fn run_ouro_stream(
                     .blocking_send(Ok(CompletionChunk {
                         delta,
                         done: false,
+                        termination: Default::default(),
                         identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
@@ -857,6 +859,7 @@ fn run_ouro_stream(
                     .blocking_send(Ok(CompletionChunk {
                         delta,
                         done: false,
+                        termination: Default::default(),
                         identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
@@ -874,6 +877,7 @@ fn run_ouro_stream(
     let _ = tx.blocking_send(Ok(CompletionChunk {
         delta: String::new(),
         done: true,
+        termination: Default::default(),
         identity: Default::default(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),

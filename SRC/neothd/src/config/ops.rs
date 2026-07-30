@@ -623,10 +623,10 @@ pub struct CodeMapConfig {
     pub auto_context_max_files: u32,
 }
 
-/// R-04 2026-05-17: LOWKEY refusal-recovery policy. Operators tune
-/// per-reframing opt-out via `disabled_reframings` (e.g. keep the
-/// `operator_authority` LOWKEY-prepend off if the deployment is
-/// for a third-party who isn't an authorised pentester).
+/// R-04 2026-05-17: refusal-recovery policy. Operators can disable
+/// NEOTH's one truthful `operator_authority` context retry. The retry
+/// never invents ownership, professional credentials, or authorization
+/// that was not established by the authenticated request context.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct RefusalRecoveryConfig {
     /// Master switch — `true` (default) runs `try_recover` once per
@@ -637,21 +637,20 @@ pub struct RefusalRecoveryConfig {
     pub enabled: bool,
     /// Reframing IDs that should NEVER fire. Matched against
     /// `Reframing::id()` (snake_case). Defaults to empty —
-    /// operator must opt-out per-reframing. Disabling
-    /// `operator_authority` falls back to `narrow_scope` for
-    /// SafetyPolicy refusals.
+    /// operator must opt out explicitly. Disabling `operator_authority`
+    /// disables the truthful same-leaf context retry; NEOTH does not
+    /// substitute a fictional academic, historical, or narrower purpose.
     #[serde(default)]
     pub disabled_reframings: Vec<String>,
-    /// R-01 2026-05-17: maximum reframings to try per refusal.
-    /// Default 2 per SPEC §4. Set to 1 for single-attempt (matches
-    /// original R-05 behaviour); set to 6 to walk the entire
-    /// applicable catalogue. After this budget is exhausted the
-    /// orchestrator emits `0x1A REFUSAL_PERSISTENT` and surfaces
-    /// the last failure to the caller.
+    /// Maximum truthful context retries per refusal. The catalogue
+    /// currently exposes one context-preserving retry, so values above
+    /// one do not create synthetic alternate purposes. After the effective
+    /// budget is exhausted the orchestrator emits
+    /// `0x1A REFUSAL_PERSISTENT` and surfaces the last failure.
     #[serde(default = "default_refusal_recovery_max_attempts")]
     pub max_attempts: u32,
     /// GOLD-FEAT-08 Tier-3 — enable the local-abliterated fallback. Default
-    /// `false` (opt-in). When `true`, a `SafetyPolicy` over-refusal that
+    /// `false` (opt-in). When `true`, a `SafetyPolicy` or `Privacy` over-refusal that
     /// survives the LOWKEY reframing pipeline is re-attempted via the
     /// operator's OWN local model (`abliterated_model`) — not by deceiving the
     /// cloud, but by routing to operator-owned hardware. WAL records
@@ -663,18 +662,14 @@ pub struct RefusalRecoveryConfig {
     /// `abliterated_fallback_enabled` is `true` (no model = nothing to route to).
     #[serde(default)]
     pub abliterated_model: Option<String>,
-    /// GOLD-FEAT-08b — enable the jailbreak-harness retry layer that runs BEFORE
-    /// the local-abliterated fallback. Default `false` (opt-in). When `true`, a
-    /// `SafetyPolicy` over-refusal that survives the LOWKEY reframing pipeline is
-    /// retried against the SAME cloud provider up to `jailbreak_max_retries`
-    /// times, each wrapping the request in a distinct seed harness
-    /// (`security::jailbreak_retry`). First non-refusal wins; all-refused falls
-    /// through to FEAT-08. The CSAM/bioweapon hard-block floor still applies
-    /// first. WAL records `0x25 PROVIDER_FALLBACK_ATTEMPTED` (kind=jailbreak).
+    /// Legacy compatibility flag. Cloud jailbreak harnesses are no longer
+    /// dispatched: provider-native refusal signals receive at most one truthful
+    /// context retry, followed only by separately authorized provider/local
+    /// fallbacks. `true` is accepted but ignored with a visible warning.
     #[serde(default = "default_jailbreak_retry_enabled")]
     pub jailbreak_retry_enabled: bool,
-    /// GOLD-FEAT-08b — number of jailbreak harnesses to try before falling
-    /// through to FEAT-08. Default 4; capped at the seed-catalog length.
+    /// Legacy compatibility value for old configs; ignored by production
+    /// dispatch together with `jailbreak_retry_enabled`.
     #[serde(default = "default_jailbreak_max_retries")]
     pub jailbreak_max_retries: usize,
     /// GOLD-ADAPT-ODY-08 — enable SOTA teacher escalation when the local model
@@ -734,7 +729,7 @@ fn default_jailbreak_max_retries() -> usize {
 }
 
 fn default_refusal_recovery_max_attempts() -> u32 {
-    2
+    1
 }
 
 /// 2026-05-17 Session 2: profile-learning policy. Defaults to off so

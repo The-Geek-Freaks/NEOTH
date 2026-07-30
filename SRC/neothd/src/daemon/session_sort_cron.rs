@@ -633,6 +633,7 @@ mod tests {
     impl Provider for MockProvider {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.response.clone(),
                 identity: Default::default(),
                 model: "mock".to_string(),

@@ -33,6 +33,7 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use std::path::PathBuf;
 
 use super::quota::{QuotaError, QuotaTracker};
@@ -78,6 +79,15 @@ enum HopAction {
 }
 
 impl FallbackProvider {
+    fn stamp_stream_route(stream: ChunkStream, slot: usize) -> ChunkStream {
+        Box::pin(stream.map(move |item| {
+            item.and_then(|mut chunk| {
+                chunk.identity.prepend_dispatch_slot(slot)?;
+                Ok(chunk)
+            })
+        }))
+    }
+
     pub fn new(
         chain: Vec<Box<dyn Provider>>,
         max_hops: u8,
@@ -274,12 +284,20 @@ impl FallbackProvider {
             .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
         let mut last_err: Option<anyhow::Error> = None;
         let mut hops = 0u8;
+        let mut shortest_active_backoff: Option<u64> = None;
 
         for (i, candidate) in self.chain.iter().enumerate() {
             let preflight_now = Self::now_unix();
-            let in_backoff = tracker
-                .backoff_remaining_for(candidate.name(), preflight_now)
-                .is_some();
+            let backoff_remaining = if candidate.handles_nonstream_quota_backoff() {
+                None
+            } else {
+                tracker.backoff_remaining_for(candidate.name(), preflight_now)
+            };
+            if let Some(remaining) = backoff_remaining {
+                shortest_active_backoff =
+                    Some(shortest_active_backoff.map_or(remaining, |known| known.min(remaining)));
+            }
+            let in_backoff = backoff_remaining.is_some();
             if i == 0 && in_backoff {
                 tracing::warn!(
                     provider = candidate.name(),
@@ -346,8 +364,18 @@ impl FallbackProvider {
                 }
             };
             match result {
-                Ok(completion) => return Ok(completion),
+                Ok(mut completion) => {
+                    completion.identity.prepend_dispatch_slot(i)?;
+                    return Ok(completion);
+                }
                 Err(error) if Self::is_quota_error(&error) => {
+                    if candidate.handles_nonstream_quota_backoff() {
+                        // A nested routing decorator already persisted and
+                        // audited its concrete leaf. The outer chain may move
+                        // on, but must not relabel or double-record that 429.
+                        last_err = Some(error);
+                        continue;
+                    }
                     let quota = error
                         .downcast_ref::<QuotaError>()
                         .expect("quota-error branch must contain QuotaError");
@@ -373,9 +401,18 @@ impl FallbackProvider {
             }
         }
         Err(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!(
-                "fallback chain exhausted: every provider returned 429 or was in backoff"
-            )
+            if let Some(remaining) = shortest_active_backoff {
+                anyhow::Error::new(QuotaError {
+                    provider: self.name(),
+                    retry_after: Some(std::time::Duration::from_secs(remaining)),
+                    body: "fallback chain exhausted: every provider is in durable backoff"
+                        .to_owned(),
+                })
+            } else {
+                anyhow::anyhow!(
+                    "fallback chain exhausted: every provider returned 429 or was in backoff"
+                )
+            }
         }))
     }
 }
@@ -399,6 +436,10 @@ impl Provider for FallbackProvider {
     }
 
     fn handles_nonstream_quota_backoff(&self) -> bool {
+        true
+    }
+
+    fn preserves_inner_response_identity(&self) -> bool {
         true
     }
 
@@ -456,6 +497,88 @@ impl Provider for FallbackProvider {
             .await
     }
 
+    async fn complete_authorized_pinned(
+        &self,
+        req: Request,
+        expected: &super::CompletionIdentity,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        let Some(&slot) = expected.dispatch_route.first() else {
+            anyhow::bail!(
+                "fallback provider cannot replay `{}`/`{}` without a pinned chain slot",
+                expected.provider,
+                expected.wire_model
+            );
+        };
+        let index = usize::from(slot);
+        let candidate = self.chain.get(index).ok_or_else(|| {
+            anyhow::anyhow!(
+                "pinned fallback slot {index} is outside chain length {}",
+                self.chain.len()
+            )
+        })?;
+        let tracker = QuotaTracker::load_from(&self.quota_path)
+            .with_context(|| format!("load fallback quota state {}", self.quota_path.display()))?;
+        let now = Self::now_unix();
+        if !candidate.handles_nonstream_quota_backoff()
+            && let Some(remaining) = tracker.backoff_remaining_for(candidate.name(), now)
+        {
+            return Err(anyhow::Error::new(QuotaError {
+                provider: candidate.name(),
+                retry_after: Some(std::time::Duration::from_secs(remaining)),
+                body: "durable pinned-leaf backoff active".to_owned(),
+            }));
+        }
+        let child_expected = expected.child_identity_for_slot(index)?;
+        let mut candidate_req = self.request_for_candidate(index, candidate.as_ref(), &req)?;
+        candidate_req.model = Some(expected.wire_model.clone());
+        let result = candidate
+            .complete_authorized_pinned(candidate_req, &child_expected, authorizer, call_scope)
+            .await;
+        let mut completion = match result {
+            Ok(completion) => completion,
+            Err(error)
+                if Self::is_quota_error(&error) && candidate.handles_nonstream_quota_backoff() =>
+            {
+                // Nested router owns the exact child-leaf quota state and has
+                // already persisted it. Pinned recovery never hops.
+                return Err(error);
+            }
+            Err(error) if Self::is_quota_error(&error) => {
+                let quota = error
+                    .downcast_ref::<QuotaError>()
+                    .expect("quota-error branch must contain QuotaError");
+                if quota.provider != candidate.name() {
+                    anyhow::bail!(
+                        "pinned fallback candidate `{}` returned quota state for mismatched provider `{}`",
+                        candidate.name(),
+                        quota.provider
+                    );
+                }
+                let _persisted = self
+                    .persist_quota_error(
+                        quota.provider,
+                        quota.retry_after,
+                        Self::now_unix(),
+                        Some(authorizer),
+                    )
+                    .await?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
+        completion.identity.prepend_dispatch_slot(index)?;
+        if completion.identity != *expected {
+            anyhow::bail!(
+                "pinned fallback recovery identity drifted from `{:?}` to `{:?}`",
+                expected,
+                completion.identity
+            );
+        }
+        Ok(completion)
+    }
+
     async fn stream_raw(
         &self,
         req: Request,
@@ -470,7 +593,8 @@ impl Provider for FallbackProvider {
             .first()
             .expect("FallbackProvider chain is non-empty");
         let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
-        primary.stream_raw(req, permit).await
+        let stream = primary.stream_raw(req, permit).await?;
+        Ok(Self::stamp_stream_route(stream, 0))
     }
 
     async fn stream_authorized(
@@ -484,7 +608,10 @@ impl Provider for FallbackProvider {
             .first()
             .expect("FallbackProvider chain is non-empty");
         let req = self.request_for_candidate(0, primary.as_ref(), &req)?;
-        primary.stream_authorized(req, authorizer, call_scope).await
+        let stream = primary
+            .stream_authorized(req, authorizer, call_scope)
+            .await?;
+        Ok(Self::stamp_stream_route(stream, 0))
     }
 }
 
@@ -493,6 +620,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::providers::CompletionIdentity;
 
     #[derive(Clone, Copy)]
     enum Behavior {
@@ -517,6 +645,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             match self.behavior {
                 Behavior::Ok => Ok(Completion {
+                    termination: Default::default(),
                     text: format!("ok:{}", self.name),
                     identity: Default::default(),
                     model: "mock".into(),
@@ -679,6 +808,7 @@ mod tests {
             self.requests.lock().unwrap().push(req.clone());
             match self.behavior {
                 Behavior::Ok => Ok(Completion {
+                    termination: Default::default(),
                     text: format!("ok:{}", self.name),
                     model: req.model.unwrap(),
                     latency: Duration::ZERO,
@@ -802,6 +932,545 @@ mod tests {
                 .backoff_remaining_for("quota-fallback", now)
                 .is_some()
         );
+    }
+
+    #[tokio::test]
+    async fn pinned_retry_replays_the_original_fallback_leaf_without_hopping() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(dir.path().join("pinned-retry.wal")).unwrap();
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fallback_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "pinned_primary",
+                    default_model: "primary-default",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Quota,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "pinned_secondary",
+                    default_model: "secondary-default",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: fallback_requests.clone(),
+                }),
+            ],
+            vec![Some("primary-wire".into()), Some("secondary-wire".into())],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_usage_home(dir.path());
+
+        let first = provider
+            .complete_authorized(
+                Request {
+                    prompt: "first".into(),
+                    model: Some("primary-wire".into()),
+                    ..Request::default()
+                },
+                &authorizer,
+                "test.pinned.initial",
+            )
+            .await
+            .expect("fallback completion");
+        assert_eq!(first.identity.provider, "pinned_secondary");
+        assert_eq!(first.identity.wire_model, "secondary-wire");
+        assert_eq!(first.identity.dispatch_route, vec![1]);
+
+        let retry = provider
+            .complete_authorized_pinned(
+                Request {
+                    prompt: "retry".into(),
+                    model: Some("primary-wire".into()),
+                    ..Request::default()
+                },
+                &first.identity,
+                &authorizer,
+                "test.pinned.retry",
+            )
+            .await
+            .expect("exact secondary retry");
+        assert_eq!(retry.identity, first.identity);
+        assert_eq!(primary_requests.lock().unwrap().len(), 1);
+        {
+            let fallback_requests = fallback_requests.lock().unwrap();
+            assert_eq!(fallback_requests.len(), 2);
+            assert_eq!(
+                fallback_requests[1].model.as_deref(),
+                Some("secondary-wire")
+            );
+        }
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn pinned_route_selects_between_leafs_with_identical_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let first_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let second_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "same-provider",
+                    default_model: "same-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: first_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "same-provider",
+                    default_model: "same-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: second_requests.clone(),
+                }),
+            ],
+            vec![Some("same-model".into()), Some("same-model".into())],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let expected = CompletionIdentity {
+            provider: "same-provider".into(),
+            wire_model: "same-model".into(),
+            dispatch_route: vec![1],
+        };
+
+        let completion = provider
+            .complete_authorized_pinned(
+                Request {
+                    prompt: "retry".into(),
+                    ..Request::default()
+                },
+                &expected,
+                &authorizer,
+                "test.pinned.identical_identity",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(completion.identity, expected);
+        assert!(first_requests.lock().unwrap().is_empty());
+        assert_eq!(second_requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn pinned_route_rejects_missing_or_invalid_slot_before_dispatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let secondary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "route-primary",
+                    default_model: "route-primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "route-secondary",
+                    default_model: "route-secondary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: secondary_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            dir.path().join("quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        for route in [Vec::new(), vec![9]] {
+            let expected = CompletionIdentity {
+                provider: "route-secondary".into(),
+                wire_model: "route-secondary-model".into(),
+                dispatch_route: route,
+            };
+            assert!(
+                provider
+                    .complete_authorized_pinned(
+                        Request::default(),
+                        &expected,
+                        &authorizer,
+                        "test.pinned.invalid_route",
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(primary_requests.lock().unwrap().is_empty());
+        assert!(secondary_requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pinned_leaf_in_durable_backoff_is_not_called_and_never_hops() {
+        let dir = tempfile::tempdir().unwrap();
+        let quota_path = dir.path().join("quota.json");
+        QuotaTracker::update_at(&quota_path, |tracker| {
+            tracker.record_429(
+                "backoff-secondary",
+                Some(std::time::Duration::from_secs(600)),
+                FallbackProvider::now_unix(),
+            );
+            Ok(())
+        })
+        .unwrap();
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let secondary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "backoff-primary",
+                    default_model: "primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "backoff-secondary",
+                    default_model: "secondary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: secondary_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            quota_path,
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let error = provider
+            .complete_authorized_pinned(
+                Request::default(),
+                &CompletionIdentity {
+                    provider: "backoff-secondary".into(),
+                    wire_model: "secondary-model".into(),
+                    dispatch_route: vec![1],
+                },
+                &authorizer,
+                "test.pinned.backoff",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.downcast_ref::<QuotaError>().is_some());
+        assert!(primary_requests.lock().unwrap().is_empty());
+        assert!(secondary_requests.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pinned_leaf_new_quota_error_is_persisted_without_hop() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(dir.path().join("pinned-new-quota.wal")).unwrap();
+        let quota_path = dir.path().join("quota.json");
+        let primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let secondary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "quota-retry-primary",
+                    default_model: "primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "quota-retry-secondary",
+                    default_model: "secondary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Quota,
+                    requests: secondary_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            quota_path.clone(),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_usage_home(dir.path());
+        let error = provider
+            .complete_authorized_pinned(
+                Request::default(),
+                &CompletionIdentity {
+                    provider: "quota-retry-secondary".into(),
+                    wire_model: "secondary-model".into(),
+                    dispatch_route: vec![1],
+                },
+                &authorizer,
+                "test.pinned.new_quota",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.downcast_ref::<QuotaError>().is_some());
+        assert!(primary_requests.lock().unwrap().is_empty());
+        assert_eq!(secondary_requests.lock().unwrap().len(), 1);
+        assert!(
+            QuotaTracker::load_from(&quota_path)
+                .unwrap()
+                .backoff_remaining_for("quota-retry-secondary", FallbackProvider::now_unix())
+                .is_some()
+        );
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    struct IdentityDriftProvider {
+        requests: std::sync::Arc<std::sync::Mutex<Vec<Request>>>,
+    }
+
+    #[async_trait]
+    impl Provider for IdentityDriftProvider {
+        fn name(&self) -> &'static str {
+            "identity-drift"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("expected-model")
+        }
+
+        fn output_token_ceiling(&self, _req: &Request) -> Option<u32> {
+            Some(4096)
+        }
+
+        fn preserves_inner_response_identity(&self) -> bool {
+            true
+        }
+
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            self.requests.lock().unwrap().push(req);
+            Ok(Completion {
+                text: "wrong leaf".into(),
+                model: "other-model".into(),
+                identity: CompletionIdentity {
+                    provider: "other-provider".into(),
+                    wire_model: "other-model".into(),
+                    dispatch_route: Vec::new(),
+                },
+                ..Completion::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_leaf_identity_drift_fails_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let provider = fallback_at(
+            dir.path(),
+            vec![Box::new(IdentityDriftProvider {
+                requests: requests.clone(),
+            })],
+            0,
+            None,
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+
+        let error = provider
+            .complete_authorized_pinned(
+                Request::default(),
+                &CompletionIdentity {
+                    provider: "identity-drift".into(),
+                    wire_model: "expected-model".into(),
+                    dispatch_route: vec![0],
+                },
+                &authorizer,
+                "test.pinned.identity_drift",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("identity drifted"));
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn nested_pinned_route_reaches_only_inner_secondary() {
+        let dir = tempfile::tempdir().unwrap();
+        let outer_primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner_primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner_secondary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "inner-primary",
+                    default_model: "inner-primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: inner_primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "inner-secondary",
+                    default_model: "inner-secondary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: inner_secondary_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            dir.path().join("inner-quota.json"),
+        );
+        let outer = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "outer-primary",
+                    default_model: "outer-primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: outer_primary_requests.clone(),
+                }),
+                Box::new(inner),
+            ],
+            vec![None, Some("inner-primary-model".into())],
+            1,
+            None,
+            dir.path().join("outer-quota.json"),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+            crate::permissions::AutonomyLevel::Full,
+        );
+        let expected = CompletionIdentity {
+            provider: "inner-secondary".into(),
+            wire_model: "inner-secondary-model".into(),
+            dispatch_route: vec![1, 1],
+        };
+
+        let completion = outer
+            .complete_authorized_pinned(
+                Request::default(),
+                &expected,
+                &authorizer,
+                "test.pinned.nested",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(completion.identity, expected);
+        assert!(outer_primary_requests.lock().unwrap().is_empty());
+        assert!(inner_primary_requests.lock().unwrap().is_empty());
+        assert_eq!(inner_secondary_requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn nested_pinned_quota_is_owned_once_by_inner_router() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) =
+            crate::wal::writer::spawn(dir.path().join("nested-pinned-quota.wal")).unwrap();
+        let inner_quota_path = dir.path().join("inner-quota.json");
+        let outer_quota_path = dir.path().join("outer-quota.json");
+        let outer_primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner_primary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner_secondary_requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let inner = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "nested-quota-primary",
+                    default_model: "nested-primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: inner_primary_requests.clone(),
+                }),
+                Box::new(RecordingProvider {
+                    name: "nested-quota-secondary",
+                    default_model: "nested-secondary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Quota,
+                    requests: inner_secondary_requests.clone(),
+                }),
+            ],
+            vec![None, None],
+            1,
+            None,
+            inner_quota_path.clone(),
+        );
+        let outer = FallbackProvider::new_with_models_at(
+            vec![
+                Box::new(RecordingProvider {
+                    name: "nested-outer-primary",
+                    default_model: "outer-primary-model",
+                    output_token_ceiling: 4096,
+                    behavior: Behavior::Ok,
+                    requests: outer_primary_requests.clone(),
+                }),
+                Box::new(inner),
+            ],
+            vec![None, Some("nested-primary-model".into())],
+            1,
+            None,
+            outer_quota_path.clone(),
+        );
+        let authorizer = crate::providers::cost_authorization::ProviderCallAuthorizer::fail_closed(
+            crate::permissions::AutonomyLevel::Full,
+            Some(writer.clone()),
+            crate::config::TokensConfig::default_max_per_request(),
+        )
+        .with_usage_home(dir.path());
+
+        let error = outer
+            .complete_authorized_pinned(
+                Request::default(),
+                &CompletionIdentity {
+                    provider: "nested-quota-secondary".into(),
+                    wire_model: "nested-secondary-model".into(),
+                    dispatch_route: vec![1, 1],
+                },
+                &authorizer,
+                "test.pinned.nested_quota",
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.downcast_ref::<QuotaError>().is_some());
+        assert!(outer_primary_requests.lock().unwrap().is_empty());
+        assert!(inner_primary_requests.lock().unwrap().is_empty());
+        assert_eq!(inner_secondary_requests.lock().unwrap().len(), 1);
+        assert!(
+            QuotaTracker::load_from(&inner_quota_path)
+                .unwrap()
+                .backoff_remaining_for("nested-quota-secondary", FallbackProvider::now_unix())
+                .is_some()
+        );
+        assert!(
+            QuotaTracker::load_from(&outer_quota_path)
+                .unwrap()
+                .backoff_remaining_for("nested-quota-primary", FallbackProvider::now_unix())
+                .is_none()
+        );
+        drop(authorizer);
+        drop(writer);
+        join.await.unwrap();
     }
 
     #[tokio::test]

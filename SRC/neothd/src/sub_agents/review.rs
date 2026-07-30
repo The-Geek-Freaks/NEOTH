@@ -300,6 +300,7 @@ mod tests {
                 .pop()
                 .ok_or_else(|| anyhow::anyhow!("scripted provider ran out of canned replies"))?;
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 identity: Default::default(),
                 model: "scripted-1".into(),

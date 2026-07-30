@@ -251,6 +251,7 @@ mod tests {
             // Prove the prompt reached us, then return a fixed summary.
             assert!(req.prompt.contains("Summarize"));
             Ok(Completion {
+                termination: Default::default(),
                 text: "  Alex shipped Nostr and OP-01.  ".to_string(),
                 identity: Default::default(),
                 model: "stub".to_string(),

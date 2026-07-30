@@ -623,6 +623,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock-1".into(),
@@ -653,6 +654,7 @@ mod tests {
             self.entered.notify_one();
             let _permit = self.release.acquire().await;
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock-1".into(),

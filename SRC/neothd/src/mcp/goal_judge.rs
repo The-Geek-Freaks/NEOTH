@@ -215,6 +215,7 @@ mod tests {
             _req: crate::providers::Request,
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.0.clone(),
                 identity: Default::default(),
                 model: "mock".into(),
@@ -244,6 +245,7 @@ mod tests {
             self.calls
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: "YES".into(),
                 identity: Default::default(),
                 model: "mock".into(),
@@ -463,6 +465,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             self.prompts.lock().unwrap().push(req.prompt);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: "NO".into(),
                 identity: Default::default(),
                 model: "mock".into(),

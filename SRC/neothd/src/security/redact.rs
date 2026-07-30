@@ -25,10 +25,96 @@
 //! callers that have already handled terminal controls and structured data.
 
 use std::borrow::Cow;
+use std::fmt::{self, Write as _};
 use std::sync::LazyLock;
 
 use base64::Engine as _;
 use regex::Regex;
+use sha2::{Digest, Sha256};
+
+pub(crate) const MAX_AUDIT_FORMAT_BYTES: usize = 4 * 1024;
+
+pub(crate) struct BoundedAuditDigest {
+    pub(crate) sha256: String,
+    pub(crate) truncated: bool,
+    pub(crate) formatted_bytes: u64,
+}
+
+struct BoundedDigestWriter<'a> {
+    digest: &'a mut Sha256,
+    kept_bytes: usize,
+    formatted_bytes: u64,
+    truncated: bool,
+}
+
+impl fmt::Write for BoundedDigestWriter<'_> {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        self.formatted_bytes = self
+            .formatted_bytes
+            .saturating_add(u64::try_from(value.len()).unwrap_or(u64::MAX));
+        let remaining = MAX_AUDIT_FORMAT_BYTES.saturating_sub(self.kept_bytes);
+        let take = remaining.min(value.len());
+        self.digest.update(&value.as_bytes()[..take]);
+        self.kept_bytes += take;
+        if take < value.len() {
+            self.truncated = true;
+            Err(fmt::Error)
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Hash bounded formatted evidence without first allocating the complete
+/// provider-controlled error/body. Formatting stops as soon as the byte cap is
+/// reached. The final digest frames the observed formatted byte count and
+/// truncation state.
+pub(crate) fn bounded_audit_digest(
+    domain: &'static [u8],
+    arguments: fmt::Arguments<'_>,
+) -> BoundedAuditDigest {
+    bounded_audit_digest_with_truncation(domain, arguments, false)
+}
+
+pub(crate) fn bounded_audit_digest_with_truncation(
+    domain: &'static [u8],
+    arguments: fmt::Arguments<'_>,
+    input_truncated: bool,
+) -> BoundedAuditDigest {
+    let mut digest = Sha256::new();
+    digest.update(b"neoth/bounded-audit-digest/v1\0");
+    digest.update(
+        u64::try_from(domain.len())
+            .unwrap_or(u64::MAX)
+            .to_be_bytes(),
+    );
+    digest.update(domain);
+    let (kept_bytes, formatted_bytes, formatting_truncated) = {
+        let mut writer = BoundedDigestWriter {
+            digest: &mut digest,
+            kept_bytes: 0,
+            formatted_bytes: 0,
+            truncated: false,
+        };
+        let result = writer.write_fmt(arguments);
+        debug_assert!(
+            result.is_ok() || writer.truncated,
+            "bounded digest writer only fails to stop capped formatting"
+        );
+        (writer.kept_bytes, writer.formatted_bytes, writer.truncated)
+    };
+    let truncated = input_truncated
+        || formatting_truncated
+        || formatted_bytes > u64::try_from(kept_bytes).unwrap_or(u64::MAX);
+    digest.update(b"\0formatted-bytes\0");
+    digest.update(formatted_bytes.to_be_bytes());
+    digest.update([u8::from(truncated)]);
+    BoundedAuditDigest {
+        sha256: hex::encode(digest.finalize()),
+        truncated,
+        formatted_bytes,
+    }
+}
 
 /// One secret-shape pattern. The name is stable wire form for the
 /// `[REDACTED:<name>]` token so audit consumers can grep for
@@ -638,6 +724,33 @@ pub fn is_sensitive_field_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounded_audit_digest_stops_formatting_at_the_cap() {
+        struct ManyChunks<'a>(&'a std::sync::atomic::AtomicUsize);
+
+        impl std::fmt::Display for ManyChunks<'_> {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                for _ in 0..10_000 {
+                    self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    formatter.write_str("0123456789abcdef")?;
+                }
+                Ok(())
+            }
+        }
+
+        let formatted_chunks = std::sync::atomic::AtomicUsize::new(0);
+        let value = ManyChunks(&formatted_chunks);
+        let evidence = bounded_audit_digest(b"bounded-test/v1", format_args!("{value}"));
+
+        assert!(evidence.truncated);
+        assert_eq!(evidence.sha256.len(), 64);
+        assert!(formatted_chunks.load(std::sync::atomic::Ordering::Relaxed) < 10_000);
+        assert!(
+            evidence.formatted_bytes
+                >= u64::try_from(MAX_AUDIT_FORMAT_BYTES).expect("cap fits u64")
+        );
+    }
 
     #[test]
     fn redacts_openai_style_keys() {

@@ -4311,6 +4311,7 @@ mod tests {
 
         let out = build_enriched_request(EnrichmentInputs {
             prompt: "draft an email",
+            operator_sovereignty: None,
             operator_context: Some("Be brief."),
             preset_addendum: Some(&preset_addendum),
             explicit_system: None,
@@ -4366,6 +4367,7 @@ mod tests {
 
         let out = build_enriched_request(EnrichmentInputs {
             prompt: "p",
+            operator_sovereignty: None,
             operator_context: Some("op"),
             preset_addendum: preset_addendum.as_deref(),
             explicit_system: Some("user"),
@@ -5546,6 +5548,7 @@ mod tests {
         use crate::pipeline::{EnrichmentInputs, build_enriched_request};
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: "hello",
+            operator_sovereignty: None,
             operator_context: None,
             preset_addendum: None,
             explicit_system: None,
@@ -5578,6 +5581,7 @@ mod tests {
         let op_ctx = "operator context";
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: "hello",
+            operator_sovereignty: None,
             operator_context: Some(op_ctx),
             preset_addendum: None,
             explicit_system: None,

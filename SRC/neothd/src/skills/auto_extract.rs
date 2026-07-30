@@ -306,6 +306,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.response.clone(),
                 identity: Default::default(),
                 model: "mock-model".to_string(),
@@ -588,6 +589,7 @@ mod tests {
             ) -> anyhow::Result<crate::providers::Completion> {
                 *self.captured.lock().unwrap() = req.prompt.clone();
                 Ok(crate::providers::Completion {
+                    termination: Default::default(),
                     text: r#"{"title":"run-cargo-test","steps":["cargo test"],"tags":["rust"],"confidence":0.82,"computer_executable":true}"#.to_string(),
                     identity: Default::default(),
                     model: "mock".to_string(),

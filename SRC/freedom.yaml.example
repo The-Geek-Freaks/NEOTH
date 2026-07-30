@@ -158,8 +158,15 @@ cluster:
 #              in `~/.neoth/credentials.yaml` instead of inlining here)
 #   endpoint — base URL for openai_compat (LM Studio, vLLM, Ollama,
 #              OpenRouter, Together, Groq, Fireworks, …)
+#   openai_compat_profile — optional exact wire contract:
+#              generic | openrouter | deepseek | moonshot_kimi | qwen_chat
+#              Named profiles require a reviewed matching official endpoint;
+#              arbitrary/local endpoints stay generic.
 inference:
   mode: single
+  # Legacy top-level openai_compat binding only. Slot fields below take
+  # precedence for custom/fallback role routing.
+  # openai_compat_profile: generic
   # accelerator: cuda      # cuda | metal | openvino | cpu. Auto-detected.
   # embedding_provider: local_qwen
   # left:
@@ -202,8 +209,9 @@ inference:
 #
 # Operators without GPU for local Qwen3 inference can route any
 # hemisphere to a hosted Qwen / DeepSeek / Llama / etc via OpenRouter.
-# OpenRouter exposes an OpenAI-compatible endpoint, so the existing
-# `openai_compat` provider drives it without extra adapter code.
+# OpenRouter exposes an OpenAI-compatible endpoint. NEOTH keeps the explicit
+# OpenRouter profile so router guardrails and observed upstream provider/model
+# evidence are not flattened into a generic-compatible result.
 #
 # Get an API key at https://openrouter.ai/keys, then paste it into
 # `~/.neoth/credentials.yaml` (NOT this file) or set the slot's `key:`
@@ -214,6 +222,7 @@ inference:
 #   mode: custom
 #   right:
 #     provider: openai_compat
+#     openai_compat_profile: openrouter
 #     endpoint: https://openrouter.ai/api/v1
 #     model: qwen/qwen3-72b-instruct
 #     # key: sk-or-v1-...  # prefer ~/.neoth/credentials.yaml

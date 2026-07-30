@@ -9,13 +9,17 @@
 //! per pass.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 
 /// Current wire schema for recurring updater pass correlation.
 ///
-/// Schema v1 is the historical payload without a pass identity. Serde defaults
-/// missing identity fields to that legacy shape so old WAL segments remain
-/// readable, but consumers must not guess a FIRED/RESULT pairing for them.
-pub const UPDATER_PASS_SCHEMA_VERSION: u16 = 2;
+/// Schema v1 is the historical payload without a pass identity. Schema v2
+/// added a pass id, lane and epoch but did not bind the accepted policy or the
+/// exact durable FIRED receipt. Serde aliases keep both generations readable,
+/// but consumers must not guess a healthy FIRED/RESULT pairing for either.
+pub const UPDATER_PASS_SCHEMA_VERSION: u16 = 3;
+
+const UPDATER_FIRED_RECEIPT_DOMAIN: &[u8] = b"neoth/updater-fired-receipt/v1\0";
 
 const fn legacy_schema_version() -> u16 {
     1
@@ -63,24 +67,46 @@ impl UpdaterPassLane {
 pub struct UpdaterPassIdentity {
     #[serde(default = "legacy_schema_version")]
     pub schema_version: u16,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "run_id",
+        alias = "pass_id",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub pass_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "accepted_config_epoch",
+        alias = "accepted_epoch",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub accepted_epoch: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_policy_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane: Option<UpdaterPassLane>,
 }
 
 impl UpdaterPassIdentity {
-    /// Construct a new schema-v2 identity before FIRED is appended. The exact
+    /// Construct a new schema-v3 identity before FIRED is appended. The exact
     /// same value must then be copied into its terminal RESULT.
-    pub fn new(lane: UpdaterPassLane, accepted_epoch: u64) -> Self {
+    pub fn bound(
+        lane: UpdaterPassLane,
+        accepted_epoch: u64,
+        accepted_policy_sha256: [u8; 32],
+    ) -> Self {
         Self {
             schema_version: UPDATER_PASS_SCHEMA_VERSION,
             pass_id: Some(uuid::Uuid::now_v7().to_string()),
             accepted_epoch: Some(accepted_epoch),
+            accepted_policy_sha256: Some(hex::encode(accepted_policy_sha256)),
             lane: Some(lane),
         }
+    }
+
+    #[cfg(test)]
+    pub fn new(lane: UpdaterPassLane, accepted_epoch: u64) -> Self {
+        Self::bound(lane, accepted_epoch, [0x42; 32])
     }
 
     /// Historical/synthetic result with no durable FIRED correlation.
@@ -89,18 +115,24 @@ impl UpdaterPassIdentity {
             schema_version: 1,
             pass_id: None,
             accepted_epoch: None,
+            accepted_policy_sha256: None,
             lane: None,
         }
     }
 
-    /// Return the stable pass id only when every schema-v2 correlation field is
-    /// present and the id is a canonical UUID. Unknown future schemas are kept
-    /// readable but deliberately treated as indeterminate.
+    /// Return the stable run id only when every schema-v3 correlation field is
+    /// present, the id is a canonical UUID and the policy binding is a canonical
+    /// lowercase SHA-256 digest. Unknown/older schemas remain readable but are
+    /// deliberately treated as indeterminate.
     pub fn correlatable_pass_id(&self) -> Option<&str> {
         if self.schema_version != UPDATER_PASS_SCHEMA_VERSION
             || self.accepted_epoch.is_none()
             || self.lane.is_none()
         {
+            return None;
+        }
+        let policy_sha256 = self.accepted_policy_sha256.as_deref()?;
+        if !is_canonical_sha256(policy_sha256) {
             return None;
         }
         let pass_id = self.pass_id.as_deref()?;
@@ -112,6 +144,25 @@ impl UpdaterPassIdentity {
         let pass_id = self.correlatable_pass_id()?;
         (self.lane?.task_kind() == task_kind).then_some(pass_id)
     }
+}
+
+fn is_canonical_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Digest the exact serialized FIRED payload after domain separation.
+///
+/// The producer computes this over the bytes acknowledged by the WAL writer;
+/// the terminal RESULT copies the digest. Consumers recompute it from the
+/// verified FIRED record before accepting the pair.
+pub fn updater_fired_receipt_sha256(payload: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(UPDATER_FIRED_RECEIPT_DOMAIN);
+    hasher.update(payload);
+    hex::encode(hasher.finalize())
 }
 
 /// Which updater task fired. Pinned exhaustively — adding a new
@@ -287,6 +338,19 @@ pub struct UpdaterTaskFiredPayload {
     pub ts_unix: u64,
 }
 
+/// Typed terminal classification for one complete recurring updater pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdaterTerminalOutcome {
+    Completed,
+    Failed,
+    SkippedByGate,
+    Interrupted,
+    Cancelled,
+    TimedOut,
+    Indeterminate,
+}
+
 /// `0x45 UPDATER_TASK_RESULT` payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdaterTaskResultPayload {
@@ -295,10 +359,53 @@ pub struct UpdaterTaskResultPayload {
     pub task_kind: UpdaterTaskKind,
     pub ts_unix: u64,
     pub duration_ms: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_outcome: Option<UpdaterTerminalOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fired_receipt_sha256: Option<String>,
     pub components: Vec<ComponentOutcome>,
 }
 
 impl UpdaterTaskResultPayload {
+    pub fn correlatable_fired_receipt(&self) -> Option<&str> {
+        let digest = self.fired_receipt_sha256.as_deref()?;
+        (self
+            .identity
+            .correlatable_pass_id_for(self.task_kind)
+            .is_some()
+            && self.terminal_outcome.is_some()
+            && self.terminal_outcome_matches_components()
+            && is_canonical_sha256(digest))
+        .then_some(digest)
+    }
+
+    fn terminal_outcome_matches_components(&self) -> bool {
+        match self.terminal_outcome {
+            Some(UpdaterTerminalOutcome::Completed) => self
+                .components
+                .iter()
+                .all(|component| component.status != ComponentStatus::Failed),
+            Some(UpdaterTerminalOutcome::Failed) => self
+                .components
+                .iter()
+                .any(|component| component.status == ComponentStatus::Failed),
+            Some(UpdaterTerminalOutcome::SkippedByGate) => {
+                !self.components.is_empty()
+                    && self
+                        .components
+                        .iter()
+                        .all(|component| component.status == ComponentStatus::SkippedByGate)
+            }
+            Some(
+                UpdaterTerminalOutcome::Interrupted
+                | UpdaterTerminalOutcome::Cancelled
+                | UpdaterTerminalOutcome::TimedOut
+                | UpdaterTerminalOutcome::Indeterminate,
+            ) => true,
+            None => false,
+        }
+    }
+
     pub fn upgraded_count(&self) -> usize {
         self.components
             .iter()
@@ -426,6 +533,8 @@ mod tests {
             task_kind: kind,
             ts_unix: ts,
             duration_ms: 1234,
+            terminal_outcome: None,
+            fired_receipt_sha256: None,
             components,
         }
     }
@@ -639,10 +748,11 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"task_kind\":\"cli_versions\""));
         assert!(json.contains("\"ts_unix\":1700000000"));
-        assert!(json.contains("\"schema_version\":2"));
-        assert!(json.contains("\"accepted_epoch\":7"));
+        assert!(json.contains("\"schema_version\":3"));
+        assert!(json.contains("\"accepted_config_epoch\":7"));
+        assert!(json.contains("\"accepted_policy_sha256\":"));
         assert!(json.contains("\"lane\":\"cli_version_probe\""));
-        assert!(json.contains("\"pass_id\":"));
+        assert!(json.contains("\"run_id\":"));
     }
 
     #[test]
@@ -652,6 +762,8 @@ mod tests {
             task_kind: UpdaterTaskKind::SkillPlugin,
             ts_unix: 100,
             duration_ms: 250,
+            terminal_outcome: Some(UpdaterTerminalOutcome::Completed),
+            fired_receipt_sha256: Some("a".repeat(64)),
             components: vec![ComponentOutcome::upgraded("skill_a", "1.0", "1.1")],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -678,6 +790,8 @@ mod tests {
             task_kind: UpdaterTaskKind::NeothSelf,
             ts_unix: 0,
             duration_ms: 0,
+            terminal_outcome: None,
+            fired_receipt_sha256: None,
             components: vec![ComponentOutcome::up_to_date("a", "1.0")],
         };
         let json = serde_json::to_string(&r).unwrap();
@@ -709,16 +823,26 @@ mod tests {
             task_kind: UpdaterTaskKind::NeothSelf,
             ts_unix: 100,
         };
+        let fired_receipt_sha256 =
+            updater_fired_receipt_sha256(&serde_json::to_vec(&fired).unwrap());
         let result = UpdaterTaskResultPayload {
             identity: identity.clone(),
             task_kind: UpdaterTaskKind::NeothSelf,
             ts_unix: 101,
             duration_ms: 1,
+            terminal_outcome: Some(UpdaterTerminalOutcome::Completed),
+            fired_receipt_sha256: Some(fired_receipt_sha256),
             components: vec![],
         };
         let fired_json = serde_json::to_value(fired).unwrap();
         let result_json = serde_json::to_value(result).unwrap();
-        for key in ["schema_version", "pass_id", "accepted_epoch", "lane"] {
+        for key in [
+            "schema_version",
+            "run_id",
+            "accepted_config_epoch",
+            "accepted_policy_sha256",
+            "lane",
+        ] {
             assert_eq!(fired_json[key], result_json[key], "mismatched key {key}");
         }
         assert!(identity.correlatable_pass_id().is_some());
@@ -736,5 +860,32 @@ mod tests {
         assert_eq!(result.identity, UpdaterPassIdentity::legacy());
         assert!(fired.identity.correlatable_pass_id().is_none());
         assert!(result.identity.correlatable_pass_id().is_none());
+    }
+
+    #[test]
+    fn schema_v2_aliases_remain_readable_but_are_not_policy_bound() {
+        let fired: UpdaterTaskFiredPayload = serde_json::from_str(
+            r#"{"schema_version":2,"pass_id":"018f47ef-3b6a-7c8d-9e0f-123456789abc","accepted_epoch":7,"lane":"cli_version_probe","task_kind":"cli_versions","ts_unix":1}"#,
+        )
+        .unwrap();
+        assert_eq!(fired.identity.accepted_epoch, Some(7));
+        assert_eq!(fired.identity.lane, Some(UpdaterPassLane::CliVersionProbe));
+        assert!(fired.identity.accepted_policy_sha256.is_none());
+        assert!(fired.identity.correlatable_pass_id().is_none());
+    }
+
+    #[test]
+    fn fired_receipt_is_domain_separated_and_deterministic() {
+        let fired = UpdaterTaskFiredPayload {
+            identity: UpdaterPassIdentity::new(UpdaterPassLane::NeothSelfProbe, 4),
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 17,
+        };
+        let bytes = serde_json::to_vec(&fired).unwrap();
+        let first = updater_fired_receipt_sha256(&bytes);
+        let second = updater_fired_receipt_sha256(&bytes);
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 64);
+        assert_ne!(first, hex::encode(Sha256::digest(&bytes)));
     }
 }

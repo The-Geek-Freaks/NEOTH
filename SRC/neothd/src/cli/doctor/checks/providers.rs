@@ -488,7 +488,7 @@ pub(crate) const DOCS: &[CheckDoc] = &[
                          enabled but effectively dead.",
         fix: "Re-enable a reframing: `neoth refusal enable <id>` (list them \
               with `neoth refusal reframings`). Restore retries: set \
-              `refusal_recovery.max_attempts: 2` in freedom.yaml. To turn \
+              `refusal_recovery.max_attempts: 1` in freedom.yaml. To turn \
               recovery off on purpose, set `refusal_recovery.enabled: \
               false` — doctor then passes quietly. Dry-run a refusal with \
               `neoth refusal test \"<refusal text>\"`.",

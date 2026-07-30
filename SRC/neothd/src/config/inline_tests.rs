@@ -790,6 +790,7 @@ mod tests {
         let cfg = RefusalRecoveryConfig::default();
         assert!(cfg.enabled, "default must be opt-in (auto-recovery on)");
         assert!(cfg.disabled_reframings.is_empty());
+        assert_eq!(cfg.max_attempts, 1, "one truthful retry is the default");
     }
 
     #[test]

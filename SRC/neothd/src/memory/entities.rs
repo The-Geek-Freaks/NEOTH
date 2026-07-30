@@ -949,6 +949,7 @@ mod tests {
             _req: crate::providers::Request,
         ) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.0.clone(),
                 identity: Default::default(),
                 model: "mock".into(),

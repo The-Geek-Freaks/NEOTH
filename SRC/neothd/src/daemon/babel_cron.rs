@@ -425,11 +425,11 @@ pub fn spawn_babel_cron_loop(
             tracing::error!(error = %e, "babel: schema init failed; observer not started");
             return;
         }
-        // Session identity: HMAC-pseudonymised boot id, keyed on the WAL HMAC
-        // master key (stable per install, one-way). Key load failure falls
-        // back to a boot-random salt — still pseudonymous, just not stable
-        // across restarts.
-        let salt = crate::wal::compaction::load_or_init_key(&wal_dir.join("hmac.key"))
+        // Session identity: HMAC-pseudonymised boot id, keyed on the existing
+        // WAL HMAC master key (stable per install, one-way). This observer is
+        // not an authority initializer: a load failure falls back to a
+        // boot-random salt without minting a replacement WAL identity.
+        let salt = crate::wal::compaction::load_existing_key(&wal_dir.join("hmac.key"))
             .unwrap_or_else(|e| {
                 tracing::warn!(error = %e, "babel: WAL hmac key unavailable, using boot-random salt");
                 uuid::Uuid::now_v7().into_bytes().to_vec()

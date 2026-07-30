@@ -29,6 +29,17 @@ use crate::wal::events::{
 };
 use crate::wal::writer::WalWriterHandle;
 
+#[derive(Debug)]
+pub enum TeacherOutcome {
+    /// The teacher produced a usable corrective completion.
+    Corrected(crate::providers::Completion),
+    /// The teacher itself refused. The caller must keep the original visible
+    /// response while accounting for this completed attempt.
+    Refused(crate::providers::Completion),
+    /// The local completion was neither a refusal nor low-confidence.
+    NotEscalated,
+}
+
 /// Low-confidence phrases emitted by local models when they are uncertain.
 /// Kept deliberately conservative — only unambiguous uncertainty markers so
 /// a normal response is never false-positively escalated.
@@ -65,10 +76,25 @@ pub fn low_confidence_local(text: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
+fn teacher_trigger(
+    local_completion: &crate::providers::Completion,
+) -> (
+    Option<crate::security::refusal_recovery::CompletionRefusalObservation>,
+    bool,
+) {
+    (
+        crate::security::refusal_recovery::observe_completion_refusal(local_completion),
+        low_confidence_local(&local_completion.text),
+    )
+}
+
 /// Try the SOTA teacher escalation path.
 ///
 /// # Arguments
-/// * `local_response` — the local model's raw reply (refusal or low-confidence).
+/// * `local_completion` — the local model's full reply. Provider-native refusal
+///   metadata is authoritative even when the text is empty.
+/// * `operator_origin` — typed authentication proof from the local CLI or a
+///   pinned operator channel. `None` suppresses cloud egress.
 /// * `original_prompt` — the operator's enriched prompt sent to the local model.
 /// * `system` — system prompt used in the turn, if any.
 /// * `provider_name` — `provider.name()` of the original provider (used only
@@ -82,17 +108,21 @@ pub fn low_confidence_local(text: &str) -> bool {
 /// * `ts` — `now_unix() as i64` from the calling turn.
 ///
 /// # Returns
-/// * `Ok(Some(corrected))` — teacher produced a corrective reply.
-/// * `Ok(None)` — local response is neither a refusal nor low-confidence;
-///   caller keeps the original response unchanged.
+/// * `Ok(TeacherOutcome::Corrected(corrected))` — teacher produced a corrective completion,
+///   including its exact provider/model identity, usage and termination.
+/// * `Ok(TeacherOutcome::Refused(completion))` — teacher refused; caller keeps
+///   the original visible response and accounts for the attempt.
+/// * `Ok(TeacherOutcome::NotEscalated)` — local response is neither a refusal
+///   nor low-confidence; caller keeps it unchanged.
 /// * `Err(e)` — infrastructure failure (e.g. teacher provider construction
 ///   failed). Best-effort callers should log and continue with the original.
 // Keep the exact provider leaf, authorization boundary, audit writer, and
 // timestamp visible together; hiding them in a reusable context risks stale
 // cost or audit authority crossing turns.
 #[allow(clippy::too_many_arguments)]
-pub async fn try_teacher_escalation(
-    local_response: &str,
+pub(crate) async fn try_teacher_escalation(
+    local_completion: &crate::providers::Completion,
+    operator_origin: Option<crate::security::operator_sovereignty::AuthenticatedOperatorOrigin>,
     original_prompt: &str,
     system: Option<&str>,
     provider_name: &str,
@@ -101,40 +131,46 @@ pub async fn try_teacher_escalation(
     authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
     writer: Option<&WalWriterHandle>,
     ts: i64,
-) -> Result<Option<String>> {
+    attempt_budget: &mut crate::security::refusal_recovery::RecoveryAttemptBudget,
+) -> Result<TeacherOutcome> {
+    if operator_origin.is_none() {
+        return Ok(TeacherOutcome::NotEscalated);
+    }
+    let original_request = crate::providers::Request {
+        prompt: original_prompt.to_string(),
+        system: system.map(str::to_string),
+        ..Default::default()
+    };
+    if crate::security::refusal_abliterated::hard_block_gate(&original_request, writer, ts)
+        .is_some()
+    {
+        return Ok(TeacherOutcome::NotEscalated);
+    }
+    let local_response = &local_completion.text;
+
     // ── Trigger gate ──────────────────────────────────────────────────────
-    // Only escalate when the local response is a refusal OR low-confidence.
+    // Only escalate when the local completion is a provider-native/textual
+    // refusal OR its visible response is low-confidence.
     // Pure-local provider check is the CALLER's responsibility (chat.rs /
     // serve_pipeline.rs guard `is_local_provider(provider.name())`).
-    let is_refusal = crate::security::refusal_detect::classify(local_response).is_refusal();
-    let is_low_conf = low_confidence_local(local_response);
+    let (refusal_observation, is_low_conf) = teacher_trigger(local_completion);
+    let is_refusal = refusal_observation.is_some();
     if !is_refusal && !is_low_conf {
-        return Ok(None);
+        return Ok(TeacherOutcome::NotEscalated);
     }
 
     // ── Build hashes for WAL audit ─────────────────────────────────────────
     let local_hash = format!(
         "{:016x}",
-        xxhash_rust::xxh3::xxh3_64(local_response.as_bytes())
+        refusal_observation.map_or_else(
+            || xxhash_rust::xxh3::xxh3_64(local_response.as_bytes()),
+            |observation| observation.evidence_hash_xxh3(),
+        )
     );
     let prompt_hash = format!(
         "{:016x}",
         xxhash_rust::xxh3::xxh3_64(original_prompt.as_bytes())
     );
-
-    // ── WAL 0x85: escalation attempted ────────────────────────────────────
-    emit_wal(
-        writer,
-        EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
-        serde_json::json!({
-            "provider": provider_name,
-            "local_response_hash_xxh3": &local_hash,
-            "prompt_hash_xxh3": &prompt_hash,
-            "is_refusal": is_refusal,
-            "is_low_confidence": is_low_conf,
-            "ts_unix": ts,
-        }),
-    )?;
 
     // ── Build the teacher provider ─────────────────────────────────────────
     // from_config_for_teacher returns Err if teacher_provider is local (guard).
@@ -182,17 +218,74 @@ pub async fn try_teacher_escalation(
         model: Some(teacher_model),
         ..Default::default()
     };
+    // The effective teacher request also contains untrusted local-model output.
+    // Re-run the same permanent floor after composing it so a safe operator
+    // prompt cannot smuggle hard-blocked content through the local response.
+    if crate::security::refusal_abliterated::hard_block_gate(&teacher_req, writer, ts).is_some() {
+        return Ok(TeacherOutcome::NotEscalated);
+    }
 
     // ── Call the teacher ────────────────────────────────────────────────────
-    let corrected = teacher
-        .complete_authorized(teacher_req, authorizer, "teacher.escalation")
-        .await?
-        .text;
-    let corrected_bytes = corrected.len();
+    let corrected = match attempt_budget
+        .dispatch(|| async {
+            // Emit only after the shared gate reserves this provider leaf.
+            // Exhausted recovery must not leave a false attempted record.
+            emit_wal(
+                writer,
+                EVENT_TYPE_TEACHER_ESCALATION_ATTEMPTED,
+                serde_json::json!({
+                    "provider": provider_name,
+                    "local_response_hash_xxh3": &local_hash,
+                    "prompt_hash_xxh3": &prompt_hash,
+                    "is_refusal": is_refusal,
+                    "is_low_confidence": is_low_conf,
+                    "ts_unix": ts,
+                }),
+            )?;
+            teacher
+                .complete_authorized(teacher_req, authorizer, "teacher.escalation")
+                .await
+        })
+        .await
+    {
+        crate::security::refusal_recovery::RecoveryDispatch::Completed(completion) => completion,
+        crate::security::refusal_recovery::RecoveryDispatch::ProviderError(error) => {
+            return Err(error);
+        }
+        crate::security::refusal_recovery::RecoveryDispatch::Exhausted => {
+            return Ok(TeacherOutcome::NotEscalated);
+        }
+        crate::security::refusal_recovery::RecoveryDispatch::DeadlineElapsed => {
+            anyhow::bail!("turn-wide refusal-recovery deadline elapsed before teacher escalation")
+        }
+    };
+    let corrected_bytes = corrected.text.len();
+    let teacher_refused =
+        crate::security::refusal_recovery::observe_completion_refusal(&corrected).is_some();
+
+    if teacher_refused {
+        if let Err(e) = emit_wal(
+            writer,
+            EVENT_TYPE_TEACHER_ESCALATION_COMPLETE,
+            serde_json::json!({
+                "teacher_provider": teacher_name,
+                "corrected_bytes": corrected_bytes,
+                "outcome": "teacher_refused",
+                "ts_unix": ts,
+            }),
+        ) {
+            tracing::warn!(error = %e, "ODY-08 teacher refusal WAL emit failed");
+        }
+        info!(
+            teacher_provider = teacher_name,
+            corrected_bytes, "ODY-08 teacher escalation returned another refusal"
+        );
+        return Ok(TeacherOutcome::Refused(corrected));
+    }
 
     // ── Write SKILL.md (best-effort) ───────────────────────────────────────
     let skill_id = format!("teacher_correction_{local_hash}");
-    if let Err(e) = write_skill_md_off_runtime(home, &skill_id, &corrected).await {
+    if let Err(e) = write_skill_md_off_runtime(home, &skill_id, &corrected.text).await {
         tracing::warn!(
             error = %e,
             skill_id = &skill_id,
@@ -207,6 +300,7 @@ pub async fn try_teacher_escalation(
         serde_json::json!({
             "teacher_provider": teacher_name,
             "corrected_bytes": corrected_bytes,
+            "outcome": "corrected",
             "skill_id": &skill_id,
             "ts_unix": ts,
         }),
@@ -221,7 +315,7 @@ pub async fn try_teacher_escalation(
         "ODY-08 teacher escalation complete"
     );
 
-    Ok(Some(corrected))
+    Ok(TeacherOutcome::Corrected(corrected))
 }
 
 /// Root creation, process/file locking, recovery, fsync, and rename are all
@@ -312,6 +406,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn provider_native_empty_refusal_triggers_teacher() {
+        let completion = crate::providers::Completion {
+            text: String::new(),
+            termination: crate::providers::ProviderTermination::refused(
+                Some("content_filter".into()),
+                crate::providers::RefusalOrigin::FinishReason,
+                "content_filter",
+                None,
+            ),
+            ..Default::default()
+        };
+
+        let (refusal_observation, is_low_confidence) = teacher_trigger(&completion);
+        assert!(refusal_observation.is_some());
+        assert!(!is_low_confidence);
+    }
+
+    #[tokio::test]
+    async fn unauthenticated_origin_cannot_trigger_teacher_provider() {
+        let completion = crate::providers::Completion {
+            text: "I cannot help with that.".to_string(),
+            ..Default::default()
+        };
+        let home = tempfile::tempdir().unwrap();
+        let mut attempt_budget =
+            crate::security::refusal_recovery::RecoveryAttemptBudget::after_initial_completion(
+                &completion,
+            );
+        let outcome = try_teacher_escalation(
+            &completion,
+            None,
+            "operator request",
+            None,
+            "local_qwen",
+            &crate::config::FreedomConfig::default(),
+            home.path(),
+            &crate::providers::cost_authorization::ProviderCallAuthorizer::test_only(
+                crate::permissions::AutonomyLevel::Full,
+            ),
+            None,
+            0,
+            &mut attempt_budget,
+        )
+        .await
+        .expect("origin gate must stop before provider construction");
+
+        assert!(matches!(outcome, TeacherOutcome::NotEscalated));
+    }
+
+    #[test]
     fn low_confidence_local_matches_expected_phrases() {
         assert!(low_confidence_local("I'm not sure about this topic."));
         assert!(low_confidence_local("I do not know the answer."));
@@ -384,10 +528,14 @@ mod tests {
     fn blocking_teacher_write_keeps_a_single_tokio_worker_responsive() {
         let home = tempfile::tempdir().unwrap();
         let skills_dir = home.path().join("skills");
-        let root =
-            crate::skills::store::open_bound_directory(&skills_dir, true, "test skills root")
-                .unwrap()
-                .unwrap();
+        let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+            home.path().parent().unwrap(),
+            &skills_dir,
+            true,
+            "test skills root",
+        )
+        .unwrap()
+        .unwrap();
         let mutation_guard = crate::skills::installer::lock_skill_mutations(&root).unwrap();
         let write_home = home.path().to_path_buf();
         let runtime = tokio::runtime::Builder::new_multi_thread()

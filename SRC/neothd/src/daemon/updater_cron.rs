@@ -14,11 +14,17 @@
 //! - Lanes that share a historical `UpdaterTaskKind` are serialized across the
 //!   complete FIRED/RESULT pair, so audit frames cannot interleave ambiguously.
 //! - NEOTH self-probe and self-stage have request-bound leaf authority, but
-//!   remain explicitly denied until absolute operation/effect/quiesce/terminal
-//!   deadlines and owned cancellation/reaping are complete.
+//!   remain explicitly denied. Their HTTP leaves have per-request DNS,
+//!   connect, idle-read and total timeouts; the pass still lacks one inherited
+//!   absolute deadline spanning every request, blocking stage preparation,
+//!   publication, terminal-WAL acknowledgement and generation quiescence.
+//!   `spawn_blocking` stage work cannot currently be cooperatively cancelled.
 //! - CLI version probes, skill/plugin probes and CLI auto-apply remain denied
 //!   until their process, registry, Git and install leaves enforce the same
-//!   exact authority contract.
+//!   exact authority contract. In particular, the binary-version child has no
+//!   timeout; npm has a local timeout but no owned descendant process tree;
+//!   Git kills/reaps its direct child but not a descendant tree; and installer
+//!   leaves have no shared pass deadline/cancellation token.
 //!
 //! ## What ships in follow-ups
 //!
@@ -39,21 +45,24 @@ use crate::updater::pipeline::run_updater_pass;
 use crate::wal::events::{EVENT_TYPE_UPDATER_TASK_FIRED, EVENT_TYPE_UPDATER_TASK_RESULT};
 use crate::wal::payloads_u04::{
     ComponentOutcome, UpdaterPassIdentity, UpdaterPassLane, UpdaterTaskFiredPayload,
-    UpdaterTaskKind, UpdaterTaskResultPayload,
+    UpdaterTaskKind, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
+    updater_fired_receipt_sha256,
 };
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 use futures_util::FutureExt;
+use sha2::{Digest as _, Sha256};
 
 /// Legacy recurring lanes are denied until their concrete network/process
 /// leaves consume request-bound authority. Manual, operator-initiated updater
 /// commands are unaffected.
-pub const UNAUDITED_RECURRING_EGRESS_DENIED: &str = "recurring updater network probe blocked: request-bound autonomy and mandatory intent/result WAL are not wired at the concrete transport leaf";
-pub const UNBOUNDED_RECURRING_LIFECYCLE_DENIED: &str = "recurring NEOTH self-update blocked: absolute operation/effect/quiesce/terminal deadlines and owned cancellation/kill/reap are not wired";
+pub const UNAUDITED_RECURRING_EGRESS_DENIED: &str = "recurring updater network probe blocked: request-bound autonomy and mandatory intent/result WAL are not wired at every concrete transport/process leaf; binary probe lacks a timeout, npm/Git do not own descendant process trees, and installers lack one inherited deadline/cancellation token";
+pub const UNBOUNDED_RECURRING_LIFECYCLE_DENIED: &str = "recurring NEOTH self-update blocked: HTTP has leaf-local timeouts but no inherited absolute pass deadline covers blocking stage prepare/publish, terminal WAL acknowledgement, or generation quiescence; spawn_blocking work cannot be cooperatively cancelled";
 const REQUEST_BOUND_POLICY_REFUSED: &str =
     "accepted updater policy refused this exact recurring leaf";
 const ACCEPTED_GENERATION_RETIRED: &str =
     "accepted updater generation retired before this recurring leaf started";
+const ACCEPTED_UPDATER_POLICY_DOMAIN: &[u8] = b"neoth/updater-accepted-policy/v1\0";
 
 #[derive(Debug)]
 enum TerminalizedPassFailure {
@@ -624,6 +633,22 @@ fn require_successful_lane_execution(
     }
 }
 
+fn accepted_updater_policy_sha256(
+    config: &crate::config::FreedomConfig,
+) -> Result<[u8; 32], String> {
+    // Serialize through `Value`: serde_json's default object map is ordered,
+    // so nested HashMap-backed policy fields do not inherit process-random
+    // iteration order into the durable binding.
+    let value = serde_json::to_value(config)
+        .map_err(|error| format!("materialize accepted updater policy snapshot: {error}"))?;
+    let canonical = serde_json::to_vec(&value)
+        .map_err(|error| format!("serialize accepted updater policy snapshot: {error}"))?;
+    let mut hasher = Sha256::new();
+    hasher.update(ACCEPTED_UPDATER_POLICY_DOMAIN);
+    hasher.update(canonical);
+    Ok(hasher.finalize().into())
+}
+
 async fn run_production_lane_once(
     lane: RecurringUpdateLane,
     snapshot: Arc<crate::config::reload::AcceptedConfigSnapshot>,
@@ -632,7 +657,11 @@ async fn run_production_lane_once(
     gate: crate::updater::pipeline::GateDecision,
 ) -> Result<(), String> {
     let config = snapshot.config();
-    let pass_identity = UpdaterPassIdentity::new(lane.audit_lane(), snapshot.epoch());
+    let pass_identity = UpdaterPassIdentity::bound(
+        lane.audit_lane(),
+        snapshot.epoch(),
+        accepted_updater_policy_sha256(&config)?,
+    );
     match lane {
         RecurringUpdateLane::CliAutoApply => {
             let deny_reason = match &gate {
@@ -774,13 +803,14 @@ async fn run_mutation_pass_at<F>(
 where
     F: Future<Output = Result<crate::daemon::auto_update::RecurringMutationOutcome, String>>,
 {
-    append_updater_fired(&identity, task_kind, writer).await?;
+    let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
     let started = std::time::Instant::now();
     let outcome = std::panic::AssertUnwindSafe(work).catch_unwind().await;
-    let (component, terminalized_failure) = match outcome {
+    let (component, terminalized_failure, terminal_outcome) = match outcome {
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::BlockedByGate)) => (
             ComponentOutcome::skipped_by_gate(component_name, current_version, deny_reason),
             None,
+            UpdaterTerminalOutcome::SkippedByGate,
         ),
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::SkippedByPolicy)) => (
             ComponentOutcome::skipped_by_gate(
@@ -789,6 +819,7 @@ where
                 REQUEST_BOUND_POLICY_REFUSED,
             ),
             None,
+            UpdaterTerminalOutcome::SkippedByGate,
         ),
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::GenerationRetired)) => (
             ComponentOutcome::skipped_by_gate(
@@ -797,10 +828,12 @@ where
                 ACCEPTED_GENERATION_RETIRED,
             ),
             None,
+            UpdaterTerminalOutcome::Cancelled,
         ),
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::Completed)) => (
             ComponentOutcome::up_to_date(component_name, current_version),
             None,
+            UpdaterTerminalOutcome::Completed,
         ),
         Ok(Ok(crate::daemon::auto_update::RecurringMutationOutcome::Staged {
             prior_version,
@@ -808,16 +841,19 @@ where
         })) => (
             ComponentOutcome::staged(component_name, prior_version, staged_version),
             None,
+            UpdaterTerminalOutcome::Completed,
         ),
         Ok(Err(error)) => (
             ComponentOutcome::failed(component_name, current_version, error.clone()),
             Some(mutation_failure_disposition(error)),
+            UpdaterTerminalOutcome::Failed,
         ),
         Err(_) => {
             let error = format!("{component_name} executor panicked");
             (
                 ComponentOutcome::failed(component_name, current_version, &error),
                 Some(TerminalizedPassFailure::CloseSupervisor(error)),
+                UpdaterTerminalOutcome::Failed,
             )
         }
     };
@@ -826,6 +862,8 @@ where
         task_kind,
         ts_unix: crate::time::now_unix_secs(),
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        terminal_outcome: Some(terminal_outcome),
+        fired_receipt_sha256: Some(fired_receipt_sha256),
         components: vec![component],
     };
     append_updater_result(&result, writer).await?;
@@ -850,7 +888,7 @@ async fn run_authorized_self_probe(
     writer: &WalWriterHandle,
 ) -> Result<UpdaterTaskResultPayload, String> {
     let task_kind = UpdaterTaskKind::NeothSelf;
-    append_updater_fired(&identity, task_kind, writer).await?;
+    let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
     let started = std::time::Instant::now();
     let current = crate::updater::self_update::current_version();
     let checked = std::panic::AssertUnwindSafe(async {
@@ -868,29 +906,44 @@ async fn run_authorized_self_probe(
     })
     .catch_unwind()
     .await;
-    let (component, terminalized_failure) = match checked {
+    let (component, terminalized_failure, terminal_outcome) = match checked {
         Ok(Ok(check)) if check.needs_update => (
             ComponentOutcome::update_available("neoth", check.current, check.latest),
             None,
+            UpdaterTerminalOutcome::Completed,
         ),
-        Ok(Ok(check)) => (ComponentOutcome::up_to_date("neoth", check.current), None),
+        Ok(Ok(check)) => (
+            ComponentOutcome::up_to_date("neoth", check.current),
+            None,
+            UpdaterTerminalOutcome::Completed,
+        ),
         Ok(Err(error)) if crate::updater::authority::error_is_policy_refusal(&error) => (
             ComponentOutcome::skipped_by_gate("neoth", current, REQUEST_BOUND_POLICY_REFUSED),
             None,
+            UpdaterTerminalOutcome::SkippedByGate,
         ),
         Ok(Err(error)) if crate::updater::authority::error_is_generation_retired(&error) => (
             ComponentOutcome::skipped_by_gate("neoth", current, ACCEPTED_GENERATION_RETIRED),
             None,
+            UpdaterTerminalOutcome::Cancelled,
         ),
         Ok(Err(error)) => {
             let failure = authorized_probe_failure_disposition(error);
             let diagnostic = match &failure {
                 TerminalizedPassFailure::RetryNextCadence(error)
-                | TerminalizedPassFailure::CloseSupervisor(error) => error,
+                | TerminalizedPassFailure::CloseSupervisor(error) => error.to_string(),
+            };
+            let terminal_outcome = if diagnostic.contains("timeout") {
+                UpdaterTerminalOutcome::TimedOut
+            } else if diagnostic.contains("cancelled") {
+                UpdaterTerminalOutcome::Cancelled
+            } else {
+                UpdaterTerminalOutcome::Failed
             };
             (
                 ComponentOutcome::failed("neoth", current, diagnostic),
                 Some(failure),
+                terminal_outcome,
             )
         }
         Err(_) => {
@@ -898,6 +951,7 @@ async fn run_authorized_self_probe(
             (
                 ComponentOutcome::failed("neoth", current, &diagnostic),
                 Some(TerminalizedPassFailure::CloseSupervisor(diagnostic)),
+                UpdaterTerminalOutcome::Failed,
             )
         }
     };
@@ -906,6 +960,8 @@ async fn run_authorized_self_probe(
         task_kind,
         ts_unix: crate::time::now_unix_secs(),
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        terminal_outcome: Some(terminal_outcome),
+        fired_receipt_sha256: Some(fired_receipt_sha256),
         components: vec![component],
     };
     append_updater_result(&result, writer).await?;
@@ -991,7 +1047,7 @@ where
     F: FnOnce() -> B,
     B: Future<Output = Result<Vec<crate::updater::pipeline::ComponentSpec>, String>>,
 {
-    append_updater_fired(&identity, task_kind, writer).await?;
+    let fired_receipt_sha256 = append_updater_fired(&identity, task_kind, writer).await?;
     let computed = std::panic::AssertUnwindSafe(async move {
         builder()
             .await
@@ -1005,8 +1061,27 @@ where
         Err(_) => failed_probe_result(task_kind, "updater builder/executor panicked"),
     };
     result.identity = identity;
+    result.terminal_outcome = Some(terminal_outcome_for_components(&result.components));
+    result.fired_receipt_sha256 = Some(fired_receipt_sha256);
     append_updater_result(&result, writer).await?;
     Ok(result)
+}
+
+fn terminal_outcome_for_components(components: &[ComponentOutcome]) -> UpdaterTerminalOutcome {
+    if components
+        .iter()
+        .any(|component| component.status == crate::wal::payloads_u04::ComponentStatus::Failed)
+    {
+        UpdaterTerminalOutcome::Failed
+    } else if !components.is_empty()
+        && components.iter().all(|component| {
+            component.status == crate::wal::payloads_u04::ComponentStatus::SkippedByGate
+        })
+    {
+        UpdaterTerminalOutcome::SkippedByGate
+    } else {
+        UpdaterTerminalOutcome::Completed
+    }
 }
 
 fn failed_probe_result(
@@ -1018,6 +1093,8 @@ fn failed_probe_result(
         task_kind,
         ts_unix: crate::time::now_unix_secs(),
         duration_ms: 0,
+        terminal_outcome: None,
+        fired_receipt_sha256: None,
         components: vec![ComponentOutcome::failed(
             format!("{}_pass", task_kind.as_str()),
             "unknown",
@@ -1030,21 +1107,22 @@ async fn append_updater_fired(
     identity: &UpdaterPassIdentity,
     task_kind: UpdaterTaskKind,
     writer: &WalWriterHandle,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let payload = UpdaterTaskFiredPayload {
         identity: identity.clone(),
         task_kind,
         ts_unix: crate::time::now_unix_secs(),
     };
     let body = serde_json::to_vec(&payload).map_err(|error| format!("serde fired: {error}"))?;
+    let fired_receipt_sha256 = updater_fired_receipt_sha256(&body);
     let header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_FIRED, &body)
         .flags(EventFlags::SYNTHETIC)
         .build();
     writer
         .append(header, body)
         .await
-        .map(|_| ())
-        .map_err(|error| format!("wal append fired: {error}"))
+        .map_err(|error| format!("wal append fired: {error}"))?;
+    Ok(fired_receipt_sha256)
 }
 
 async fn append_updater_result(
@@ -1165,6 +1243,19 @@ mod tests {
         assert_eq!(decoded, result);
         assert_eq!(fired.identity, decoded.identity);
         assert!(decoded.identity.correlatable_pass_id().is_some());
+        assert_eq!(
+            decoded.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Completed)
+        );
+        let expected_fired_receipt = updater_fired_receipt_sha256(first.payload);
+        assert_eq!(
+            decoded.fired_receipt_sha256.as_deref(),
+            Some(expected_fired_receipt.as_str())
+        );
+        assert_eq!(
+            decoded.correlatable_fired_receipt(),
+            decoded.fired_receipt_sha256.as_deref()
+        );
     }
 
     #[tokio::test]
@@ -1189,9 +1280,30 @@ mod tests {
             crate::wal::payloads_u04::ComponentStatus::SkippedByGate
         );
         assert_eq!(result.components[0].note, ACCEPTED_GENERATION_RETIRED);
+        assert_eq!(
+            result.terminal_outcome,
+            Some(UpdaterTerminalOutcome::Cancelled)
+        );
 
         drop(writer);
         join.await.unwrap();
+    }
+
+    #[test]
+    fn accepted_policy_digest_is_stable_and_changes_with_the_snapshot() {
+        let first = crate::config::FreedomConfig::default();
+        let second = crate::config::FreedomConfig::default();
+        assert_eq!(
+            accepted_updater_policy_sha256(&first).unwrap(),
+            accepted_updater_policy_sha256(&second).unwrap()
+        );
+
+        let mut changed = first.clone();
+        changed.monitor.interval_secs = changed.monitor.interval_secs.saturating_add(1);
+        assert_ne!(
+            accepted_updater_policy_sha256(&first).unwrap(),
+            accepted_updater_policy_sha256(&changed).unwrap()
+        );
     }
 
     #[tokio::test(start_paused = true)]
@@ -1737,7 +1849,8 @@ mod tests {
             match recurring_egress_gate(lane) {
                 GateDecision::Deny { reason } => {
                     assert_eq!(reason, UNBOUNDED_RECURRING_LIFECYCLE_DENIED);
-                    assert!(reason.contains("kill/reap"));
+                    assert!(reason.contains("absolute pass deadline"));
+                    assert!(reason.contains("spawn_blocking"));
                 }
                 GateDecision::Allow => {
                     panic!("{lane:?} must remain denied until R3-18B is complete")
@@ -1753,6 +1866,7 @@ mod tests {
                 GateDecision::Deny { reason } => {
                     assert_eq!(reason, UNAUDITED_RECURRING_EGRESS_DENIED);
                     assert!(reason.contains("intent/result WAL"));
+                    assert!(reason.contains("descendant process trees"));
                 }
                 GateDecision::Allow => {
                     panic!("{lane:?} must remain denied until all concrete leaves are wired")

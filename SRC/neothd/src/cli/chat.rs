@@ -423,6 +423,14 @@ struct TurnRouteResolution {
 }
 
 impl TurnDispatchRoute {
+    /// Only direct/streaming routes map one returned Completion to one
+    /// concrete provider request that can be retried without changing route
+    /// semantics. Council and tool/refinement loops require their own
+    /// route-aware recovery coordinator.
+    pub(crate) const fn supports_single_leaf_recovery(&self) -> bool {
+        matches!(self, Self::Streaming | Self::Direct)
+    }
+
     pub(crate) const fn uses_mcp_catalogue(&self) -> bool {
         matches!(self, Self::McpDispatch { .. })
     }
@@ -1829,6 +1837,9 @@ async fn build_prompt_bundle(
 
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
+        operator_sovereignty: Some(
+            crate::security::operator_sovereignty::OperatorSovereigntyPrompt::local_interactive(),
+        ),
         operator_context: operator_context.as_deref(),
         preset_addendum: preset_addendum.as_deref(),
         explicit_system: args.system.as_deref(),
@@ -2175,6 +2186,10 @@ async fn enforce_preflight(
         let f = &d.omit_flags;
         let enriched = build_enriched_request(EnrichmentInputs {
             prompt: &d.prompt,
+            operator_sovereignty: Some(
+                crate::security::operator_sovereignty::OperatorSovereigntyPrompt::local_interactive(
+                ),
+            ),
             operator_context: if f.operator_context {
                 None
             } else {
@@ -2835,8 +2850,9 @@ struct DispatchOutput {
     framed: FramedProviderDispatch,
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
-    final_prompt: String,
-    final_system: Option<String>,
+    /// Exact provider request used for this turn, including sampling and
+    /// thinking controls. Recovery may rewrite prompt/system only.
+    recovery_request: Request,
     /// F4/D21 — the in-flight turn journal, opened in `dispatch_provider`, closed
     /// (+ 0x06 anchor) by `run_post_reply_pipelines` after the response is
     /// recorded. `None` when the journal failed to open (non-fatal).
@@ -2854,11 +2870,10 @@ struct DispatchOutput {
 }
 
 struct ProviderDispatchResult {
-    response_text: String,
-    input_tokens: Option<u32>,
-    output_tokens: Option<u32>,
-    provider: String,
-    model: String,
+    /// Preserve the provider's complete response envelope across dispatch,
+    /// framing and refusal recovery. Flattening this value used to discard
+    /// latency, cache accounting and decorator-route identity.
+    completion: crate::providers::Completion,
     /// Number of reply chunks visible to a stream consumer. True provider
     /// streaming overwrites this with the measured delta count; composed and
     /// direct routes expose their complete reply as one logical chunk.
@@ -2880,7 +2895,6 @@ struct FramedProviderDispatch {
     /// after the hook returns Continue.
     stream_output_deferred: bool,
     stream_limit_tokens: u32,
-    stream_elapsed_ms: u64,
 }
 
 impl ProviderDispatchResult {
@@ -2893,11 +2907,27 @@ impl ProviderDispatchResult {
     ) -> Self {
         let stream_chunk_count = if response_text.is_empty() { 0 } else { 1 };
         Self {
-            response_text,
-            input_tokens,
-            output_tokens,
-            provider,
-            model,
+            completion: crate::providers::Completion {
+                text: response_text,
+                identity: crate::providers::CompletionIdentity {
+                    provider,
+                    wire_model: model.clone(),
+                    dispatch_route: Vec::new(),
+                },
+                model,
+                input_tokens,
+                output_tokens,
+                ..Default::default()
+            },
+            stream_chunk_count,
+            stream_output_emitted: false,
+        }
+    }
+
+    fn from_completion(completion: crate::providers::Completion) -> Self {
+        let stream_chunk_count = u32::from(!completion.text.is_empty());
+        Self {
+            completion,
             stream_chunk_count,
             stream_output_emitted: false,
         }
@@ -2912,6 +2942,32 @@ impl ProviderDispatchResult {
         self.stream_output_emitted = true;
         self
     }
+}
+
+fn accumulate_optional_counter(total: &mut Option<u32>, observed: Option<u32>) {
+    if let Some(observed) = observed {
+        *total = Some(total.unwrap_or(0).saturating_add(observed));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn should_check_refusal_hard_block(
+    recovery_route_eligible: bool,
+    operator_origin: Option<crate::security::operator_sovereignty::AuthenticatedOperatorOrigin>,
+    refusal_observed: bool,
+    truthful_retry_enabled: bool,
+    abliterated_fallback_enabled: bool,
+    teacher_escalation_enabled: bool,
+    local_provider: bool,
+    low_confidence: bool,
+) -> bool {
+    let response_replacement_requested =
+        refusal_observed && (truthful_retry_enabled || abliterated_fallback_enabled);
+    let teacher_triggered =
+        teacher_escalation_enabled && local_provider && (refusal_observed || low_confidence);
+    recovery_route_eligible
+        && operator_origin.is_some()
+        && (response_replacement_requested || teacher_triggered)
 }
 
 const CHAT_STREAM_PROTOCOL_VERSION: u8 = 2;
@@ -2929,6 +2985,36 @@ fn stream_content_hash(response_text: &str) -> String {
     use sha2::{Digest as _, Sha256};
 
     hex::encode(Sha256::digest(response_text.as_bytes()))
+}
+
+struct StreamTerminationProjection {
+    finish_reason: Option<String>,
+    refused: bool,
+    refusal_origin: Option<&'static str>,
+    refusal_reason: Option<String>,
+}
+
+fn stream_termination_projection(
+    termination: &crate::providers::ProviderTermination,
+) -> StreamTerminationProjection {
+    let clean = |value: Option<&str>| {
+        value
+            .map(|value| {
+                value
+                    .chars()
+                    .filter(|character| !character.is_control())
+                    .take(160)
+                    .collect::<String>()
+            })
+            .filter(|value| !value.trim().is_empty())
+    };
+    let refusal = termination.refusal.as_ref();
+    StreamTerminationProjection {
+        finish_reason: clean(termination.finish_reason.as_deref()),
+        refused: refusal.is_some(),
+        refusal_origin: refusal.map(|refusal| refusal.origin.as_str()),
+        refusal_reason: clean(refusal.map(|refusal| refusal.reason.as_str())),
+    }
 }
 
 fn stream_finalization_receipt(request_id: &str, chunk_count: u32, content_hash: &str) -> String {
@@ -2995,6 +3081,7 @@ fn stream_provider_done_line(
     control_token: Option<&str>,
     chunk_count: u32,
     response_text: &str,
+    termination: &crate::providers::ProviderTermination,
 ) -> Option<String> {
     #[derive(serde::Serialize)]
     struct ProviderDoneFrame<'a> {
@@ -3004,9 +3091,14 @@ fn stream_provider_done_line(
         control_token: &'a str,
         count: u32,
         content_hash: String,
+        finish_reason: Option<&'a str>,
+        refused: bool,
+        refusal_origin: Option<&'static str>,
+        refusal_reason: Option<&'a str>,
     }
 
     let control_token = control_token?;
+    let termination = stream_termination_projection(termination);
     serde_json::to_string(&ProviderDoneFrame {
         neoth_stream: "provider_done",
         protocol_version: CHAT_STREAM_PROTOCOL_VERSION,
@@ -3014,6 +3106,10 @@ fn stream_provider_done_line(
         control_token,
         count: chunk_count,
         content_hash: stream_content_hash(response_text),
+        finish_reason: termination.finish_reason.as_deref(),
+        refused: termination.refused,
+        refusal_origin: termination.refusal_origin,
+        refusal_reason: termination.refusal_reason.as_deref(),
     })
     .ok()
 }
@@ -3070,6 +3166,7 @@ struct StreamDoneMetadata<'a> {
     elapsed_ms: u64,
     model: &'a str,
     response_text: &'a str,
+    termination: &'a crate::providers::ProviderTermination,
 }
 
 struct PostReplyStreamPlan<'a> {
@@ -3078,7 +3175,6 @@ struct PostReplyStreamPlan<'a> {
     output_deferred: bool,
     provider_chunk_count: u32,
     limit_tokens: u32,
-    elapsed_ms: u64,
 }
 
 fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
@@ -3097,9 +3193,14 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
         output_tokens: u32,
         elapsed_ms: u64,
         model: &'a str,
+        finish_reason: Option<&'a str>,
+        refused: bool,
+        refusal_origin: Option<&'static str>,
+        refusal_reason: Option<&'a str>,
         links: T,
     }
 
+    let termination = stream_termination_projection(metadata.termination);
     let content_hash = stream_content_hash(metadata.response_text);
     let request_id = metadata.control_token.map(stream_request_id);
     let finalization_receipt = request_id.as_deref().map(|request_id| {
@@ -3122,6 +3223,10 @@ fn build_stream_done_line(metadata: StreamDoneMetadata<'_>) -> String {
         output_tokens: metadata.output_tokens.unwrap_or(0),
         elapsed_ms: metadata.elapsed_ms,
         model: metadata.model,
+        finish_reason: termination.finish_reason.as_deref(),
+        refused: termination.refused,
+        refusal_origin: termination.refusal_origin,
+        refusal_reason: termination.refusal_reason.as_deref(),
         links: crate::cli::deep_links::extract_deep_links(metadata.response_text),
     })
     .expect("stream completion frame contains only serializable fields")
@@ -3135,6 +3240,7 @@ fn write_provider_done_and_build_stream_done_line(
         metadata.control_token,
         metadata.chunk_count,
         metadata.response_text,
+        metadata.termination,
     ) {
         write_stream_control_line(&mut output, &provider_done_line)?;
     }
@@ -3149,22 +3255,27 @@ fn finalize_dispatch_stream_to(
     stream: bool,
     control_token: Option<&str>,
     limit_tokens: u32,
-    elapsed_ms: u64,
     stream_output_deferred: bool,
     dispatch: ProviderDispatchResult,
 ) -> std::io::Result<FramedProviderDispatch> {
+    let elapsed_ms = dispatch
+        .completion
+        .latency
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
     let stream_done_line = if stream && !stream_output_deferred {
         Some(write_provider_done_and_build_stream_done_line(
             &mut output,
             StreamDoneMetadata {
                 control_token,
                 chunk_count: dispatch.stream_chunk_count,
-                input_tokens: dispatch.input_tokens,
-                output_tokens: dispatch.output_tokens,
+                input_tokens: dispatch.completion.input_tokens,
+                output_tokens: dispatch.completion.output_tokens,
                 limit_tokens,
                 elapsed_ms,
-                model: &dispatch.model,
-                response_text: &dispatch.response_text,
+                model: &dispatch.completion.identity.wire_model,
+                response_text: &dispatch.completion.text,
+                termination: &dispatch.completion.termination,
             },
         )?)
     } else {
@@ -3175,7 +3286,6 @@ fn finalize_dispatch_stream_to(
         stream_done_line,
         stream_output_deferred,
         stream_limit_tokens: limit_tokens,
-        stream_elapsed_ms: elapsed_ms,
     })
 }
 
@@ -3205,6 +3315,10 @@ fn write_local_stream_completion_to(
         request_id: Option<String>,
         control_token: Option<&'a str>,
         count: u32,
+        finish_reason: Option<&'static str>,
+        refused: bool,
+        refusal_origin: Option<&'static str>,
+        refusal_reason: Option<&'static str>,
     }
     #[derive(serde::Serialize)]
     struct LocalDone<'a> {
@@ -3219,6 +3333,10 @@ fn write_local_stream_completion_to(
         output_tokens: u32,
         elapsed_ms: u64,
         model: &'static str,
+        finish_reason: Option<&'static str>,
+        refused: bool,
+        refusal_origin: Option<&'static str>,
+        refusal_reason: Option<&'static str>,
         links: [(); 0],
     }
 
@@ -3230,6 +3348,10 @@ fn write_local_stream_completion_to(
             request_id: request_id.clone(),
             control_token,
             count: chunk_count,
+            finish_reason: None,
+            refused: false,
+            refusal_origin: None,
+            refusal_reason: None,
         })
         .map_err(std::io::Error::other)?;
         write_stream_control_line(&mut output, &provider_done)?;
@@ -3246,6 +3368,10 @@ fn write_local_stream_completion_to(
         output_tokens: 0,
         elapsed_ms: 0,
         model: "local",
+        finish_reason: None,
+        refused: false,
+        refusal_origin: None,
+        refusal_reason: None,
         links: [],
     })
     .map_err(std::io::Error::other)?;
@@ -3586,6 +3712,7 @@ async fn dispatch_provider(
         // GOLD-CCPARITY-EFFORT-03: per-call thinking-budget override.
         thinking_budget,
     };
+    let recovery_request = req.clone();
     let token_capped_provider =
         crate::providers::token_cap::TokenCappedProvider::new(provider, request_token_cap);
     // B22: every provider invocation below (direct, stream, MCP iteration,
@@ -3747,7 +3874,11 @@ async fn dispatch_provider(
             let mut chunk_count: u32 = 0;
             let mut input_tokens: Option<u32> = None;
             let mut output_tokens: Option<u32> = None;
+            let mut cache_creation_tokens: Option<u32> = None;
+            let mut cache_read_tokens: Option<u32> = None;
             let mut response_identity: Option<crate::providers::CompletionIdentity> = None;
+            let mut provider_termination =
+                crate::providers::ProviderTermination::default();
             let mut saw_done_chunk = false;
 
             use futures_util::stream::StreamExt;
@@ -3764,6 +3895,14 @@ async fn dispatch_provider(
             while let Some(item) = stream.next().await {
                 match item {
                     Ok(chunk) => {
+                        accumulate_optional_counter(
+                            &mut cache_creation_tokens,
+                            chunk.cache_creation_tokens,
+                        );
+                        accumulate_optional_counter(
+                            &mut cache_read_tokens,
+                            chunk.cache_read_tokens,
+                        );
                         if !chunk.identity.is_bound() {
                             if let Some(p) = stream_permit {
                                 p.record_failure();
@@ -3825,6 +3964,7 @@ async fn dispatch_provider(
                         }
                         if chunk.done {
                             saw_done_chunk = true;
+                            provider_termination = chunk.termination;
                             // Release any construct still held at stream end.
                             if !defer_provider_output && stream_control_token.is_none() {
                                 let rest = md_buf.flush();
@@ -3886,8 +4026,6 @@ async fn dispatch_provider(
             if let Some(p) = stream_permit {
                 p.record_success();
             }
-            let provider_used = response_identity.provider;
-            let model_used = response_identity.wire_model;
             // GOLD-ADAPT-HERMES-09b — emit the stream's tokens/sec sample (0x69
             // TOKEN_TPS_SAMPLE). Best-effort; a WAL hiccup never fails the turn.
             {
@@ -3901,20 +4039,24 @@ async fn dispatch_provider(
             {
                 let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
                 publish_provider_responded(
-                    &provider_used,
-                    &model_used,
+                    &response_identity.provider,
+                    &response_identity.wire_model,
                     input_tokens,
                     output_tokens,
                     elapsed_ms,
                 );
             }
-            let result = ProviderDispatchResult::new(
-                acc,
+            let result = ProviderDispatchResult::from_completion(crate::providers::Completion {
+                text: acc,
+                model: response_identity.wire_model.clone(),
+                identity: response_identity,
+                termination: provider_termination,
+                latency: stream_call_started.elapsed(),
                 input_tokens,
                 output_tokens,
-                provider_used,
-                model_used,
-            )
+                cache_creation_tokens,
+                cache_read_tokens,
+            })
             .with_stream_chunk_count(chunk_count);
             if defer_provider_output {
                 result
@@ -4297,13 +4439,7 @@ async fn dispatch_provider(
                                     resolved.output_tokens,
                                     resolved_elapsed_ms,
                                 );
-                                ProviderDispatchResult::new(
-                                    resolved.text,
-                                    resolved.input_tokens,
-                                    resolved.output_tokens,
-                                    resolved.identity.provider,
-                                    resolved.identity.wire_model,
-                                )
+                                ProviderDispatchResult::from_completion(resolved)
                             }
                             Some(_) => {
                                 return_dispatch_error!(anyhow::anyhow!(
@@ -4311,13 +4447,7 @@ async fn dispatch_provider(
                                 ));
                             }
                             None => {
-                                ProviderDispatchResult::new(
-                                    completion.text,
-                                    completion.input_tokens,
-                                    completion.output_tokens,
-                                    completion.identity.provider,
-                                    completion.identity.wire_model,
-                                )
+                                ProviderDispatchResult::from_completion(completion)
                             }
                         }
                     }
@@ -4350,19 +4480,22 @@ async fn dispatch_provider(
             return Err(error);
         }
     };
+    if dispatch_result.completion.latency.is_zero() {
+        dispatch_result.completion.latency = inference_started.elapsed();
+    }
 
     // Stream framing is route-independent. Council/MCP/direct routes produce a
     // complete body rather than provider deltas, so expose that body as one
     // logical authenticated delta when no post-provider content gate exists.
     // The actual streaming route already emitted its deltas above.
     if args.stream && !defer_provider_output && !dispatch_result.stream_output_emitted {
-        let chunk_count = u32::from(!dispatch_result.response_text.is_empty());
+        let chunk_count = u32::from(!dispatch_result.completion.text.is_empty());
         let stdout = std::io::stdout();
         if let Err(error) = write_provider_stream_delta(
             stdout.lock(),
             stream_control_token,
             chunk_count,
-            &dispatch_result.response_text,
+            &dispatch_result.completion.text,
         )
         .context("write authenticated composed provider reply")
         {
@@ -4381,8 +4514,8 @@ async fn dispatch_provider(
     // returns Continue. In either case `done` stays deferred until the complete
     // post-reply pipeline and WAL drain succeed.
     let sentinel_cap = crate::tokens::budget::effective_cap(
-        &dispatch_result.provider,
-        &dispatch_result.model,
+        &dispatch_result.completion.identity.provider,
+        &dispatch_result.completion.identity.wire_model,
         config.tokens.max_per_request,
     );
     let stdout = std::io::stdout();
@@ -4392,7 +4525,6 @@ async fn dispatch_provider(
         args.stream,
         stream_control_token,
         sentinel_cap,
-        inference_started.elapsed().as_millis() as u64,
         defer_provider_output,
         dispatch_result,
     )
@@ -4407,10 +4539,7 @@ async fn dispatch_provider(
             return Err(error);
         }
     };
-    let response_text = &framed.dispatch.response_text;
-    let final_input_tokens = framed.dispatch.input_tokens;
-    let final_output_tokens = framed.dispatch.output_tokens;
-    let provider_used = &framed.dispatch.provider;
+    let completion = &framed.dispatch.completion;
 
     // SL-00(1c): the provider work is done — release the in-flight slot and
     // feed the cluster local-load gauge the REAL measured throughput so our
@@ -4419,7 +4548,7 @@ async fn dispatch_provider(
     {
         drop(inflight_guard);
         crate::cluster::local_load::record_completion(
-            final_output_tokens.unwrap_or(0),
+            completion.output_tokens.unwrap_or(0),
             inference_started.elapsed(),
         );
     }
@@ -4431,9 +4560,9 @@ async fn dispatch_provider(
         let latency_ns = u64::try_from(inference_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         let payload = serde_json::to_vec(&serde_json::json!({
             "request_id": inference_id,
-            "output_hash": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
-            "input_tokens": final_input_tokens,
-            "output_tokens": final_output_tokens,
+            "output_hash": xxhash_rust::xxh3::xxh3_64(completion.text.as_bytes()),
+            "input_tokens": completion.input_tokens,
+            "output_tokens": completion.output_tokens,
             "latency_ns": latency_ns,
             "stream": args.stream,
             "ts_unix": now_unix(),
@@ -4451,10 +4580,11 @@ async fn dispatch_provider(
     // Successful remote call → bump the per-provider daily counter for the
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
-    if !crate::providers::is_local_provider(provider_used) {
+    if !crate::providers::is_local_provider(&completion.identity.provider) {
         if quota_tracker.is_none() {
             let error = anyhow::anyhow!(
-                "remote provider `{provider_used}` completed without initialized quota state"
+                "remote provider `{}` completed without initialized quota state",
+                completion.identity.provider
             );
             drop(authorized_provider);
             drop(call_authorizer);
@@ -4463,7 +4593,10 @@ async fn dispatch_provider(
             return Err(error);
         }
         if let Err(e) = crate::providers::quota::QuotaTracker::update_at(&quota_path, |tracker| {
-            tracker.record_success(provider_used, crate::providers::quota::now_unix());
+            tracker.record_success(
+                &completion.identity.provider,
+                crate::providers::quota::now_unix(),
+            );
             Ok(())
         }) {
             tracing::warn!(error = %e, "quota.json save after success failed (best-effort)");
@@ -4479,8 +4612,7 @@ async fn dispatch_provider(
         framed,
         writer,
         writer_join,
-        final_prompt,
-        final_system,
+        recovery_request,
         turn_journal: journal,
         // GOLD-ADAPT-ODY-20 — 0 on stream/single-provider paths; populated from
         // `outcome.successful_calls` in the MCP-dispatch branch above.
@@ -4501,19 +4633,15 @@ async fn dispatch_provider(
 /// if the PostProviderCall hook blocks the reply.
 #[allow(clippy::too_many_arguments)]
 async fn run_post_reply_pipelines(
-    response_text: String,
+    mut completion: crate::providers::Completion,
     writer: crate::wal::writer::WalWriterHandle,
     writer_join: tokio::task::JoinHandle<()>,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
     args: ChatArgs,
     prompt: String,
-    final_prompt: String,
-    final_system: Option<String>,
-    provider_used: String,
-    model_used: String,
-    final_input_tokens: Option<u32>,
-    final_output_tokens: Option<u32>,
+    recovery_request: crate::providers::Request,
+    recovery_route_eligible: bool,
     review_context: Option<(String, String)>,
     hooks: Vec<crate::hooks::schema::HookDef>,
     segment_path: std::path::PathBuf,
@@ -4551,6 +4679,18 @@ async fn run_post_reply_pipelines(
     mut stream_plan: PostReplyStreamPlan<'_>,
 ) -> Result<()> {
     let first_tour_home = instance_paths.home.clone();
+    // Start the shared deadline before hooks, audits, and recovery selection.
+    // Initial provider latency plus post-reply coordination must fit inside the
+    // same refusal-recovery wall-clock budget.
+    let mut recovery_attempt_budget =
+        crate::security::refusal_recovery::RecoveryAttemptBudget::after_initial_completion(
+            &completion,
+        );
+    let response_text = completion.text.clone();
+    let mut provider_used = completion.identity.provider.clone();
+    let mut model_used = completion.identity.wire_model.clone();
+    let mut final_input_tokens = completion.input_tokens;
+    let mut final_output_tokens = completion.output_tokens;
     // ODY-16: auto-scale token cap from discovered model context window
     // (85% × window, hard-capped at 200K, ≤ operator_cap).
     // Used by the turn-end context bar further below.
@@ -4558,7 +4698,7 @@ async fn run_post_reply_pipelines(
     // dispatch_provider) so the context-window cap reflects the model that was
     // actually called.  Fall back to model_for_estimate only when model_used is
     // empty — a guard against future regressions; normal paths always set it.
-    let resolved_cap: u32 = {
+    let mut resolved_cap: u32 = {
         let model_name_for_cap = if model_used.is_empty() {
             model_for_estimate(&args, &config, tweaks_model.as_deref())
         } else {
@@ -4605,9 +4745,11 @@ async fn run_post_reply_pipelines(
                 ..Default::default()
             },
         );
+    let recovery_token_capped_provider =
+        crate::providers::token_cap::TokenCappedProvider::new(provider, resolved_cap);
     let authorized_post_provider =
         crate::providers::cost_authorization::CostAuthorizingProvider::new(
-            provider,
+            &recovery_token_capped_provider,
             call_authorizer.clone(),
             post_call_model,
             "chat_post_reply_round",
@@ -4624,16 +4766,20 @@ async fn run_post_reply_pipelines(
     // any blocks that were redacted at PreProviderCall so the response the
     // LLM produced with placeholder content has originals re-injected before
     // anything lands in WAL or recall.
-    let mut response_text = match run_hook_stage(
+    let provider_response_text = response_text;
+    let (mut response_text, post_hook_replaced_provider_body) = match run_hook_stage(
         crate::hooks::HookStage::PostProviderCall,
-        &response_text,
+        &provider_response_text,
         &hooks,
         &writer,
         once_guard,
     )
     .await?
     {
-        HookOutcome::Continue(body, _blocks) => body,
+        HookOutcome::Continue(body, _blocks) => {
+            let replaced = body != provider_response_text;
+            (body, replaced)
+        }
         HookOutcome::Blocked { name, reason } => {
             // End the borrow first, then release every writer-owning wrapper
             // before waiting for the one-shot WAL task to finish.
@@ -4650,6 +4796,13 @@ async fn run_post_reply_pipelines(
     if !pending_block_restorations.is_empty() {
         response_text =
             crate::hooks::block_filter::restore_blocks(&response_text, &pending_block_restorations);
+    }
+    completion.text = response_text.clone();
+    if post_hook_replaced_provider_body {
+        // The accepted body is operator-hook output, not the provider's native
+        // refusal/filter response. Keeping the old termination would make the
+        // recovery coordinator overwrite a deliberate hook replacement.
+        completion.termination = crate::providers::ProviderTermination::default();
     }
 
     // Learn presentation preferences only from an authenticated, accepted
@@ -4688,30 +4841,11 @@ async fn run_post_reply_pipelines(
     .await
     .context("audit authenticated communication-adaptation evidence")?;
 
-    // Each concrete leaf response was durably recorded at the provider
-    // boundary before control returned here. Close the turn journal only after
-    // post-provider hooks also completed, so a crash in that pipeline remains
-    // recoverable even though its provider call already has a terminal frame.
-    if let Some(mut j) = turn_journal {
-        use crate::recovery::turn_journal::{TurnEvent, closed_payload};
-        let turn_id = format!("{raw_event_id:016x}");
-        let ts = crate::time::now_unix_i64();
-        let _ = j.append(&TurnEvent::ProviderResponse {
-            ts_unix: ts,
-            provider: provider_used.clone(),
-            model: model_used.clone(),
-            input_tokens: final_input_tokens.unwrap_or(0),
-            output_tokens: final_output_tokens.unwrap_or(0),
-        });
-        let line_count = std::fs::read_to_string(j.path())
-            .map(|b| b.lines().filter(|l| !l.is_empty()).count())
-            .unwrap_or(0);
-        let payload = closed_payload(&turn_id, ts, line_count);
-        let header =
-            crate::wal::make_header(crate::wal::events::EVENT_TYPE_TURN_JOURNAL_CLOSED, &payload);
-        let _ = writer.append(header, payload).await;
-        let _ = j.close();
-    }
+    let mut refusal_completion = completion;
+    let operator_origin =
+        Some(crate::security::operator_sovereignty::AuthenticatedOperatorOrigin::LocalInteractive);
+    let initial_refusal_observation =
+        crate::security::refusal_recovery::observe_completion_refusal(&refusal_completion);
 
     // ── Mirror-refusal Schicht-0 detection (SPEC_mirror_refusal §1) ────────
     // Pure-deterministic classifier — no LLM call, no meta-decision-making.
@@ -4720,8 +4854,8 @@ async fn run_post_reply_pipelines(
     // even before the full mirror pipeline (Stages 2-6) lands. The pipeline
     // itself depends on the hemisphere architecture which is Phase-2 scope.
     {
-        let report = crate::security::refusal_detect::classify(&response_text);
-        if report.is_refusal() {
+        if let Some(observation) = initial_refusal_observation.as_ref() {
+            let report = &observation.report;
             // R-09 2026-05-17: classify WHY the model refused — orthogonal
             // to the surface-class (hard/partial/soft/redirect/safety) the
             // refusal_detect classifier produces. Both signals get bundled
@@ -4730,7 +4864,7 @@ async fn run_post_reply_pipelines(
             // (forward-compat via serde-default in the consumer); newer
             // pipeline stages (R-01..R-05) read them to pick the LOWKEY
             // reframing strategy.
-            let cause = crate::security::refusal_cause::classify_cause(&response_text);
+            let cause = &observation.cause;
             let payload = serde_json::to_vec(&serde_json::json!({
                 "operator_id": config.operator_id,
                 "provider": provider_used,
@@ -4741,6 +4875,10 @@ async fn run_post_reply_pipelines(
                 "cause": cause.cause.as_str(),
                 "cause_confidence": cause.confidence,
                 "cause_matched_patterns": cause.matched_patterns,
+                "provider_native": observation.provider_native,
+                "native_reason": observation.native_reason.as_deref(),
+                "native_origin": observation.native_origin.map(|origin| origin.as_str()),
+                "refusal_evidence_hash_xxh3": observation.evidence_hash_xxh3(),
                 "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(response_text.as_bytes()),
                 "ts_unix": now_unix(),
             }));
@@ -4799,179 +4937,244 @@ async fn run_post_reply_pipelines(
     // pipeline reached first and ungated. (The abliterated path also re-checks
     // internally via the same gate for non-chat callers — no double-emit here
     // because both blocks are skipped when `hard_blocked`.)
-    let hard_blocked = crate::security::refusal_abliterated::hard_block_gate(
-        &final_prompt,
-        Some(&writer),
-        now_unix() as i64,
-    )
-    .is_some();
-
+    let refusal_recovery_env_enabled = std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
+        .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
+        .unwrap_or(true);
+    let truthful_retry_enabled = config.refusal_recovery.enabled && refusal_recovery_env_enabled;
+    let should_check_hard_block = should_check_refusal_hard_block(
+        recovery_route_eligible,
+        operator_origin,
+        initial_refusal_observation.is_some(),
+        truthful_retry_enabled,
+        config.refusal_recovery.abliterated_fallback_enabled,
+        config.refusal_recovery.teacher_escalation_enabled,
+        crate::providers::is_local_provider(&provider_used),
+        crate::skills::teacher::low_confidence_local(&refusal_completion.text),
+    );
+    let hard_blocked = should_check_hard_block
+        && crate::security::refusal_abliterated::hard_block_gate(
+            &recovery_request,
+            Some(&writer),
+            now_unix() as i64,
+        )
+        .is_some();
+    // A live CLI stream that already emitted provider deltas/boundary cannot
+    // be invisibly replaced after the fact. Retain and attribute its native
+    // refusal; only non-streaming or explicitly buffered/gated streams may
+    // enter a response-replacing recovery path.
+    let recovery_can_replace_visible_response = !args.stream || stream_plan.output_deferred;
     let mut derived_from_mirror_pipeline = false;
-    if !hard_blocked
-        && config.refusal_recovery.enabled
-        && std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
-            .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
-            .unwrap_or(true)
+    if !recovery_can_replace_visible_response
+        && truthful_retry_enabled
+        && initial_refusal_observation.is_some()
     {
-        let report = crate::security::refusal_detect::classify(&response_text);
-        if report.is_refusal() {
-            let recovery_req = crate::providers::Request {
-                prompt: final_prompt.clone(),
-                // Q1: idempotent apply — re-entry path also
-                // gets the Karpathy preamble. The
-                // `apply_code_discipline_preamble` no-ops when the
-                // preamble is already present so this is
-                // safe under any sequencing.
-                system: Some(
-                    crate::providers::context_guards::apply_code_discipline_preamble(
-                        final_system.as_deref(),
-                    ),
+        info!(
+            "native refusal retained without transparent retry because the live stream boundary was already emitted"
+        );
+    }
+    if recovery_route_eligible
+        && !hard_blocked
+        && recovery_can_replace_visible_response
+        && truthful_retry_enabled
+        && initial_refusal_observation.is_some()
+    {
+        let recovery_req = crate::providers::Request {
+            // Q1: idempotent apply — re-entry path also
+            // gets the Karpathy preamble. The
+            // `apply_code_discipline_preamble` no-ops when the
+            // preamble is already present so this is
+            // safe under any sequencing.
+            system: Some(
+                crate::providers::context_guards::apply_code_discipline_preamble(
+                    recovery_request.system.as_deref(),
                 ),
-                model: Some(model_used.clone()),
-                ..Default::default()
-            };
-            match crate::security::refusal_recovery::try_recover_multi(
-                provider,
-                &recovery_req,
-                &response_text,
-                &config.refusal_recovery.disabled_reframings,
-                Some(&writer),
-                now_unix(),
-                config.refusal_recovery.max_attempts,
-            )
-            .await
-            {
-                Ok(crate::security::refusal_recovery::RecoveryOutcome::Recovered {
+            ),
+            ..recovery_request.clone()
+        };
+        match crate::security::refusal_recovery::try_recover_completion_multi(
+            provider,
+            &recovery_req,
+            operator_origin,
+            &refusal_completion,
+            &config.refusal_recovery.disabled_reframings,
+            Some(&writer),
+            now_unix(),
+            config.refusal_recovery.max_attempts,
+            &mut recovery_attempt_budget,
+        )
+        .await
+        {
+            Ok(crate::security::refusal_recovery::RecoveryOutcome::Recovered {
+                completion,
+                reframing_id,
+            }) => {
+                let completion = crate::security::refusal_recovery::merge_recovered_completion(
+                    &refusal_completion,
                     completion,
-                    reframing_id,
-                }) => {
-                    info!(
-                        reframing = reframing_id,
-                        original_bytes = response_text.len(),
-                        recovered_bytes = completion.text.len(),
-                        "refusal recovery succeeded — replacing response_text downstream"
+                );
+                info!(
+                    reframing = reframing_id,
+                    original_bytes = response_text.len(),
+                    recovered_bytes = completion.text.len(),
+                    "refusal recovery succeeded — replacing response_text downstream"
+                );
+                refusal_completion = completion;
+                response_text = refusal_completion.text.clone();
+                provider_used = refusal_completion.identity.provider.clone();
+                model_used = refusal_completion.identity.wire_model.clone();
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                resolved_cap = crate::tokens::budget::effective_cap(
+                    &provider_used,
+                    &model_used,
+                    config.tokens.max_per_request,
+                );
+                derived_from_mirror_pipeline = true; // ADV-07
+            }
+            Ok(crate::security::refusal_recovery::RecoveryOutcome::RefusedAgain {
+                reframing_id,
+                completion,
+                ..
+            }) => {
+                crate::security::refusal_recovery::accumulate_completion_attempt(
+                    &mut refusal_completion,
+                    &completion,
+                );
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                tracing::info!(
+                    reframing = reframing_id,
+                    "refusal recovery attempted but model refused again — leaving original refusal in place"
+                );
+            }
+            Ok(crate::security::refusal_recovery::RecoveryOutcome::NotRecoverable { cause }) => {
+                tracing::debug!(
+                    cause = cause.as_str(),
+                    "refusal not recoverable (Unknown / OperatorPolicy / all reframings disabled)"
+                );
+            }
+            Ok(crate::security::refusal_recovery::RecoveryOutcome::ProviderError {
+                reframing_id,
+                error,
+                completed_attempts,
+            }) => {
+                if let Some(completion) = completed_attempts {
+                    crate::security::refusal_recovery::accumulate_completion_attempt(
+                        &mut refusal_completion,
+                        &completion,
                     );
-                    response_text = completion.text;
-                    derived_from_mirror_pipeline = true; // ADV-07
+                    final_input_tokens = refusal_completion.input_tokens;
+                    final_output_tokens = refusal_completion.output_tokens;
                 }
-                Ok(crate::security::refusal_recovery::RecoveryOutcome::RefusedAgain {
-                    reframing_id,
-                    ..
-                }) => {
-                    tracing::info!(
-                        reframing = reframing_id,
-                        "refusal recovery attempted but model refused again — leaving original refusal in place"
-                    );
-                }
-                Ok(crate::security::refusal_recovery::RecoveryOutcome::NotRecoverable {
-                    cause,
-                }) => {
-                    tracing::debug!(
-                        cause = cause.as_str(),
-                        "refusal not recoverable (Unknown / OperatorPolicy / all reframings disabled)"
-                    );
-                }
-                Ok(crate::security::refusal_recovery::RecoveryOutcome::ProviderError {
-                    reframing_id,
-                    error,
-                }) => {
-                    tracing::warn!(
-                        reframing = reframing_id,
-                        error = %error,
-                        "refusal recovery retry hit provider error — leaving original refusal in place"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "refusal recovery failed (non-fatal)");
-                }
+                tracing::warn!(
+                    reframing = reframing_id,
+                    error = %error,
+                    "refusal recovery retry hit provider error — leaving original refusal in place"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "refusal recovery failed (non-fatal)");
             }
         }
     }
 
-    // ── GOLD-FEAT-08b Tier-2.5: jailbreak-harness retry ───────────────────
-    // Operator decision (2026-06-22, authorized-researcher / sovereign agent):
-    // BEFORE the sovereign local fallback, if the response is STILL a SafetyPolicy
-    // over-refusal and the operator opted in, retry the SAME cloud provider up to
-    // `jailbreak_max_retries` times, each wrapping the request in a distinct seed
-    // harness (ported from davidondrej/jailbreak-autoresearch). First non-refusal
-    // wins. If every harness still refuses, fall through to FEAT-08 below (the
-    // operator's local model — the sovereign floor). The CSAM/bioweapon hard-block
-    // floor runs first inside the retry. Opt-in + WAL-audited (0x25).
-    let mut jailbreak_recovered = false;
-    if !hard_blocked && config.refusal_recovery.jailbreak_retry_enabled {
-        let jb_report = crate::security::refusal_detect::classify(&response_text);
-        if jb_report.is_refusal()
-            && crate::security::refusal_abliterated::should_route_to_abliterated(
-                &crate::security::refusal_cause::classify_cause(&response_text),
-            )
-        {
-            match crate::security::jailbreak_retry::try_jailbreak_retry(
-                provider,
-                &final_prompt,
-                final_system.as_deref(),
-                None,
-                config.refusal_recovery.jailbreak_max_retries,
-                Some(&writer),
-                now_unix() as i64,
-            )
-            .await
-            {
-                Ok(Some(new_text)) => {
-                    tracing::info!(
-                        recovered_bytes = new_text.len(),
-                        "FEAT-08b jailbreak retry succeeded — replacing response"
-                    );
-                    response_text = new_text;
-                    derived_from_mirror_pipeline = true; // skip profile extraction on recovered turns
-                    jailbreak_recovered = true;
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(error = %e, "FEAT-08b jailbreak retry failed (non-fatal)");
-                }
-            }
-        }
+    // Legacy cloud jailbreak harnesses are intentionally not dispatched.
+    // Provider-native signals + one truthful context retry run above; any
+    // subsequent cloud leaf must be selected and authorized explicitly by the
+    // fallback router. Old configs remain parseable but receive a visible log.
+    if config.refusal_recovery.jailbreak_retry_enabled {
+        tracing::warn!(
+            "refusal_recovery.jailbreak_retry_enabled is deprecated and ignored; \
+             use the truthful context retry or an explicitly configured local fallback"
+        );
     }
 
     // ── GOLD-FEAT-08 Tier-3: local-abliterated fallback ───────────────────
-    // After the LOWKEY reframing pipeline above (and the FEAT-08b jailbreak retry,
-    // if it ran and did NOT recover), if the response is STILL a SafetyPolicy
+    // After the truthful reframing pipeline above, if the response is STILL a SafetyPolicy
     // over-refusal and the operator opted in, route to their OWN local abliterated
     // model (operator-owned hardware — NOT provider-deception). The orchestrator
     // runs the permanent hard-block floor first and emits WAL 0x26/0x27/0x28
     // internally. Best-effort; never bails a turn.
-    if !jailbreak_recovered && !hard_blocked && config.refusal_recovery.abliterated_fallback_enabled
+    if recovery_route_eligible
+        && !hard_blocked
+        && recovery_can_replace_visible_response
+        && config.refusal_recovery.abliterated_fallback_enabled
+        && let Some(t3_observation) =
+            crate::security::refusal_recovery::observe_completion_refusal(&refusal_completion)
+        && crate::security::refusal_abliterated::should_route_to_abliterated(&t3_observation.cause)
     {
-        let t3_report = crate::security::refusal_detect::classify(&response_text);
-        if t3_report.is_refusal()
-            && crate::security::refusal_abliterated::should_route_to_abliterated(
-                &crate::security::refusal_cause::classify_cause(&response_text),
-            )
+        match crate::security::refusal_abliterated::try_abliterated_fallback(
+            provider,
+            &call_authorizer,
+            &recovery_request,
+            &refusal_completion,
+            crate::security::refusal_abliterated::AbliteratedFallbackOptions {
+                operator_origin,
+                model: config.refusal_recovery.abliterated_model.as_deref(),
+                writer: Some(&writer),
+                now_unix: now_unix() as i64,
+            },
+            &mut recovery_attempt_budget,
+        )
+        .await
         {
-            match crate::security::refusal_abliterated::try_abliterated_fallback(
-                provider,
-                &call_authorizer,
-                &final_prompt,
-                final_system.as_deref(),
-                config.refusal_recovery.abliterated_model.as_deref(),
-                &response_text,
-                Some(&writer),
-                now_unix() as i64,
-            )
-            .await
-            {
-                Ok(Some(new_text)) => {
-                    tracing::info!(
-                        recovered_bytes = new_text.len(),
-                        "FEAT-08 abliterated fallback succeeded — replacing response"
-                    );
-                    response_text = new_text;
-                    derived_from_mirror_pipeline = true; // ADV-07: skip profile extraction on recovered turns
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    tracing::warn!(error = %e, "FEAT-08 abliterated fallback failed (non-fatal)");
-                }
+            Ok(crate::security::refusal_abliterated::AbliteratedOutcome::Recovered(completion)) => {
+                let completion = crate::security::refusal_recovery::merge_recovered_completion(
+                    &refusal_completion,
+                    completion,
+                );
+                tracing::info!(
+                    recovered_bytes = completion.text.len(),
+                    provider = %completion.identity.provider,
+                    model = %completion.identity.wire_model,
+                    "FEAT-08 abliterated fallback succeeded — replacing response"
+                );
+                refusal_completion = completion;
+                response_text = refusal_completion.text.clone();
+                provider_used = refusal_completion.identity.provider.clone();
+                model_used = refusal_completion.identity.wire_model.clone();
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                resolved_cap = crate::tokens::budget::effective_cap(
+                    &provider_used,
+                    &model_used,
+                    config.tokens.max_per_request,
+                );
+                derived_from_mirror_pipeline = true; // ADV-07: skip profile extraction on recovered turns
+            }
+            Ok(crate::security::refusal_abliterated::AbliteratedOutcome::RefusedAgain(
+                completion,
+            )) => {
+                crate::security::refusal_recovery::accumulate_completion_attempt(
+                    &mut refusal_completion,
+                    &completion,
+                );
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                tracing::info!(
+                    provider = %completion.identity.provider,
+                    model = %completion.identity.wire_model,
+                    "FEAT-08 abliterated fallback was also refused — retaining original response"
+                );
+            }
+            Ok(crate::security::refusal_abliterated::AbliteratedOutcome::AttemptedNoRecovery(
+                completion,
+            )) => {
+                crate::security::refusal_recovery::accumulate_completion_attempt(
+                    &mut refusal_completion,
+                    &completion,
+                );
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                tracing::info!(
+                    provider = %completion.identity.provider,
+                    model = %completion.identity.wire_model,
+                    "FEAT-08 local shadow completed but cloud re-ask failed — retaining original response"
+                );
+            }
+            Ok(crate::security::refusal_abliterated::AbliteratedOutcome::NotRecovered) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, "FEAT-08 abliterated fallback failed (non-fatal)");
             }
         }
     }
@@ -4985,36 +5188,114 @@ async fn run_post_reply_pipelines(
     // `derived_from_mirror_pipeline = true` (ADV-07) skips profile extraction
     // on corrected turns so the teacher's writing style is not learned as the
     // operator's own. Best-effort; never fails a turn.
-    if !hard_blocked
+    if recovery_route_eligible
+        && !hard_blocked
+        && recovery_can_replace_visible_response
         && crate::providers::is_local_provider(&provider_used)
         && config.refusal_recovery.teacher_escalation_enabled
     {
         match crate::skills::teacher::try_teacher_escalation(
-            &response_text,
-            &final_prompt,
-            final_system.as_deref(),
+            &refusal_completion,
+            operator_origin,
+            &recovery_request.prompt,
+            recovery_request.system.as_deref(),
             &provider_used,
             &config,
             &first_tour_home,
             &call_authorizer,
             Some(&writer),
             now_unix() as i64,
+            &mut recovery_attempt_budget,
         )
         .await
         {
-            Ok(Some(corrected)) => {
+            Ok(crate::skills::teacher::TeacherOutcome::Corrected(completion)) => {
+                let completion = crate::security::refusal_recovery::merge_recovered_completion(
+                    &refusal_completion,
+                    completion,
+                );
                 tracing::info!(
-                    corrected_bytes = corrected.len(),
+                    corrected_bytes = completion.text.len(),
+                    provider = %completion.identity.provider,
+                    model = %completion.identity.wire_model,
                     "ODY-08 teacher escalation succeeded — replacing response"
                 );
-                response_text = corrected;
+                refusal_completion = completion;
+                response_text = refusal_completion.text.clone();
+                provider_used = refusal_completion.identity.provider.clone();
+                model_used = refusal_completion.identity.wire_model.clone();
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                resolved_cap = crate::tokens::budget::effective_cap(
+                    &provider_used,
+                    &model_used,
+                    config.tokens.max_per_request,
+                );
                 derived_from_mirror_pipeline = true; // ADV-07: skip profile extraction
             }
-            Ok(None) => {}
+            Ok(crate::skills::teacher::TeacherOutcome::Refused(completion)) => {
+                crate::security::refusal_recovery::accumulate_completion_attempt(
+                    &mut refusal_completion,
+                    &completion,
+                );
+                final_input_tokens = refusal_completion.input_tokens;
+                final_output_tokens = refusal_completion.output_tokens;
+                tracing::info!(
+                    provider = %completion.identity.provider,
+                    model = %completion.identity.wire_model,
+                    "ODY-08 teacher also refused — retaining original response"
+                );
+            }
+            Ok(crate::skills::teacher::TeacherOutcome::NotEscalated) => {}
             Err(e) => {
                 tracing::warn!(error = %e, "ODY-08 teacher escalation failed (non-fatal)");
             }
         }
+    }
+
+    if let Some(notice) = crate::providers::operator_refusal_notice(&refusal_completion) {
+        refusal_completion.text = notice;
+        response_text = refusal_completion.text.clone();
+    }
+
+    // Each concrete leaf response was durably recorded at the provider
+    // boundary before control returned here. Close the turn journal only after
+    // every recovery layer settled so its final identity, native termination
+    // and aggregate reported usage describe the response that continues
+    // through egress. The original refusal remains separately anchored by
+    // REFUSAL_OBSERVED and every retry remains a distinct provider-boundary
+    // cost/audit attempt.
+    if let Some(mut j) = turn_journal {
+        use crate::recovery::turn_journal::{TurnEvent, closed_payload};
+        let turn_id = format!("{raw_event_id:016x}");
+        let ts = crate::time::now_unix_i64();
+        j.append(&TurnEvent::ProviderResponse {
+            ts_unix: ts,
+            provider: refusal_completion.identity.provider.clone(),
+            model: refusal_completion.identity.wire_model.clone(),
+            termination: refusal_completion.termination.clone(),
+            input_tokens: refusal_completion.input_tokens.unwrap_or(0),
+            output_tokens: refusal_completion.output_tokens.unwrap_or(0),
+            latency_ms: refusal_completion
+                .latency
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64,
+            cache_creation_tokens: refusal_completion.cache_creation_tokens,
+            cache_read_tokens: refusal_completion.cache_read_tokens,
+        })
+        .context("append final provider response to turn journal")?;
+        let line_count = tokio::fs::read_to_string(j.path())
+            .await
+            .map(|b| b.lines().filter(|l| !l.is_empty()).count())
+            .unwrap_or(0);
+        let payload = closed_payload(&turn_id, ts, line_count);
+        let header =
+            crate::wal::make_header(crate::wal::events::EVENT_TYPE_TURN_JOURNAL_CLOSED, &payload);
+        writer
+            .append(header, payload)
+            .await
+            .context("append turn-journal CLOSED anchor")?;
+        j.close().context("remove closed turn journal")?;
     }
 
     if args.stream && stream_plan.output_deferred {
@@ -5038,12 +5319,16 @@ async fn run_post_reply_pipelines(
                 StreamDoneMetadata {
                     control_token: stream_plan.control_token,
                     chunk_count: stream_plan.provider_chunk_count,
-                    input_tokens: final_input_tokens,
-                    output_tokens: final_output_tokens,
+                    input_tokens: refusal_completion.input_tokens,
+                    output_tokens: refusal_completion.output_tokens,
                     limit_tokens: stream_plan.limit_tokens,
-                    elapsed_ms: stream_plan.elapsed_ms,
-                    model: &model_used,
+                    elapsed_ms: refusal_completion
+                        .latency
+                        .as_millis()
+                        .min(u128::from(u64::MAX)) as u64,
+                    model: &refusal_completion.identity.wire_model,
                     response_text: &response_text,
+                    termination: &refusal_completion.termination,
                 },
             )
             .context("write post-provider-gated completion boundary")?,
@@ -6254,7 +6539,6 @@ async fn run_chat_with_consent(
         hook.stage == crate::hooks::HookStage::PostProviderCall && hook.enabled.unwrap_or(true)
     }) || !pending_block_restorations.is_empty()
         || config.refusal_recovery.enabled
-        || config.refusal_recovery.jailbreak_retry_enabled
         || config.refusal_recovery.abliterated_fallback_enabled
         || (config.refusal_recovery.teacher_escalation_enabled
             && crate::providers::is_local_provider(provider.name()));
@@ -6286,6 +6570,7 @@ async fn run_chat_with_consent(
         mcp_catalogue_slot.is_some(),
     )
     .await;
+    let recovery_route_eligible = chat_route.supports_single_leaf_recovery();
 
     let mut budget_items = budget_items;
     let mut final_system = final_system;
@@ -6373,23 +6658,17 @@ async fn run_chat_with_consent(
             FramedProviderDispatch {
                 dispatch:
                     ProviderDispatchResult {
-                        response_text,
-                        input_tokens: final_input_tokens,
-                        output_tokens: final_output_tokens,
-                        provider: provider_used,
-                        model: model_used,
+                        completion,
                         stream_chunk_count,
                         ..
                     },
                 stream_done_line,
                 stream_output_deferred,
                 stream_limit_tokens,
-                stream_elapsed_ms,
             },
         writer,
         writer_join,
-        final_prompt,
-        final_system,
+        recovery_request,
         turn_journal,
         mcp_tool_calls,
         mcp_tool_records,
@@ -6424,19 +6703,15 @@ async fn run_chat_with_consent(
 
     let stream_control_token_ref = stream_control_token.as_ref().map(|token| token.as_str());
     let post_reply_result = run_post_reply_pipelines(
-        response_text,
+        completion,
         writer,
         writer_join,
         config,
         provider,
         args,
         prompt,
-        final_prompt,
-        final_system,
-        provider_used,
-        model_used,
-        final_input_tokens,
-        final_output_tokens,
+        recovery_request,
+        recovery_route_eligible,
         review_context,
         hooks,
         segment_path,
@@ -6467,7 +6742,6 @@ async fn run_chat_with_consent(
             output_deferred: stream_output_deferred,
             provider_chunk_count: stream_chunk_count,
             limit_tokens: stream_limit_tokens,
-            elapsed_ms: stream_elapsed_ms,
         },
     )
     .await;
@@ -10631,8 +10905,10 @@ mod tests {
     #[test]
     fn authenticated_stream_frames_preserve_provider_review_done_order() {
         let control_token = "0123456789abcdef0123456789abcdef";
+        let termination = crate::providers::ProviderTermination::default();
         let provider_done_line =
-            stream_provider_done_line(Some(control_token), 2, "primary reply").unwrap();
+            stream_provider_done_line(Some(control_token), 2, "primary reply", &termination)
+                .unwrap();
         let stream_done_line = build_stream_done_line(StreamDoneMetadata {
             control_token: Some(control_token),
             chunk_count: 2,
@@ -10642,6 +10918,7 @@ mod tests {
             elapsed_ms: 7,
             model: "test-model",
             response_text: "primary reply",
+            termination: &termination,
         });
         let mut stdout = b"primary reply".to_vec();
 
@@ -10675,8 +10952,13 @@ mod tests {
 
     #[test]
     fn provider_done_frame_is_token_bound_and_carries_no_reply_text() {
-        let line = stream_provider_done_line(Some("0123456789abcdef0123456789abcdef"), 7, "reply")
-            .unwrap();
+        let line = stream_provider_done_line(
+            Some("0123456789abcdef0123456789abcdef"),
+            7,
+            "reply",
+            &crate::providers::ProviderTermination::default(),
+        )
+        .unwrap();
         let frame: serde_json::Value = serde_json::from_str(&line).unwrap();
 
         assert_eq!(frame["neoth_stream"], "provider_done");
@@ -10686,6 +10968,153 @@ mod tests {
         assert_eq!(frame["content_hash"], stream_content_hash("reply"));
         assert!(frame.get("text").is_none());
         assert!(frame.get("reply").is_none());
+    }
+
+    #[test]
+    fn stream_terminal_frames_expose_only_typed_refusal_projection() {
+        let termination = crate::providers::ProviderTermination::refused(
+            Some("content_\nfilter".to_string()),
+            crate::providers::RefusalOrigin::FinishReason,
+            "content_\0filter",
+            Some("provider-authored body is not terminal metadata".to_string()),
+        )
+        .with_native_detail("raw_safety", serde_json::json!({"secret": "omitted"}));
+        let provider_done = stream_provider_done_line(
+            Some("0123456789abcdef0123456789abcdef"),
+            0,
+            "",
+            &termination,
+        )
+        .expect("authenticated provider boundary");
+        let done = build_stream_done_line(StreamDoneMetadata {
+            control_token: Some("0123456789abcdef0123456789abcdef"),
+            chunk_count: 0,
+            input_tokens: Some(3),
+            output_tokens: Some(0),
+            limit_tokens: 64,
+            elapsed_ms: 2,
+            model: "test-model",
+            response_text: "",
+            termination: &termination,
+        });
+
+        for frame in [provider_done, done] {
+            let frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+            assert_eq!(frame["finish_reason"], "content_filter");
+            assert_eq!(frame["refused"], true);
+            assert_eq!(frame["refusal_origin"], "finish_reason");
+            assert_eq!(frame["refusal_reason"], "content_filter");
+            assert!(frame.get("message").is_none());
+            assert!(frame.get("native_details").is_none());
+            assert!(frame.get("raw_safety").is_none());
+        }
+    }
+
+    #[test]
+    fn dispatch_result_preserves_complete_provider_envelope() {
+        let completion = crate::providers::Completion {
+            text: "reply".to_string(),
+            identity: crate::providers::CompletionIdentity {
+                provider: "decorator-leaf".to_string(),
+                wire_model: "wire-model".to_string(),
+                dispatch_route: vec![2, 1],
+            },
+            model: "wire-model".to_string(),
+            termination: crate::providers::ProviderTermination::finished(Some("stop".to_string())),
+            latency: std::time::Duration::from_millis(17),
+            input_tokens: Some(11),
+            output_tokens: Some(7),
+            cache_creation_tokens: Some(5),
+            cache_read_tokens: Some(3),
+        };
+
+        let dispatch = ProviderDispatchResult::from_completion(completion.clone());
+        assert_eq!(dispatch.completion.text, completion.text);
+        assert_eq!(dispatch.completion.identity, completion.identity);
+        assert_eq!(dispatch.completion.termination, completion.termination);
+        assert_eq!(dispatch.completion.latency, completion.latency);
+        assert_eq!(
+            dispatch.completion.cache_creation_tokens,
+            completion.cache_creation_tokens
+        );
+        assert_eq!(
+            dispatch.completion.cache_read_tokens,
+            completion.cache_read_tokens
+        );
+    }
+
+    #[test]
+    fn stream_cache_counters_aggregate_without_overflow() {
+        let mut total = None;
+        accumulate_optional_counter(&mut total, Some(5));
+        accumulate_optional_counter(&mut total, None);
+        accumulate_optional_counter(&mut total, Some(7));
+        assert_eq!(total, Some(12));
+
+        let mut saturated = Some(u32::MAX);
+        accumulate_optional_counter(&mut saturated, Some(1));
+        assert_eq!(saturated, Some(u32::MAX));
+    }
+
+    #[test]
+    fn hard_block_gate_runs_only_for_an_eligible_response_replacement() {
+        let local_operator = Some(
+            crate::security::operator_sovereignty::AuthenticatedOperatorOrigin::LocalInteractive,
+        );
+
+        assert!(!should_check_refusal_hard_block(
+            true,
+            local_operator,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert!(!should_check_refusal_hard_block(
+            true,
+            local_operator,
+            true,
+            false,
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert!(should_check_refusal_hard_block(
+            true,
+            local_operator,
+            true,
+            true,
+            false,
+            false,
+            false,
+            false,
+        ));
+        assert!(should_check_refusal_hard_block(
+            true,
+            local_operator,
+            false,
+            false,
+            false,
+            true,
+            true,
+            true,
+        ));
+        assert!(!should_check_refusal_hard_block(
+            false,
+            local_operator,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+        ));
+        assert!(!should_check_refusal_hard_block(
+            true, None, true, true, true, true, true, true,
+        ));
     }
 
     #[test]
@@ -10723,7 +11152,15 @@ mod tests {
 
     #[test]
     fn provider_done_frame_is_absent_without_an_authenticated_token() {
-        assert!(stream_provider_done_line(None, 7, "reply").is_none());
+        assert!(
+            stream_provider_done_line(
+                None,
+                7,
+                "reply",
+                &crate::providers::ProviderTermination::default(),
+            )
+            .is_none()
+        );
     }
 
     #[test]
@@ -10806,14 +11243,18 @@ mod tests {
                 true,
                 Some(control_token),
                 64,
-                3,
                 false,
                 output,
             )
             .unwrap();
 
-            let provider_done_line =
-                stream_provider_done_line(Some(control_token), chunks, "reply").unwrap();
+            let provider_done_line = stream_provider_done_line(
+                Some(control_token),
+                chunks,
+                "reply",
+                &crate::providers::ProviderTermination::default(),
+            )
+            .unwrap();
             let stdout = String::from_utf8(stdout).unwrap();
             assert_eq!(stdout.matches(&provider_done_line).count(), 1);
             let done_line = framed
@@ -10858,7 +11299,7 @@ mod tests {
         };
 
         let nonstream =
-            finalize_dispatch_stream_to(RejectWrites, false, None, 64, 3, false, make_output())
+            finalize_dispatch_stream_to(RejectWrites, false, None, 64, false, make_output())
                 .unwrap();
         assert!(nonstream.stream_done_line.is_none());
 
@@ -10867,7 +11308,6 @@ mod tests {
             true,
             Some("0123456789abcdef0123456789abcdef"),
             64,
-            3,
             false,
             make_output(),
         ) {
@@ -11167,6 +11607,7 @@ modes:
         let build = |catalogue: &crate::mcp::catalogue::McpPromptCatalogue| {
             crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                 prompt: "use the available tool",
+                operator_sovereignty: None,
                 operator_context: None,
                 preset_addendum: None,
                 explicit_system: None,
@@ -12104,6 +12545,7 @@ modes:
         }
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock-1".to_string(),
@@ -12132,6 +12574,7 @@ modes:
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "SHOULD NOT BE CALLED".into(),
                 identity: Default::default(),
                 model: "x".into(),
@@ -12162,6 +12605,7 @@ modes:
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "must not dispatch".into(),
                 identity: Default::default(),
                 model: "gpt-4o".into(),
@@ -12267,7 +12711,8 @@ modes:
         );
 
         // WAL: SegmentHeader, then MODE_CHECKPOINT (PWF-02 session-start anchor),
-        // then RAW_TEXT — and NOTHING after RAW_TEXT (no PROVIDER_REQUEST).
+        // then RAW_TEXT. Writer-finalization metadata may follow, but no
+        // provider/cost/permission frame may exist on this local shortcut.
         let bytes = read(&seg).await.unwrap();
         let frames = &bytes[SEGMENT_HEADER_LEN..];
         // PWF-02: skip the MODE_CHECKPOINT frame that now precedes RAW_TEXT.
@@ -12287,12 +12732,22 @@ modes:
             dec0.payload, b"Do you remember when we talked about rust?",
             "RAW_TEXT payload must be the verbatim recall prompt"
         );
-        let rest = &frames[dec0.header.total_len as usize..];
-        assert!(
-            rest.is_empty(),
-            "no frame may follow RAW_TEXT on the recall path (no PROVIDER_REQUEST); got {} trailing bytes",
-            rest.len()
-        );
+        let mut rest = &frames[dec0.header.total_len as usize..];
+        while !rest.is_empty() {
+            let frame = decode_frame(rest).expect("decode recall-path trailing WAL frame");
+            assert!(
+                !(0x20..=0x2f).contains(&frame.header.event_type)
+                    && !matches!(
+                        frame.header.event_type,
+                        crate::wal::events::EVENT_TYPE_PERMISSION_GRANTED
+                            | crate::wal::events::EVENT_TYPE_PERMISSION_DENIED
+                            | crate::wal::events::EVENT_TYPE_COST_ESTIMATE_SHOWN
+                    ),
+                "local recall must not create provider/cost/permission frame 0x{:02x}",
+                frame.header.event_type
+            );
+            rest = &rest[frame.header.total_len as usize..];
+        }
     }
 
     #[tokio::test]
@@ -12593,6 +13048,7 @@ modes:
             }
             async fn complete(&self, _req: Request) -> Result<Completion> {
                 Ok(Completion {
+                    termination: Default::default(),
                     text: "PARIS".into(),
                     identity: Default::default(),
                     model: "Qwen/Qwen2.5-3B-Instruct".into(),
@@ -12711,6 +13167,8 @@ modes:
         use crate::providers::ChunkStream;
         use futures_util::stream;
 
+        static RECOVERY_CALLS: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
         struct MockStreamProvider;
 
         #[async_trait]
@@ -12725,6 +13183,7 @@ modes:
                 true
             }
             async fn complete(&self, _req: Request) -> Result<Completion> {
+                RECOVERY_CALLS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 anyhow::bail!("not used in streaming test")
             }
             async fn stream_raw(
@@ -12736,6 +13195,7 @@ modes:
                     Ok(CompletionChunk {
                         delta: "hello ".into(),
                         done: false,
+                        termination: Default::default(),
                         identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
@@ -12745,6 +13205,7 @@ modes:
                     Ok(CompletionChunk {
                         delta: "world".into(),
                         done: false,
+                        termination: Default::default(),
                         identity: Default::default(),
                         input_tokens: None,
                         output_tokens: None,
@@ -12754,6 +13215,12 @@ modes:
                     Ok(CompletionChunk {
                         delta: String::new(),
                         done: true,
+                        termination: crate::providers::ProviderTermination::refused(
+                            Some("content_filter".into()),
+                            crate::providers::RefusalOrigin::FinishReason,
+                            "content_filter",
+                            None,
+                        ),
                         identity: Default::default(),
                         input_tokens: Some(5),
                         output_tokens: Some(3),
@@ -12800,7 +13267,10 @@ modes:
             rollback: crate::config::RollbackConfig::default(),
             claude_cli: crate::config::ClaudeCliConfig::default(),
             profile: crate::config::ProfileConfig::default(),
-            refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
+            refusal_recovery: crate::config::RefusalRecoveryConfig {
+                enabled: false,
+                ..Default::default()
+            },
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
@@ -12834,9 +13304,15 @@ modes:
             until: vec![],
         };
 
+        RECOVERY_CALLS.store(0, std::sync::atomic::Ordering::SeqCst);
         run_chat_with(args, config, &MockStreamProvider)
             .await
             .expect("streaming run");
+        assert_eq!(
+            RECOVERY_CALLS.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "an already-emitted live stream must not be transparently retried"
+        );
 
         // B22 — the streaming call is authorized from its final request at the
         // provider boundary, immediately before the stream is opened.
@@ -12865,6 +13341,7 @@ modes:
         let mut request_index = None;
         let mut response_index = None;
         let mut chunk_count = 0usize;
+        let mut refusal_observed = false;
         let mut request_payload: Option<serde_json::Value> = None;
         let mut response_payload: Option<serde_json::Value> = None;
         while !cursor.is_empty() {
@@ -12893,6 +13370,7 @@ modes:
                     response_payload = Some(serde_json::from_slice(frame.payload).unwrap());
                 }
                 crate::wal::events::EVENT_TYPE_PROVIDER_STREAM_CHUNK => chunk_count += 1,
+                crate::wal::events::EVENT_TYPE_REFUSAL_OBSERVED => refusal_observed = true,
                 _ => {}
             }
             cursor = &cursor[frame.header.total_len as usize..];
@@ -12903,6 +13381,10 @@ modes:
         assert_eq!(request_index.unwrap(), permission_index.unwrap() + 1);
         assert!(request_index.unwrap() < response_index.unwrap());
         assert_eq!(chunk_count, 2);
+        assert!(
+            refusal_observed,
+            "native final-stream refusal must reach post-reply observation"
+        );
         let request_payload = request_payload.unwrap();
         let response_payload = response_payload.unwrap();
         assert_eq!(response_payload["streamed"], true);
@@ -13076,6 +13558,7 @@ modes:
                     .clone()
                     .unwrap_or_else(|| "mock-capture-1".to_string());
                 Ok(Completion {
+                    termination: Default::default(),
                     text: self.reply.clone(),
                     identity: Default::default(),
                     model: model_echo,
@@ -13269,6 +13752,7 @@ modes:
             self.counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "counting-mock-1".to_string(),
@@ -13304,6 +13788,7 @@ modes:
                 .expect("authorized leaf request must bind a model");
             self.seen_models.lock().unwrap().push(model.clone());
             Ok(Completion {
+                termination: Default::default(),
                 text: "captured".into(),
                 identity: Default::default(),
                 model,
@@ -14113,6 +14598,7 @@ modes:
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_system.lock().unwrap() = req.system.clone();
             Ok(Completion {
+                termination: Default::default(),
                 text: "ok".into(),
                 identity: Default::default(),
                 model: "cap-1".into(),
@@ -15045,6 +15531,7 @@ modes:
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_model.lock().unwrap() = Some(req.model.clone());
             Ok(Completion {
+                termination: Default::default(),
                 text: "model-captured".into(),
                 identity: Default::default(),
                 model: req.model.clone().unwrap_or_else(|| "default".into()),
@@ -15313,6 +15800,7 @@ modes:
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.seen_budget.lock().unwrap() = Some(req.thinking_budget);
             Ok(Completion {
+                termination: Default::default(),
                 text: "effort-captured".into(),
                 identity: Default::default(),
                 model: "effort-capture".into(),

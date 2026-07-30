@@ -310,6 +310,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.into(),
                 identity: Default::default(),
                 model: "mock".into(),

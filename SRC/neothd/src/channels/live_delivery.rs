@@ -399,6 +399,7 @@ pub async fn collect_provider_stream(
     let mut output_tokens = None;
     let mut cache_creation_tokens = None;
     let mut cache_read_tokens = None;
+    let mut termination = crate::providers::ProviderTermination::default();
     let mut saw_done = false;
 
     while let Some(item) = stream.next().await {
@@ -459,6 +460,7 @@ pub async fn collect_provider_stream(
 
         if chunk.done {
             saw_done = true;
+            termination = chunk.termination;
             input_tokens = chunk.input_tokens;
             output_tokens = chunk.output_tokens;
             cache_creation_tokens = chunk.cache_creation_tokens;
@@ -485,6 +487,7 @@ pub async fn collect_provider_stream(
     };
     Ok(LiveStreamResult::Complete(Box::new(LiveStreamCompletion {
         completion: Completion {
+            termination,
             text,
             model: identity.wire_model.clone(),
             identity,
@@ -872,7 +875,9 @@ mod tests {
             identity: CompletionIdentity {
                 provider: "mock_provider".into(),
                 wire_model: "mock_model".into(),
+                dispatch_route: Vec::new(),
             },
+            termination: Default::default(),
             input_tokens: done.then_some(3),
             output_tokens: done.then_some(2),
             cache_creation_tokens: None,
@@ -908,6 +913,44 @@ mod tests {
         assert_eq!(ch.sends.load(Ordering::SeqCst), 1);
         assert_eq!(ch.edits.load(Ordering::SeqCst), 2);
         assert_eq!(ch.last_edit_text.lock().unwrap().as_deref(), Some("hello"));
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn provider_stream_preserves_native_final_termination() {
+        let ch = Arc::new(MockChannel::new(false));
+        let live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Slack, fast_config());
+        let mut final_chunk = chunk("", true);
+        final_chunk.termination = crate::providers::ProviderTermination::refused(
+            Some("content_filter".into()),
+            crate::providers::RefusalOrigin::FinishReason,
+            "content_filter",
+            None,
+        );
+        let stream: ChunkStream = Box::pin(futures_util::stream::iter(vec![Ok(final_chunk)]));
+        let (writer, join, _dir) = test_writer();
+
+        let result = collect_provider_stream(stream, live, &writer, 1024)
+            .await
+            .unwrap();
+        let LiveStreamResult::Complete(completed) = result else {
+            panic!("stream must complete")
+        };
+        assert_eq!(
+            completed.completion.termination.finish_reason.as_deref(),
+            Some("content_filter")
+        );
+        assert_eq!(
+            completed
+                .completion
+                .termination
+                .refusal
+                .as_ref()
+                .map(|refusal| refusal.origin),
+            Some(crate::providers::RefusalOrigin::FinishReason)
+        );
 
         drop(writer);
         let _ = join.await;

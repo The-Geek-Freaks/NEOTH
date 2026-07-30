@@ -28,6 +28,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::termination::ProviderTermination;
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
@@ -174,6 +175,7 @@ impl Provider for CohereAdapter {
                 .json()
                 .await
                 .context("parse cohere_api response JSON")?;
+            let termination = cohere_termination(parsed.finish_reason.clone())?;
 
             // Concatenate every text block (Anthropic-like content[] array).
             // Empty → error (CDX-07 silent-fail-to-empty guard).
@@ -217,6 +219,7 @@ impl Provider for CohereAdapter {
                 text,
                 identity: Default::default(),
                 model,
+                termination,
                 latency,
                 input_tokens,
                 output_tokens,
@@ -226,6 +229,15 @@ impl Provider for CohereAdapter {
         })
         .await
     }
+}
+
+fn cohere_termination(finish_reason: Option<String>) -> Result<ProviderTermination> {
+    if let Some(reason) = finish_reason.as_deref()
+        && matches!(reason.to_ascii_uppercase().as_str(), "ERROR" | "TIMEOUT")
+    {
+        anyhow::bail!("cohere_api returned 200 OK with non-success finish_reason `{reason}`");
+    }
+    Ok(ProviderTermination::finished(finish_reason))
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -380,6 +392,10 @@ mod tests {
         assert_eq!(completion.input_tokens, Some(11));
         assert_eq!(completion.output_tokens, Some(6));
         assert_eq!(completion.model, "command-mock");
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("COMPLETE")
+        );
     }
 
     #[tokio::test]
@@ -494,5 +510,43 @@ mod tests {
             msg.contains("no text content") || msg.contains("MAX_TOKENS"),
             "error must explain WHY; got: {msg}"
         );
+    }
+
+    #[test]
+    fn finish_reason_table_preserves_success_and_rejects_terminal_errors() {
+        for reason in ["COMPLETE", "MAX_TOKENS", "STOP_SEQUENCE", "TOOL_CALL"] {
+            let termination =
+                cohere_termination(Some(reason.into())).expect("successful finish reason");
+            assert_eq!(termination.finish_reason.as_deref(), Some(reason));
+            assert!(!termination.is_refusal());
+        }
+        for reason in ["ERROR", "TIMEOUT", "error", "timeout"] {
+            let error = cohere_termination(Some(reason.into())).expect_err("must be non-success");
+            assert!(error.to_string().contains(reason));
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_200_error_finish_reason_is_not_returned_as_completion() {
+        let mock = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "finish_reason": "ERROR",
+                "message": {
+                    "content": [{"type": "text", "text": "partial transport failure"}]
+                }
+            })))
+            .mount(&mock)
+            .await;
+        let adapter = build_adapter_against(&mock.uri());
+        let error = adapter
+            .complete(Request {
+                prompt: "x".into(),
+                ..Default::default()
+            })
+            .await
+            .expect_err("ERROR finish reason must fail");
+        assert!(error.to_string().contains("finish_reason `ERROR`"));
     }
 }

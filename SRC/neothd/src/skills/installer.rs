@@ -54,9 +54,9 @@ use sha2::{Digest as _, Sha256};
 use super::schema::SkillManifest;
 use super::store::{
     BoundChildObject, BoundDirectory, bind_child_object, cap_metadata_is_link_like,
-    open_bound_directory, open_real_child_dir, open_regular_file, read_regular_file_bounded,
-    read_regular_file_bounded_observed, remove_child_file, remove_real_directory_tree,
-    rename_child, valid_child_identity_token,
+    open_bound_directory, open_bound_directory_from_trusted_anchor, open_real_child_dir,
+    open_regular_file, read_regular_file_bounded, read_regular_file_bounded_observed,
+    remove_child_file, remove_real_directory_tree, rename_child, valid_child_identity_token,
 };
 
 const MAX_SKILL_MANIFEST_BYTES: usize = 1024 * 1024;
@@ -78,6 +78,26 @@ const CREATOR_DIRECTORY_STAGE_PREFIX: &str = ".skill-create-stage-";
 const CREATOR_MANIFEST_STAGE_PREFIX: &str = ".skill-yaml.stage-";
 const FILE_REPLACEMENT_STAGE_PREFIX: &str = ".neoth-replace-";
 static SKILL_MUTATION_PROCESS_NONCE: OnceLock<String> = OnceLock::new();
+
+fn open_or_create_bound_skills_root(target_skills_dir: &Path) -> Result<BoundDirectory> {
+    let absolute_skills_dir = std::path::absolute(target_skills_dir).with_context(|| {
+        format!(
+            "resolve absolute target skills root {}",
+            target_skills_dir.display()
+        )
+    })?;
+    let instance_home = absolute_skills_dir
+        .parent()
+        .context("target skills root has no NEOTH-home parent")?;
+    let trusted_anchor = instance_home.parent().unwrap_or(instance_home);
+    open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &absolute_skills_dir,
+        true,
+        "skills root",
+    )?
+    .context("created skills root is unexpectedly absent")
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum FinalLookupSwapPoint {
@@ -591,7 +611,7 @@ fn validate_skill_mutation_journal(record: &SkillMutationJournal) -> Result<()> 
         );
     }
     validate_mutation_operation_id(&record.operation_id)?;
-    validate_installed_skill_dir_name(&record.skill_id)?;
+    validate_mutation_skill_id(&record.skill_id, record.kind)?;
     match record.mutation_sequence {
         Some(sequence) => {
             if sequence == 0 {
@@ -1468,8 +1488,21 @@ pub(crate) fn installed_entry_generation_locked(
     root: &BoundDirectory,
     id: &str,
 ) -> Result<Option<String>> {
-    let display = root.display_path.join(id);
-    let metadata = match root.dir.symlink_metadata(id) {
+    installed_entry_generation_at_locked(root, id, id)
+}
+
+/// Hash an entry that currently lives under a private transaction name as the
+/// same logical public object that was bound before the rename. Directory-tree
+/// generations are already root-name independent; broken leaf/link generations
+/// must receive the original public name or a safe rename would change the
+/// object digest by construction.
+fn installed_entry_generation_at_locked(
+    root: &BoundDirectory,
+    entry_name: &str,
+    logical_id: &str,
+) -> Result<Option<String>> {
+    let display = root.display_path.join(entry_name);
+    let metadata = match root.dir.symlink_metadata(entry_name) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {
@@ -1479,7 +1512,7 @@ pub(crate) fn installed_entry_generation_locked(
     };
 
     if metadata.is_dir() && !cap_metadata_is_link_like(&metadata) {
-        let directory = open_real_child_dir(&root.dir, OsStr::new(id), &display)?;
+        let directory = open_real_child_dir(&root.dir, OsStr::new(entry_name), &display)?;
         if let Ok(generation) = skill_tree_generation_sha256(&directory, &display, None) {
             return Ok(Some(generation));
         }
@@ -1502,9 +1535,9 @@ pub(crate) fn installed_entry_generation_locked(
     hasher.update(b"NEOTH_INSTALLED_ENTRY_GENERATION\0v2\0");
     hash_installed_leaf(
         &root.dir,
-        OsStr::new(id),
+        OsStr::new(entry_name),
         &display,
-        Path::new(id),
+        Path::new(logical_id),
         &metadata,
         &mut CopyBudget::default(),
         &mut hasher,
@@ -1712,8 +1745,7 @@ pub(crate) fn prepare_install_from_local_with_expectation_and_origin(
         }
     }
 
-    let target_root = open_bound_directory(target_skills_dir, true, "skills root")?
-        .context("created skills root is unexpectedly absent")?;
+    let target_root = open_or_create_bound_skills_root(target_skills_dir)?;
     let _mutation_guard = lock_skill_mutations(&target_root)?;
     recover_pending_transactions_locked(&target_root)?;
     let target_dir = target_root.display_path.join(&manifest.id);
@@ -1919,8 +1951,7 @@ pub(crate) fn prepare_skill_document_mutation(
         }
     }
 
-    let target_root = open_bound_directory(&request.target_skills_dir, true, "skills root")?
-        .context("created skills root is unexpectedly absent")?;
+    let target_root = open_or_create_bound_skills_root(&request.target_skills_dir)?;
     let mutation_guard = lock_skill_mutations(&target_root)?;
     recover_pending_transactions_locked(&target_root)?;
     let target_display = target_root.display_path.join(&request.id);
@@ -2320,7 +2351,7 @@ impl PreparedSkillInstall {
                     .backup_candidate
                     .to_str()
                     .context("private replacement backup name is not UTF-8")?;
-                if installed_entry_generation_locked(&self.target_root, backup_name)?
+                if installed_entry_generation_at_locked(&self.target_root, backup_name, &self.id)?
                     != self.replaced_generation_sha256
                 {
                     anyhow::bail!(
@@ -2479,8 +2510,11 @@ impl PreparedSkillInstall {
                     let backup_name = backup
                         .to_str()
                         .context("private replacement backup name is not UTF-8")?;
-                    if installed_entry_generation_locked(&self.target_root, backup_name)?
-                        != self.replaced_generation_sha256
+                    if installed_entry_generation_at_locked(
+                        &self.target_root,
+                        backup_name,
+                        &self.id,
+                    )? != self.replaced_generation_sha256
                     {
                         anyhow::bail!(
                             "replacement rollback generation no longer matches the preflight-bound target"
@@ -2679,8 +2713,7 @@ pub(crate) fn prepare_uninstall_with_expectation_and_origin(
         }
     }
 
-    let root = open_bound_directory(target_skills_dir, true, "skills root")?
-        .context("created skills root is unexpectedly absent")?;
+    let root = open_or_create_bound_skills_root(target_skills_dir)?;
     let mutation_guard = lock_skill_mutations(&root)?;
     recover_pending_transactions_locked(&root)?;
     let target_generation_sha256 = installed_entry_generation_locked(&root, id)?;
@@ -2873,7 +2906,8 @@ impl PreparedSkillRemoval {
             let tombstone_name = tombstone
                 .to_str()
                 .context("private removal tombstone name is not UTF-8")?;
-            if installed_entry_generation_locked(&self.root, tombstone_name)?.as_deref()
+            if installed_entry_generation_at_locked(&self.root, tombstone_name, &self.id)?
+                .as_deref()
                 != Some(self.target_generation_sha256.as_str())
             {
                 anyhow::bail!(
@@ -3005,11 +3039,12 @@ fn restore_prior_backup_if_present(
     if bound_backup.identity_token() != prior_identity {
         return Ok(false);
     }
-    let backup_generation = installed_entry_generation_locked(
+    let backup_generation = installed_entry_generation_at_locked(
         root,
         backup
             .to_str()
             .context("private skill backup name is not UTF-8")?,
+        &record.skill_id,
     )?;
     if backup_generation.as_deref() != Some(prior) {
         anyhow::bail!(
@@ -3134,7 +3169,9 @@ fn restore_prior_removal_tombstone(
     let tombstone_name = expected_tombstone
         .to_str()
         .context("private removal tombstone name is not UTF-8")?;
-    if installed_entry_generation_locked(root, tombstone_name)?.as_deref() != Some(prior) {
+    if installed_entry_generation_at_locked(root, tombstone_name, &record.skill_id)?.as_deref()
+        != Some(prior)
+    {
         anyhow::bail!(
             "cannot restore indeterminate skill removal {}: tombstone does not match the bound v2 prior generation",
             record.operation_id
@@ -3653,8 +3690,11 @@ impl PendingSkillMutationReconciliation {
                         .to_str()
                         .context("private replacement backup name is not UTF-8")?;
                     if bound_backup.identity_token() != expected_identity
-                        || installed_entry_generation_locked(&self.root, backup_name)?
-                            != self.record.prior_generation_sha256
+                        || installed_entry_generation_at_locked(
+                            &self.root,
+                            backup_name,
+                            &self.record.skill_id,
+                        )? != self.record.prior_generation_sha256
                         || !bound_backup.matches_child(&self.root.dir, &backup, &backup_display)?
                     {
                         anyhow::bail!(
@@ -3700,8 +3740,11 @@ impl PendingSkillMutationReconciliation {
                     let tombstone_name = tombstone
                         .to_str()
                         .context("private removal tombstone name is not UTF-8")?;
-                    if installed_entry_generation_locked(&self.root, tombstone_name)?
-                        != self.record.prior_generation_sha256
+                    if installed_entry_generation_at_locked(
+                        &self.root,
+                        tombstone_name,
+                        &self.record.skill_id,
+                    )? != self.record.prior_generation_sha256
                     {
                         anyhow::bail!(
                             "cannot settle skill removal {}: tombstone generation is not the authorized object",
@@ -3812,7 +3855,7 @@ fn cleanup_transaction_artifact_restartable(
     Ok(())
 }
 
-fn validate_installed_skill_dir_name(id: &str) -> Result<()> {
+pub(crate) fn validate_installed_skill_dir_name(id: &str) -> Result<()> {
     if id.is_empty() || id.contains(['\0', '/', '\\', ':']) || matches!(id, "." | "..") {
         anyhow::bail!("invalid installed skill directory name `{id}`");
     }
@@ -3823,6 +3866,14 @@ fn validate_installed_skill_dir_name(id: &str) -> Result<()> {
         anyhow::bail!("invalid installed skill directory name `{id}`");
     }
     Ok(())
+}
+
+pub(crate) fn validate_mutation_skill_id(id: &str, kind: SkillMutationKind) -> Result<()> {
+    if kind == SkillMutationKind::Remove {
+        validate_installed_skill_dir_name(id)
+    } else {
+        super::creator::validate_skill_id(id)
+    }
 }
 
 /// One row in the operator-facing skills list. Distinct from
@@ -5179,12 +5230,14 @@ struct PendingTransaction {
 
 /// Recover interrupted skill installs without consulting ambient paths.
 ///
-/// Recovery deliberately prefers a known-live backup over an uncommitted
-/// stage. A stage can survive a crash during its recursive copy, whereas a
-/// backup is only created after the staged tree and its directory entries have
-/// been synced. If the public id already exists, it is the committed winner.
-/// Ambiguous duplicate backups fail closed instead of selecting an arbitrary
-/// prior generation.
+/// Recovery deliberately prefers a known-live, journal-bound backup over an
+/// uncommitted stage. A stage can survive a crash during its recursive copy,
+/// whereas a backup is only created after the staged tree and its directory
+/// entries have been synced. A journal-less backup is unauthenticated rollback
+/// evidence: even an existing public entry cannot prove which generation won,
+/// so recovery preserves every artifact and fails closed until explicit repair.
+/// Ambiguous duplicate backups likewise fail closed instead of selecting an
+/// arbitrary prior generation.
 pub fn recover_pending_transactions(target_skills_dir: &Path) -> Result<()> {
     let Some(root) = open_bound_directory(target_skills_dir, false, "skills root")? else {
         return Ok(());
@@ -5807,7 +5860,28 @@ pub(crate) fn lock_skill_mutations(root: &BoundDirectory) -> Result<SkillMutatio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
+
+    struct TestSkillsRoot {
+        _home: TempDir,
+        skills: PathBuf,
+    }
+
+    impl TestSkillsRoot {
+        fn path(&self) -> &Path {
+            &self.skills
+        }
+    }
+
+    fn temp_skills_root() -> TestSkillsRoot {
+        let home = tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir(&skills).unwrap();
+        TestSkillsRoot {
+            _home: home,
+            skills,
+        }
+    }
 
     #[cfg(unix)]
     fn try_symlink_dir(source: &Path, target: &Path) -> std::io::Result<()> {
@@ -5861,6 +5935,63 @@ mod tests {
         )
     }
 
+    fn prepared_journal_for_id(kind: SkillMutationKind, skill_id: &str) -> SkillMutationJournal {
+        SkillMutationJournal {
+            version: SKILL_MUTATION_JOURNAL_VERSION,
+            operation_id: "0123456789abcdef0123456789abcdef".to_string(),
+            kind,
+            origin: SkillMutationOrigin::CliInstall,
+            skill_id: skill_id.to_string(),
+            mutation_sequence: None,
+            previous_terminal_receipt_sha256: None,
+            prior_install_incarnation: None,
+            resulting_install_incarnation: None,
+            source_generation_sha256: kind.is_install().then(|| "a".repeat(64)),
+            prior_generation_sha256: (kind == SkillMutationKind::Replace).then(|| "b".repeat(64)),
+            prior_object_identity: (kind == SkillMutationKind::Replace)
+                .then(|| "windows:00000001:0000000000000001:dir".to_string()),
+            intent_delivery_owner_nonce: None,
+            intent_receipt: None,
+            commit_boundary_nonce: None,
+            phase: SkillMutationPhase::Prepared,
+            observed_generation_sha256: None,
+            error_sha256: None,
+            terminal_delivery_state: SkillTerminalDeliveryState::NotStarted,
+            terminal_delivery_owner_nonce: None,
+            terminal_receipt: None,
+            cleanup_started: None,
+            created_at_unix: 0,
+        }
+    }
+
+    #[test]
+    fn mutation_journal_accepts_legacy_ids_only_for_removal() {
+        let legacy_id = "legacy skill.β";
+        assert!(
+            validate_skill_mutation_journal(&prepared_journal_for_id(
+                SkillMutationKind::Remove,
+                legacy_id,
+            ))
+            .is_ok()
+        );
+        for kind in [SkillMutationKind::Install, SkillMutationKind::Replace] {
+            let error = validate_skill_mutation_journal(&prepared_journal_for_id(kind, legacy_id))
+                .unwrap_err();
+            assert!(
+                format!("{error:#}").contains("invalid skill id"),
+                "{kind:?} must retain the canonical creator id boundary: {error:#}"
+            );
+        }
+        for kind in [
+            SkillMutationKind::Install,
+            SkillMutationKind::Replace,
+            SkillMutationKind::Remove,
+        ] {
+            validate_skill_mutation_journal(&prepared_journal_for_id(kind, "canonical_skill"))
+                .unwrap();
+        }
+    }
+
     fn force_indeterminate_removal_after_parent_sync_failure(
         skills_dir: &Path,
         id: &str,
@@ -5908,9 +6039,8 @@ mod tests {
         const TEST_PATH: &str = "skills::installer::tests::second_os_process_is_blocked_by_the_held_skill_mutation_lock";
 
         if let Ok(shared) = std::env::var(CHILD_ENV) {
-            let root = open_bound_directory(Path::new(&shared), true, "skills")
-                .expect("child: open bound dir")
-                .expect("child: bound dir present");
+            let root = open_or_create_bound_skills_root(Path::new(&shared))
+                .expect("child: open bound dir");
             match lock_skill_mutations(&root) {
                 Ok(_guard) => std::process::exit(0),
                 Err(_) => std::process::exit(3),
@@ -5919,9 +6049,7 @@ mod tests {
 
         let dir = tempdir().unwrap();
         let shared = dir.path();
-        let root = open_bound_directory(shared, true, "skills")
-            .unwrap()
-            .expect("parent: bound dir present");
+        let root = open_or_create_bound_skills_root(shared).expect("parent: bound dir present");
 
         // Parent holds the lock across the child's entire attempt.
         let guard = lock_skill_mutations(&root).expect("parent acquires the lock");
@@ -5955,7 +6083,7 @@ mod tests {
     #[test]
     fn install_from_local_copies_skill_dir_into_target() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("my_skill_source");
         write_skill(&src, "my_skill", &good_yaml("my_skill"));
@@ -5970,7 +6098,7 @@ mod tests {
     #[test]
     fn prepared_install_keeps_public_anchor_absent_until_commit_and_retries_cleanly() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "prepared", &good_yaml("prepared"));
         std::fs::write(source.join("asset.txt"), b"prepared bytes").unwrap();
@@ -6037,7 +6165,7 @@ mod tests {
     #[test]
     fn prepared_replace_binds_old_anchor_and_keeps_it_live_until_commit() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         write_skill(&old_source, "replace_me", &good_yaml("replace_me"));
         std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
@@ -6084,7 +6212,7 @@ mod tests {
     #[test]
     fn prepared_install_abort_removes_only_private_stage() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "abort_me", &good_yaml("abort_me"));
         let operation_id = "22222222222222222222222222222222";
@@ -6110,7 +6238,7 @@ mod tests {
     #[test]
     fn crash_after_intent_before_commit_recovers_same_operation_as_aborted() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "intent_crash", &good_yaml("intent_crash"));
         let operation_id = "abababababababababababababababab";
@@ -6145,7 +6273,7 @@ mod tests {
     #[test]
     fn crash_at_commit_started_before_rename_is_aborted_not_committed() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "before_rename", &good_yaml("before_rename"));
         let operation_id = "bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc";
@@ -6182,7 +6310,7 @@ mod tests {
     #[test]
     fn crash_after_public_rename_before_dirsync_is_indeterminate() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "after_rename", &good_yaml("after_rename"));
         let operation_id = "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
@@ -6234,7 +6362,7 @@ mod tests {
     #[test]
     fn parent_sync_failure_never_reports_fresh_install_committed() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "sync_install", &good_yaml("sync_install"));
         let operation_id = "dededededededededededededededede";
@@ -6267,7 +6395,7 @@ mod tests {
     #[test]
     fn parent_sync_failure_never_reports_replace_committed_and_retains_backup() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         write_skill(&old_source, "sync_replace", &good_yaml("sync_replace"));
         std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
@@ -6320,7 +6448,7 @@ mod tests {
     #[test]
     fn prior_backup_sync_failure_restores_only_after_indeterminate_terminal_ack() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         write_skill(&old_source, "backup_sync", &good_yaml("backup_sync"));
         std::fs::write(old_source.join("asset.txt"), b"old").unwrap();
@@ -6378,7 +6506,7 @@ mod tests {
     #[test]
     fn cleanup_started_resumes_the_same_partial_backup_after_restart() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         write_skill(&old_source, "cleanup_resume", &good_yaml("cleanup_resume"));
         std::fs::create_dir(old_source.join("nested")).unwrap();
@@ -6433,7 +6561,7 @@ mod tests {
     #[test]
     fn crash_after_dirsync_before_result_retains_committed_same_operation_outbox() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "result_pending", &good_yaml("result_pending"));
         let operation_id = "12121212121212121212121212121212";
@@ -6464,7 +6592,7 @@ mod tests {
     #[test]
     fn prepared_removal_keeps_anchor_until_commit_and_same_id_retry_is_idempotent() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "remove_me", &good_yaml("remove_me"));
         let installed = install_from_local(&source, dest.path(), false).unwrap();
@@ -6506,7 +6634,7 @@ mod tests {
     #[test]
     fn prepared_removal_refuses_generation_drift_after_intent_binding() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "drifted_remove", &good_yaml("drifted_remove"));
         std::fs::write(source.join("asset.txt"), b"old").unwrap();
@@ -6535,7 +6663,7 @@ mod tests {
     #[test]
     fn replacement_final_lookup_swap_is_indeterminate_even_with_identical_prior_bytes() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         write_skill(
             &old_source,
@@ -6608,7 +6736,7 @@ mod tests {
     #[test]
     fn directory_removal_final_lookup_swap_preserves_both_objects_as_indeterminate() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(
             &source,
@@ -6666,7 +6794,7 @@ mod tests {
 
     #[test]
     fn leaf_removal_final_lookup_swap_renames_but_never_unlinks_the_swapped_leaf() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let target = dest.path().join("identity_remove_leaf");
         std::fs::write(&target, b"same leaf bytes").unwrap();
         let operation_id = "90909090909090909090909090909090";
@@ -6712,7 +6840,7 @@ mod tests {
     #[test]
     fn prepared_skill_mutations_reject_unbound_operation_ids() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "invalid_op", &good_yaml("invalid_op"));
 
@@ -6737,7 +6865,7 @@ mod tests {
     #[test]
     fn install_from_local_copies_sibling_files() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("rich_skill_source");
         write_skill(&src, "rich_skill", &good_yaml("rich_skill"));
@@ -6756,7 +6884,7 @@ mod tests {
         let linked_source = parent.path().join("source");
         try_symlink_dir(outside.path(), &linked_source)
             .expect("create linked source-root test fixture");
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let error = install_from_local(&linked_source, dest.path(), false).unwrap_err();
         assert!(format!("{error:#}").contains("skill source must be a real directory"));
@@ -6767,7 +6895,7 @@ mod tests {
     fn install_from_local_rejects_linked_sibling_directories() {
         let staging = tempdir().unwrap();
         let outside = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "linked-child", &good_yaml("linked-child"));
         let sentinel = outside.path().join("keep.txt");
@@ -6785,7 +6913,7 @@ mod tests {
     #[test]
     fn install_expectation_binds_every_package_file() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "bound-package", &good_yaml("bound-package"));
         std::fs::write(source.join("README.md"), b"generation one").unwrap();
@@ -6815,7 +6943,7 @@ mod tests {
     #[test]
     fn install_report_matches_the_preflight_generation() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "bound-package", &good_yaml("bound-package"));
         std::fs::create_dir(source.join("assets")).unwrap();
@@ -6855,7 +6983,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         let assets = source.join("assets");
         let payload = assets.join("payload.bin");
@@ -6927,7 +7055,7 @@ mod tests {
         use std::os::unix::fs::PermissionsExt as _;
 
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let old_source = staging.path().join("old");
         let new_source = staging.path().join("new");
         write_skill(&old_source, "mode-drift", &good_yaml("mode-drift"));
@@ -6960,7 +7088,7 @@ mod tests {
     #[test]
     fn replacement_expectation_rejects_a_destination_generation_that_changed() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = staging.path().join("source");
         write_skill(&source, "bound-target", &good_yaml("bound-target"));
         std::fs::write(source.join("asset.txt"), b"new generation").unwrap();
@@ -7086,7 +7214,7 @@ mod tests {
     #[test]
     fn failed_force_install_preserves_the_prior_tree_and_cleans_the_stage() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let original = staging.path().join("original");
         write_skill(&original, "bounded", &good_yaml("bounded"));
         std::fs::write(original.join("VERSION"), b"old").unwrap();
@@ -7134,7 +7262,7 @@ mod tests {
             "mkfifo failed: {}",
             std::io::Error::last_os_error()
         );
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let error = install_from_local(source.path(), dest.path(), false).unwrap_err();
         assert!(format!("{error:#}").contains("expected a real regular file"));
@@ -7143,7 +7271,7 @@ mod tests {
     #[test]
     fn install_from_local_refuses_when_target_exists_without_force() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("dup_source");
         write_skill(&src, "dup", &good_yaml("dup"));
@@ -7157,7 +7285,7 @@ mod tests {
     #[test]
     fn install_from_local_with_force_replaces_prior_install() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src_v1 = staging.path().join("replaceable_v1");
         write_skill(&src_v1, "replaceable", &good_yaml("replaceable"));
@@ -7175,8 +7303,8 @@ mod tests {
     }
 
     #[test]
-    fn list_recovery_keeps_public_generation_and_cleans_committed_artifacts() {
-        let dest = tempdir().unwrap();
+    fn list_recovery_refuses_journal_less_backup_instead_of_silently_cleaning() {
+        let dest = temp_skills_root();
         let (stage_name, backup_name) = transaction_names("recoverable");
         let public = dest.path().join("recoverable");
         write_skill(&public, "recoverable", &good_yaml("recoverable"));
@@ -7187,18 +7315,17 @@ mod tests {
         let stage = dest.path().join(&stage_name);
         write_skill(&stage, "recoverable", &good_yaml("recoverable"));
 
-        let rows = list_installed(dest.path()).unwrap();
+        let error = list_installed(dest.path()).unwrap_err();
 
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].dir_name, "recoverable");
+        assert!(format!("{error:#}").contains("journal-less backup"));
         assert_eq!(std::fs::read(public.join("VERSION")).unwrap(), b"new");
-        assert!(!backup.exists());
-        assert!(!stage.exists());
+        assert!(backup.exists());
+        assert!(stage.exists());
     }
 
     #[test]
     fn recovery_never_discards_journal_less_backup_even_with_public_winner() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let (_, backup_name) = transaction_names("recoverable");
         let public = dest.path().join("recoverable");
         write_skill(&public, "recoverable", &good_yaml("recoverable"));
@@ -7213,7 +7340,7 @@ mod tests {
         assert!(public.exists(), "the observed public winner remains live");
         assert!(
             backup.exists(),
-            "the only rollback generation must survive a failed parent sync"
+            "unauthenticated rollback evidence must survive until explicit repair"
         );
 
         let retry = recover_pending_transactions(dest.path()).unwrap_err();
@@ -7224,7 +7351,7 @@ mod tests {
 
     #[test]
     fn list_recovery_refuses_to_publish_journal_less_backup() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let (stage_name, backup_name) = transaction_names("recoverable");
         let backup = dest.path().join(&backup_name);
         write_skill(&backup, "recoverable", &good_yaml("recoverable"));
@@ -7244,7 +7371,7 @@ mod tests {
 
     #[test]
     fn list_recovery_discards_stage_only_interrupted_copy() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let (stage_name, _) = transaction_names("incomplete");
         let stage = dest.path().join(&stage_name);
         std::fs::create_dir(&stage).unwrap();
@@ -7260,7 +7387,7 @@ mod tests {
     #[test]
     fn install_blocks_on_journal_less_backup_without_mutating_it() {
         let source_root = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let source = source_root.path().join("source");
         write_skill(&source, "recoverable", &good_yaml("recoverable"));
         std::fs::write(source.join("VERSION"), b"new").unwrap();
@@ -7284,7 +7411,7 @@ mod tests {
 
     #[test]
     fn uninstall_blocks_on_journal_less_backup_without_mutating_it() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let (stage_name, backup_name) = transaction_names("recoverable");
         write_skill(
             &dest.path().join(&backup_name),
@@ -7306,7 +7433,7 @@ mod tests {
 
     #[test]
     fn uninstall_retains_tombstone_until_indeterminate_rollback_is_acked() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let public = dest.path().join("doomed");
         let operation_id = "55555555555555555555555555555555";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
@@ -7337,7 +7464,7 @@ mod tests {
 
     #[test]
     fn crash_after_removal_rename_before_parent_sync_restores_prior_on_ack() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let public = dest.path().join("crash_remove");
         write_skill(&public, "crash_remove", &good_yaml("crash_remove"));
         std::fs::write(public.join("sentinel"), b"prior").unwrap();
@@ -7385,7 +7512,7 @@ mod tests {
 
     #[test]
     fn indeterminate_removal_rollback_retries_parent_sync_before_ack() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let public = dest.path().join("retry_remove");
         let operation_id = "57575757575757575757575757575757";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
@@ -7427,7 +7554,7 @@ mod tests {
 
     #[test]
     fn indeterminate_removal_without_tombstone_fails_closed() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let operation_id = "58585858585858585858585858585858";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
             dest.path(),
@@ -7452,7 +7579,7 @@ mod tests {
 
     #[test]
     fn indeterminate_removal_with_other_operation_tombstone_fails_closed() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let operation_id = "59595959595959595959595959595959";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
             dest.path(),
@@ -7482,7 +7609,7 @@ mod tests {
 
     #[test]
     fn indeterminate_removal_with_generation_drift_fails_closed() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let operation_id = "61616161616161616161616161616161";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
             dest.path(),
@@ -7508,7 +7635,7 @@ mod tests {
 
     #[test]
     fn indeterminate_removal_with_multiple_tombstones_fails_closed() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let operation_id = "62626262626262626262626262626262";
         let tombstone = force_indeterminate_removal_after_parent_sync_failure(
             dest.path(),
@@ -7542,7 +7669,7 @@ mod tests {
 
     #[test]
     fn recovery_fails_closed_on_ambiguous_backup_generations() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         for nonce in [
             "0123456789abcdef0123456789abcdef",
             "fedcba9876543210fedcba9876543210",
@@ -7564,7 +7691,7 @@ mod tests {
 
     #[test]
     fn recovery_refuses_linked_transaction_artifacts() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let outside = tempdir().unwrap();
         let sentinel = outside.path().join("keep.txt");
         std::fs::write(&sentinel, b"keep").unwrap();
@@ -7583,7 +7710,7 @@ mod tests {
     #[test]
     fn install_from_local_rejects_missing_manifest() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("no_manifest");
         std::fs::create_dir_all(&src).unwrap();
@@ -7595,7 +7722,7 @@ mod tests {
     #[test]
     fn install_from_local_rejects_broken_yaml() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("broken");
         std::fs::create_dir_all(&src).unwrap();
@@ -7610,7 +7737,7 @@ mod tests {
     #[test]
     fn install_from_local_rejects_empty_id() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let src = staging.path().join("emptyid");
         std::fs::create_dir_all(&src).unwrap();
@@ -7631,7 +7758,7 @@ mod tests {
     #[test]
     fn install_from_local_rejects_path_traversal_id() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let src = staging.path().join("evil_source");
         std::fs::create_dir_all(&src).unwrap();
         // Malicious manifest id that would escape the skills dir.
@@ -7652,7 +7779,7 @@ mod tests {
 
     #[test]
     fn uninstall_removes_skill_dir() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let target = dest.path().join("doomed");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("skill.yaml"), "id: doomed\n").unwrap();
@@ -7664,14 +7791,14 @@ mod tests {
 
     #[test]
     fn uninstall_missing_id_is_ok_false() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let removed = uninstall(dest.path(), "never_installed").unwrap();
         assert!(!removed);
     }
 
     #[test]
     fn stale_uninstall_expectation_preserves_a_changed_healthy_generation() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let target = dest.path().join("healthy");
         write_skill(&target, "healthy", &good_yaml("healthy"));
         std::fs::write(target.join("asset.txt"), b"first").unwrap();
@@ -7698,7 +7825,7 @@ mod tests {
 
     #[test]
     fn stale_uninstall_expectation_preserves_a_changed_broken_entry() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let target = dest.path().join("broken");
         std::fs::write(&target, b"first broken generation").unwrap();
         let preflight = inspect_installed_target(dest.path(), "broken").unwrap();
@@ -7721,7 +7848,7 @@ mod tests {
 
     #[test]
     fn uninstall_rejects_ids_that_can_escape_the_skills_root() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let outside = tempdir().unwrap();
         let sentinel = outside.path().join("keep.txt");
         std::fs::write(&sentinel, b"keep").unwrap();
@@ -7748,7 +7875,7 @@ mod tests {
 
     #[test]
     fn uninstall_accepts_safe_legacy_directory_names() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let target = dest.path().join("legacy skill.β");
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("skill.yaml"), "id: legacy skill.β\n").unwrap();
@@ -7759,7 +7886,7 @@ mod tests {
 
     #[test]
     fn uninstall_unlinks_broken_skill_directories_without_following_them() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let outside = tempdir().unwrap();
         let sentinel = outside.path().join("keep.txt");
         std::fs::write(&sentinel, b"keep").unwrap();
@@ -7775,7 +7902,7 @@ mod tests {
 
     #[test]
     fn broken_file_entry_is_visible_and_removable() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let broken = dest.path().join("broken-file");
         std::fs::write(&broken, b"not a skill directory").unwrap();
 
@@ -7827,7 +7954,7 @@ mod tests {
 
     #[test]
     fn recursive_remove_does_not_follow_a_swapped_target_link() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let outside = tempdir().unwrap();
         let sentinel = outside.path().join("keep.txt");
         std::fs::write(&sentinel, b"keep").unwrap();
@@ -7879,7 +8006,7 @@ mod tests {
     #[test]
     fn forced_reinstall_rejects_linked_target_directories() {
         let staging = tempdir().unwrap();
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let outside = tempdir().unwrap();
         let sentinel = outside.path().join("keep.txt");
         std::fs::write(&sentinel, b"keep").unwrap();
@@ -7896,7 +8023,7 @@ mod tests {
 
     #[test]
     fn list_installed_surfaces_broken_entries() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
 
         let healthy = dest.path().join("healthy");
         std::fs::create_dir_all(&healthy).unwrap();
@@ -7935,14 +8062,14 @@ mod tests {
 
     #[test]
     fn list_installed_returns_empty_for_missing_dir() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let rows = list_installed(&dest.path().join("nope")).unwrap();
         assert!(rows.is_empty());
     }
 
     #[test]
     fn list_installed_skips_private_dotfiles_but_surfaces_public_files() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         // Hidden dir
         std::fs::create_dir_all(dest.path().join(".hidden")).unwrap();
         // Plain file
@@ -7958,7 +8085,7 @@ mod tests {
 
     #[test]
     fn recovery_cleans_creator_directory_and_private_file_stages() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let nonce = "0123456789abcdef0123456789abcdef";
         let creator_stage = dest
             .path()
@@ -7984,7 +8111,7 @@ mod tests {
 
     #[test]
     fn recovery_finishes_private_uninstall_tombstones() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let nonce = "0123456789abcdef0123456789abcdef";
         let tombstone = dest
             .path()
@@ -8000,7 +8127,7 @@ mod tests {
 
     #[test]
     fn recovery_accepts_the_same_safe_broken_names_as_uninstall() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let nonce = "0123456789abcdef0123456789abcdef";
         let tombstone = dest
             .path()
@@ -8015,7 +8142,7 @@ mod tests {
 
     #[test]
     fn recovery_retains_uninstall_tombstone_until_parent_sync_succeeds() {
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let nonce = "0123456789abcdef0123456789abcdef";
         let tombstone = dest
             .path()
@@ -8041,7 +8168,7 @@ mod tests {
         // neither act on it nor guess. It must also not fail the store — that
         // turned one foreign entry into a permanent product-wide outage with no
         // in-product repair path (external review PR5-001).
-        let dest = tempdir().unwrap();
+        let dest = temp_skills_root();
         let uppercase = "0123456789ABCDEF0123456789ABCDEF";
         let stage = dest
             .path()
@@ -8078,7 +8205,7 @@ mod tests {
         // recovery owns.
         for prefix in RESERVED_SKILL_ENTRY_PREFIXES {
             let staging = tempdir().unwrap();
-            let dest = tempdir().unwrap();
+            let dest = temp_skills_root();
             let source = staging.path().join("planted");
             write_skill(&source, "planted", &good_yaml("planted"));
             std::fs::write(source.join(format!("{prefix}readme")), b"x").unwrap();

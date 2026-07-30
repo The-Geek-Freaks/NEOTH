@@ -96,13 +96,24 @@ pub(crate) fn write_sidecar(
         );
     }
 
-    let bound =
-        crate::skills::store::open_bound_directory(home, true, "audit-RPC sidecar directory")?
-            .context("audit-RPC sidecar directory was not created")?;
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let bound = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        home,
+        true,
+        "audit-RPC sidecar directory",
+    )?
+    .context("audit-RPC sidecar directory was not created")?;
     let path = bound.display_path.join(SIDECAR_FILE_NAME);
-    crate::util::atomic_write::atomic_write_private(&path, &body).with_context(|| {
+    crate::skills::store::atomic_write_private_child(
+        &bound.dir,
+        OsStr::new(SIDECAR_FILE_NAME),
+        &path,
+        &body,
+    )
+    .with_context(|| {
         format!(
-            "atomically write private audit-RPC sidecar {}",
+            "atomically write capability-bound private audit-RPC sidecar {}",
             path.display()
         )
     })?;
@@ -200,6 +211,7 @@ fn remove_sidecar_inner(home: &Path) -> Result<()> {
         || legacy_result.as_ref().copied().unwrap_or(false);
     let sync_result = if removed_any {
         crate::skills::store::sync_parent_directory(&bound.dir, &bound.display_path)
+            .map(|_| ())
             .context("make audit-RPC sidecar removal durable")
     } else {
         Ok(())
@@ -455,6 +467,46 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn sidecar_publish_rejects_a_symlinked_neoth_home() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("create test directory");
+        let outside = tempfile::tempdir().expect("create outside directory");
+        let home = temporary.path().join(".neoth");
+        symlink(outside.path(), &home).expect("create planted NEOTH-home symlink");
+        let endpoint = endpoint_for_home(&home, NONCE_A).expect("derive typed test endpoint");
+
+        let error = write_sidecar(&home, &endpoint, 42, NONCE_A)
+            .expect_err("explicit trusted anchor must reject a symlinked NEOTH home");
+
+        assert!(format!("{error:#}").contains("audit-RPC sidecar directory"));
+        assert!(!outside.path().join(SIDECAR_FILE_NAME).exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sidecar_publish_rejects_a_reparse_neoth_home_when_supported() {
+        use std::os::windows::fs::symlink_dir;
+
+        let temporary = tempfile::tempdir().expect("create test directory");
+        let outside = tempfile::tempdir().expect("create outside directory");
+        let home = temporary.path().join(".neoth");
+        match symlink_dir(outside.path(), &home) {
+            Ok(()) => {
+                let endpoint =
+                    endpoint_for_home(&home, NONCE_A).expect("derive typed test endpoint");
+                let error = write_sidecar(&home, &endpoint, 42, NONCE_A)
+                    .expect_err("explicit trusted anchor must reject a reparse NEOTH home");
+                assert!(format!("{error:#}").contains("audit-RPC sidecar directory"));
+                assert!(!outside.path().join(SIDECAR_FILE_NAME).exists());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+            Err(error) => panic!("create planted Windows NEOTH-home reparse point: {error}"),
+        }
+    }
+
     #[test]
     fn sidecar_contains_no_tcp_or_bearer_material() {
         let temporary = tempfile::tempdir().expect("create test directory");
@@ -512,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_sync_failure_is_reported_after_atomic_commit() {
+    fn namespace_sync_failure_blocks_before_sidecar_publication() {
         let temporary = tempfile::tempdir().expect("create test directory");
         let (home, endpoint) = home_and_endpoint(&temporary, NONCE_A);
 
@@ -521,14 +573,13 @@ mod tests {
         crate::skills::store::force_parent_sync_failure_for_test(false);
 
         let error = result.expect_err("required parent sync failure must surface");
-        assert!(format!("{error:#}").contains("make audit-RPC sidecar namespace commit durable"));
-        assert_eq!(
-            read_sidecar(&home).expect("atomic commit remains complete"),
-            AuditRpcSidecarV2 {
-                endpoint,
-                pid: 42,
-                endpoint_nonce: NONCE_A.to_owned(),
-            }
+        assert!(
+            format!("{error:#}")
+                .contains("sync parent before using existing audit-RPC sidecar directory")
+        );
+        assert!(
+            !sidecar_path(&home).exists(),
+            "sidecar bytes were published below an unconfirmed NEOTH-home namespace"
         );
     }
 

@@ -6223,12 +6223,13 @@ pub(crate) async fn prepare_wal(
     // writer is up below.
     let pending_auth_failures: Vec<crate::wal::cpt_recovery::ScanReport> = {
         let key_path = wal_dir.join("hmac.key");
-        let master = crate::wal::compaction::load_or_init_key(&key_path).with_context(|| {
-            format!(
-                "load instance WAL HMAC key before recovery scan at {}",
-                key_path.display()
-            )
-        })?;
+        let master = crate::cli::security::recover_and_load_or_initialize_hmac_key(home, &key_path)
+            .with_context(|| {
+                format!(
+                    "establish instance WAL HMAC authority before recovery scan at {}",
+                    key_path.display()
+                )
+            })?;
         let auth = crate::wal::cpt_auth::CompactionAuthenticator::from_master_key(&master);
         let report = crate::wal::cpt_recovery::scan_and_apply(&wal_dir, &auth, || {
             crate::time::now_unix_secs()

@@ -5191,6 +5191,7 @@ mod tests {
             _req: crate::providers::Request,
         ) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.0.clone(),
                 identity: Default::default(),
                 model: "mock".into(),
@@ -5220,6 +5221,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock".into(),

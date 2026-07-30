@@ -448,6 +448,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
             match &self.reply {
                 Ok(text) => Ok(Completion {
+                    termination: Default::default(),
                     text: text.clone(),
                     identity: Default::default(),
                     model: "mock".to_string(),

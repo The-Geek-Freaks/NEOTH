@@ -402,9 +402,7 @@ async fn publish_installed_skill_decision(
                 decision.clone(),
                 expectation.as_ref(),
             )?;
-        if first.durability() == crate::skills::authority::SkillAuthorityDurability::Confirmed
-            && first.accepted_policy_current_at_return()
-        {
+        if first.durability().is_live_verified() && first.accepted_policy_current_at_return() {
             return Ok(first);
         }
         let confirmed =
@@ -417,8 +415,8 @@ async fn publish_installed_skill_decision(
             )
             .context("reconfirm visible installed-Skill authority decision")?;
         anyhow::ensure!(
-            confirmed.durability() == crate::skills::authority::SkillAuthorityDurability::Confirmed,
-            "installed-Skill authority decision is visible but durability remains unconfirmed"
+            confirmed.durability().is_live_verified(),
+            "installed-Skill authority decision is visible but publication remains unverified"
         );
         anyhow::ensure!(
             confirmed.accepted_policy_current_at_return(),
@@ -1365,6 +1363,8 @@ async fn run_skill_toggle(args: &SkillsArgs) -> Result<()> {
                     receipt.package_generation_sha256(),
                     match receipt.durability() {
                         crate::skills::authority::SkillAuthorityDurability::Confirmed => "durable",
+                        crate::skills::authority::SkillAuthorityDurability::NamespaceDurabilityUnsupported =>
+                            "live-verified; namespace power-loss durability unsupported",
                         crate::skills::authority::SkillAuthorityDurability::Unconfirmed =>
                             "visible; durability unconfirmed",
                         crate::skills::authority::SkillAuthorityDurability::StateUncertain =>

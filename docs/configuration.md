@@ -315,6 +315,9 @@ provider_model: local-model-id
 
 inference:
   mode: single
+  # Exact named wire profile for the legacy top-level compatible binding.
+  # Arbitrary/local endpoints should remain `generic`.
+  openai_compat_profile: generic
   accelerator_override: cuda  # optional; omit for auto-detection
   embedding_provider: local_qwen
   profile_provider: local_qwen
@@ -325,6 +328,14 @@ profile:
   learn_provider: local_qwen
   allow_cloud_fallback: false
 ```
+
+Custom topology slots can carry their own `openai_compat_profile`. Supported
+Chat-Completions profiles are `generic`, `openrouter`, `deepseek`,
+`moonshot_kimi`, and `qwen_chat`. Named profiles are accepted only with their
+reviewed matching official endpoint; CLI, wizard, and GUI save paths auto-tag
+an exact catalogue endpoint and clear stale profile metadata for arbitrary
+URLs. Unsupported Qwen Responses/Anthropic-compatible/DashScope surfaces fail
+closed instead of being silently sent through Chat Completions.
 
 `profile.learn_provider` controls the post-reply extraction path used today.
 `profile.allow_cloud_fallback` is the explicit fail-open switch for that path;

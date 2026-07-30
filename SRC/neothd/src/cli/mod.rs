@@ -53,6 +53,7 @@ pub(crate) mod consent_outbox;
 pub mod cost;
 pub mod council;
 pub mod credential;
+mod credential_transfer;
 pub mod cron;
 pub mod ctx;
 pub mod deep_links;
@@ -402,10 +403,9 @@ pub enum Commands {
     /// produced automatically as channel messages arrive.
     Identity(identity::IdentityArgs),
 
-    /// Manage `credentials.yaml`: `list` shows which credential keys are set
-    /// (NAMES only, never values); `import --file <path>` merges a
-    /// credentials.yaml-shaped file in (set fields overwrite; absent fields
-    /// untouched). Never prints secret values.
+    /// Manage credentials and explicit local secret files. `list` and `import`
+    /// never print secret values; `copy --source <path> --destination <path>`
+    /// uses a prompt-free, single-use, verified local data plane.
     Credential(credential::CredentialArgs),
 
     /// Inspect the n8n integration (READ-ONLY): `status` reports the webhook

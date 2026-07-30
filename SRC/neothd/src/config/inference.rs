@@ -251,6 +251,68 @@ impl InferenceProvider {
     }
 }
 
+/// Exact wire contract behind an `openai_compat` binding.
+///
+/// `Generic` preserves the legacy arbitrary-endpoint behavior. Named profiles
+/// are deliberately narrower: the provider factory validates their endpoint,
+/// retains a vendor-specific completion identity, and refuses wire surfaces
+/// that the chat-completions adapter does not implement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenAiCompatibleProfile {
+    #[default]
+    Generic,
+    #[serde(rename = "openrouter", alias = "open_router")]
+    OpenRouter,
+    #[serde(rename = "deepseek", alias = "deep_seek")]
+    DeepSeek,
+    #[serde(alias = "moonshot", alias = "kimi")]
+    MoonshotKimi,
+    #[serde(alias = "qwen", alias = "qwen_openai_compat")]
+    QwenChat,
+    QwenResponses,
+    #[serde(alias = "qwen_anthropic")]
+    QwenAnthropicCompat,
+    #[serde(alias = "dashscope")]
+    QwenDashScope,
+}
+
+impl OpenAiCompatibleProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Generic => "generic",
+            Self::OpenRouter => "openrouter",
+            Self::DeepSeek => "deepseek",
+            Self::MoonshotKimi => "moonshot_kimi",
+            Self::QwenChat => "qwen_chat",
+            Self::QwenResponses => "qwen_responses",
+            Self::QwenAnthropicCompat => "qwen_anthropic_compat",
+            Self::QwenDashScope => "qwen_dash_scope",
+        }
+    }
+
+    /// Provider leaf identity stamped onto authorization and completions.
+    pub const fn adapter_name(self) -> &'static str {
+        match self {
+            Self::Generic => "openai_compat",
+            Self::OpenRouter => "openrouter_api",
+            Self::DeepSeek => "deepseek_api",
+            Self::MoonshotKimi => "moonshot_kimi_api",
+            Self::QwenChat => "qwen_chat_api",
+            Self::QwenResponses => "qwen_responses_api",
+            Self::QwenAnthropicCompat => "qwen_anthropic_compat_api",
+            Self::QwenDashScope => "qwen_dashscope_api",
+        }
+    }
+
+    pub const fn uses_chat_completions(self) -> bool {
+        matches!(
+            self,
+            Self::Generic | Self::OpenRouter | Self::DeepSeek | Self::MoonshotKimi | Self::QwenChat
+        )
+    }
+}
+
 /// One hemisphere's provider binding. Reuses the existing single-provider
 /// schema fields — operator never sees a new credentials format.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -266,6 +328,11 @@ pub struct HemisphereSlot {
     /// Endpoint when the provider is OpenAI-compatible.
     #[serde(default)]
     pub endpoint: Option<String>,
+    /// Exact wire contract for an `openai_compat` slot. `None` preserves
+    /// legacy configs: the runtime may infer a reviewed profile from the
+    /// endpoint and otherwise falls back to the generic adapter.
+    #[serde(default, alias = "open_ai_compat_profile")]
+    pub openai_compat_profile: Option<OpenAiCompatibleProfile>,
     /// C-3 Phase 2 (Session 14) — AWS region for `aws_bedrock` adapter.
     /// Examples: `us-east-1`, `eu-central-1`, `ap-northeast-1`. The
     /// adapter validates that the configured region matches the
@@ -306,6 +373,11 @@ pub struct InferenceTopology {
     /// `metal`, `openvino`, `cpu`.
     #[serde(default)]
     pub accelerator_override: Option<String>,
+    /// Exact profile for the legacy top-level `provider_kind:
+    /// openai_compat` binding. Hemisphere/fallback slots infer a named profile
+    /// only from an exact reviewed endpoint and never inherit this value.
+    #[serde(default, alias = "open_ai_compat_profile")]
+    pub openai_compat_profile: Option<OpenAiCompatibleProfile>,
     /// Where embeddings are computed. Independent of chat provider —
     /// operator might want OpenAI for chat but local Qwen for embeddings.
     #[serde(default)]
@@ -1238,6 +1310,78 @@ mod tests {
                 "legacy freedom.yaml provider id `{legacy}` must remain readable"
             );
         }
+    }
+
+    #[test]
+    fn openai_compatible_profiles_round_trip_and_accept_public_aliases() {
+        for profile in [
+            OpenAiCompatibleProfile::Generic,
+            OpenAiCompatibleProfile::OpenRouter,
+            OpenAiCompatibleProfile::DeepSeek,
+            OpenAiCompatibleProfile::MoonshotKimi,
+            OpenAiCompatibleProfile::QwenChat,
+            OpenAiCompatibleProfile::QwenResponses,
+            OpenAiCompatibleProfile::QwenAnthropicCompat,
+            OpenAiCompatibleProfile::QwenDashScope,
+        ] {
+            let wire = serde_yaml::to_string(&profile).unwrap();
+            let parsed: OpenAiCompatibleProfile = serde_yaml::from_str(&wire).unwrap();
+            assert_eq!(parsed, profile);
+        }
+        assert_eq!(
+            serde_yaml::from_str::<OpenAiCompatibleProfile>("kimi").unwrap(),
+            OpenAiCompatibleProfile::MoonshotKimi
+        );
+        assert_eq!(
+            serde_yaml::from_str::<OpenAiCompatibleProfile>("qwen").unwrap(),
+            OpenAiCompatibleProfile::QwenChat
+        );
+    }
+
+    #[test]
+    fn compatible_profile_round_trips_at_topology_scope() {
+        let topology: InferenceTopology = serde_yaml::from_str(
+            r#"
+openai_compat_profile: deepseek
+default_slot:
+  provider: openai_compat
+  endpoint: https://openrouter.ai/api/v1
+  openai_compat_profile: openrouter
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            topology.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::DeepSeek)
+        );
+        assert_eq!(
+            topology.default_slot.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::OpenRouter)
+        );
+        let round_trip = serde_yaml::to_string(&topology).unwrap();
+        let parsed: InferenceTopology = serde_yaml::from_str(&round_trip).unwrap();
+        assert_eq!(
+            parsed.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::DeepSeek)
+        );
+        assert_eq!(
+            parsed.default_slot.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::OpenRouter)
+        );
+    }
+
+    #[test]
+    fn old_compatible_slot_defaults_to_unprofiled_for_migration() {
+        let slot: HemisphereSlot = serde_yaml::from_str(
+            r#"
+provider: openai_compat
+endpoint: http://localhost:8080/v1
+model: local-model
+"#,
+        )
+        .unwrap();
+        assert_eq!(slot.provider, Some(InferenceProvider::OpenAiCompat));
+        assert_eq!(slot.openai_compat_profile, None);
     }
 
     #[test]

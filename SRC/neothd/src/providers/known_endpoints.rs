@@ -40,6 +40,8 @@
 //! `/v1/models` endpoint per provider — for now the hardcode is the
 //! offline-mode baseline.
 
+use crate::config::inference::OpenAiCompatibleProfile;
+
 /// One well-known OpenAI-compatible endpoint.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KnownEndpoint {
@@ -53,6 +55,9 @@ pub struct KnownEndpoint {
     /// by `OpenAiAdapter::new_compat`. Trailing slash safe; the
     /// adapter strips it on construction.
     pub endpoint: &'static str,
+    /// Exact vendor/wire identity retained through authorization and
+    /// completion attribution. Generic endpoints keep the legacy profile.
+    pub profile: OpenAiCompatibleProfile,
     /// Default model id when the operator doesn't supply one. Picked
     /// to be the provider's flagship — operator can override via
     /// `freedom.yaml::provider_model` or wizard step.
@@ -66,15 +71,16 @@ pub struct KnownEndpoint {
     pub has_list_models: bool,
 }
 
-/// Pinned 2026-05-18 snapshot. Cross-checked against an offline
-/// provider-catalogue research dump + each provider's public docs.
+/// Pinned 2026-07-30 snapshot. Cross-checked against each provider's public
+/// API documentation; named profiles below retain vendor identity at runtime.
 pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
     KnownEndpoint {
         display: "DeepSeek (direct)",
         provider_id: "deepseek",
-        endpoint: "https://api.deepseek.com/v1",
-        default_model: "deepseek-v3.2",
-        summary: "DeepSeek V3.2 + R1 reasoning — strong code + math, low cost",
+        endpoint: "https://api.deepseek.com",
+        profile: OpenAiCompatibleProfile::DeepSeek,
+        default_model: "deepseek-v4-pro",
+        summary: "DeepSeek V4 Pro + Flash — code, reasoning and agent workflows",
         doc_url: "https://api-docs.deepseek.com",
         has_list_models: true,
     },
@@ -82,6 +88,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "xAI Grok (direct)",
         provider_id: "xai",
         endpoint: "https://api.x.ai/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "grok-4-fast-non-reasoning",
         summary: "Grok 4 family — real-time data integration, vision",
         doc_url: "https://docs.x.ai/docs/api-reference",
@@ -91,6 +98,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Mistral AI",
         provider_id: "mistral",
         endpoint: "https://api.mistral.ai/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "mistral-large-latest",
         summary: "Mistral Large + Codestral — EU-hosted, function calling",
         doc_url: "https://docs.mistral.ai/api",
@@ -99,16 +107,28 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
     KnownEndpoint {
         display: "Moonshot Kimi",
         provider_id: "moonshot",
-        endpoint: "https://api.moonshot.cn/v1",
-        default_model: "kimi-k2",
-        summary: "Kimi K2 / K2.5 — long-context (200k+), Chinese-native",
-        doc_url: "https://platform.moonshot.cn/docs/api",
+        endpoint: "https://api.moonshot.ai/v1",
+        profile: OpenAiCompatibleProfile::MoonshotKimi,
+        default_model: "kimi-k3",
+        summary: "Kimi K3 — long-context, tool use and multimodal chat",
+        doc_url: "https://platform.kimi.ai/docs/api/chat",
+        has_list_models: true,
+    },
+    KnownEndpoint {
+        display: "Qwen (Model Studio OpenAI-compatible)",
+        provider_id: "qwen",
+        endpoint: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        profile: OpenAiCompatibleProfile::QwenChat,
+        default_model: "qwen3.7-plus",
+        summary: "Qwen chat-completions across Alibaba Cloud Model Studio regions",
+        doc_url: "https://www.alibabacloud.com/help/en/model-studio/compatibility-of-openai-with-dashscope",
         has_list_models: true,
     },
     KnownEndpoint {
         display: "Z.ai GLM",
         provider_id: "zai",
         endpoint: "https://open.bigmodel.cn/api/paas/v4",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "glm-4.6",
         summary: "ChatGLM 4.6 / 4.7 — bilingual EN/ZH, agent + tool use",
         doc_url: "https://open.bigmodel.cn/dev/api",
@@ -118,6 +138,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Together AI",
         provider_id: "together",
         endpoint: "https://api.together.xyz/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
         summary: "OSS models hosted (Llama, Mixtral, Qwen, DeepSeek)",
         doc_url: "https://docs.together.ai",
@@ -127,6 +148,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Groq",
         provider_id: "groq",
         endpoint: "https://api.groq.com/openai/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "llama-3.3-70b-versatile",
         summary: "Low-latency hosted Llama / Mixtral / Gemma (LPU)",
         doc_url: "https://console.groq.com/docs",
@@ -136,6 +158,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "OpenRouter",
         provider_id: "openrouter",
         endpoint: "https://openrouter.ai/api/v1",
+        profile: OpenAiCompatibleProfile::OpenRouter,
         default_model: "anthropic/claude-opus-4-7",
         summary: "Meta-router across 100+ models; per-call provider routing",
         doc_url: "https://openrouter.ai/docs",
@@ -145,6 +168,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Fireworks AI",
         provider_id: "fireworks",
         endpoint: "https://api.fireworks.ai/inference/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "accounts/fireworks/models/llama-v3p3-70b-instruct",
         summary: "OSS model inference + fine-tuning, function calling",
         doc_url: "https://docs.fireworks.ai",
@@ -154,6 +178,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Perplexity AI",
         provider_id: "perplexity",
         endpoint: "https://api.perplexity.ai",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "sonar-pro",
         summary: "Sonar Pro — built-in web search + citations",
         doc_url: "https://docs.perplexity.ai",
@@ -163,6 +188,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "Ollama (local)",
         provider_id: "ollama",
         endpoint: "http://localhost:11434/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "llama3.3",
         summary: "Local OSS model runner — no key required, OpenAI-compat",
         doc_url: "https://github.com/ollama/ollama/blob/main/docs/openai.md",
@@ -172,6 +198,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "LM Studio (local)",
         provider_id: "lm_studio",
         endpoint: "http://localhost:1234/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "auto",
         summary: "Local OSS model GUI runner — OpenAI-compat server",
         doc_url: "https://lmstudio.ai/docs/local-server",
@@ -181,6 +208,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "vLLM (local)",
         provider_id: "vllm",
         endpoint: "http://localhost:8000/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "auto",
         summary: "Local high-throughput inference server — OpenAI-compat",
         doc_url: "https://docs.vllm.ai",
@@ -190,6 +218,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "llama.cpp server (local)",
         provider_id: "llama_cpp",
         endpoint: "http://localhost:8080/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "auto",
         summary: "Local llama.cpp HTTP server — OpenAI-compat, GGUF models",
         doc_url: "https://github.com/ggerganov/llama.cpp/tree/master/examples/server",
@@ -199,6 +228,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "gpt4free (local proxy)",
         provider_id: "gpt4free",
         endpoint: "http://localhost:1337/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "gpt-4o",
         summary: "Free/scraped endpoint aggregator — OpenAI-compat (use at own risk)",
         doc_url: "https://github.com/xtekky/gpt4free",
@@ -208,6 +238,7 @@ pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
         display: "text-generation-webui (local)",
         provider_id: "text_generation_webui",
         endpoint: "http://localhost:5000/v1",
+        profile: OpenAiCompatibleProfile::Generic,
         default_model: "auto",
         summary: "Oobabooga's web UI — OpenAI-compat API for loaded GGUF/safetensors",
         doc_url: "https://github.com/oobabooga/text-generation-webui",
@@ -220,6 +251,88 @@ pub fn find_by_id(provider_id: &str) -> Option<&'static KnownEndpoint> {
     KNOWN_ENDPOINTS
         .iter()
         .find(|e| e.provider_id == provider_id)
+}
+
+/// Infer a vendor profile only from a reviewed service origin. Arbitrary
+/// OpenAI-compatible endpoints remain `Generic`, preserving existing configs.
+pub(crate) fn profile_for_endpoint(endpoint: &str) -> Option<OpenAiCompatibleProfile> {
+    [
+        OpenAiCompatibleProfile::OpenRouter,
+        OpenAiCompatibleProfile::DeepSeek,
+        OpenAiCompatibleProfile::MoonshotKimi,
+        OpenAiCompatibleProfile::QwenChat,
+    ]
+    .into_iter()
+    .find(|profile| profile_matches_endpoint(*profile, endpoint))
+}
+
+/// Fail closed when a named profile points at a different service or a wire
+/// surface the chat-completions adapter does not implement.
+pub(crate) fn validate_profile_endpoint(
+    profile: OpenAiCompatibleProfile,
+    endpoint: &str,
+) -> anyhow::Result<()> {
+    if !profile.uses_chat_completions() {
+        anyhow::bail!(
+            "OpenAI-compatible profile `{}` is not implemented by the \
+             chat-completions adapter; choose `qwen_chat` or configure a \
+             native adapter for that wire surface",
+            profile.as_str()
+        );
+    }
+    if profile == OpenAiCompatibleProfile::Generic || profile_matches_endpoint(profile, endpoint) {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "OpenAI-compatible profile `{}` requires its reviewed official HTTPS \
+         service endpoint; the configured endpoint does not match",
+        profile.as_str()
+    )
+}
+
+fn profile_matches_endpoint(profile: OpenAiCompatibleProfile, endpoint: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(endpoint) else {
+        return false;
+    };
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let path = url.path().trim_end_matches('/');
+    match profile {
+        OpenAiCompatibleProfile::Generic => true,
+        OpenAiCompatibleProfile::OpenRouter => host == "openrouter.ai" && path == "/api/v1",
+        OpenAiCompatibleProfile::DeepSeek => {
+            host == "api.deepseek.com" && matches!(path, "" | "/v1")
+        }
+        OpenAiCompatibleProfile::MoonshotKimi => {
+            matches!(host, "api.moonshot.ai" | "api.moonshot.cn") && path == "/v1"
+        }
+        OpenAiCompatibleProfile::QwenChat => is_qwen_chat_endpoint(host, path),
+        OpenAiCompatibleProfile::QwenResponses
+        | OpenAiCompatibleProfile::QwenAnthropicCompat
+        | OpenAiCompatibleProfile::QwenDashScope => false,
+    }
+}
+
+fn is_qwen_chat_endpoint(host: &str, path: &str) -> bool {
+    let shared_domain = matches!(
+        host,
+        "dashscope.aliyuncs.com"
+            | "dashscope-intl.aliyuncs.com"
+            | "dashscope-us.aliyuncs.com"
+            | "cn-hongkong.dashscope.aliyuncs.com"
+    );
+    let workspace_domain = host.ends_with(".maas.aliyuncs.com") && host != "maas.aliyuncs.com";
+    (shared_domain || workspace_domain) && path == "/compatible-mode/v1"
 }
 
 /// Loopback host bounded so it does NOT match near-miss addresses: the host
@@ -413,7 +526,8 @@ mod tests {
     fn find_by_id_returns_known() {
         let deepseek = find_by_id("deepseek").expect("deepseek must be present");
         assert_eq!(deepseek.display, "DeepSeek (direct)");
-        assert_eq!(deepseek.endpoint, "https://api.deepseek.com/v1");
+        assert_eq!(deepseek.endpoint, "https://api.deepseek.com");
+        assert_eq!(deepseek.profile, OpenAiCompatibleProfile::DeepSeek);
     }
 
     #[test]
@@ -556,11 +670,75 @@ mod tests {
             "zai",
             "groq",
             "openrouter",
+            "qwen",
         ];
         for id in must_have {
             assert!(
                 find_by_id(id).is_some(),
                 "AIRFORCE-research catalog must include: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn named_profiles_are_inferred_only_from_reviewed_service_origins() {
+        for (endpoint, profile) in [
+            (
+                "https://openrouter.ai/api/v1",
+                OpenAiCompatibleProfile::OpenRouter,
+            ),
+            (
+                "https://api.deepseek.com",
+                OpenAiCompatibleProfile::DeepSeek,
+            ),
+            (
+                "https://api.deepseek.com/v1/",
+                OpenAiCompatibleProfile::DeepSeek,
+            ),
+            (
+                "https://api.moonshot.ai/v1",
+                OpenAiCompatibleProfile::MoonshotKimi,
+            ),
+            (
+                "https://workspace.eu-central-1.maas.aliyuncs.com/compatible-mode/v1",
+                OpenAiCompatibleProfile::QwenChat,
+            ),
+        ] {
+            assert_eq!(profile_for_endpoint(endpoint), Some(profile), "{endpoint}");
+            validate_profile_endpoint(profile, endpoint).unwrap();
+        }
+        for endpoint in [
+            "https://openrouter.ai.evil.example/api/v1",
+            "https://api.deepseek.com.evil.example",
+            "https://workspace.eu-central-1.maas.aliyuncs.com/api/v1",
+            "https://user@api.moonshot.ai/v1",
+        ] {
+            assert_eq!(profile_for_endpoint(endpoint), None, "{endpoint}");
+        }
+    }
+
+    #[test]
+    fn named_profile_endpoint_mismatch_and_unimplemented_surfaces_fail_closed() {
+        let mismatch = validate_profile_endpoint(
+            OpenAiCompatibleProfile::DeepSeek,
+            "https://gateway.example.test/v1",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(mismatch.contains("deepseek"));
+        assert!(mismatch.contains("does not match"));
+
+        for unsupported in [
+            OpenAiCompatibleProfile::QwenResponses,
+            OpenAiCompatibleProfile::QwenAnthropicCompat,
+            OpenAiCompatibleProfile::QwenDashScope,
+        ] {
+            let error = validate_profile_endpoint(unsupported, "https://dashscope.aliyuncs.com/v1")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("not implemented"),
+                "{unsupported:?}: {error}"
             );
         }
     }

@@ -767,7 +767,14 @@ pub async fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
     // Stage the machine-local wrapping first, durably append the signed 0xD9
     // boundary, then atomically install it. A rerun recovers either side of an
     // interrupted transaction before it can start another rotation.
-    let rotation = rotate_hmac_key_with_audit(&home, &key_path, &raw, "rewrap", None).await?;
+    let rotation = rotate_hmac_key_with_audit(
+        &home,
+        &key_path,
+        &raw,
+        HmacKeyMutationMode::RewrapRecovery,
+        None,
+    )
+    .await?;
 
     eprintln!();
     eprintln!("[neoth security] HMAC KEY RE-WRAPPED FOR THIS MACHINE");
@@ -907,6 +914,49 @@ pub(crate) struct HmacKeyRotationResult {
     pub(crate) recovered: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HmacKeyMutationMode {
+    FreshInit,
+    RotateExisting,
+    RewrapRecovery,
+}
+
+impl HmacKeyMutationMode {
+    fn rotation_reason(self) -> Result<&'static str> {
+        match self {
+            Self::RotateExisting => Ok("rotate"),
+            Self::RewrapRecovery => Ok("rewrap"),
+            Self::FreshInit => {
+                anyhow::bail!("FreshInit is not an audited HMAC-key rotation mode")
+            }
+        }
+    }
+}
+
+fn acquire_hmac_mutation_lease(
+    home: &Path,
+    key_path: &Path,
+    _mode: HmacKeyMutationMode,
+) -> Result<crate::wal::compaction::HmacKeyLease> {
+    crate::wal::compaction::acquire_hmac_key_lease(
+        home,
+        key_path,
+        crate::wal::compaction::HmacKeyLeaseMode::ExclusiveMutation,
+    )
+}
+
+pub(crate) struct HmacWriterAuthority {
+    pub(crate) active_key: Vec<u8>,
+    pub(crate) verification_keys: Vec<Vec<u8>>,
+    _lease: crate::wal::compaction::HmacKeyLease,
+}
+
+impl HmacWriterAuthority {
+    pub(crate) fn validate_namespace_binding(&self) -> Result<()> {
+        self._lease.validate_namespace_binding()
+    }
+}
+
 impl HmacKeyRotationResult {
     pub(crate) fn ts_unix(&self) -> i64 {
         self.payload.ts_unix
@@ -950,16 +1000,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-fn hmac_rotation_lock_path(key_path: &Path) -> PathBuf {
-    key_path.with_file_name(format!(
-        "{}.rotation.lock",
-        key_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("hmac.key")
-    ))
-}
-
 fn hmac_rotation_journal_path(key_path: &Path) -> PathBuf {
     key_path.with_file_name(format!(
         "{}.rotation.json",
@@ -970,22 +1010,13 @@ fn hmac_rotation_journal_path(key_path: &Path) -> PathBuf {
     ))
 }
 
-fn current_key_storage_hash(key_path: &Path) -> Result<Option<String>> {
-    match std::fs::read(key_path) {
-        Ok(body) => Ok(Some(sha256_hex(&body))),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => {
-            Err(error).with_context(|| format!("read HMAC key storage at {}", key_path.display()))
-        }
-    }
-}
-
-fn remove_rotation_file(path: &Path) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
-    }
+fn current_key_storage_hash(home: &Path, key_path: &Path) -> Result<Option<String>> {
+    crate::wal::compaction::read_optional_home_wal_file(
+        home,
+        key_path,
+        crate::wal::scan::MAX_HOME_KEY_BYTES,
+    )
+    .map(|body| body.map(|body| sha256_hex(&body)))
 }
 
 fn sync_rotation_parent(path: &Path) -> Result<()> {
@@ -1106,14 +1137,13 @@ async fn append_hmac_key_rotated(home: &Path, daemon_live: bool, payload: &[u8])
         return Ok(());
     }
     let wal_dir = home.join("wal");
-    std::fs::create_dir_all(&wal_dir)
-        .with_context(|| format!("create WAL directory {}", wal_dir.display()))?;
     let segment = crate::wal::writer::unique_standalone_segment_path(
         &wal_dir,
         crate::wal::writer::HMAC_ROTATION_SURFACE,
     );
-    let (writer, join) = crate::wal::writer::spawn_for_home(segment, home.to_path_buf())
-        .context("spawn one-shot HMAC-key rotation WAL writer")?;
+    let (writer, join) =
+        crate::wal::writer::spawn_hmac_rotation_for_home(segment, home.to_path_buf())
+            .context("spawn one-shot HMAC-key rotation WAL writer")?;
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED, payload)
             .build();
@@ -1127,13 +1157,19 @@ async fn append_hmac_key_rotated(home: &Path, daemon_live: bool, payload: &[u8])
     append.map(|_| ())
 }
 
-fn load_pending_hmac_rotation(key_path: &Path) -> Result<Option<PendingHmacKeyRotation>> {
+fn load_pending_hmac_rotation(
+    home: &Path,
+    key_path: &Path,
+) -> Result<Option<PendingHmacKeyRotation>> {
     let journal_path = hmac_rotation_journal_path(key_path);
-    if !journal_path.exists() {
+    let Some(body) = crate::wal::compaction::read_optional_home_wal_file(
+        home,
+        &journal_path,
+        crate::wal::scan::MAX_HOME_KEY_BYTES,
+    )?
+    else {
         return Ok(None);
-    }
-    let body = std::fs::read(&journal_path)
-        .with_context(|| format!("read pending HMAC-key rotation {}", journal_path.display()))?;
+    };
     let pending: PendingHmacKeyRotation = serde_json::from_slice(&body)
         .with_context(|| format!("parse pending HMAC-key rotation {}", journal_path.display()))?;
     pending.validate()?;
@@ -1153,24 +1189,36 @@ fn pending_rotation_paths(
     ))
 }
 
-fn abort_pending_hmac_rotation(key_path: &Path, pending: &PendingHmacKeyRotation) -> Result<()> {
+fn abort_pending_hmac_rotation(
+    home: &Path,
+    key_path: &Path,
+    pending: &PendingHmacKeyRotation,
+) -> Result<()> {
     let (staged_path, _) = pending_rotation_paths(key_path, pending)?;
-    remove_rotation_file(&staged_path)?;
-    remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
-    sync_rotation_parent(key_path)
+    crate::wal::compaction::remove_home_wal_file_if_present(home, &staged_path)?;
+    crate::wal::compaction::remove_home_wal_file_if_present(
+        home,
+        &hmac_rotation_journal_path(key_path),
+    )?;
+    Ok(())
 }
 
 fn commit_pending_hmac_rotation(
+    home: &Path,
     key_path: &Path,
     pending: PendingHmacKeyRotation,
     recovered: bool,
 ) -> Result<HmacKeyRotationResult> {
     pending.validate()?;
     let (staged_path, archive_path) = pending_rotation_paths(key_path, &pending)?;
-    let current_storage = current_key_storage_hash(key_path)?;
-    if key_path.exists()
-        && let Ok(current) = crate::wal::compaction::load_or_init_key(key_path)
-        && sha256_hex(&current) == pending.payload.new_key_sha256
+    let current_storage = current_key_storage_hash(home, key_path)?;
+    let current_key = current_storage
+        .as_ref()
+        .map(|_| crate::wal::compaction::load_existing_home_key(home, key_path))
+        .transpose()?;
+    if current_key
+        .as_ref()
+        .is_some_and(|current| sha256_hex(current) == pending.payload.new_key_sha256)
     {
         if let Some(archive) = &archive_path {
             let expected = pending
@@ -1178,9 +1226,12 @@ fn commit_pending_hmac_rotation(
                 .previous_key_storage_sha256
                 .as_deref()
                 .context("committed HMAC archive has no signed predecessor hash")?;
-            let archived = std::fs::read(archive).with_context(|| {
-                format!("read committed HMAC key archive {}", archive.display())
-            })?;
+            let archived = crate::wal::compaction::read_existing_home_wal_file(
+                home,
+                archive,
+                crate::wal::scan::MAX_HOME_KEY_BYTES,
+            )
+            .with_context(|| format!("read committed HMAC key archive {}", archive.display()))?;
             if sha256_hex(&archived) != expected {
                 anyhow::bail!(
                     "committed HMAC key archive {} does not match the signed predecessor",
@@ -1188,9 +1239,11 @@ fn commit_pending_hmac_rotation(
                 );
             }
         }
-        remove_rotation_file(&staged_path)?;
-        remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
-        sync_rotation_parent(key_path)?;
+        crate::wal::compaction::remove_home_wal_file_if_present(home, &staged_path)?;
+        crate::wal::compaction::remove_home_wal_file_if_present(
+            home,
+            &hmac_rotation_journal_path(key_path),
+        )?;
         return Ok(HmacKeyRotationResult {
             payload: pending.payload,
             archive_path,
@@ -1202,13 +1255,7 @@ fn commit_pending_hmac_rotation(
             "pending HMAC-key rotation is stale: active key matches neither side of the signed transition"
         );
     }
-    if !staged_path.exists() {
-        anyhow::bail!(
-            "pending HMAC-key rotation is audited but staged key {} is missing",
-            staged_path.display()
-        );
-    }
-    let staged = crate::wal::compaction::load_or_init_key(&staged_path)
+    let staged = crate::wal::compaction::load_existing_home_key_sibling(home, &staged_path)
         .context("load staged HMAC replacement key")?;
     if sha256_hex(&staged) != pending.payload.new_key_sha256 {
         anyhow::bail!("staged HMAC replacement key does not match the signed transition");
@@ -1219,9 +1266,11 @@ fn commit_pending_hmac_rotation(
             .previous_key_storage_sha256
             .as_deref()
             .context("HMAC archive requested without a previous key")?;
-        if archive.exists() {
-            let existing = std::fs::read(archive)
-                .with_context(|| format!("read HMAC key archive {}", archive.display()))?;
+        if let Some(existing) = crate::wal::compaction::read_optional_home_wal_file(
+            home,
+            archive,
+            crate::wal::scan::MAX_HOME_KEY_BYTES,
+        )? {
             if sha256_hex(&existing) != previous_hash {
                 anyhow::bail!(
                     "HMAC key archive {} exists with unexpected contents",
@@ -1229,22 +1278,28 @@ fn commit_pending_hmac_rotation(
                 );
             }
         } else {
-            let active = std::fs::read(key_path)
-                .with_context(|| format!("read retiring HMAC key {}", key_path.display()))?;
-            crate::util::atomic_write::atomic_write_private(archive, &active)
+            let active = crate::wal::compaction::read_existing_home_wal_file(
+                home,
+                key_path,
+                crate::wal::scan::MAX_HOME_KEY_BYTES,
+            )
+            .with_context(|| format!("read retiring HMAC key {}", key_path.display()))?;
+            crate::wal::compaction::write_new_home_wal_file(home, archive, &active)
                 .with_context(|| format!("write HMAC key archive {}", archive.display()))?;
         }
     }
-    crate::wal::compaction::rewrap_key(key_path, &staged)
+    crate::wal::compaction::replace_home_key(home, key_path, &staged)
         .context("atomically install audited HMAC replacement key")?;
-    let installed = crate::wal::compaction::load_or_init_key(key_path)
+    let installed = crate::wal::compaction::load_existing_home_key(home, key_path)
         .context("verify installed HMAC replacement key")?;
     if sha256_hex(&installed) != pending.payload.new_key_sha256 {
         anyhow::bail!("installed HMAC replacement key does not match the signed transition");
     }
-    remove_rotation_file(&staged_path)?;
-    remove_rotation_file(&hmac_rotation_journal_path(key_path))?;
-    sync_rotation_parent(key_path)?;
+    crate::wal::compaction::remove_home_wal_file_if_present(home, &staged_path)?;
+    crate::wal::compaction::remove_home_wal_file_if_present(
+        home,
+        &hmac_rotation_journal_path(key_path),
+    )?;
     Ok(HmacKeyRotationResult {
         payload: pending.payload,
         archive_path,
@@ -1256,44 +1311,107 @@ fn recover_pending_hmac_rotation_locked(
     home: &Path,
     key_path: &Path,
 ) -> Result<Option<HmacKeyRotationResult>> {
-    let Some(pending) = load_pending_hmac_rotation(key_path)? else {
+    let Some(pending) = load_pending_hmac_rotation(home, key_path)? else {
         return Ok(None);
     };
     let signing_key_path = home.join("wal").join("signing.key");
     let payload = serde_json::to_vec(&pending.payload)
         .context("serialize pending HMAC-key rotation payload")?;
     if hmac_rotation_event_is_durable(home, &payload, &signing_key_path)? {
-        return commit_pending_hmac_rotation(key_path, pending, true).map(Some);
+        return commit_pending_hmac_rotation(home, key_path, pending, true).map(Some);
     }
-    if key_path.exists()
-        && crate::wal::compaction::load_or_init_key(key_path)
+    let current_storage = current_key_storage_hash(home, key_path)?;
+    if current_storage.is_some()
+        && crate::wal::compaction::load_existing_home_key(home, key_path)
             .is_ok_and(|active| sha256_hex(&active) == pending.payload.new_key_sha256)
     {
         anyhow::bail!(
             "active HMAC key matches a pending replacement whose signed 0xD9 boundary is missing — refusing to erase recovery state"
         );
     }
-    if current_key_storage_hash(key_path)? != pending.payload.previous_key_storage_sha256 {
+    if current_storage != pending.payload.previous_key_storage_sha256 {
         anyhow::bail!(
             "pending unaudited HMAC-key rotation is stale: active key no longer matches its signed predecessor"
         );
     }
-    abort_pending_hmac_rotation(key_path, &pending)?;
+    abort_pending_hmac_rotation(home, key_path, &pending)?;
     Ok(None)
 }
 
-/// Recover an interrupted HMAC rotation before a WAL writer loads the active
-/// key. This prevents a restarted daemon from emitting an old-key compaction
-/// marker after an already-durable 0xD9 boundary.
-pub(crate) fn recover_hmac_key_rotation(
+/// Recover any authenticated pending key transition and then load or initialize
+/// the active key while the same cross-process rotation lock remains held.
+///
+/// First-start writers and audit emitters must use this entrypoint before
+/// publishing any WAL namespace artifact. It creates a key only for a
+/// provably fresh namespace and never replaces missing authority for existing
+/// WAL evidence.
+pub(crate) fn recover_and_load_or_initialize_hmac_key(
     home: &Path,
     key_path: &Path,
-) -> Result<Option<HmacKeyRotationResult>> {
-    let _lock = crate::util::locked_file::lock_file_blocking(
-        &hmac_rotation_lock_path(key_path),
-        "HMAC-key rotation",
+) -> Result<Vec<u8>> {
+    let lease = acquire_hmac_mutation_lease(home, key_path, HmacKeyMutationMode::FreshInit)?;
+    recover_pending_hmac_rotation_locked(home, key_path)?;
+    let key = crate::wal::compaction::load_or_initialize_home_key_locked(home, key_path)?;
+    lease.validate_namespace_binding()?;
+    Ok(key)
+}
+
+fn try_acquire_existing_hmac_writer_authority(
+    home: &Path,
+    key_path: &Path,
+) -> Result<Option<HmacWriterAuthority>> {
+    let lease = crate::wal::compaction::acquire_hmac_key_lease(
+        home,
+        key_path,
+        crate::wal::compaction::HmacKeyLeaseMode::SharedWriter,
     )?;
-    recover_pending_hmac_rotation_locked(home, key_path)
+
+    // A valid journal means recovery owns the next transition. Never admit a
+    // writer against either side of that transition, even when the active key
+    // remains readable. Returning `None` drops the shared lease before the
+    // caller enters the exclusive recovery path.
+    if load_pending_hmac_rotation(home, key_path)?.is_some() {
+        return Ok(None);
+    }
+    let Some(active_storage) = crate::wal::compaction::read_optional_home_wal_file(
+        home,
+        key_path,
+        crate::wal::scan::MAX_HOME_KEY_BYTES,
+    )?
+    else {
+        return Ok(None);
+    };
+    let active_key = crate::wal::compaction::decode_existing_key(&active_storage, key_path)
+        .context("decode existing active HMAC key under writer lease")?;
+    let verification_keys = crate::wal::scan::load_home_hmac_keys(home)
+        .context("load active and archived HMAC verification keys under writer lease")?;
+    if verification_keys.first().map(Vec::as_slice) != Some(active_key.as_slice()) {
+        anyhow::bail!("capability-bound active HMAC key changed during writer lease admission");
+    }
+    lease.validate_namespace_binding()?;
+    Ok(Some(HmacWriterAuthority {
+        active_key,
+        verification_keys,
+        _lease: lease,
+    }))
+}
+
+/// Retain a shared cross-process HMAC lease for the complete normal-writer
+/// lifetime. Established writers take the load-only fast path and therefore
+/// coexist. A pending rotation or genuinely absent first-start key drops the
+/// shared lease, performs one serialized exclusive recovery/initialization,
+/// then retries shared admission against the resulting authoritative keyset.
+pub(crate) fn acquire_hmac_writer_authority(
+    home: &Path,
+    key_path: &Path,
+) -> Result<HmacWriterAuthority> {
+    if let Some(authority) = try_acquire_existing_hmac_writer_authority(home, key_path)? {
+        return Ok(authority);
+    }
+
+    recover_and_load_or_initialize_hmac_key(home, key_path)?;
+    try_acquire_existing_hmac_writer_authority(home, key_path)?
+        .context("HMAC recovery completed without an admissible active writer key")
 }
 
 /// Crash-recoverable HMAC key rotation shared by `keys rotate` and
@@ -1304,7 +1422,7 @@ pub(crate) async fn rotate_hmac_key_with_audit(
     home: &Path,
     key_path: &Path,
     new_key: &[u8],
-    reason: &str,
+    mode: HmacKeyMutationMode,
     archive_path: Option<PathBuf>,
 ) -> Result<HmacKeyRotationResult> {
     if new_key.len() < 16 {
@@ -1313,10 +1431,8 @@ pub(crate) async fn rotate_hmac_key_with_audit(
             new_key.len()
         );
     }
-    let _lock = crate::util::locked_file::lock_file_blocking(
-        &hmac_rotation_lock_path(key_path),
-        "HMAC-key rotation",
-    )?;
+    let reason = mode.rotation_reason()?;
+    let lease = acquire_hmac_mutation_lease(home, key_path, mode)?;
     let daemon_live = match crate::daemon::pidfile::live_daemon_pid(&home.join("neothd.pid")) {
         Ok(Some(_)) => true,
         Ok(None) => false,
@@ -1330,11 +1446,24 @@ pub(crate) async fn rotate_hmac_key_with_audit(
         );
     }
     if let Some(recovered) = recover_pending_hmac_rotation_locked(home, key_path)? {
+        lease.validate_namespace_binding()?;
         return Ok(recovered);
     }
     let signing_key_path = home.join("wal").join("signing.key");
-    let previous_key_storage_sha256 = current_key_storage_hash(key_path)?;
+    let previous_key_storage_sha256 = current_key_storage_hash(home, key_path)?;
     let replaced = previous_key_storage_sha256.is_some();
+    match mode {
+        HmacKeyMutationMode::RotateExisting => {
+            crate::wal::compaction::load_existing_home_key(home, key_path).context(
+                "`neoth keys rotate` requires an existing readable hmac.key; use first-start initialization or `security rewrap-hmac-key` for recovery",
+            )?;
+            if archive_path.is_none() {
+                anyhow::bail!("RotateExisting requires a collision-free archive destination");
+            }
+        }
+        HmacKeyMutationMode::RewrapRecovery => {}
+        HmacKeyMutationMode::FreshInit => unreachable!("validated by rotation_reason"),
+    }
     if archive_path.is_some() && !replaced {
         anyhow::bail!("cannot archive an HMAC key that does not exist");
     }
@@ -1350,7 +1479,13 @@ pub(crate) async fn rotate_hmac_key_with_audit(
             .and_then(|value| value.to_str())
             .context("HMAC key archive path has no UTF-8 filename")?;
         validate_private_sibling_name(name, "archive_file")?;
-        if archive.exists() {
+        if crate::wal::compaction::read_optional_home_wal_file(
+            home,
+            archive,
+            crate::wal::scan::MAX_HOME_KEY_BYTES,
+        )?
+        .is_some()
+        {
             anyhow::bail!("HMAC key archive already exists at {}", archive.display());
         }
     }
@@ -1372,8 +1507,6 @@ pub(crate) async fn rotate_hmac_key_with_audit(
     let parent = key_path
         .parent()
         .context("HMAC key path has no parent directory")?;
-    std::fs::create_dir_all(parent)
-        .with_context(|| format!("create HMAC key parent {}", parent.display()))?;
     let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
     let staged_path = parent.join(&staged_file);
     let pending = PendingHmacKeyRotation {
@@ -1388,37 +1521,53 @@ pub(crate) async fn rotate_hmac_key_with_audit(
     };
     pending.validate()?;
     let journal_path = hmac_rotation_journal_path(key_path);
-    if staged_path.exists() || journal_path.exists() {
+    if crate::wal::compaction::read_optional_home_wal_file(
+        home,
+        &staged_path,
+        crate::wal::scan::MAX_HOME_KEY_BYTES,
+    )?
+    .is_some()
+        || crate::wal::compaction::read_optional_home_wal_file(
+            home,
+            &journal_path,
+            crate::wal::scan::MAX_HOME_KEY_BYTES,
+        )?
+        .is_some()
+    {
         anyhow::bail!("HMAC-key rotation transaction paths already exist");
     }
     let journal =
         serde_json::to_vec(&pending).context("serialize pending HMAC-key rotation journal")?;
-    crate::util::atomic_write::atomic_write_private(&journal_path, &journal)
+    crate::wal::compaction::write_new_home_wal_file(home, &journal_path, &journal)
         .with_context(|| format!("write HMAC-key rotation journal {}", journal_path.display()))?;
-    if let Err(error) = crate::wal::compaction::write_key_securely(&staged_path, new_key)
-        .context("write staged HMAC replacement key")
+    if let Err(error) =
+        crate::wal::compaction::write_new_home_key_sibling(home, &staged_path, new_key)
+            .context("write staged HMAC replacement key")
     {
-        let _ = remove_rotation_file(&journal_path);
+        let _ = crate::wal::compaction::remove_home_wal_file_if_present(home, &journal_path);
         return Err(error);
     }
-    sync_rotation_parent(key_path)?;
+    lease.validate_namespace_binding()?;
     let payload_bytes =
         serde_json::to_vec(&pending.payload).context("serialize HMAC-key rotation audit")?;
     if let Err(audit_error) = append_hmac_key_rotated(home, daemon_live, &payload_bytes).await
         && !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)?
     {
-        abort_pending_hmac_rotation(key_path, &pending)?;
+        abort_pending_hmac_rotation(home, key_path, &pending)?;
         return Err(audit_error);
     }
     if !hmac_rotation_event_is_durable(home, &payload_bytes, &signing_key_path)? {
         anyhow::bail!("HMAC-key rotation audit append returned success but is not durable");
     }
-    commit_pending_hmac_rotation(key_path, pending, false)
+    lease.validate_namespace_binding()?;
+    let committed = commit_pending_hmac_rotation(home, key_path, pending, false)?;
+    lease.validate_namespace_binding()?;
+    Ok(committed)
 }
 
 /// SC-09 (Session 28) — write the operator's WAL HMAC compaction key
 /// to `args.output` in plaintext. Handles the DPAPI unwrap on Windows
-/// (via `wal::compaction::load_or_init_key`); the operator sees the
+/// (via the load-only WAL key reader); the operator sees the
 /// raw bytes regardless of how they're stored on disk.
 ///
 /// **Operator-visible warnings are deliberate**: this path is the
@@ -1518,7 +1667,7 @@ pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
             key_path.display()
         );
     }
-    let key_bytes = crate::wal::compaction::load_or_init_key(&key_path)?;
+    let key_bytes = crate::wal::compaction::load_existing_key(&key_path)?;
 
     // Ensure the parent dir exists so a fresh `--output ~/safe/key`
     // works without the operator pre-mkdiring.
@@ -2707,7 +2856,7 @@ mod tests {
         std::fs::create_dir_all(&wal_dir).unwrap();
         let key_path = wal_dir.join("hmac.key");
         crate::wal::compaction::rewrap_key(&key_path, &[0x31; 32]).unwrap();
-        let previous_key_storage_sha256 = current_key_storage_hash(&key_path).unwrap();
+        let previous_key_storage_sha256 = current_key_storage_hash(home.path(), &key_path).unwrap();
         let replacement = [0x72; 32];
         let signing_key =
             crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
@@ -2748,7 +2897,7 @@ mod tests {
             home.path(),
             &key_path,
             &[0x99; 32],
-            "rotate",
+            HmacKeyMutationMode::RotateExisting,
             Some(wal_dir.join("unused.archive")),
         )
         .await
@@ -2767,5 +2916,197 @@ mod tests {
         );
         assert!(!hmac_rotation_journal_path(&key_path).exists());
         assert!(!wal_dir.join(staged_file).exists());
+    }
+
+    #[test]
+    fn writer_admission_recovers_a_pending_rotation_before_taking_the_shared_fast_path() {
+        let home = TempDir::new().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        let active = [0x31; 32];
+        crate::wal::compaction::rewrap_key(&key_path, &active).unwrap();
+        let replacement = [0x72; 32];
+        let signing_key =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let mut payload = HmacKeyRotatedPayload {
+            schema: HmacKeyRotatedPayload::SCHEMA,
+            rotation_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            new_key_sha256: sha256_hex(&replacement),
+            previous_key_storage_sha256: current_key_storage_hash(home.path(), &key_path).unwrap(),
+            replaced: true,
+            reason: "rotate".to_owned(),
+            ts_unix: crate::time::now_unix_i64(),
+            signer_pubkey: crate::wal::signing::pubkey_b64(&signing_key),
+            sig: String::new(),
+        };
+        payload.sig = crate::wal::signing::sign_b64(&signing_key, &payload.canonical_bytes());
+        let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
+        let staged_path = wal_dir.join(&staged_file);
+        let pending = PendingHmacKeyRotation {
+            schema: PendingHmacKeyRotation::SCHEMA,
+            payload,
+            staged_file,
+            archive_file: Some("hmac.key.1700000000.archive".to_owned()),
+        };
+        let journal_path = hmac_rotation_journal_path(&key_path);
+        crate::wal::compaction::write_new_home_wal_file(
+            home.path(),
+            &journal_path,
+            &serde_json::to_vec(&pending).unwrap(),
+        )
+        .unwrap();
+        crate::wal::compaction::write_new_home_key_sibling(home.path(), &staged_path, &replacement)
+            .unwrap();
+
+        let authority = acquire_hmac_writer_authority(home.path(), &key_path)
+            .expect("writer admission must serialize and recover pending state");
+
+        assert_eq!(authority.active_key, active);
+        assert_eq!(
+            authority.verification_keys.first().map(Vec::as_slice),
+            Some(active.as_slice())
+        );
+        authority.validate_namespace_binding().unwrap();
+        assert!(
+            !journal_path.exists(),
+            "writer fast path must not ignore a pending rotation journal"
+        );
+        assert!(
+            !staged_path.exists(),
+            "unaudited pending replacement must be rolled back before writer admission"
+        );
+    }
+
+    #[tokio::test]
+    async fn rotate_existing_never_mints_a_missing_identity_over_wal_evidence() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let evidence = wal_dir.join("000001.wal");
+        std::fs::write(&evidence, b"historical-unverifiable-evidence").unwrap();
+        let key_path = wal_dir.join("hmac.key");
+
+        let error = rotate_hmac_key_with_audit(
+            home.path(),
+            &key_path,
+            &[0x91; 32],
+            HmacKeyMutationMode::RotateExisting,
+            Some(wal_dir.join("hmac.key.1700000000.archive")),
+        )
+        .await
+        .expect_err("RotateExisting must require the existing active identity");
+        assert!(
+            format!("{error:#}").contains("requires an existing readable hmac.key"),
+            "unexpected missing-key rotation error: {error:#}"
+        );
+        assert!(
+            !key_path.exists(),
+            "rotation must not mint a replacement key"
+        );
+        assert_eq!(
+            std::fs::read(evidence).unwrap(),
+            b"historical-unverifiable-evidence"
+        );
+        assert!(!hmac_rotation_journal_path(&key_path).exists());
+    }
+
+    #[test]
+    fn recovery_loads_a_missing_staged_key_without_creating_it() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+        crate::wal::compaction::rewrap_key(&key_path, &[0x33; 32]).unwrap();
+        let signing =
+            crate::wal::signing::load_or_init_signing_key(&wal_dir.join("signing.key")).unwrap();
+        let mut payload = HmacKeyRotatedPayload {
+            schema: HmacKeyRotatedPayload::SCHEMA,
+            rotation_id: uuid::Uuid::now_v7().hyphenated().to_string(),
+            new_key_sha256: sha256_hex(&[0x44; 32]),
+            previous_key_storage_sha256: current_key_storage_hash(home.path(), &key_path).unwrap(),
+            replaced: true,
+            reason: "rewrap".to_owned(),
+            ts_unix: crate::time::now_unix_i64(),
+            signer_pubkey: crate::wal::signing::pubkey_b64(&signing),
+            sig: String::new(),
+        };
+        payload.sig = crate::wal::signing::sign_b64(&signing, &payload.canonical_bytes());
+        let staged_file = format!("hmac.key.rotation-{}.next", payload.rotation_id);
+        let staged_path = wal_dir.join(&staged_file);
+        let pending = PendingHmacKeyRotation {
+            schema: PendingHmacKeyRotation::SCHEMA,
+            payload,
+            staged_file,
+            archive_file: None,
+        };
+
+        let error = commit_pending_hmac_rotation(home.path(), &key_path, pending, true)
+            .expect_err("recovery must load-only a missing staged replacement");
+        assert!(
+            format!("{error:#}").contains("required WAL key material is missing"),
+            "unexpected staged-key error: {error:#}"
+        );
+        assert!(
+            !staged_path.exists(),
+            "load-only recovery must never mint a missing staged key"
+        );
+        assert_eq!(
+            crate::wal::compaction::load_existing_home_key(home.path(), &key_path).unwrap(),
+            vec![0x33; 32]
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_writer_lease_fences_rotation_until_the_old_key_writer_exits() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, writer_join) =
+            crate::wal::writer::spawn_for_home(segment, home.path().to_path_buf()).unwrap();
+        let header = crate::wal::HeaderBuilder::new(0x44, b"before-rotation").build();
+        writer
+            .append(header, b"before-rotation".to_vec())
+            .await
+            .unwrap();
+
+        let rotate_home = home.path().to_path_buf();
+        let key_path = wal_dir.join("hmac.key");
+        let rotate_key_path = key_path.clone();
+        let archive = wal_dir.join("hmac.key.1700000000.archive");
+        let rotation = tokio::spawn(async move {
+            rotate_hmac_key_with_audit(
+                &rotate_home,
+                &rotate_key_path,
+                &[0xa7; 32],
+                HmacKeyMutationMode::RotateExisting,
+                Some(archive),
+            )
+            .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(
+            !rotation.is_finished(),
+            "exclusive rotation must not cross 0xD9 while an old-key writer lease is alive"
+        );
+        let header = crate::wal::HeaderBuilder::new(0x45, b"still-before-boundary").build();
+        writer
+            .append(header, b"still-before-boundary".to_vec())
+            .await
+            .expect("old-key append remains legal before the boundary");
+        drop(writer);
+        writer_join.await.unwrap();
+
+        let result = rotation
+            .await
+            .expect("rotation task joins")
+            .expect("rotation proceeds after writer shutdown");
+        assert!(!result.recovered);
+        assert_eq!(
+            crate::wal::compaction::load_existing_home_key(home.path(), &key_path).unwrap(),
+            vec![0xa7; 32]
+        );
     }
 }

@@ -160,6 +160,7 @@ pub mod recon;
 pub mod recovery;
 pub mod reflection;
 pub mod secret;
+pub mod secret_transfer;
 pub mod security;
 pub mod self_improve;
 pub mod skills;

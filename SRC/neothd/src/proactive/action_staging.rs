@@ -45,8 +45,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::proactive::{ProactiveItem, ProactiveQueue};
 use crate::skills::store::{
-    BoundDirectory, cap_metadata_is_link_like, open_bound_directory, read_regular_file_bounded,
-    remove_child_file, rename_child, replace_existing_regular_file_report,
+    BoundDirectory, cap_metadata_is_link_like, open_bound_directory,
+    open_bound_directory_from_trusted_anchor, read_regular_file_bounded, remove_child_file,
+    rename_child, replace_existing_regular_file_report,
 };
 
 const MAX_PROPOSAL_BYTES: usize = 1024 * 1024;
@@ -407,7 +408,13 @@ fn proposal_file_name(id: &str) -> std::io::Result<OsString> {
 }
 
 fn proposals_root(home: &Path, create: bool) -> std::io::Result<Option<BoundDirectory>> {
-    open_bound_directory(&proposals_dir(home), create, "proposal store").map_err(anyhow_to_io)
+    let target = proposals_dir(home);
+    if !create {
+        return open_bound_directory(&target, false, "proposal store").map_err(anyhow_to_io);
+    }
+    let trusted_anchor = home.parent().unwrap_or(home);
+    open_bound_directory_from_trusted_anchor(trusted_anchor, &target, true, "proposal store")
+        .map_err(anyhow_to_io)
 }
 
 struct ProposalMutationGuard {
@@ -871,9 +878,14 @@ pub fn sync_proposals_to_obsidian(
             target_paths: Vec::new(),
         });
     }
-    let dest_root = open_bound_directory(&dest_dir, true, "proposal vault view")
-        .map_err(anyhow_to_io)?
-        .expect("created proposal vault view must exist");
+    let dest_root = open_bound_directory_from_trusted_anchor(
+        vault_root,
+        &dest_dir,
+        true,
+        "proposal vault view",
+    )
+    .map_err(anyhow_to_io)?
+    .expect("created proposal vault view must exist");
     let _guard = lock_proposal_mutations(&dest_root)?;
 
     let mut target_paths = Vec::with_capacity(proposals.len());

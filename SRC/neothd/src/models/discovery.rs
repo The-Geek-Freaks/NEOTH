@@ -330,8 +330,9 @@ impl RouteBinding {
 /// is required because consent is instance-local; a process-global or
 /// home-less fallback inventory could otherwise perform unapproved egress.
 pub fn build_sources_from_config_at(config: &FreedomConfig, home: &Path) -> Result<SourcePlan> {
+    let key_path = home.join("wal").join("hmac.key");
     let binding_key = zeroize::Zeroizing::new(
-        crate::wal::compaction::load_or_init_key(&home.join("wal").join("hmac.key"))
+        crate::cli::security::recover_and_load_or_initialize_hmac_key(home, &key_path)
             .context("load instance key for model-catalog route bindings")?,
     );
     Ok(build_sources_with_bedrock_resolver_at(

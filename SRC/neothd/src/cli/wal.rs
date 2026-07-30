@@ -83,9 +83,11 @@ pub enum WalAction {
         /// Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`.
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
-        /// Re-verify each included compaction marker's HMAC against the local
-        /// key at export time (sets `chain_verified`). Off by default so an
-        /// operator without the key can still export the metadata bundle.
+        /// Re-verify each included compaction marker's HMAC against the
+        /// selected WAL directory's existing key at export time (sets
+        /// `chain_verified`). Verification never creates a replacement key.
+        /// Off by default so an operator without the key can still export the
+        /// metadata bundle with unverified marker evidence.
         #[arg(long, default_value_t = false)]
         verify_chain: bool,
         /// WAL directory override (tests / inspecting a backup).
@@ -1069,11 +1071,19 @@ fn run_wal_export(
 
     let (frames, raw_markers) = collect_proof(wal_dir, start_ns, end_ns)?;
 
-    // Optionally re-verify each marker's HMAC against the local key NOW so the
-    // bundle records a verified-at-export verdict. Without the key (or with the
-    // flag off) the verifier checks it themselves — `verified_at_export: None`.
+    // Optionally re-verify each marker's HMAC against the exact WAL directory's
+    // existing key NOW so the bundle records a verified-at-export verdict.
+    // Proof export is never an authority initializer: an explicitly requested
+    // verification fails if the historical key is unavailable.
     let key = if verify_chain {
-        compaction::load_or_init_key(&compaction::default_key_path()).ok()
+        Some(
+            compaction::load_existing_key(&wal_dir.join("hmac.key")).with_context(|| {
+                format!(
+                    "load existing HMAC key for verified proof export from {}",
+                    wal_dir.display()
+                )
+            })?,
+        )
     } else {
         None
     };
@@ -1500,6 +1510,34 @@ mod tests {
         // verify_chain=false ⇒ marker not re-checked ⇒ chain_verified false.
         assert!(!env.bundle.chain_verified);
         assert_eq!(env.bundle.markers[0].verified_at_export, None);
+    }
+
+    #[test]
+    fn verified_export_requires_the_selected_wal_directorys_existing_key() {
+        let _env = crate::test_env::lock();
+        let waldir = tempdir().unwrap();
+        write_segment_with_marker(waldir.path(), 1, 1);
+        let outdir = tempdir().unwrap();
+        let out = outdir.path().join("proof.neoth-proof");
+
+        let error = run_wal_export(
+            "100d",
+            Some(&out),
+            waldir.path(),
+            true,
+            false,
+            OutputFormat::Json,
+        )
+        .expect_err("explicit chain verification without its key must fail closed");
+        assert!(
+            format!("{error:#}").contains("load existing HMAC key"),
+            "unexpected verified-export error: {error:#}"
+        );
+        assert!(!waldir.path().join("hmac.key").exists());
+        assert!(
+            !out.exists(),
+            "failed verification must not publish a proof envelope"
+        );
     }
 
     #[test]

@@ -368,6 +368,7 @@ fn assemble_cluster_request(
     // boundary; the remote prompt cannot activate local recall/skills/MCP.
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt,
+        operator_sovereignty: None,
         operator_context: None,
         preset_addendum: None,
         explicit_system: Some(CLUSTER_DELEGATED_SYSTEM),
@@ -1104,6 +1105,7 @@ mod tests {
             }
             async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
                 Ok(Completion {
+                    termination: Default::default(),
                     text: format!("echo: {}", req.prompt),
                     identity: Default::default(),
                     model: "qwen3".into(),
@@ -1161,6 +1163,7 @@ mod tests {
             async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Ok(Completion {
+                    termination: Default::default(),
                     text: "done".into(),
                     identity: Default::default(),
                     model: "qwen3".into(),
@@ -1330,6 +1333,7 @@ mod tests {
             async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
                 *self.seen.lock().unwrap() = Some(req);
                 Ok(Completion {
+                    termination: Default::default(),
                     text: "done".into(),
                     identity: Default::default(),
                     model: "qwen3".into(),

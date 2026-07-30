@@ -1068,13 +1068,17 @@ pub const EVENT_TYPE_JOB_SKIPPED_BY_GATE: u8 = 0x43;
 /// U-04 (2026-05-26): updater cron task fired one check pass.
 /// Emitted by every tick of the self-update / skill+plugin /
 /// CLI-version cron — operators see "the updater ran" even when
-/// no upgrade was needed. Payload: `{ task_kind, ts_unix }` where
-/// `task_kind ∈ neoth_self | skill_plugin | cli_versions`.
+/// no upgrade was needed. Schema-v3 payload binds `{schema_version, run_id,
+/// lane, task_kind, accepted_config_epoch, accepted_policy_sha256, ts_unix}`.
+/// Historical schema-v1/v2 records remain readable but are not treated as a
+/// fully correlatable current pass.
 pub const EVENT_TYPE_UPDATER_TASK_FIRED: u8 = 0x44;
 
 /// U-04: updater cron task completed. One frame per
 /// `0x44 UPDATER_TASK_FIRED`. Payload carries the per-component
-/// outcome list — `{ task_kind, ts_unix, duration_ms, components:
+/// outcome list and exact durable FIRED receipt — `{schema_version, run_id,
+/// lane, task_kind, accepted_config_epoch, accepted_policy_sha256,
+/// fired_receipt_sha256, terminal_outcome, ts_unix, duration_ms, components:
 /// [{ name, prior_version?, new_version?, status }] }` where
 /// `status ∈ up_to_date | upgraded | failed | skipped_by_gate`.
 pub const EVENT_TYPE_UPDATER_TASK_RESULT: u8 = 0x45;

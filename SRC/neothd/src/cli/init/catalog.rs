@@ -362,6 +362,7 @@ pub(crate) fn apply_local_only_preset(topology: &mut crate::config::inference::I
         model: None,
         key: None,
         endpoint: None,
+        openai_compat_profile: None,
         region: None,
         api_version: None,
         // GOLD-WIRE-04: local-only preset leaves voices unset.
@@ -389,6 +390,7 @@ pub(crate) fn apply_local_abliterated_preset(
         model: Some(model_ref.to_string()),
         key: None,
         endpoint: Some(preset.endpoint.clone()),
+        openai_compat_profile: None,
         region: None,
         api_version: None,
         voice: None,

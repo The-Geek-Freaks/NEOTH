@@ -586,6 +586,10 @@ impl Provider for CompactingProvider {
         self.inner.handles_nonstream_quota_backoff()
     }
 
+    fn preserves_inner_response_identity(&self) -> bool {
+        true
+    }
+
     async fn complete_raw(
         &self,
         req: Request,
@@ -615,6 +619,21 @@ impl Provider for CompactingProvider {
             .await?;
         self.inner
             .complete_authorized(req, authorizer, call_scope)
+            .await
+    }
+
+    async fn complete_authorized_pinned(
+        &self,
+        req: Request,
+        expected: &crate::providers::CompletionIdentity,
+        authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        let req = self
+            .maybe_compact(req, Some((authorizer, call_scope)), None)
+            .await?;
+        self.inner
+            .complete_authorized_pinned(req, expected, authorizer, call_scope)
             .await
     }
 
@@ -673,6 +692,9 @@ pub fn arc_from_config(
         fn handles_nonstream_quota_backoff(&self) -> bool {
             self.0.handles_nonstream_quota_backoff()
         }
+        fn preserves_inner_response_identity(&self) -> bool {
+            true
+        }
         async fn complete_raw(
             &self,
             req: Request,
@@ -695,6 +717,17 @@ pub fn arc_from_config(
         ) -> Result<Completion> {
             self.0
                 .complete_authorized(req, authorizer, call_scope)
+                .await
+        }
+        async fn complete_authorized_pinned(
+            &self,
+            req: Request,
+            expected: &crate::providers::CompletionIdentity,
+            authorizer: &crate::providers::cost_authorization::ProviderCallAuthorizer,
+            call_scope: &'static str,
+        ) -> Result<Completion> {
+            self.0
+                .complete_authorized_pinned(req, expected, authorizer, call_scope)
                 .await
         }
         async fn stream_authorized(
@@ -754,6 +787,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.lock().unwrap().push(req.prompt.clone());
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "stub".into(),
@@ -835,6 +869,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.lock().unwrap().push(req.clone());
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.to_string(),
                 model: req.model.unwrap(),
                 latency: Duration::ZERO,
@@ -1082,6 +1117,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             *self.0.lock().unwrap() = req.system.clone();
             Ok(Completion {
+                termination: Default::default(),
                 text: "SUMMARY".into(),
                 identity: Default::default(),
                 model: "capture".into(),
@@ -1470,6 +1506,7 @@ mod tests {
             async fn complete(&self, req: Request) -> Result<Completion> {
                 self.0.lock().unwrap().push(req.prompt.clone());
                 Ok(Completion {
+                    termination: Default::default(),
                     text: "ok".into(),
                     identity: Default::default(),
                     model: "capture".into(),

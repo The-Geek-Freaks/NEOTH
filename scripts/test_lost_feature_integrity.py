@@ -191,8 +191,12 @@ def ws_lf_section(document: str) -> str:
 
 
 def ws_lf_task_counts(document: str) -> tuple[int, int, int]:
+    # The 118-item inventory contract counts the materialized top-level ROAD
+    # rows. Indented acceptance leaves (for example GOLD-LF-P2-26a/b) remain
+    # explicit release blockers under their parent but are not new inventory
+    # rows and therefore must not inflate the dashboard denominator.
     tasks = re.findall(
-        r"(?m)^\s*-\s+\[([^\]])\]\s+\*\*(GOLD-LF-[A-Z0-9-]+)\b",
+        r"(?m)^-\s+\[([^\]])\]\s+\*\*(GOLD-LF-[A-Z0-9-]+)\b",
         ws_lf_section(document),
     )
     require(len(tasks) == 118, f"WS-LF must contain exactly 118 task checkboxes; got {len(tasks)}")

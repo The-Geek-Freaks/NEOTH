@@ -1229,6 +1229,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> anyhow::Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.reply.into(),
                 identity: Default::default(),
                 model: "fixed_label_chat".into(),

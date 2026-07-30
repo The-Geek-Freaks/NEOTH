@@ -6,7 +6,7 @@
 //!
 //! Streaming arrives in Phase 5C. Day-5b is non-streaming.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
@@ -145,49 +146,132 @@ impl Provider for GeminiAdapter {
                 .await
                 .context("parse gemini response JSON")?;
 
-            let text = parsed
-                // CDX-07 silent-fail-to-empty fix: a Gemini 200 response
-                // with no candidates / no parts is a safety-block / quota
-                // edge case operators want to see surfaced, not silently
-                // collapsed to "". Force an error so the chat dispatch
-                // logs the failure cause instead of emitting a blank reply.
-                .candidates
-                .into_iter()
-                .next()
-                .and_then(|c| c.content.parts.into_iter().next())
-                .map(|p| p.text)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Gemini returned 200 OK but no candidates[].content.parts[].text — \
-                     likely a safety filter block or quota exhaustion envelope. \
-                     Inspect the raw HTTP body via NEOTH_LOG_LEVEL=debug."
-                    )
-                })?;
-
             let latency = started.elapsed();
-            debug!(
-                model = %model,
-                response_bytes = text.len(),
-                latency_ms = latency.as_millis(),
-                "gemini completion"
-            );
-
-            Ok(Completion {
-                text,
-                identity: Default::default(),
-                model,
-                latency,
-                input_tokens: parsed.usage_metadata.as_ref().map(|u| u.prompt_token_count),
-                output_tokens: parsed
-                    .usage_metadata
-                    .as_ref()
-                    .map(|u| u.candidates_token_count),
-                cache_creation_tokens: None,
-                cache_read_tokens: None,
-            })
+            completion_from_response(parsed, model, latency)
         })
         .await
     }
+}
+
+fn completion_from_response(
+    parsed: GeminiResponse,
+    model: String,
+    latency: Duration,
+) -> Result<Completion> {
+    let candidate = parsed.candidates.first();
+    let finish_reason = candidate.and_then(|value| value.finish_reason.clone());
+    let prompt_block_reason = parsed
+        .prompt_feedback
+        .as_ref()
+        .and_then(|feedback| feedback.block_reason.clone());
+    let candidate_filter_reason = finish_reason
+        .as_deref()
+        .filter(|reason| is_candidate_filter_reason(reason))
+        .map(str::to_owned);
+
+    let mut termination = if let Some(reason) = prompt_block_reason.as_ref() {
+        ProviderTermination::refused(
+            finish_reason.clone(),
+            RefusalOrigin::PromptFilter,
+            reason.clone(),
+            parsed
+                .prompt_feedback
+                .as_ref()
+                .and_then(|feedback| feedback.block_reason_message.clone()),
+        )
+    } else if let Some(reason) = candidate_filter_reason {
+        ProviderTermination::refused(
+            finish_reason.clone(),
+            RefusalOrigin::CandidateFilter,
+            reason,
+            candidate.and_then(|value| value.finish_message.clone()),
+        )
+    } else {
+        ProviderTermination::finished(finish_reason)
+    };
+
+    if let Some(feedback) = parsed.prompt_feedback.as_ref() {
+        if !feedback.safety_ratings.is_empty() {
+            termination = termination.with_native_detail(
+                "prompt_feedback_safety_ratings",
+                serde_json::Value::Array(feedback.safety_ratings.clone()),
+            );
+        }
+        if let Some(message) = feedback.block_reason_message.as_ref() {
+            termination = termination
+                .with_native_detail("prompt_block_reason_message", message.clone().into());
+        }
+    }
+    if let Some(candidate) = candidate {
+        if !candidate.safety_ratings.is_empty() {
+            termination = termination.with_native_detail(
+                "candidate_safety_ratings",
+                serde_json::Value::Array(candidate.safety_ratings.clone()),
+            );
+        }
+        if let Some(message) = candidate.finish_message.as_ref() {
+            termination = termination.with_native_detail("finish_message", message.clone().into());
+        }
+    }
+
+    // CDX-07: a malformed ordinary 200 remains an error. A native prompt or
+    // candidate filter is a valid provider outcome even when Gemini omits all
+    // candidate text.
+    let text = candidate
+        .and_then(|value| value.content.as_ref())
+        .and_then(|content| content.parts.first())
+        .map(|part| part.text.clone());
+    let text = match text {
+        Some(text) => text,
+        None if termination.is_refusal() => String::new(),
+        None => {
+            anyhow::bail!(
+                "Gemini returned 200 OK but no candidates[].content.parts[].text and no \
+                 native prompt/candidate filter metadata"
+            )
+        }
+    };
+
+    debug!(
+        model = %model,
+        response_bytes = text.len(),
+        latency_ms = latency.as_millis(),
+        "gemini completion"
+    );
+
+    Ok(Completion {
+        text,
+        identity: Default::default(),
+        model,
+        termination,
+        latency,
+        input_tokens: parsed
+            .usage_metadata
+            .as_ref()
+            .and_then(|usage| usage.prompt_token_count),
+        output_tokens: parsed
+            .usage_metadata
+            .as_ref()
+            .and_then(|usage| usage.candidates_token_count),
+        cache_creation_tokens: None,
+        cache_read_tokens: None,
+    })
+}
+
+fn is_candidate_filter_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "SAFETY"
+            | "RECITATION"
+            | "BLOCKLIST"
+            | "PROHIBITED_CONTENT"
+            | "SPII"
+            | "IMAGE_SAFETY"
+            | "MODEL_ARMOR"
+            | "IMAGE_PROHIBITED_CONTENT"
+            | "IMAGE_RECITATION"
+            | "ESCALATION"
+    )
 }
 
 // ── Wire types ─────────────────────────────────────────────────────────────
@@ -228,27 +312,75 @@ struct GeminiPart {
 
 #[derive(Deserialize)]
 struct GeminiResponse {
+    #[serde(default)]
     candidates: Vec<GeminiCandidate>,
+    #[serde(rename = "promptFeedback", default)]
+    prompt_feedback: Option<GeminiPromptFeedback>,
     #[serde(rename = "usageMetadata", default)]
     usage_metadata: Option<GeminiUsage>,
 }
 
 #[derive(Deserialize)]
 struct GeminiCandidate {
-    content: GeminiContent,
+    #[serde(default)]
+    content: Option<GeminiContent>,
+    #[serde(rename = "finishReason", default)]
+    finish_reason: Option<String>,
+    #[serde(rename = "safetyRatings", default)]
+    safety_ratings: Vec<serde_json::Value>,
+    #[serde(rename = "finishMessage", default)]
+    finish_message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GeminiPromptFeedback {
+    #[serde(rename = "blockReason", default)]
+    block_reason: Option<String>,
+    #[serde(rename = "blockReasonMessage", default)]
+    block_reason_message: Option<String>,
+    #[serde(rename = "safetyRatings", default)]
+    safety_ratings: Vec<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
 struct GeminiUsage {
-    #[serde(rename = "promptTokenCount")]
-    prompt_token_count: u32,
-    #[serde(rename = "candidatesTokenCount")]
-    candidates_token_count: u32,
+    #[serde(rename = "promptTokenCount", default)]
+    prompt_token_count: Option<u32>,
+    #[serde(rename = "candidatesTokenCount", default)]
+    candidates_token_count: Option<u32>,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn documented_filter_reasons_are_distinct_from_structural_failures() {
+        for reason in [
+            "SAFETY",
+            "RECITATION",
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "SPII",
+            "IMAGE_SAFETY",
+            "MODEL_ARMOR",
+            "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION",
+            "ESCALATION",
+        ] {
+            assert!(is_candidate_filter_reason(reason), "{reason}");
+        }
+        for reason in [
+            "MALFORMED_FUNCTION_CALL",
+            "UNEXPECTED_TOOL_CALL",
+            "NO_IMAGE",
+            "MAX_TOKENS",
+            "STOP",
+            "OTHER",
+        ] {
+            assert!(!is_candidate_filter_reason(reason), "{reason}");
+        }
+    }
     use crate::providers::Provider;
 
     #[test]
@@ -300,5 +432,130 @@ mod tests {
         assert_eq!(json["topP"].as_f64(), Some(f64::from(0.75_f32)));
         assert_eq!(json["seed"], 17);
         assert_eq!(json["stopSequences"], serde_json::json!(["END"]));
+    }
+
+    #[test]
+    fn normal_fixture_retains_finish_reason_and_usage() {
+        let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "role": "model",
+                    "parts": [{ "text": "hello from gemini" }]
+                },
+                "finishReason": "STOP",
+                "safetyRatings": [{
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "probability": "NEGLIGIBLE"
+                }]
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "candidatesTokenCount": 3
+            }
+        }))
+        .expect("normal fixture");
+
+        let completion = completion_from_response(parsed, "gemini-fixture".into(), Duration::ZERO)
+            .expect("normal completion");
+        assert_eq!(completion.text, "hello from gemini");
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("STOP")
+        );
+        assert!(!completion.termination.is_refusal());
+        assert_eq!(completion.input_tokens, Some(5));
+        assert_eq!(completion.output_tokens, Some(3));
+        assert!(
+            completion
+                .termination
+                .native_details
+                .contains_key("candidate_safety_ratings")
+        );
+    }
+
+    #[test]
+    fn prompt_feedback_block_with_partial_usage_metadata_is_retained() {
+        let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+            "promptFeedback": {
+                "blockReason": "SAFETY",
+                "blockReasonMessage": "Prompt was blocked by safety policy.",
+                "safetyRatings": [{
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "probability": "HIGH",
+                    "blocked": true
+                }]
+            },
+            "usageMetadata": {
+                "promptTokenCount": 5,
+                "totalTokenCount": 5
+            }
+        }))
+        .expect("prompt block fixture");
+
+        let completion = completion_from_response(parsed, "gemini-fixture".into(), Duration::ZERO)
+            .expect("prompt block is a typed provider outcome");
+        assert!(completion.text.is_empty());
+        let refusal = completion
+            .termination
+            .refusal
+            .expect("promptFeedback.blockReason must be retained");
+        assert_eq!(refusal.origin, RefusalOrigin::PromptFilter);
+        assert_eq!(refusal.reason, "SAFETY");
+        assert_eq!(
+            refusal.message.as_deref(),
+            Some("Prompt was blocked by safety policy.")
+        );
+        assert_eq!(completion.input_tokens, Some(5));
+        assert_eq!(
+            completion.output_tokens, None,
+            "an omitted candidatesTokenCount must remain unknown"
+        );
+        assert!(
+            completion
+                .termination
+                .native_details
+                .contains_key("prompt_feedback_safety_ratings")
+        );
+    }
+
+    #[test]
+    fn candidate_filter_without_content_retains_ratings_and_message() {
+        let parsed: GeminiResponse = serde_json::from_value(serde_json::json!({
+            "candidates": [{
+                "finishReason": "PROHIBITED_CONTENT",
+                "finishMessage": "Candidate was blocked.",
+                "safetyRatings": [{
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "probability": "MEDIUM",
+                    "blocked": true
+                }]
+            }]
+        }))
+        .expect("candidate block fixture");
+
+        let completion = completion_from_response(parsed, "gemini-fixture".into(), Duration::ZERO)
+            .expect("candidate filter is a typed provider outcome");
+        assert!(completion.text.is_empty());
+        assert_eq!(
+            completion.termination.finish_reason.as_deref(),
+            Some("PROHIBITED_CONTENT")
+        );
+        let refusal = completion
+            .termination
+            .refusal
+            .expect("candidate finishReason must be retained");
+        assert_eq!(refusal.origin, RefusalOrigin::CandidateFilter);
+        assert_eq!(refusal.reason, "PROHIBITED_CONTENT");
+        assert_eq!(refusal.message.as_deref(), Some("Candidate was blocked."));
+        assert_eq!(
+            completion.termination.native_details.get("finish_message"),
+            Some(&serde_json::json!("Candidate was blocked."))
+        );
+        assert!(
+            completion
+                .termination
+                .native_details
+                .contains_key("candidate_safety_ratings")
+        );
     }
 }

@@ -585,6 +585,7 @@ mod tests {
                 self.red_reply.clone()
             };
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 identity: Default::default(),
                 model: "scripted".into(),
@@ -610,6 +611,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "unexpected provider call".into(),
                 identity: Default::default(),
                 model: "counting".into(),

@@ -99,6 +99,8 @@ impl TurnJournal {
             .open(&self.path)
             .with_context(|| format!("open journal {}", self.path.display()))?;
         writeln!(f, "{body}").with_context(|| format!("append to {}", self.path.display()))?;
+        f.sync_data()
+            .with_context(|| format!("sync journal {}", self.path.display()))?;
         Ok(())
     }
 
@@ -140,8 +142,16 @@ pub enum TurnEvent {
         ts_unix: i64,
         provider: String,
         model: String,
+        #[serde(default)]
+        termination: crate::providers::ProviderTermination,
+        #[serde(default)]
+        latency_ms: u64,
         input_tokens: u32,
         output_tokens: u32,
+        #[serde(default)]
+        cache_creation_tokens: Option<u32>,
+        #[serde(default)]
+        cache_read_tokens: Option<u32>,
     },
     /// Provider call errored — used for crash forensics.
     ProviderError { ts_unix: i64, error: String },
@@ -278,6 +288,33 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(line).unwrap();
             assert!(parsed.get("event").is_some());
             assert!(parsed.get("ts_unix").is_some());
+        }
+    }
+
+    #[test]
+    fn legacy_provider_response_defaults_missing_termination() {
+        let event: TurnEvent = serde_json::from_str(
+            r#"{"event":"ProviderResponse","ts_unix":100,"provider":"legacy","model":"m","input_tokens":1,"output_tokens":2}"#,
+        )
+        .expect("legacy journal event");
+
+        match event {
+            TurnEvent::ProviderResponse {
+                termination,
+                latency_ms,
+                cache_creation_tokens,
+                cache_read_tokens,
+                ..
+            } => {
+                assert_eq!(
+                    termination,
+                    crate::providers::ProviderTermination::default()
+                );
+                assert_eq!(latency_ms, 0);
+                assert_eq!(cache_creation_tokens, None);
+                assert_eq!(cache_read_tokens, None);
+            }
+            other => panic!("expected ProviderResponse, got {other:?}"),
         }
     }
 

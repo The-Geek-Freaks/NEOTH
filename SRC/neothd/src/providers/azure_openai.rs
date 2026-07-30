@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::quota::{QuotaError, parse_retry_after};
+use super::termination::{ProviderTermination, RefusalOrigin};
 use super::{Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request};
 use crate::secret::SecretString;
 
@@ -253,6 +254,24 @@ impl Provider for AzureOpenAiAdapter {
                     .await
                     .unwrap_or_else(|_| "<unreadable body>".into())
                     .replace(self.api_key.expose(), "[REDACTED]");
+                if let Some((reason, message)) = parse_azure_policy_error(&body_text) {
+                    return Ok(Completion {
+                        text: message.clone().unwrap_or_default(),
+                        identity: Default::default(),
+                        model: deployment,
+                        termination: ProviderTermination::refused(
+                            None,
+                            RefusalOrigin::PromptFilter,
+                            reason,
+                            message,
+                        ),
+                        latency: started.elapsed(),
+                        input_tokens: None,
+                        output_tokens: None,
+                        cache_creation_tokens: None,
+                        cache_read_tokens: None,
+                    });
+                }
                 return Err(map_azure_error(status, &body_text, &deployment));
             }
 
@@ -261,17 +280,13 @@ impl Provider for AzureOpenAiAdapter {
                 .await
                 .with_context(|| "parse azure_openai response JSON".to_string())?;
 
-            let text = parsed
-                .choices
-                .into_iter()
-                .next()
-                .map(|c| c.message.content)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "azure_openai returned 200 OK but no choices[].message.content — \
-                     likely a content-filter refusal. Inspect NEOTH_LOG_LEVEL=debug."
-                    )
-                })?;
+            let choice = parsed.choices.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "azure_openai returned 200 OK but the response has no choices[] — \
+                     likely an upstream error envelope. Inspect NEOTH_LOG_LEVEL=debug."
+                )
+            })?;
+            let (text, termination) = parse_azure_choice(choice)?;
 
             let latency = started.elapsed();
             debug!(
@@ -287,6 +302,7 @@ impl Provider for AzureOpenAiAdapter {
                 text,
                 identity: Default::default(),
                 model: deployment,
+                termination,
                 latency,
                 input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
                 output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
@@ -296,6 +312,80 @@ impl Provider for AzureOpenAiAdapter {
         })
         .await
     }
+}
+
+fn parse_azure_choice(choice: ChatChoice) -> Result<(String, ProviderTermination)> {
+    let ChatChoice {
+        message,
+        finish_reason,
+    } = choice;
+    let ChatChoiceMessage { content, refusal } = message;
+    let refusal_present = refusal.is_some();
+    let refusal_message = refusal.filter(|value| !value.trim().is_empty());
+    let content_filtered = finish_reason.as_deref() == Some("content_filter");
+    let termination = if refusal_present {
+        ProviderTermination::refused(
+            finish_reason.clone(),
+            RefusalOrigin::ProviderMessage,
+            "message.refusal",
+            refusal_message.clone(),
+        )
+    } else if content_filtered {
+        ProviderTermination::refused(
+            finish_reason.clone(),
+            RefusalOrigin::FinishReason,
+            "content_filter",
+            None,
+        )
+    } else {
+        ProviderTermination::finished(finish_reason)
+    };
+    let text = content
+        .or_else(|| refusal_message.clone())
+        .or_else(|| termination.is_refusal().then(String::new))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "azure_openai returned 200 OK but choices[0].message.content is null \
+                 without a native refusal or content_filter finish reason"
+            )
+        })?;
+    Ok((text, termination))
+}
+
+fn parse_azure_policy_error(body: &str) -> Option<(String, Option<String>)> {
+    let parsed: serde_json::Value = serde_json::from_str(body).ok()?;
+    let envelope = parsed.get("error").unwrap_or(&parsed);
+    let reason = [
+        envelope.get("code"),
+        envelope.pointer("/innererror/code"),
+        envelope.pointer("/inner_error/code"),
+        parsed.get("code"),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(serde_json::Value::as_str)
+    .find(|value| {
+        matches!(
+            value
+                .trim()
+                .to_ascii_lowercase()
+                .replace(['_', '-'], "")
+                .as_str(),
+            "contentfilter"
+                | "contentpolicyviolation"
+                | "responsibleaipolicyviolation"
+                | "safetyviolation"
+        )
+    })?
+    .trim()
+    .to_string();
+    let message = envelope
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    Some((reason, message))
 }
 
 /// Strip trailing slashes + an accidental path suffix from the
@@ -386,11 +476,16 @@ struct ChatResponse {
 #[derive(Deserialize)]
 struct ChatChoice {
     message: ChatChoiceMessage,
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ChatChoiceMessage {
-    content: String,
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    refusal: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -679,5 +774,62 @@ mod tests {
             "gpt-5-prod",
         );
         assert!(err.to_string().contains("HTTP 500"));
+    }
+
+    #[test]
+    fn native_200_refusal_fixtures_preserve_authoritative_signal() {
+        for (fixture, expected_origin, expected_reason, expected_text) in [
+            (
+                serde_json::json!({
+                    "message": {"content": null, "refusal": "I cannot help with that."},
+                    "finish_reason": "stop"
+                }),
+                RefusalOrigin::ProviderMessage,
+                "message.refusal",
+                "I cannot help with that.",
+            ),
+            (
+                serde_json::json!({
+                    "message": {"content": null},
+                    "finish_reason": "content_filter"
+                }),
+                RefusalOrigin::FinishReason,
+                "content_filter",
+                "",
+            ),
+        ] {
+            let choice: ChatChoice = serde_json::from_value(fixture).expect("valid fixture");
+            let (text, termination) = parse_azure_choice(choice).expect("native refusal");
+            let refusal = termination.refusal.expect("typed refusal");
+            assert_eq!(refusal.origin, expected_origin);
+            assert_eq!(refusal.reason, expected_reason);
+            assert_eq!(text, expected_text);
+        }
+    }
+
+    #[test]
+    fn blank_message_refusal_is_authoritative_and_not_a_malformed_success() {
+        let choice: ChatChoice = serde_json::from_value(serde_json::json!({
+            "message": {"content": null, "refusal": ""},
+            "finish_reason": "stop"
+        }))
+        .unwrap();
+        let (text, termination) = parse_azure_choice(choice).expect("blank native refusal");
+        assert!(text.is_empty());
+        assert_eq!(
+            termination.refusal.expect("typed refusal").origin,
+            RefusalOrigin::ProviderMessage
+        );
+    }
+
+    #[test]
+    fn http_policy_envelope_is_recognised_without_message_substring_guessing() {
+        let (reason, message) = parse_azure_policy_error(
+            r#"{"error":{"code":"content_filter","message":"Prompt blocked.","innererror":{"code":"ResponsibleAIPolicyViolation"}}}"#,
+        )
+        .expect("policy envelope");
+        assert_eq!(reason, "content_filter");
+        assert_eq!(message.as_deref(), Some("Prompt blocked."));
+        assert!(parse_azure_policy_error(r#"{"error":{"code":"BadRequest"}}"#).is_none());
     }
 }

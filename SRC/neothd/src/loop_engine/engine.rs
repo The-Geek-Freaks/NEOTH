@@ -872,10 +872,12 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: "ok".into(),
                 identity: crate::providers::CompletionIdentity {
                     provider: "loop_budget_test".into(),
                     wire_model: "test-model".into(),
+                    dispatch_route: Vec::new(),
                 },
                 model: "test-model".into(),
                 latency: std::time::Duration::ZERO,
@@ -908,6 +910,7 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: self.text.clone(),
                 identity: Default::default(),
                 model: "test-model".into(),
@@ -940,10 +943,12 @@ mod tests {
         ) -> anyhow::Result<crate::providers::Completion> {
             self.prompts.lock().unwrap().push(req.prompt);
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: "round output".into(),
                 identity: crate::providers::CompletionIdentity {
                     provider: "recording_loop_test".into(),
                     wire_model: "test-model".into(),
+                    dispatch_route: Vec::new(),
                 },
                 model: "test-model".into(),
                 latency: std::time::Duration::ZERO,

@@ -343,8 +343,12 @@ async fn rotate(
                     serde_json::json!({
                         "dry_run": true,
                         "current_exists": exists,
-                        "would_archive_to": archive_path.display().to_string(),
-                        "would_generate_at": path.display().to_string(),
+                        "would_rotate": exists,
+                        "would_archive_to": exists.then(|| archive_path.display().to_string()),
+                        "would_generate_at": exists.then(|| path.display().to_string()),
+                        "refusal": (!exists).then_some(
+                            "RotateExisting requires an existing hmac.key; use first-start initialization or security rewrap-hmac-key"
+                        ),
                     })
                 );
             }
@@ -357,7 +361,8 @@ async fn rotate(
                     );
                 } else {
                     println!(
-                        "dry-run: no existing key; would generate at {}",
+                        "dry-run: would refuse because no existing key is present at {}; \
+                         use first-start initialization or `neoth security rewrap-hmac-key`",
                         path.display()
                     );
                 }
@@ -366,7 +371,6 @@ async fn rotate(
         return Ok(());
     }
 
-    let had_current = path.exists();
     let mut new_key = zeroize::Zeroizing::new([0u8; 32]);
     getrandom::getrandom(new_key.as_mut())
         .context("OS RNG unavailable — refusing to generate a weak HMAC key")?;
@@ -374,8 +378,8 @@ async fn rotate(
         home,
         path,
         new_key.as_ref(),
-        "rotate",
-        had_current.then_some(archive_path),
+        crate::cli::security::HmacKeyMutationMode::RotateExisting,
+        Some(archive_path),
     )
     .await?;
     let archived_at = rotation
@@ -519,7 +523,9 @@ mod tests {
     #[tokio::test]
     async fn rotate_archives_existing_key_and_generates_new() {
         let dir = tempdir().unwrap();
-        let key_path = dir.path().join("hmac.key");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
         // Seed an existing 32-byte key.
         std::fs::write(&key_path, vec![0x42u8; 32]).unwrap();
         #[cfg(unix)]
@@ -562,14 +568,14 @@ mod tests {
 
         // Exactly one archive file present.
         let mut archives = Vec::new();
-        for entry in std::fs::read_dir(dir.path()).unwrap().flatten() {
+        for entry in std::fs::read_dir(&wal_dir).unwrap().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             if name.contains(".archive") {
                 archives.push(name);
             }
         }
         assert_eq!(archives.len(), 1, "expected one archive, got {archives:?}");
-        let archive_bytes = std::fs::read(dir.path().join(&archives[0])).unwrap();
+        let archive_bytes = std::fs::read(wal_dir.join(&archives[0])).unwrap();
         assert_eq!(
             archive_bytes,
             vec![0x42u8; 32],
@@ -580,7 +586,9 @@ mod tests {
     #[tokio::test]
     async fn rotate_dry_run_does_not_modify_files() {
         let dir = tempdir().unwrap();
-        let key_path = dir.path().join("hmac.key");
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
         std::fs::write(&key_path, vec![0x77u8; 32]).unwrap();
         let args = KeysArgs {
             home: Some(dir.path().to_path_buf()),
@@ -594,9 +602,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rotate_works_when_no_existing_key() {
+    async fn rotate_refuses_when_no_existing_key() {
         let dir = tempdir().unwrap();
-        let key_path = dir.path().join("hmac.key");
+        let key_path = dir.path().join("wal").join("hmac.key");
         assert!(!key_path.exists());
         let args = KeysArgs {
             home: Some(dir.path().to_path_buf()),
@@ -604,11 +612,14 @@ mod tests {
             key: Some(key_path.clone()),
             output: OutputFormat::Table,
         };
-        run_keys(args).await.unwrap();
+        let error = run_keys(args)
+            .await
+            .expect_err("RotateExisting must refuse a missing active key");
         assert!(
-            key_path.exists(),
-            "rotate with no prior key should still generate one"
+            format!("{error:#}").contains("requires an existing readable hmac.key"),
+            "unexpected missing-key error: {error:#}"
         );
+        assert!(!key_path.exists());
     }
 
     #[tokio::test]

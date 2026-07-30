@@ -21,7 +21,8 @@ pub struct VerifyArgs {
     /// Override the WAL directory (mostly for tests).
     #[arg(long, value_name = "DIR")]
     pub wal_dir: Option<PathBuf>,
-    /// Override the HMAC key path.
+    /// Override the existing HMAC key path. Verification is read-only and
+    /// never initializes a missing key.
     #[arg(long, value_name = "PATH")]
     pub key: Option<PathBuf>,
     /// Verify only this specific segment file.
@@ -71,7 +72,7 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         .key
         .clone()
         .unwrap_or_else(compaction::default_key_path);
-    let key = match compaction::load_or_init_key(&key_path) {
+    let key = match compaction::load_existing_key(&key_path) {
         Ok(k) => k,
         Err(e) => {
             // SC-09: a load failure here is almost always a DPAPI unwrap
@@ -621,6 +622,32 @@ mod tests {
         assert!(segs[0].to_string_lossy().contains("000001"));
         assert!(segs[1].to_string_lossy().contains("000002"));
         assert!(segs[2].to_string_lossy().contains("000003"));
+    }
+
+    #[tokio::test]
+    async fn verify_never_initializes_a_missing_historical_key() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let key_path = wal_dir.join("hmac.key");
+
+        let error = run_verify(VerifyArgs {
+            wal_dir: Some(wal_dir),
+            key: Some(key_path.clone()),
+            segment: None,
+            since_rotation: false,
+            output: OutputFormat::Json,
+        })
+        .await
+        .expect_err("verification without its historical authority must fail closed");
+        assert!(
+            format!("{error:#}").contains("could not be loaded"),
+            "unexpected missing-key error: {error:#}"
+        );
+        assert!(
+            !key_path.exists(),
+            "read-only verification must never mint replacement authority"
+        );
     }
 
     #[test]

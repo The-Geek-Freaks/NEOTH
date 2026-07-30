@@ -1748,6 +1748,7 @@ mod tests {
             _req: crate::providers::Request,
         ) -> Result<crate::providers::Completion> {
             Ok(crate::providers::Completion {
+                termination: Default::default(),
                 text: "weekend trip planning".into(),
                 identity: Default::default(),
                 model: "fixed_label_chat".into(),

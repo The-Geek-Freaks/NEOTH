@@ -15064,6 +15064,16 @@ fn write_zf05_fields(fp: &Path, rd: &Path, state: &WizardSnapshot) -> Result<()>
 /// None — all errors are returned via `Result`.
 fn set_nested_in_freedom(path: &Path, dotted_key: &str, value: serde_yaml::Value) -> Result<()> {
     let _guard = FREEDOM_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let exact_compat_profile = (dotted_key == "provider_endpoint")
+        .then(|| value.as_str())
+        .flatten()
+        .and_then(|endpoint| {
+            neothd::providers::known_endpoints::KNOWN_ENDPOINTS
+                .iter()
+                .find(|known| known.endpoint == endpoint)
+                .map(|known| known.profile)
+        })
+        .filter(|profile| *profile != neothd::config::inference::OpenAiCompatibleProfile::Generic);
     let body = if path.exists() {
         std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
@@ -15112,6 +15122,38 @@ fn set_nested_in_freedom(path: &Path, dotted_key: &str, value: serde_yaml::Value
             map.insert(k1v, serde_yaml::Value::Mapping(m1));
         }
         _ => anyhow::bail!("set_nested_in_freedom: path depth > 3 not supported: {dotted_key}"),
+    }
+
+    // A raw endpoint edit is the GUI's current OpenAI-compatible endpoint
+    // surface. Persist a named profile only for an exact reviewed catalogue
+    // URL; custom URLs clear stale metadata and retain generic legacy
+    // behaviour. Keep both the legacy top-level binding and the single-mode
+    // default slot coherent in the same atomic file rewrite.
+    if dotted_key == "provider_endpoint" {
+        let profile = exact_compat_profile
+            .map(serde_yaml::to_value)
+            .transpose()
+            .context("serialize reviewed OpenAI-compatible profile")?
+            .unwrap_or(serde_yaml::Value::Null);
+        let inference_key = serde_yaml::Value::from("inference");
+        let mut inference = map
+            .get(&inference_key)
+            .and_then(serde_yaml::Value::as_mapping)
+            .cloned()
+            .unwrap_or_default();
+        inference.insert(
+            serde_yaml::Value::from("openai_compat_profile"),
+            profile.clone(),
+        );
+        let default_slot_key = serde_yaml::Value::from("default_slot");
+        let mut default_slot = inference
+            .get(&default_slot_key)
+            .and_then(serde_yaml::Value::as_mapping)
+            .cloned()
+            .unwrap_or_default();
+        default_slot.insert(serde_yaml::Value::from("openai_compat_profile"), profile);
+        inference.insert(default_slot_key, serde_yaml::Value::Mapping(default_slot));
+        map.insert(inference_key, serde_yaml::Value::Mapping(inference));
     }
 
     let serialised = serde_yaml::to_string(&root)
@@ -25980,6 +26022,40 @@ fn init_tracing() {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    #[test]
+    fn provider_endpoint_writer_persists_only_exact_reviewed_profile() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+
+        set_nested_in_freedom(
+            &path,
+            "provider_endpoint",
+            serde_yaml::Value::from("https://openrouter.ai/api/v1"),
+        )
+        .unwrap();
+        let reviewed: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            reviewed["inference"]["openai_compat_profile"].as_str(),
+            Some("openrouter")
+        );
+        assert_eq!(
+            reviewed["inference"]["default_slot"]["openai_compat_profile"].as_str(),
+            Some("openrouter")
+        );
+
+        set_nested_in_freedom(
+            &path,
+            "provider_endpoint",
+            serde_yaml::Value::from("https://gateway.example.test/v1"),
+        )
+        .unwrap();
+        let custom: serde_yaml::Value =
+            serde_yaml::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(custom["inference"]["openai_compat_profile"].is_null());
+        assert!(custom["inference"]["default_slot"]["openai_compat_profile"].is_null());
+    }
 
     fn test_skill_manifest(id: &str, description: &str) -> neothd::skills::schema::SkillManifest {
         serde_yaml::from_str(&format!(

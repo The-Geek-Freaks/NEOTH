@@ -28,9 +28,11 @@
 //! writer calls this after each frame and emits a marker when due.
 
 use std::borrow::Cow;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use cap_fs_ext::OpenOptionsFollowExt as _;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 
@@ -41,6 +43,346 @@ type HmacSha256 = Hmac<Sha256>;
 /// Default key path: `~/.neoth/wal/hmac.key`.
 pub fn default_key_path() -> PathBuf {
     crate::config::FreedomConfig::default_wal_dir().join("hmac.key")
+}
+
+const HMAC_ROTATION_LOCK_NAME: &str = "hmac.key.rotation.lock";
+const HMAC_LEASE_RETRY_EVERY: std::time::Duration = std::time::Duration::from_millis(25);
+const HMAC_LEASE_GIVE_UP_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HmacKeyLeaseMode {
+    SharedWriter,
+    ExclusiveMutation,
+}
+
+/// Stable, capability-bound lifetime fence for the active WAL HMAC identity.
+///
+/// Normal writers retain a shared lease until their append task exits.
+/// Rotation/recovery retains an exclusive lease from its first state read
+/// through the durable 0xD9 boundary and key commit. The direct-child binding
+/// and no-follow handle prevent a link/reparse leaf from becoming a second lock
+/// namespace.
+pub(crate) struct HmacKeyLease {
+    root: crate::skills::store::BoundDirectory,
+    #[cfg(unix)]
+    binding: crate::skills::store::BoundChildObject,
+    #[cfg(windows)]
+    identity_token: String,
+    _file: std::fs::File,
+    display_path: PathBuf,
+}
+
+impl HmacKeyLease {
+    pub(crate) fn validate_namespace_binding(&self) -> Result<()> {
+        #[cfg(unix)]
+        let matches = self.binding.matches_child(
+            &self.root.dir,
+            OsStr::new(HMAC_ROTATION_LOCK_NAME),
+            &self.display_path,
+        )?;
+        #[cfg(windows)]
+        let matches = {
+            use cap_std::fs::OpenOptionsExt as _;
+            use windows_sys::Win32::Storage::FileSystem::{
+                FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE,
+            };
+            let mut options = cap_std::fs::OpenOptions::new();
+            options
+                .read(true)
+                .follow(cap_fs_ext::FollowSymlinks::No)
+                .access_mode(FILE_GENERIC_READ)
+                // The retained pin deliberately denies DELETE sharing. This
+                // validation handle requests no DELETE access and therefore
+                // coexists without weakening that namespace pin.
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+                .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            let file = self
+                .root
+                .dir
+                .open_with(OsStr::new(HMAC_ROTATION_LOCK_NAME), &options)
+                .with_context(|| {
+                    format!(
+                        "re-open pinned HMAC-key lease for identity validation {}",
+                        self.display_path.display()
+                    )
+                })?;
+            let metadata = file.metadata().with_context(|| {
+                format!(
+                    "inspect pinned HMAC-key lease during identity validation {}",
+                    self.display_path.display()
+                )
+            })?;
+            metadata.is_file()
+                && !metadata.file_type().is_symlink()
+                && cap_file_identity(&metadata) == self.identity_token
+        };
+        if !matches {
+            anyhow::bail!(
+                "HMAC-key lease namespace changed while its lock was held: {}",
+                self.display_path.display()
+            );
+        }
+        Ok(())
+    }
+}
+
+fn validate_home_key_path(home: &Path, key_path: &Path) -> Result<PathBuf> {
+    let expected = std::path::absolute(home.join("wal").join("hmac.key"))?;
+    let requested = std::path::absolute(key_path)?;
+    if requested != expected {
+        anyhow::bail!(
+            "home-bound HMAC key path {} does not match canonical {}",
+            key_path.display(),
+            expected.display()
+        );
+    }
+    Ok(expected)
+}
+
+fn cap_file_identity(metadata: &cap_std::fs::Metadata) -> String {
+    #[cfg(unix)]
+    {
+        use cap_fs_ext::MetadataExt as _;
+        format!("unix:{:016x}:{:016x}:file", metadata.dev(), metadata.ino())
+    }
+    #[cfg(windows)]
+    {
+        use cap_fs_ext::MetadataExt as _;
+        format!(
+            "windows:{:08x}:{:016x}:file",
+            metadata.dev(),
+            metadata.ino()
+        )
+    }
+}
+
+fn open_bound_hmac_rotation_lock(
+    home: &Path,
+    key_path: &Path,
+    _mode: HmacKeyLeaseMode,
+) -> Result<(
+    crate::skills::store::BoundDirectory,
+    crate::skills::store::BoundChildObject,
+    std::fs::File,
+    PathBuf,
+)> {
+    validate_home_key_path(home, key_path)?;
+    let wal_path = home.join("wal");
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &wal_path,
+        true,
+        "WAL HMAC lease directory",
+    )?
+    .context("created WAL HMAC lease directory is unavailable")?;
+    let name = OsStr::new(HMAC_ROTATION_LOCK_NAME);
+    let display = root.display_path.join(name);
+
+    let mut options = cap_std::fs::OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .follow(cap_fs_ext::FollowSymlinks::No);
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.mode(0o600).custom_flags(libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE,
+            FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | READ_CONTROL | WRITE_DAC)
+            // The creation/open handle must coexist with the DELETE-capable
+            // identity binder below. A second identity-matched handle removes
+            // FILE_SHARE_DELETE before the lease is exposed.
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+
+    let cap_file = match root.dir.open_with(name, &options) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let mut existing = cap_std::fs::OpenOptions::new();
+            existing
+                .read(true)
+                .write(true)
+                .follow(cap_fs_ext::FollowSymlinks::No);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt as _;
+                existing.custom_flags(libc::O_NONBLOCK);
+            }
+            #[cfg(windows)]
+            {
+                use cap_std::fs::OpenOptionsExt as _;
+                use windows_sys::Win32::Storage::FileSystem::{
+                    FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+                    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
+                };
+                existing
+                    .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | READ_CONTROL | WRITE_DAC)
+                    .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                    .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+            }
+            root.dir.open_with(name, &existing).with_context(|| {
+                format!(
+                    "open existing HMAC-key lease without following links {}",
+                    display.display()
+                )
+            })?
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "create capability-bound HMAC-key lease {}",
+                    display.display()
+                )
+            });
+        }
+    };
+    let metadata = cap_file
+        .metadata()
+        .with_context(|| format!("inspect HMAC-key lease {}", display.display()))?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        anyhow::bail!(
+            "HMAC-key lease must be a real regular file, not a link or reparse point: {}",
+            display.display()
+        );
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::PermissionsExt as _;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            cap_file
+                .set_permissions(cap_std::fs::Permissions::from_mode(0o600))
+                .with_context(|| format!("make HMAC-key lease private {}", display.display()))?;
+        }
+    }
+    #[cfg(windows)]
+    crate::wal::win_native::set_private_current_user_file_handle_dacl(&cap_file)
+        .with_context(|| format!("protect HMAC-key lease {}", display.display()))?;
+
+    let opened_identity = cap_file_identity(&metadata);
+    let (identity_file, binding) =
+        crate::skills::store::open_bound_regular_file_readwrite(&root.dir, name, &display)
+            .context("bind HMAC-key lease identity")?;
+    // `open_bound_regular_file_readwrite` already compares its opened handle
+    // with a capability-relative, read-only reopen. Do not call
+    // `BoundChildObject::matches_child` here: on Windows that mutation-oriented
+    // helper requests DELETE access, which correctly conflicts with an
+    // existing shared writer's no-FILE_SHARE_DELETE pin.
+    if binding.identity_token() != opened_identity {
+        anyhow::bail!(
+            "HMAC-key lease changed while its no-follow handle was being bound: {}",
+            display.display()
+        );
+    }
+    drop(identity_file);
+    #[cfg(windows)]
+    let cap_file = {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+        let mut pinned = cap_std::fs::OpenOptions::new();
+        pinned.read(true).follow(cap_fs_ext::FollowSymlinks::No);
+        match _mode {
+            HmacKeyLeaseMode::SharedWriter => {
+                // Windows shared LockFileEx leases must be carried by a
+                // read-only handle; a write-capable handle makes otherwise
+                // shared byte-range locks conflict across writers.
+                pinned.access_mode(FILE_GENERIC_READ);
+            }
+            HmacKeyLeaseMode::ExclusiveMutation => {
+                pinned
+                    .write(true)
+                    .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE);
+            }
+        }
+        pinned
+            // No FILE_SHARE_DELETE: this handle pins the checked direct child.
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+        let pinned = root
+            .dir
+            .open_with(name, &pinned)
+            .with_context(|| format!("pin HMAC-key lease namespace {}", display.display()))?;
+        let pinned_metadata = pinned
+            .metadata()
+            .with_context(|| format!("inspect pinned HMAC-key lease {}", display.display()))?;
+        if !pinned_metadata.is_file()
+            || pinned_metadata.file_type().is_symlink()
+            || cap_file_identity(&pinned_metadata) != opened_identity
+        {
+            anyhow::bail!(
+                "HMAC-key lease identity changed before its namespace pin: {}",
+                display.display()
+            );
+        }
+        drop(cap_file);
+        pinned
+    };
+    Ok((root, binding, cap_file.into_std(), display))
+}
+
+pub(crate) fn acquire_hmac_key_lease(
+    home: &Path,
+    key_path: &Path,
+    mode: HmacKeyLeaseMode,
+) -> Result<HmacKeyLease> {
+    let (root, binding, file, display_path) = open_bound_hmac_rotation_lock(home, key_path, mode)?;
+    #[cfg(windows)]
+    let identity_token = binding.identity_token().to_owned();
+    #[cfg(windows)]
+    drop(binding);
+
+    let started = std::time::Instant::now();
+    loop {
+        let acquired = match mode {
+            HmacKeyLeaseMode::SharedWriter => file.try_lock_shared(),
+            HmacKeyLeaseMode::ExclusiveMutation => file.try_lock(),
+        };
+        match acquired {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if started.elapsed() >= HMAC_LEASE_GIVE_UP_AFTER {
+                    anyhow::bail!(
+                        "HMAC-key {} lease {} remained busy for >5s",
+                        match mode {
+                            HmacKeyLeaseMode::SharedWriter => "writer",
+                            HmacKeyLeaseMode::ExclusiveMutation => "rotation",
+                        },
+                        display_path.display()
+                    );
+                }
+                std::thread::sleep(HMAC_LEASE_RETRY_EVERY);
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err(error).with_context(|| {
+                    format!("acquire HMAC-key {mode:?} lease {}", display_path.display())
+                });
+            }
+        }
+    }
+    let lease = HmacKeyLease {
+        root,
+        #[cfg(unix)]
+        binding,
+        #[cfg(windows)]
+        identity_token,
+        _file: file,
+        display_path,
+    };
+    lease.validate_namespace_binding()?;
+    Ok(lease)
 }
 
 /// Emit a marker every 1024 frames OR every 16 MiB. Either threshold
@@ -183,6 +525,335 @@ pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
     Ok(key)
 }
 
+/// Load the canonical active HMAC key for `home`, or create it only while the
+/// WAL namespace is still provably fresh.
+///
+/// The caller must hold the instance's HMAC-rotation lock. Keeping the
+/// initialization under that same cross-process authority prevents two first
+/// starts from minting competing identities. Existing segments, journals,
+/// stages, or other WAL artifacts without `hmac.key` are recovery evidence,
+/// not permission to invent a replacement key.
+pub(crate) fn load_or_initialize_home_key_locked(home: &Path, key_path: &Path) -> Result<Vec<u8>> {
+    validate_home_key_path(home, key_path)?;
+
+    match crate::wal::scan::load_home_hmac_keys(home) {
+        Ok(keys) => {
+            if let Some(active) = keys.into_iter().next() {
+                return Ok(active);
+            }
+        }
+        Err(scan_error) => {
+            return initialize_home_key_locked(home, key_path).map_err(|init_error| {
+                scan_error.context(format!(
+                    "active WAL HMAC key was not scanner-readable and safe initialization was \
+                     refused: {init_error:#}"
+                ))
+            });
+        }
+    }
+    initialize_home_key_locked(home, key_path)
+}
+
+fn initialize_home_key_locked(home: &Path, key_path: &Path) -> Result<Vec<u8>> {
+    let wal_path = home.join("wal");
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &wal_path,
+        true,
+        "WAL HMAC key directory",
+    )?
+    .context("created WAL HMAC key directory is unavailable")?;
+
+    let active_name = std::ffi::OsStr::new("hmac.key");
+    let master_name = std::ffi::OsStr::new("master.key");
+    let rotation_lock_name = std::ffi::OsStr::new(HMAC_ROTATION_LOCK_NAME);
+    let signing_name = std::ffi::OsStr::new("signing.key");
+    let signing_lock_name = std::ffi::OsStr::new("signing.key.lock");
+    let mut examined_entries = 0usize;
+    for entry in root
+        .dir
+        .entries()
+        .with_context(|| format!("enumerate WAL key directory {}", wal_path.display()))?
+    {
+        examined_entries = examined_entries
+            .checked_add(1)
+            .context("WAL key initialization entry counter overflow")?;
+        if examined_entries > crate::wal::scan::MAX_HOME_KEY_DIRECTORY_ENTRIES {
+            anyhow::bail!(
+                "WAL key initialization exceeds the {}-entry directory limit under {}",
+                crate::wal::scan::MAX_HOME_KEY_DIRECTORY_ENTRIES,
+                wal_path.display()
+            );
+        }
+        let name = entry
+            .with_context(|| format!("read WAL key entry under {}", wal_path.display()))?
+            .file_name();
+        match name.as_os_str() {
+            name if name == master_name => {
+                let display = root.display_path.join(name);
+                let body = crate::skills::store::read_regular_file_bounded(
+                    &root.dir,
+                    name,
+                    &display,
+                    crate::wal::scan::MAX_HOME_KEY_BYTES,
+                )
+                .context("validate pre-existing WAL master key before HMAC initialization")?;
+                let raw = decode_existing_key(&body, &display)
+                    .context("decode pre-existing WAL master key")?;
+                crate::wal::crypto::WalMasterKey::from_bytes(&raw)
+                    .context("validate pre-existing WAL master key")?;
+            }
+            name if name == rotation_lock_name || name == signing_lock_name => {
+                let display = root.display_path.join(name);
+                // Never read the byte range: on Windows the active
+                // `LockFileEx` lease intentionally locks it and a read would
+                // fail with ERROR_LOCK_VIOLATION. The capability/no-follow
+                // handle still proves regular-file identity and metadata.
+                let (file, _binding) = crate::skills::store::open_bound_regular_file_readwrite(
+                    &root.dir, name, &display,
+                )
+                .with_context(|| {
+                    format!(
+                        "validate pre-existing empty WAL key lock {}",
+                        display.display()
+                    )
+                })?;
+                let metadata = file.metadata().with_context(|| {
+                    format!("inspect pre-existing WAL key lock {}", display.display())
+                })?;
+                if metadata.len() != 0 {
+                    anyhow::bail!(
+                        "WAL key lock must be an empty regular file before first HMAC initialization: {}",
+                        display.display()
+                    );
+                }
+            }
+            name if name == signing_name => {
+                let display = root.display_path.join(name);
+                let body = crate::skills::store::read_regular_file_bounded(
+                    &root.dir,
+                    name,
+                    &display,
+                    crate::wal::scan::MAX_HOME_KEY_BYTES,
+                )
+                .context("validate pre-existing proof signing key before HMAC initialization")?;
+                let raw = maybe_unwrap_dpapi(&body, &display)
+                    .context("decode pre-existing proof signing key")?;
+                if raw.len() != 32 {
+                    anyhow::bail!(
+                        "proof signing key must decode to exactly 32 bytes before first HMAC initialization: {}",
+                        display.display()
+                    );
+                }
+            }
+            _ => {
+                anyhow::bail!(
+                    "refusing to create a new WAL HMAC identity while `{}` already exists under {}",
+                    name.to_string_lossy(),
+                    wal_path.display()
+                );
+            }
+        }
+    }
+
+    let active_display = root.display_path.join(active_name);
+    if std::path::absolute(&active_display)? != std::path::absolute(key_path)? {
+        anyhow::bail!(
+            "capability-bound WAL HMAC path {} differs from requested {}",
+            active_display.display(),
+            key_path.display()
+        );
+    }
+    let mut initialized = vec![0u8; 32];
+    getrandom::getrandom(&mut initialized)
+        .context("OS RNG unavailable; refusing to generate a weak WAL HMAC key")?;
+    let encoded = encode_key_for_storage(&active_display, &initialized)
+        .context("encode instance-bound WAL HMAC key")?;
+    if let Err(create_error) = crate::skills::store::atomic_write_private_child_create_new(
+        &root.dir,
+        active_name,
+        &active_display,
+        &encoded,
+    ) {
+        if let Ok(keys) = crate::wal::scan::load_home_hmac_keys(home)
+            && let Some(active) = keys.into_iter().next()
+        {
+            return Ok(active);
+        }
+        return Err(create_error).context("create instance-bound WAL HMAC key");
+    }
+
+    let stored = crate::skills::store::read_regular_file_bounded(
+        &root.dir,
+        active_name,
+        &active_display,
+        crate::wal::scan::MAX_HOME_KEY_BYTES,
+    )
+    .context("re-open created WAL HMAC key through its bound directory")?;
+    let bound_active =
+        decode_existing_key(&stored, &active_display).context("decode created WAL HMAC key")?;
+    if bound_active != initialized {
+        anyhow::bail!(
+            "created WAL HMAC key changed between its atomic commit and capability-bound read"
+        );
+    }
+
+    let scanner_active = crate::wal::scan::load_home_hmac_keys(home)?
+        .into_iter()
+        .next()
+        .context("created WAL HMAC key is not visible to the bounded WAL scanner")?;
+    if scanner_active != bound_active {
+        anyhow::bail!("WAL emitter and scanner resolved different active HMAC keys");
+    }
+    Ok(bound_active)
+}
+
+fn bound_home_wal_file(home: &Path, path: &Path, max_bytes: usize) -> Result<Option<Vec<u8>>> {
+    let wal_path = std::path::absolute(home.join("wal"))?;
+    let requested = std::path::absolute(path)?;
+    if requested.parent() != Some(wal_path.as_path()) {
+        anyhow::bail!(
+            "WAL key material must be a direct child of {}: {}",
+            wal_path.display(),
+            path.display()
+        );
+    }
+    let name = requested
+        .file_name()
+        .context("WAL key material path has no file name")?;
+    let Some(root) = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        home.parent().unwrap_or(home),
+        &wal_path,
+        false,
+        "WAL key material directory",
+    )?
+    else {
+        return Ok(None);
+    };
+    match root.dir.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect WAL key material {}", requested.display()))
+        }
+        Ok(_) => {
+            crate::skills::store::read_regular_file_bounded(&root.dir, name, &requested, max_bytes)
+                .map(Some)
+                .with_context(|| format!("read WAL key material {}", requested.display()))
+        }
+    }
+}
+
+pub(crate) fn read_existing_home_wal_file(
+    home: &Path,
+    path: &Path,
+    max_bytes: usize,
+) -> Result<Vec<u8>> {
+    bound_home_wal_file(home, path, max_bytes)?
+        .with_context(|| format!("required WAL key material is missing at {}", path.display()))
+}
+
+pub(crate) fn read_optional_home_wal_file(
+    home: &Path,
+    path: &Path,
+    max_bytes: usize,
+) -> Result<Option<Vec<u8>>> {
+    bound_home_wal_file(home, path, max_bytes)
+}
+
+pub(crate) fn write_new_home_wal_file(home: &Path, path: &Path, bytes: &[u8]) -> Result<()> {
+    let wal_path = std::path::absolute(home.join("wal"))?;
+    let requested = std::path::absolute(path)?;
+    if requested.parent() != Some(wal_path.as_path()) {
+        anyhow::bail!(
+            "new WAL key material must be a direct child of {}: {}",
+            wal_path.display(),
+            path.display()
+        );
+    }
+    let name = requested
+        .file_name()
+        .context("new WAL key material path has no file name")?;
+    let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        home.parent().unwrap_or(home),
+        &wal_path,
+        true,
+        "new WAL key material directory",
+    )?
+    .context("created WAL key material directory is unavailable")?;
+    crate::skills::store::atomic_write_private_child_create_new(&root.dir, name, &requested, bytes)
+}
+
+pub(crate) fn write_new_home_key_sibling(home: &Path, path: &Path, key: &[u8]) -> Result<()> {
+    let encoded = encode_key_for_storage(path, key)?;
+    write_new_home_wal_file(home, path, &encoded)
+}
+
+pub(crate) fn replace_home_key(home: &Path, path: &Path, key: &[u8]) -> Result<()> {
+    let wal_path = std::path::absolute(home.join("wal"))?;
+    let requested = std::path::absolute(path)?;
+    if requested.parent() != Some(wal_path.as_path()) {
+        anyhow::bail!(
+            "replacement WAL key material must be a direct child of {}: {}",
+            wal_path.display(),
+            path.display()
+        );
+    }
+    let name = requested
+        .file_name()
+        .context("replacement WAL key material path has no file name")?;
+    let root = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        home.parent().unwrap_or(home),
+        &wal_path,
+        false,
+        "replacement WAL key material directory",
+    )?
+    .context("replacement WAL key material directory is missing")?;
+    let encoded = encode_key_for_storage(&requested, key)?;
+    crate::skills::store::atomic_write_private_child(&root.dir, name, &requested, &encoded)
+}
+
+pub(crate) fn remove_home_wal_file_if_present(home: &Path, path: &Path) -> Result<bool> {
+    let wal_path = std::path::absolute(home.join("wal"))?;
+    let requested = std::path::absolute(path)?;
+    if requested.parent() != Some(wal_path.as_path()) {
+        anyhow::bail!(
+            "WAL cleanup target must be a direct child of {}: {}",
+            wal_path.display(),
+            path.display()
+        );
+    }
+    let name = requested
+        .file_name()
+        .context("WAL cleanup target has no file name")?;
+    let Some(root) = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        home.parent().unwrap_or(home),
+        &wal_path,
+        false,
+        "WAL cleanup directory",
+    )?
+    else {
+        return Ok(false);
+    };
+    let removed = crate::skills::store::remove_child_file_if_present(&root.dir, name, &requested)?;
+    if removed {
+        crate::skills::store::sync_parent_directory(&root.dir, &root.display_path)
+            .context("durably commit WAL cleanup")?;
+    }
+    Ok(removed)
+}
+
+pub(crate) fn load_existing_home_key(home: &Path, key_path: &Path) -> Result<Vec<u8>> {
+    validate_home_key_path(home, key_path)?;
+    let body = read_existing_home_wal_file(home, key_path, crate::wal::scan::MAX_HOME_KEY_BYTES)?;
+    decode_existing_key(&body, key_path)
+}
+
+pub(crate) fn load_existing_home_key_sibling(home: &Path, path: &Path) -> Result<Vec<u8>> {
+    let body = read_existing_home_wal_file(home, path, crate::wal::scan::MAX_HOME_KEY_BYTES)?;
+    decode_existing_key(&body, path)
+}
+
 /// Load an already-created WAL HMAC key without silently generating a new
 /// identity. Proof readers use this fail-closed path: an absent key means the
 /// existing WAL cannot be authenticated and must not be treated as empty.
@@ -269,12 +940,12 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
 }
 
 #[cfg(not(windows))]
-fn encode_key_for_storage(_path: &Path, key: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn encode_key_for_storage(_path: &Path, key: &[u8]) -> Result<Vec<u8>> {
     Ok(key.to_vec())
 }
 
 #[cfg(windows)]
-fn encode_key_for_storage(path: &Path, key: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn encode_key_for_storage(path: &Path, key: &[u8]) -> Result<Vec<u8>> {
     match crate::wal::dpapi::protect(key) {
         Ok(wrapped) => Ok(wrapped),
         Err(e) => {
@@ -903,5 +1574,115 @@ mod tests {
         };
         let r = verify_marker(&seg_path, b"k", &marker);
         assert!(r.is_err());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn hmac_rotation_lock_refuses_a_symlink_or_reparse_leaf() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let outside = home.path().join("outside-lock");
+        std::fs::write(&outside, b"sentinel").unwrap();
+        let lock = wal.join(HMAC_ROTATION_LOCK_NAME);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &lock).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_file(&outside, &lock) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                return;
+            }
+            panic!("create test reparse leaf: {error}");
+        }
+
+        let error = acquire_hmac_key_lease(
+            home.path(),
+            &wal.join("hmac.key"),
+            HmacKeyLeaseMode::ExclusiveMutation,
+        )
+        .err()
+        .expect("link/reparse lock leaves must never define the lease namespace");
+        assert!(
+            format!("{error:#}").contains("without following links")
+                || format!("{error:#}").contains("real regular file"),
+            "unexpected no-follow lock error: {error:#}"
+        );
+        assert_eq!(std::fs::read(outside).unwrap(), b"sentinel");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn first_hmac_initialization_refuses_a_symlink_or_reparse_key_leaf() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let outside = home.path().join("outside-key");
+        std::fs::write(&outside, [0x55; 32]).unwrap();
+        let key_path = wal.join("hmac.key");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &key_path).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_file(&outside, &key_path) {
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                return;
+            }
+            panic!("create test key reparse leaf: {error}");
+        }
+
+        let lease =
+            acquire_hmac_key_lease(home.path(), &key_path, HmacKeyLeaseMode::ExclusiveMutation)
+                .unwrap();
+        let error = load_or_initialize_home_key_locked(home.path(), &key_path)
+            .expect_err("first initialization must not replace a linked key leaf");
+        assert!(
+            format!("{error:#}").contains("refusing to create a new WAL HMAC identity")
+                || format!("{error:#}").contains("real regular file"),
+            "unexpected linked-key error: {error:#}"
+        );
+        lease.validate_namespace_binding().unwrap();
+        assert_eq!(std::fs::read(outside).unwrap(), [0x55; 32]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn writer_and_rotation_leases_detect_unlinked_lock_replacement() {
+        for mode in [
+            HmacKeyLeaseMode::SharedWriter,
+            HmacKeyLeaseMode::ExclusiveMutation,
+        ] {
+            let home = tempdir().unwrap();
+            let wal = home.path().join("wal");
+            let key_path = wal.join("hmac.key");
+            let lease = acquire_hmac_key_lease(home.path(), &key_path, mode).unwrap();
+            let lock_path = wal.join(HMAC_ROTATION_LOCK_NAME);
+
+            std::fs::remove_file(&lock_path).unwrap();
+            std::fs::write(&lock_path, b"replacement-inode").unwrap();
+
+            let error = lease
+                .validate_namespace_binding()
+                .expect_err("a replacement inode must invalidate the held lease");
+            assert!(
+                format!("{error:#}").contains("namespace changed"),
+                "unexpected replacement error for {mode:?}: {error:#}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fresh_init_validates_an_actively_locked_rotation_file_by_metadata() {
+        let home = tempdir().unwrap();
+        let wal = home.path().join("wal");
+        let key_path = wal.join("hmac.key");
+        let lease =
+            acquire_hmac_key_lease(home.path(), &key_path, HmacKeyLeaseMode::ExclusiveMutation)
+                .unwrap();
+
+        let key = load_or_initialize_home_key_locked(home.path(), &key_path)
+            .expect("fresh init must not read the LockFileEx-locked byte range");
+        assert_eq!(key.len(), 32);
+        assert!(key_path.is_file());
+        lease.validate_namespace_binding().unwrap();
     }
 }

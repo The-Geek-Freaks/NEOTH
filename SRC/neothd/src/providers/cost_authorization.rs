@@ -17,12 +17,14 @@ use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 
 use super::{
-    ChunkStream, Completion, Provider, ProviderDispatchPermit, ProviderRequestControls, Request,
+    ChunkStream, Completion, CompletionIdentity, Provider, ProviderDispatchPermit,
+    ProviderRequestControls, Request,
 };
 #[cfg(test)]
 use crate::permissions::AutonomyLevel;
 use crate::permissions::gate::ChannelAsker;
 use crate::permissions::{Action, AutonomyPolicySnapshot, ConfirmStrategy, Gate};
+use crate::security::provider_subject::ProviderSubjectIdentifier;
 use crate::wal::writer::WalWriterHandle;
 
 static AUTHORIZATION_ID_NONCE: AtomicU64 = AtomicU64::new(0);
@@ -125,9 +127,11 @@ fn request_binding_sha256(
     call_scope: &str,
     streaming: bool,
     output_token_ceiling: Option<u32>,
+    provider_subject: Option<&ProviderSubjectIdentifier>,
 ) -> String {
     let mut hasher = Sha256::new();
-    hash_binding_field(&mut hasher, "schema", b"neoth.provider-call-binding.v1");
+    let provider_subject = provider_subject.and_then(|subject| subject.wire_value_for(provider));
+    hash_binding_field(&mut hasher, "schema", b"neoth.provider-call-binding.v2");
     hash_binding_field(&mut hasher, "call_scope", call_scope.as_bytes());
     hash_binding_field(&mut hasher, "provider", provider.as_bytes());
     hash_binding_field(&mut hasher, "model", model.as_bytes());
@@ -206,6 +210,16 @@ fn request_binding_sha256(
         &mut hasher,
         "output_token_ceiling_present",
         &[u8::from(output_token_ceiling.is_some())],
+    );
+    hash_binding_field(
+        &mut hasher,
+        "provider_subject_present",
+        &[u8::from(provider_subject.is_some())],
+    );
+    hash_binding_field(
+        &mut hasher,
+        "provider_subject",
+        provider_subject.unwrap_or_default().as_bytes(),
     );
     finish_sha256(hasher)
 }
@@ -317,6 +331,9 @@ pub struct ProviderCallAuditContext {
     pub call_type: Option<&'static str>,
     pub request_id: Option<String>,
     pub task_id: Option<String>,
+    /// Pinned local operator identity supplied only after the owning ingress
+    /// has authenticated the caller. Never place a channel sender ID or other
+    /// untrusted request field here.
     pub operator_id: Option<String>,
     pub session_id: Option<String>,
     pub target: Option<String>,
@@ -353,7 +370,10 @@ fn add_audit_context(
         payload.insert("task_id_sha256".into(), identifier_sha256(task_id).into());
     }
     if let Some(operator_id) = context.operator_id.as_deref() {
-        payload.insert("operator_id".into(), operator_id.into());
+        payload.insert(
+            "operator_id_sha256".into(),
+            identifier_sha256(operator_id).into(),
+        );
     }
     if let Some(session_id) = context.session_id.as_deref() {
         payload.insert("session_id".into(), session_id.into());
@@ -473,7 +493,7 @@ impl ProviderCallAuditTicket {
                 *cache_read_tokens,
             ),
             ProviderCallTerminal::Failure {
-                error_kind,
+                kind,
                 latency_ns,
                 input_tokens,
                 output_tokens,
@@ -481,7 +501,7 @@ impl ProviderCallAuditTicket {
                 cache_read_tokens,
             } => (
                 false,
-                *error_kind,
+                kind.receipt_outcome(),
                 *latency_ns,
                 *input_tokens,
                 *output_tokens,
@@ -560,18 +580,30 @@ impl ProviderCallAuditTicket {
                 crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
             }
             ProviderCallTerminal::Failure {
-                error_kind,
+                kind,
                 latency_ns,
                 input_tokens,
                 output_tokens,
                 cache_creation_tokens,
                 cache_read_tokens,
             } => {
+                let error_kind = kind.receipt_outcome();
                 payload.insert("ok".into(), false.into());
                 payload.insert("error_kind".into(), error_kind.into());
                 // Stable compatibility code for existing WAL consumers. Never
                 // the raw provider/transport error string.
                 payload.insert("error".into(), error_kind.into());
+                if let Some(provider_outcome) = kind.provider_outcome() {
+                    payload.insert("client_outcome".into(), "client_abandoned".into());
+                    payload.insert("provider_outcome".into(), provider_outcome.as_str().into());
+                    // An indeterminate provider outcome is never evidence that
+                    // an automatic repeat is safe: the abandoned transport may
+                    // still complete and charge or mutate upstream state.
+                    payload.insert(
+                        "automatic_retry_safe".into(),
+                        provider_outcome.is_not_dispatched().into(),
+                    );
+                }
                 payload.insert("latency_ns".into(), latency_ns.into());
                 payload.insert("latency_ms".into(), (latency_ns / 1_000_000).into());
                 payload.insert("input_tokens".into(), input_tokens.into());
@@ -637,6 +669,55 @@ impl ProviderCallAuditTicket {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProviderOutcome {
+    /// The durable intent existed, but no dispatch permit was returned and the
+    /// concrete provider transport could not have started.
+    NotDispatched,
+    /// The client-side future was dropped after dispatch admission. Dropping a
+    /// future is not proof that the provider stopped, so billing, mutations and
+    /// eventual completion remain unknown.
+    Indeterminate,
+}
+
+impl ProviderOutcome {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::NotDispatched => "not_dispatched",
+            Self::Indeterminate => "indeterminate",
+        }
+    }
+
+    const fn is_not_dispatched(self) -> bool {
+        matches!(self, Self::NotDispatched)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProviderCallFailureKind {
+    /// A concrete error was observed through the provider boundary.
+    Observed(&'static str),
+    /// The NEOTH caller stopped awaiting the invocation. `provider_outcome`
+    /// records only what NEOTH can prove about the provider side.
+    ClientAbandoned { provider_outcome: ProviderOutcome },
+}
+
+impl ProviderCallFailureKind {
+    const fn receipt_outcome(self) -> &'static str {
+        match self {
+            Self::Observed(error_kind) => error_kind,
+            Self::ClientAbandoned { .. } => "client_abandoned",
+        }
+    }
+
+    const fn provider_outcome(self) -> Option<ProviderOutcome> {
+        match self {
+            Self::Observed(_) => None,
+            Self::ClientAbandoned { provider_outcome } => Some(provider_outcome),
+        }
+    }
+}
+
 enum ProviderCallTerminal {
     Success {
         response_hash_sha256: String,
@@ -651,7 +732,7 @@ enum ProviderCallTerminal {
         terminal_kind: &'static str,
     },
     Failure {
-        error_kind: &'static str,
+        kind: ProviderCallFailureKind,
         latency_ns: u64,
         input_tokens: Option<u32>,
         output_tokens: Option<u32>,
@@ -664,6 +745,7 @@ enum ProviderCallTerminal {
 /// permit is to durably convert this into a lifecycle guard (0x20 first).
 pub(crate) struct AuthorizedLeafCall {
     ticket: ProviderCallAuditTicket,
+    provider_subject: Option<ProviderSubjectIdentifier>,
 }
 
 /// Roll back an admitted daily-budget reservation unless ownership is moved
@@ -843,9 +925,11 @@ impl Drop for ProviderIntentLifecycle {
             return;
         };
         let state = std::mem::replace(&mut self.state, ProviderIntentState::Disarmed);
-        let append_cancelled = async move {
+        let append_abandoned = async move {
             let terminal = ProviderCallTerminal::Failure {
-                error_kind: "provider_call_cancelled",
+                kind: ProviderCallFailureKind::ClientAbandoned {
+                    provider_outcome: ProviderOutcome::NotDispatched,
+                },
                 latency_ns: u64::try_from(ticket.started.elapsed().as_nanos()).unwrap_or(u64::MAX),
                 input_tokens: None,
                 output_tokens: None,
@@ -853,24 +937,24 @@ impl Drop for ProviderIntentLifecycle {
                 cache_read_tokens: None,
             };
             if let Err(error) = ticket.append_terminal(terminal).await {
-                tracing::error!(error = %error, "pre-dispatch cancellation terminal audit failed");
+                tracing::error!(error = %error, "pre-dispatch client-abandonment terminal audit failed");
             }
         };
 
         let cleanup = async move {
             match state {
                 ProviderIntentState::Pending(task) => match task.await {
-                    Ok(Ok(())) => append_cancelled.await,
+                    Ok(Ok(())) => append_abandoned.await,
                     Ok(Err(error)) => tracing::error!(
                         error = %error,
-                        "cancelled provider intent did not become durable; no terminal frame required"
+                        "abandoned provider intent did not become durable; no terminal frame required"
                     ),
                     Err(error) => tracing::error!(
                         error = %error,
-                        "cancelled provider intent task failed; no durable request was acknowledged"
+                        "abandoned provider intent task failed; no durable request was acknowledged"
                     ),
                 },
-                ProviderIntentState::Durable => append_cancelled.await,
+                ProviderIntentState::Durable => append_abandoned.await,
                 ProviderIntentState::NotDurable | ProviderIntentState::Disarmed => {}
                 #[cfg(test)]
                 ProviderIntentState::Disabled => {}
@@ -889,6 +973,10 @@ impl Drop for ProviderIntentLifecycle {
 }
 
 impl AuthorizedLeafCall {
+    pub(crate) fn take_provider_subject(&mut self) -> Option<ProviderSubjectIdentifier> {
+        self.provider_subject.take()
+    }
+
     pub(crate) async fn begin_dispatch(mut self) -> Result<ProviderCallAuditGuard> {
         let mut reservation_guard = None;
         if let Some(plan) = self.ticket.daily_budget_plan.take() {
@@ -998,7 +1086,7 @@ impl ProviderCallAuditGuard {
             return Ok(());
         };
         let terminal = ProviderCallTerminal::Failure {
-            error_kind,
+            kind: ProviderCallFailureKind::Observed(error_kind),
             latency_ns: Self::elapsed_ns(ticket),
             input_tokens: self.input_tokens,
             output_tokens: self.output_tokens,
@@ -1093,10 +1181,8 @@ impl Drop for ProviderCallAuditGuard {
             return;
         }
         let terminal = ProviderCallTerminal::Failure {
-            error_kind: if ticket.streaming {
-                "stream_dropped"
-            } else {
-                "provider_call_cancelled"
+            kind: ProviderCallFailureKind::ClientAbandoned {
+                provider_outcome: ProviderOutcome::Indeterminate,
             },
             latency_ns: Self::elapsed_ns(&ticket),
             input_tokens: self.input_tokens,
@@ -1108,7 +1194,7 @@ impl Drop for ProviderCallAuditGuard {
             Ok(runtime) => {
                 runtime.spawn(async move {
                     if let Err(error) = ticket.append_terminal(terminal).await {
-                        tracing::error!(error = %error, "provider cancellation terminal audit failed");
+                        tracing::error!(error = %error, "provider client-abandonment terminal audit failed");
                     }
                 });
             }
@@ -1659,6 +1745,51 @@ impl ProviderCallAuthorizer {
         self
     }
 
+    async fn provider_subject_for_leaf(
+        &self,
+        provider: &'static str,
+    ) -> Result<Option<ProviderSubjectIdentifier>> {
+        // This field is an OpenAI-native contract. Azure, OpenRouter, custom
+        // gateways and OpenAI-compatible leaves must never inherit it merely
+        // because their JSON shape resembles Chat Completions.
+        if provider != "openai_api"
+            || self.audit_context.incognito
+            || self.audit_context.cluster_delegated
+        {
+            return Ok(None);
+        }
+        let Some(principal) = self
+            .audit_context
+            .operator_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|principal| !principal.is_empty())
+        else {
+            return Ok(None);
+        };
+        let Some(home) = self.usage_home.clone() else {
+            // A caller without a bound instance home has no durable local
+            // subject authority and therefore cannot assert an identity.
+            return Ok(None);
+        };
+        let principal = principal.to_owned();
+        tokio::task::spawn_blocking(move || {
+            crate::security::provider_subject::derive(&home, provider, &principal)
+        })
+        .await
+        .map_err(|join| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider-subject derivation task failed: {join}"
+            )))
+        })?
+        .map(Some)
+        .map_err(|error| {
+            anyhow::anyhow!(ProviderAuthorizationError(format!(
+                "provider-subject derivation failed: {error:#}"
+            )))
+        })
+    }
+
     /// Append an orchestration event that is part of an already-authorized
     /// provider dispatch. Decorators use this for required per-leaf state
     /// transitions (for example quota backoff and fallback hops) so the same
@@ -1758,6 +1889,7 @@ impl ProviderCallAuthorizer {
                 .then_some(super::DEFAULT_CLOUD_OUTPUT_TOKEN_CEILING)
         });
 
+        let provider_subject = self.provider_subject_for_leaf(provider).await?;
         let request_binding_sha256 = request_binding_sha256(
             provider,
             model,
@@ -1765,6 +1897,7 @@ impl ProviderCallAuthorizer {
             call_scope,
             streaming,
             output_token_ceiling,
+            provider_subject.as_ref(),
         );
         let invocation_id = new_authorization_id(&request_binding_sha256);
 
@@ -1797,6 +1930,7 @@ impl ProviderCallAuthorizer {
         };
         if super::is_local_provider(provider) {
             return Ok(AuthorizedLeafCall {
+                provider_subject,
                 ticket: ProviderCallAuditTicket {
                     audit_sink,
                     invocation_id,
@@ -1966,6 +2100,7 @@ impl ProviderCallAuthorizer {
             )))
         })?;
         Ok(AuthorizedLeafCall {
+            provider_subject,
             ticket: ProviderCallAuditTicket {
                 audit_sink,
                 invocation_id,
@@ -2077,6 +2212,17 @@ impl Provider for CostAuthorizingProvider<'_> {
         }
         self.inner
             .complete_authorized(req, &self.authorizer, self.call_scope)
+            .await
+    }
+
+    async fn complete_pinned(
+        &self,
+        mut req: Request,
+        expected: &CompletionIdentity,
+    ) -> Result<Completion> {
+        req.model = Some(expected.wire_model.clone());
+        self.inner
+            .complete_authorized_pinned(req, expected, &self.authorizer, self.call_scope)
             .await
     }
 
@@ -2240,6 +2386,17 @@ impl Provider for AuthorizedProvider {
         self.bind_model(&mut req);
         self.inner
             .complete_authorized(req, &self.authorizer, self.call_scope)
+            .await
+    }
+
+    async fn complete_pinned(
+        &self,
+        mut req: Request,
+        expected: &CompletionIdentity,
+    ) -> Result<Completion> {
+        req.model = Some(expected.wire_model.clone());
+        self.inner
+            .complete_authorized_pinned(req, expected, &self.authorizer, self.call_scope)
             .await
     }
 
@@ -2459,6 +2616,7 @@ mod tests {
                 let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
                 if attempt >= self.retry_failures {
                     return Ok(Completion {
+                        termination: Default::default(),
                         text: "retry succeeded".into(),
                         ..Completion::default()
                     });
@@ -2867,6 +3025,7 @@ mod tests {
         async fn complete(&self, req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: req.model.unwrap_or_default(),
                 model: "wire-model".into(),
                 latency: Duration::ZERO,
@@ -2896,6 +3055,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "cached response".into(),
                 model: "claude-sonnet-4-6".into(),
                 latency: Duration::ZERO,
@@ -3045,6 +3205,125 @@ mod tests {
         assert_eq!(frames[1].1["decision"], "deny");
     }
 
+    #[tokio::test]
+    async fn pinned_retry_cannot_bypass_a_denied_paid_call_gate() {
+        let dir = tempfile::tempdir().unwrap();
+        let segment = dir.path().join("pinned-paid-call-denied-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let mut custom = crate::permissions::CustomAutonomyConfig::default();
+        custom.overrides.insert(
+            crate::permissions::ActionKind::PaidProviderCall,
+            crate::permissions::CustomDecision::Deny,
+        );
+        let inner = CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyPolicySnapshot::new(AutonomyLevel::Custom, &custom),
+                Some(writer.clone()),
+                test_input_token_cap(),
+            ),
+            None,
+            "test.pinned.denied_policy",
+        );
+        let expected = CompletionIdentity {
+            provider: "openai_api".into(),
+            wire_model: "gpt-4o".into(),
+            dispatch_route: Vec::new(),
+        };
+
+        let error = provider
+            .complete_pinned(Request::default(), &expected)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("custom override"));
+        assert_eq!(
+            inner.calls.load(Ordering::SeqCst),
+            0,
+            "a denied pinned retry must not reach the transport"
+        );
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn successful_pinned_retry_gets_a_distinct_authorized_lifecycle() {
+        let dir = tempfile::tempdir().unwrap();
+        crate::consent::grant(dir.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        let segment = dir.path().join("pinned-lifecycle-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
+        let inner = CountingProvider {
+            name: "openai_api",
+            calls: AtomicUsize::new(0),
+            default_model: Some("gpt-4o".into()),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Full,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(dir.path()),
+            None,
+            "test.pinned.lifecycle",
+        );
+
+        let first = provider.complete(Request::default()).await.unwrap();
+        let retry = provider
+            .complete_pinned(
+                Request {
+                    prompt: "truthful retry context".into(),
+                    model: Some("must-not-reselect".into()),
+                    ..Request::default()
+                },
+                &first.identity,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(retry.identity, first.identity);
+        assert_eq!(inner.calls.load(Ordering::SeqCst), 2);
+        drop(provider);
+        drop(writer);
+        join.await.unwrap();
+
+        let lifecycle = wal_frames(&segment)
+            .into_iter()
+            .filter(|(event_type, _)| {
+                matches!(
+                    *event_type,
+                    crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST
+                        | crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lifecycle
+                .iter()
+                .map(|(event_type, _)| *event_type)
+                .collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+            ]
+        );
+        assert_ne!(
+            lifecycle[0].1["invocation_id"], lifecycle[2].1["invocation_id"],
+            "a pinned retry must receive a fresh authorized invocation"
+        );
+        assert_eq!(lifecycle[2].1["provider"], "openai_api");
+        assert_eq!(lifecycle[2].1["wire_model"], "gpt-4o");
+    }
+
     struct NativeStreamingProvider {
         calls: AtomicUsize,
     }
@@ -3056,6 +3335,30 @@ mod tests {
 
     struct SensitiveSuccessProvider {
         calls: AtomicUsize,
+    }
+
+    struct PendingProvider {
+        entered_transport: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl Provider for PendingProvider {
+        fn name(&self) -> &'static str {
+            "local_qwen"
+        }
+
+        fn default_model(&self) -> Option<&str> {
+            Some("qwen-test")
+        }
+
+        async fn complete_raw(
+            &self,
+            _req: Request,
+            _permit: &ProviderDispatchPermit,
+        ) -> Result<Completion> {
+            self.entered_transport.notify_one();
+            futures_util::future::pending().await
+        }
     }
 
     #[async_trait]
@@ -3071,6 +3374,7 @@ mod tests {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(Completion {
+                termination: Default::default(),
                 text: "raw completion body with secret-token".into(),
                 latency: Duration::from_millis(2),
                 input_tokens: Some(11),
@@ -3236,6 +3540,7 @@ mod tests {
                     identity: CompletionIdentity {
                         provider: "forged-provider".into(),
                         wire_model: "forged-model".into(),
+                        dispatch_route: Vec::new(),
                     },
                     ..Default::default()
                 },
@@ -3268,10 +3573,12 @@ mod tests {
             let model = req.model.unwrap_or_default();
             self.wire_models.lock().unwrap().push(model.clone());
             Ok(Completion {
+                termination: Default::default(),
                 text: model.clone(),
                 identity: CompletionIdentity {
                     provider: "forged-provider".into(),
                     wire_model: "forged-model".into(),
+                    dispatch_route: Vec::new(),
                 },
                 model,
                 latency: Duration::ZERO,
@@ -4056,7 +4363,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancellation_after_durable_intent_before_ack_emits_exactly_one_terminal() {
+    async fn abandonment_after_durable_intent_before_ack_proves_transport_not_dispatched() {
         let dir = tempfile::tempdir().unwrap();
         let segment = dir.path().join("cancel-during-intent-ack-000001.wal");
         let (writer, join) = crate::wal::writer::spawn(segment.clone()).unwrap();
@@ -4101,7 +4408,7 @@ mod tests {
         drop(writer);
         tokio::time::timeout(Duration::from_secs(5), join)
             .await
-            .expect("writer did not drain cancellation terminal")
+            .expect("writer did not drain abandonment terminal")
             .unwrap();
 
         let frames = wal_frames(&segment);
@@ -4117,7 +4424,77 @@ mod tests {
             frames[0].1["request_binding_sha256"],
             frames[1].1["request_binding_sha256"]
         );
-        assert_eq!(frames[1].1["error_kind"], "provider_call_cancelled");
+        assert_eq!(frames[1].1["error_kind"], "client_abandoned");
+        assert_eq!(frames[1].1["client_outcome"], "client_abandoned");
+        assert_eq!(frames[1].1["provider_outcome"], "not_dispatched");
+        assert_eq!(frames[1].1["automatic_retry_safe"], true);
+    }
+
+    #[tokio::test]
+    async fn post_dispatch_future_drop_records_client_abandoned_and_indeterminate() {
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let segment = wal_dir.join("000001.wal");
+        let (writer, join) =
+            crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
+        let inner = PendingProvider {
+            entered_transport: tokio::sync::Notify::new(),
+        };
+        let provider = CostAuthorizingProvider::new(
+            &inner,
+            ProviderCallAuthorizer::fail_closed(
+                AutonomyLevel::Strict,
+                Some(writer.clone()),
+                test_input_token_cap(),
+            )
+            .with_usage_home(dir.path()),
+            None,
+            "test.post_dispatch_abandoned",
+        );
+
+        let mut call = Box::pin(provider.complete(Request::default()));
+        tokio::select! {
+            result = &mut call => {
+                let _ = result;
+                panic!("pending transport returned before the caller abandoned it");
+            }
+            result = tokio::time::timeout(
+                Duration::from_secs(5),
+                inner.entered_transport.notified(),
+            ) => {
+                result.expect("provider transport was never entered");
+            }
+        }
+        drop(call);
+        drop(provider);
+        drop(writer);
+        tokio::time::timeout(Duration::from_secs(5), join)
+            .await
+            .expect("writer did not drain indeterminate abandonment terminal")
+            .unwrap();
+
+        let frames = wal_frames(&segment);
+        assert_eq!(
+            frames.iter().map(|frame| frame.0).collect::<Vec<_>>(),
+            [
+                crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+            ]
+        );
+        assert_eq!(frames[1].1["error_kind"], "client_abandoned");
+        assert_eq!(frames[1].1["client_outcome"], "client_abandoned");
+        assert_eq!(frames[1].1["provider_outcome"], "indeterminate");
+        assert_eq!(frames[1].1["automatic_retry_safe"], false);
+        assert!(
+            !frames[1].1.to_string().contains("provider_call_cancelled"),
+            "dropping a client future is not proof that the provider cancelled"
+        );
+
+        let events = usage_events(dir.path());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].outcome.as_deref(), Some("client_abandoned"));
+        assert!(!events[0].ok);
     }
 
     #[tokio::test]
@@ -4268,11 +4645,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_terminal_usage_records_done_error_and_cancellation_exactly_once() {
+    async fn stream_terminal_usage_records_done_error_and_abandonment_exactly_once() {
         let dir = tempfile::tempdir().unwrap();
         let wal_dir = dir.path().join("wal");
         std::fs::create_dir_all(&wal_dir).unwrap();
-        let segment = wal_dir.join("stream-lifecycle-000001.wal");
+        let segment = wal_dir.join("000001.wal");
         let (writer, join) =
             crate::wal::writer::spawn_for_home(segment.clone(), dir.path().to_path_buf()).unwrap();
         let authorizer = ProviderCallAuthorizer::fail_closed(
@@ -4346,7 +4723,10 @@ mod tests {
         assert_eq!(frames[1].1["terminal_kind"], "stream_done");
         assert_eq!(frames[3].1["error_kind"], "stream_truncated");
         assert_eq!(frames[5].1["error_kind"], "stream_error");
-        assert_eq!(frames[7].1["error_kind"], "stream_dropped");
+        assert_eq!(frames[7].1["error_kind"], "client_abandoned");
+        assert_eq!(frames[7].1["client_outcome"], "client_abandoned");
+        assert_eq!(frames[7].1["provider_outcome"], "indeterminate");
+        assert_eq!(frames[7].1["automatic_retry_safe"], false);
         for pair in frames.chunks_exact(2) {
             assert_eq!(pair[0].0, crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST);
             assert!(matches!(
@@ -4373,7 +4753,7 @@ mod tests {
                 "stream_done",
                 "stream_truncated",
                 "stream_error",
-                "stream_dropped"
+                "client_abandoned"
             ]
         );
         assert!(events.iter().all(|event| event.streaming));
@@ -4550,6 +4930,7 @@ mod tests {
             "test.binding",
             false,
             Some(4096),
+            None,
         );
         assert_eq!(base.len(), 64);
         assert!(base.bytes().all(|byte| byte.is_ascii_hexdigit()));
@@ -4562,6 +4943,7 @@ mod tests {
                 "test.binding",
                 true,
                 Some(4096),
+                None,
             )
         );
         let mut changed = req.clone();
@@ -4575,6 +4957,7 @@ mod tests {
                 "test.binding",
                 false,
                 Some(4096),
+                None,
             ),
             "the exact final system prompt must be part of provider authorization"
         );
@@ -4589,8 +4972,110 @@ mod tests {
                 "test.binding",
                 false,
                 Some(4096),
+                None,
             )
         );
+    }
+
+    #[tokio::test]
+    async fn openai_provider_subject_is_bound_and_requires_operator_proof() {
+        let home = tempfile::tempdir().unwrap();
+        let context = ProviderCallAuditContext {
+            operator_id: Some("raw-alice@example.test".into()),
+            ..Default::default()
+        };
+        let authorizer = ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+            .with_usage_home(home.path())
+            .with_audit_context(context.clone());
+        let subject = authorizer
+            .provider_subject_for_leaf("openai_api")
+            .await
+            .unwrap()
+            .expect("authenticated local operator gets an OpenAI subject");
+        let raw = subject.wire_value_for("openai_api").unwrap();
+        assert_eq!(raw.len(), 64);
+        assert!(!raw.contains("raw-alice"));
+
+        assert!(
+            authorizer
+                .provider_subject_for_leaf("openai_api_custom")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            authorizer
+                .provider_subject_for_leaf("openrouter_api")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        for context in [
+            ProviderCallAuditContext::default(),
+            ProviderCallAuditContext {
+                operator_id: Some("raw-alice@example.test".into()),
+                incognito: true,
+                ..Default::default()
+            },
+            ProviderCallAuditContext {
+                operator_id: Some("raw-alice@example.test".into()),
+                cluster_delegated: true,
+                ..Default::default()
+            },
+        ] {
+            assert!(
+                ProviderCallAuthorizer::test_only(AutonomyLevel::Full)
+                    .with_usage_home(home.path())
+                    .with_audit_context(context)
+                    .provider_subject_for_leaf("openai_api")
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+        }
+
+        let req = Request {
+            model: Some("gpt-5".into()),
+            prompt: "hello".into(),
+            ..Default::default()
+        };
+        let without = request_binding_sha256(
+            "openai_api",
+            "gpt-5",
+            &req,
+            "test.subject.binding",
+            false,
+            Some(4096),
+            None,
+        );
+        let with = request_binding_sha256(
+            "openai_api",
+            "gpt-5",
+            &req,
+            "test.subject.binding",
+            false,
+            Some(4096),
+            Some(&subject),
+        );
+        assert_ne!(without, with);
+        assert!(!serde_json::to_string(&req).unwrap().contains("raw-alice"));
+    }
+
+    #[test]
+    fn provider_lifecycle_context_never_serializes_raw_operator_identity() {
+        let raw = "raw-alice@example.test";
+        let mut payload = serde_json::Map::new();
+        add_audit_context(
+            &mut payload,
+            &ProviderCallAuditContext {
+                operator_id: Some(raw.into()),
+                ..Default::default()
+            },
+        );
+        let serialized = serde_json::to_string(&payload).unwrap();
+        assert!(!serialized.contains(raw));
+        assert!(payload.get("operator_id").is_none());
+        assert_eq!(payload["operator_id_sha256"].as_str().unwrap().len(), 64);
     }
 
     #[tokio::test]
@@ -5062,12 +5547,14 @@ mod tests {
                 let compact = line.split_whitespace().collect::<String>();
                 if compact.starts_with("asyncfncomplete(") {
                     safe_overrides.push(format!("{relative}:complete"));
+                } else if compact.starts_with("asyncfncomplete_pinned(") {
+                    safe_overrides.push(format!("{relative}:complete_pinned"));
                 } else if compact.starts_with("asyncfnstream(") {
                     safe_overrides.push(format!("{relative}:stream"));
                 }
                 if !line.trim_start().starts_with("//")
                     && (line.contains("ProviderDispatchPermit::authorized(")
-                        || line.contains("ProviderDispatchPermit::transport_only()"))
+                        || line.contains("ProviderDispatchPermit::transport_only("))
                 {
                     permit_constructors.push(relative.clone());
                 }
@@ -5078,13 +5565,16 @@ mod tests {
             safe_overrides,
             [
                 "cost_authorization.rs:complete",
+                "cost_authorization.rs:complete_pinned",
                 "cost_authorization.rs:stream",
                 "cost_authorization.rs:complete",
+                "cost_authorization.rs:complete_pinned",
                 "cost_authorization.rs:stream",
                 "mod.rs:complete",
+                "mod.rs:complete_pinned",
                 "mod.rs:stream",
             ],
-            "only the two authorization decorators and the trait's fail-closed defaults may expose Provider::complete/stream in production"
+            "only the two authorization decorators and the trait's fail-closed defaults may expose Provider::complete/complete_pinned/stream in production"
         );
         assert_eq!(
             permit_constructors,
@@ -5214,7 +5704,9 @@ mod tests {
                 .chars()
                 .filter(|character| !character.is_whitespace())
                 .collect::<String>();
-            let hits = compact.matches(".complete(").count() + compact.matches(".stream(").count();
+            let hits = compact.matches(".complete(").count()
+                + compact.matches(".complete_pinned(").count()
+                + compact.matches(".stream(").count();
             if hits == 0 {
                 continue;
             }
@@ -5437,23 +5929,23 @@ mod tests {
             ),
             (
                 "providers/mod.rs",
-                1,
-                "149b4a18f01caafe3cb16ec4bb9e96b3b7db90b30c90efee257d96f515a0dc24",
+                2,
+                "61a3b747e25fcc5c0e99ca76bff2d5a2df8faa3bc7d8e8ce63c95e4224656cc0",
             ),
             (
                 "security/jailbreak_retry.rs",
                 1,
-                "2a946cc418f69d12f5971c1fc5e3ca1cd5bbceda4d730e07a767e67ecd55a0a6",
+                "70724acb7b8cba990c6ba313919bc1c3c0f08c07a8a27c5b5fb5f68e7b27d6a5",
             ),
             (
                 "security/refusal_abliterated.rs",
                 1,
-                "4c637a465163b61b71e10ecb0bb21a4bbafbbddbd4610db8e5653b1bd7066829",
+                "ac22ffdd85a7ff74960d522d1b07ef5a86cc156089503dbe74fc0b69fc06bc89",
             ),
             (
                 "security/refusal_recovery.rs",
-                2,
-                "d87ae6306552981bed3b385cb011d19c12e45a993e98116f466d6da46eaef49f",
+                3,
+                "ce8518addd8eb0a9319dbf09fcfffe9d55d32a5c08ed5fc7bcfe8c2876c78d61",
             ),
             (
                 "skills/auto_extract.rs",

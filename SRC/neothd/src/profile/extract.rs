@@ -485,6 +485,7 @@ mod tests {
         ) -> anyhow::Result<Completion> {
             *self.last_request.lock().unwrap() = Some(req);
             Ok(Completion {
+                termination: Default::default(),
                 text: self.reply.clone(),
                 identity: Default::default(),
                 model: "mock-1".into(),

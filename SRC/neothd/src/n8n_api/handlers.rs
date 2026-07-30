@@ -350,6 +350,10 @@ fn build_provider_request(
 
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &req.prompt,
+        // A provider:call token authenticates the workflow, not the provenance
+        // of each machine-generated prompt. Do not relabel arbitrary workflow
+        // input as an explicit human operator command.
+        operator_sovereignty: None,
         operator_context: None,
         preset_addendum: None,
         explicit_system: req.system.as_deref(),

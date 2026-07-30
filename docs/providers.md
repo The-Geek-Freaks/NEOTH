@@ -86,10 +86,32 @@ provider_kind: openai_compat
 provider_endpoint: http://127.0.0.1:1234/v1
 provider_model: operator-model-id
 
+inference:
+  openai_compat_profile: generic
+
 profile:
   learn_provider: local_qwen
   allow_cloud_fallback: false
 ```
+
+Custom topology slots can bind a named compatible cloud explicitly:
+
+```yaml
+inference:
+  mode: custom
+  right:
+    provider: openai_compat
+    openai_compat_profile: openrouter
+    endpoint: https://openrouter.ai/api/v1
+    model: qwen/qwen3-72b-instruct
+```
+
+Supported Chat-Completions profiles are `generic`, `openrouter`, `deepseek`,
+`moonshot_kimi`, and `qwen_chat`. Named profiles preserve vendor-specific
+refusal/error attribution and are accepted only with a reviewed matching
+official endpoint. OpenRouter keeps bounded observed upstream provider/model
+evidence separately from the authorized router leaf; that evidence never
+rewrites cost or consent authorization.
 
 For Ollama, only normalized loopback endpoints (`localhost`, `127.0.0.0/8`, or
 `[::1]`) identify as `local_ollama`. LAN, public and Ollama Cloud endpoints

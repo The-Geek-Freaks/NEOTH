@@ -313,6 +313,7 @@ mod tests {
         }
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.0.to_string(),
                 identity: Default::default(),
                 model: "mock".to_string(),

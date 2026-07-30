@@ -28,6 +28,60 @@ use super::{
 
 use crate::daemon::accelerator::Accelerator;
 
+#[derive(Debug, thiserror::Error)]
+#[error("local_qwen generation was abandoned by its caller")]
+struct LocalQwenGenerationAbandoned;
+
+struct CancelBlockingGenerationOnDrop {
+    signal: Arc<std::sync::atomic::AtomicBool>,
+    armed: bool,
+}
+
+impl CancelBlockingGenerationOnDrop {
+    fn new(signal: Arc<std::sync::atomic::AtomicBool>) -> Self {
+        Self {
+            signal,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CancelBlockingGenerationOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.signal
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+}
+
+async fn spawn_cancellable_generation<F, T>(work: F) -> Result<T>
+where
+    F: FnOnce(&std::sync::atomic::AtomicBool) -> Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    let signal = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_signal = Arc::clone(&signal);
+    let mut cancellation = CancelBlockingGenerationOnDrop::new(signal);
+    let result = tokio::task::spawn_blocking(move || work(worker_signal.as_ref()))
+        .await
+        .context("local_qwen forward task join error")?;
+    cancellation.disarm();
+    result
+}
+
+fn ensure_generation_active(signal: &std::sync::atomic::AtomicBool) -> Result<()> {
+    if signal.load(std::sync::atomic::Ordering::Acquire) {
+        Err(LocalQwenGenerationAbandoned.into())
+    } else {
+        Ok(())
+    }
+}
+
 /// Loaded-model state cached behind a mutex. Holding ModelForCausalLM
 /// across calls means we re-use the weights (a ~3 GB safetensors mmap) and
 /// the candle KV-cache structure. `clear_kv_cache` must run between calls
@@ -438,7 +492,7 @@ impl Provider for LocalQwenAdapter {
             let max_new_tokens = self.max_new_tokens;
             // Everything below is CPU/GPU-bound + blocking (mmap + tensor ops);
             // run it on a blocking thread so we don't stall tokio's reactor.
-            tokio::task::spawn_blocking(move || -> Result<Completion> {
+            spawn_cancellable_generation(move |cancellation| -> Result<Completion> {
                 run_forward(
                     loaded,
                     &tokenizer_path,
@@ -449,10 +503,10 @@ impl Provider for LocalQwenAdapter {
                     max_new_tokens,
                     &repo,
                     &req,
+                    cancellation,
                 )
             })
             .await
-            .context("local_qwen forward task join error")?
         })
         .await
     }
@@ -767,6 +821,7 @@ fn run_stream(
                 let chunk = CompletionChunk {
                     delta,
                     done: false,
+                    termination: Default::default(),
                     identity: Default::default(),
                     input_tokens: None,
                     output_tokens: None,
@@ -787,6 +842,7 @@ fn run_stream(
     let final_chunk = CompletionChunk {
         delta: String::new(),
         done: true,
+        termination: Default::default(),
         identity: Default::default(),
         input_tokens: Some(input_token_count as u32),
         output_tokens: Some(new_tokens.len() as u32),
@@ -902,6 +958,7 @@ fn run_forward(
     max_new_tokens: u32,
     repo: &str,
     req: &Request,
+    cancellation: &std::sync::atomic::AtomicBool,
 ) -> Result<Completion> {
     use candle_core::{DType, Tensor};
     use candle_nn::VarBuilder;
@@ -909,6 +966,7 @@ fn run_forward(
     use tokenizers::Tokenizer;
 
     let started = Instant::now();
+    ensure_generation_active(cancellation)?;
 
     // ── 1. Acquire / build the cached model. ───────────────────────────────
     let mut slot = loaded
@@ -948,6 +1006,7 @@ fn run_forward(
             "local_qwen: model loaded into cache",
         );
     }
+    ensure_generation_active(cancellation)?;
     // From here on, slot.as_mut().unwrap() is safe.
     let loaded_model = slot.as_mut().expect("slot just initialised");
     // Reset KV cache so previous conversations don't leak. (No cross-request
@@ -979,6 +1038,7 @@ fn run_forward(
     let mut early_text: Option<String> = None;
 
     for step in 0..max_new_tokens {
+        ensure_generation_active(cancellation)?;
         let (context, seqlen_offset) = if step == 0 {
             (&all_tokens[..], 0)
         } else {
@@ -986,6 +1046,7 @@ fn run_forward(
         };
         let input = Tensor::new(context, &loaded_model.device)?.unsqueeze(0)?;
         let logits = loaded_model.model.forward(&input, seqlen_offset)?;
+        ensure_generation_active(cancellation)?;
         let logits = logits.squeeze(0)?.squeeze(0)?;
         let next: u32 = sample_token(&logits, sampling.merged_with_request(req))?;
         let is_eos =
@@ -1013,6 +1074,7 @@ fn run_forward(
     }
 
     // ── 4. Decode + return. ───────────────────────────────────────────────
+    ensure_generation_active(cancellation)?;
     // When L-13 fired, the early-truncated text already excludes
     // the stop sequence; otherwise decode the full token tail.
     let text = match early_text {
@@ -1028,6 +1090,7 @@ fn run_forward(
         }
     };
     Ok(Completion {
+        termination: Default::default(),
         text,
         identity: Default::default(),
         model: req.model.clone().unwrap_or_else(|| repo.to_string()),
@@ -1359,6 +1422,48 @@ pub(crate) fn cache_dir_at(neoth_home: &Path, repo: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn dropping_generation_future_cooperatively_stops_blocking_worker() {
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (stopped_tx, stopped_rx) = tokio::sync::oneshot::channel();
+        let mut generation = Box::pin(spawn_cancellable_generation(move |cancellation| {
+            let _ = entered_tx.send(());
+            while !cancellation.load(std::sync::atomic::Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let _ = stopped_tx.send(());
+            Err::<(), _>(LocalQwenGenerationAbandoned.into())
+        }));
+
+        tokio::select! {
+            result = &mut generation => {
+                let _ = result;
+                panic!("blocking generation exited before the client abandoned it");
+            }
+            result = tokio::time::timeout(Duration::from_secs(2), entered_rx) => {
+                result
+                    .expect("blocking worker did not start")
+                    .expect("blocking worker dropped its start signal");
+            }
+        }
+        drop(generation);
+        tokio::time::timeout(Duration::from_secs(2), stopped_rx)
+            .await
+            .expect("blocking worker ignored cooperative cancellation")
+            .expect("blocking worker dropped its stop signal");
+    }
+
+    #[test]
+    fn generation_cancellation_is_a_typed_error() {
+        let signal = std::sync::atomic::AtomicBool::new(true);
+        let error = ensure_generation_active(&signal).unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<LocalQwenGenerationAbandoned>()
+                .is_some()
+        );
+    }
 
     // ── L-13 stop-sequence helper ───────────────────────────────
 

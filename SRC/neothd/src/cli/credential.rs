@@ -1,4 +1,5 @@
-//! `neoth credential {list, import}` — manage `~/.neoth/credentials.yaml`.
+//! `neoth credential` — manage configured credentials and explicit local
+//! secret-bearing file transfers.
 //!
 //! - `list` prints which credential KEYS are currently set — **names only,
 //!   never the secret values**.
@@ -14,6 +15,9 @@
 //! cross-process-safe [`Credentials::update_at`] RMW boundary, preserve unknown
 //! future fields, write atomically at mode 0600, and zeroize the serialized
 //! buffer after publication.
+//! `copy --source <path> --destination <path>` uses a separate, authenticated
+//! local data plane: payload bytes never enter a prompt, argv, replay record, or
+//! terminal report, and an existing destination is never overwritten.
 
 use std::path::{Path, PathBuf};
 
@@ -49,6 +53,19 @@ pub enum CredentialAction {
         /// (names only, never values) and write nothing.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// Copy one exact local secret-bearing file to a new private destination.
+    ///
+    /// The source is preserved. The destination parent must already exist and
+    /// the destination itself must not exist.
+    Copy {
+        /// Exact local source file. Secret bytes are read from the file, never
+        /// from argv.
+        #[arg(long)]
+        source: PathBuf,
+        /// Exact new local destination file.
+        #[arg(long)]
+        destination: PathBuf,
     },
     /// Scan a file or directory for committed secrets (AWS / GitHub / OpenAI /
     /// Slack / Google keys, PEM private keys, `api_key = "…"` assignments).
@@ -438,6 +455,10 @@ pub fn run_credential(args: CredentialArgs, output: OutputFormat) -> Result<()> 
     match args.action {
         CredentialAction::List => run_list(output),
         CredentialAction::Import { file, dry_run } => run_import(&file, dry_run, output),
+        CredentialAction::Copy {
+            source,
+            destination,
+        } => super::credential_transfer::run_file_copy(&source, &destination, output),
         CredentialAction::Scan { path, entropy } => run_scan(&path, entropy, output),
         CredentialAction::Migrate { to, dry_run } => run_migrate(&to, dry_run, output),
     }

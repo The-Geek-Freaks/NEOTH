@@ -100,6 +100,7 @@ mod tests {
 
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.canned_response.clone(),
                 identity: Default::default(),
                 model: "test".to_string(),

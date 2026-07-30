@@ -67,6 +67,8 @@ pub fn run_updater_pass(
         task_kind,
         ts_unix,
         duration_ms: started.elapsed().as_millis().min(u32::MAX as u128) as u32,
+        terminal_outcome: None,
+        fired_receipt_sha256: None,
         components: outcomes,
     }
 }

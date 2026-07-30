@@ -4,8 +4,11 @@
 //! component below that ancestor is then created/opened relative to an owned
 //! directory handle and without following links. Security-sensitive rename and
 //! recursive-delete operations use native handle-relative primitives on Windows
-//! instead of cap-std's ambient-path fallbacks. Once opened, a namespace swap
-//! cannot redirect the operation to a different object.
+//! instead of cap-std's ambient-path fallbacks. Bound traversal never follows a
+//! swapped ancestor. Unix file publication additionally requires an
+//! owner-private parent and verifies the exact open stage before and after its
+//! unavoidable name-based rename; it does not claim isolation from a hostile
+//! process running as the same OS identity.
 
 use std::ffi::OsStr;
 use std::io::{Read as _, Write as _};
@@ -30,6 +33,9 @@ thread_local! {
     static TEST_BEFORE_EMPTY_DIRECTORY_RENAME:
         std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static TEST_BEFORE_OPEN_FILE_RENAME:
+        std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(test)]
@@ -47,6 +53,22 @@ fn set_before_empty_directory_rename_for_test(hook: impl FnOnce() + 'static) {
 #[cfg(all(test, unix))]
 fn run_before_empty_directory_rename_for_test() {
     TEST_BEFORE_EMPTY_DIRECTORY_RENAME.with(|slot| {
+        if let Some(hook) = slot.borrow_mut().take() {
+            hook();
+        }
+    });
+}
+
+#[cfg(all(test, unix))]
+fn set_before_open_file_rename_for_test(hook: impl FnOnce() + 'static) {
+    TEST_BEFORE_OPEN_FILE_RENAME.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(hook));
+    });
+}
+
+#[cfg(all(test, unix))]
+fn run_before_open_file_rename_for_test() {
+    TEST_BEFORE_OPEN_FILE_RENAME.with(|slot| {
         if let Some(hook) = slot.borrow_mut().take() {
             hook();
         }
@@ -83,6 +105,23 @@ impl BoundChildObject {
         display_path: &Path,
     ) -> Result<bool> {
         Ok(bind_child_object(parent, name, display_path)?.identity_token == self.identity_token)
+    }
+
+    /// Re-check a regular-file namespace binding through a read-only handle.
+    ///
+    /// Windows mutation bindings deliberately request `DELETE` so a later
+    /// handle-relative rename/delete cannot be redirected. A pure read/copy
+    /// path must not require that capability: operator-owned credential files
+    /// commonly grant read access while denying deletion. This variant opens
+    /// the named child with `FILE_GENERIC_READ` only, retains no mutation
+    /// authority, and compares the resulting file identity with this binding.
+    pub(crate) fn matches_regular_file_child_readonly(
+        &self,
+        parent: &Dir,
+        name: &OsStr,
+        display_path: &Path,
+    ) -> Result<bool> {
+        Ok(readonly_regular_file_identity(parent, name, display_path)? == self.identity_token)
     }
 }
 
@@ -214,17 +253,29 @@ pub(crate) fn bind_child_object(
 /// component below that boundary is protected. If the anchor is absent, the
 /// nearest existing ancestor is used and every missing descendant is created
 /// handle-relatively.
+///
+/// Production creation paths should use
+/// [`open_bound_directory_from_trusted_anchor`] instead. This dynamic-anchor
+/// variant remains for read-only discovery and its durability regression tests.
+fn has_navigation_component(path: &Path) -> bool {
+    path.components()
+        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+}
+
 pub(crate) fn open_bound_directory(
     path: &Path,
     create: bool,
     label: &str,
 ) -> Result<Option<BoundDirectory>> {
+    if has_navigation_component(path) {
+        anyhow::bail!(
+            "{label} path must not contain `.` or `..` components: {}",
+            path.display()
+        );
+    }
     let absolute = std::path::absolute(path)
         .with_context(|| format!("resolve absolute {label} path {}", path.display()))?;
-    if absolute
-        .components()
-        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
-    {
+    if has_navigation_component(&absolute) {
         anyhow::bail!(
             "{label} path must not contain `.` or `..` components: {}",
             path.display()
@@ -237,6 +288,7 @@ pub(crate) fn open_bound_directory(
             break;
         }
     }
+    let designated_anchor = anchor.clone();
     loop {
         match std::fs::symlink_metadata(&anchor) {
             Ok(_) => break,
@@ -269,9 +321,128 @@ pub(crate) fn open_bound_directory(
         .to_path_buf();
     let canonical_anchor = std::fs::canonicalize(&anchor)
         .with_context(|| format!("canonicalize trusted {label} ancestor {}", anchor.display()))?;
-    let mut current = open_ambient_directory_nofollow(&canonical_anchor, label)?;
-    let mut current_display = canonical_anchor;
+    if create && anchor == designated_anchor {
+        // The designated grandparent may be the visible residue of this
+        // function's earlier mkdir + failed parent-sync attempt. Confirm its
+        // namespace publication before treating it as the trusted boundary;
+        // otherwise a retry could descend into it and publish a child.
+        if let Some(anchor_parent) = canonical_anchor.parent() {
+            let parent = open_ambient_directory_nofollow(anchor_parent, label)?;
+            sync_parent_directory(&parent, anchor_parent).with_context(|| {
+                format!(
+                    "sync parent before using existing trusted {label} boundary {}",
+                    canonical_anchor.display()
+                )
+            })?;
+        }
+    }
+    let current = open_ambient_directory_nofollow(&canonical_anchor, label)?;
+    walk_bound_directory_descendants(
+        current,
+        canonical_anchor,
+        &relative,
+        &absolute,
+        create,
+        label,
+    )
+}
 
+/// Open or create `path` below an explicit, already-existing trust anchor.
+///
+/// Unlike [`open_bound_directory`], this contract never re-selects the ambient
+/// anchor from filesystem state. A directory left visible by a failed parent
+/// sync therefore remains a guarded descendant on every retry. The anchor is
+/// canonicalized and opened exactly once; every component below it is then
+/// opened or created through directory capabilities without following links.
+///
+/// In create mode, the parent namespace of every existing or newly-created
+/// descendant is synced before the walk can descend beneath it.
+pub(crate) fn open_bound_directory_from_trusted_anchor(
+    trusted_anchor: &Path,
+    path: &Path,
+    create: bool,
+    label: &str,
+) -> Result<Option<BoundDirectory>> {
+    if has_navigation_component(trusted_anchor) {
+        anyhow::bail!(
+            "trusted {label} anchor must not contain `.` or `..` components: {}",
+            trusted_anchor.display()
+        );
+    }
+    let absolute_anchor = std::path::absolute(trusted_anchor).with_context(|| {
+        format!(
+            "resolve absolute trusted {label} anchor {}",
+            trusted_anchor.display()
+        )
+    })?;
+    if has_navigation_component(&absolute_anchor) {
+        anyhow::bail!(
+            "trusted {label} anchor must not contain `.` or `..` components: {}",
+            trusted_anchor.display()
+        );
+    }
+
+    if has_navigation_component(path) {
+        anyhow::bail!(
+            "{label} path must not contain `.` or `..` components: {}",
+            path.display()
+        );
+    }
+    let absolute = std::path::absolute(path)
+        .with_context(|| format!("resolve absolute {label} path {}", path.display()))?;
+    if has_navigation_component(&absolute) {
+        anyhow::bail!(
+            "{label} path must not contain `.` or `..` components: {}",
+            path.display()
+        );
+    }
+
+    let relative = absolute
+        .strip_prefix(&absolute_anchor)
+        .with_context(|| {
+            format!(
+                "{label} target {} is outside trusted anchor {}",
+                absolute.display(),
+                absolute_anchor.display()
+            )
+        })?
+        .to_path_buf();
+    if relative
+        .components()
+        .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        anyhow::bail!(
+            "{label} target has a non-child component below trusted anchor {}: {}",
+            absolute_anchor.display(),
+            absolute.display()
+        );
+    }
+
+    let canonical_anchor = std::fs::canonicalize(&absolute_anchor).with_context(|| {
+        format!(
+            "canonicalize existing trusted {label} anchor {}",
+            absolute_anchor.display()
+        )
+    })?;
+    let current = open_ambient_directory_nofollow(&canonical_anchor, label)?;
+    walk_bound_directory_descendants(
+        current,
+        canonical_anchor,
+        &relative,
+        &absolute,
+        create,
+        label,
+    )
+}
+
+fn walk_bound_directory_descendants(
+    mut current: Dir,
+    mut current_display: PathBuf,
+    relative: &Path,
+    absolute: &Path,
+    create: bool,
+    label: &str,
+) -> Result<Option<BoundDirectory>> {
     for component in relative.components() {
         let Component::Normal(name) = component else {
             anyhow::bail!(
@@ -282,7 +453,7 @@ pub(crate) fn open_bound_directory(
         let next_display = current_display.join(name);
         match current.open_dir_nofollow(name) {
             Ok(next) => {
-                ensure_cap_directory_is_real(&next, label, &absolute)?;
+                ensure_cap_directory_is_real(&next, label, absolute)?;
                 if create {
                     // A prior mkdir attempt may have published this child but
                     // failed its durability confirmation. Re-sync even an
@@ -327,7 +498,7 @@ pub(crate) fn open_bound_directory(
                         name.to_string_lossy()
                     )
                 })?;
-                ensure_cap_directory_is_real(&next, label, &absolute)?;
+                ensure_cap_directory_is_real(&next, label, absolute)?;
                 current = next;
                 current_display = next_display;
             }
@@ -342,10 +513,10 @@ pub(crate) fn open_bound_directory(
         }
     }
 
-    ensure_cap_directory_is_real(&current, label, &absolute)?;
+    ensure_cap_directory_is_real(&current, label, absolute)?;
     Ok(Some(BoundDirectory {
         dir: current,
-        display_path: absolute,
+        display_path: absolute.to_path_buf(),
     }))
 }
 
@@ -367,6 +538,34 @@ fn create_private_child_directory(parent: &Dir, name: &OsStr) -> std::io::Result
 /// other Windows reparse point.
 pub(crate) fn open_real_child_dir(parent: &Dir, name: &OsStr, display_path: &Path) -> Result<Dir> {
     validate_child_name(name)?;
+    #[cfg(windows)]
+    let child = {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ,
+            FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .follow(FollowSymlinks::No)
+            .access_mode(FILE_GENERIC_READ)
+            // A prepared mutation keeps a DELETE-capable identity handle open
+            // across generation revalidation. The read handle must therefore
+            // share DELETE as well as read/write or Windows rejects the second
+            // open with ERROR_SHARING_VIOLATION before the atomic rename.
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT);
+        let file = parent.open_with(name, &options).with_context(|| {
+            format!(
+                "installed skill must be a real directory, not a file, symlink, or reparse point: {}",
+                display_path.display()
+            )
+        })?;
+        Dir::from_std_file(file.into_std())
+    };
+    #[cfg(not(windows))]
     let child = parent.open_dir_nofollow(name).with_context(|| {
         format!(
             "installed skill must be a real directory, not a file, symlink, or reparse point: {}",
@@ -512,9 +711,32 @@ pub(crate) fn read_regular_file_bounded_observed(
 /// Same no-follow leaf open used by recursive copies. The caller streams from
 /// the returned handle and therefore reads the exact object that was checked.
 pub(crate) fn open_regular_file(parent: &Dir, name: &OsStr, display_path: &Path) -> Result<File> {
+    open_bound_regular_file(parent, name, display_path).map(|(file, _binding)| file)
+}
+
+/// Open one real regular file and retain the identity of that exact handle.
+///
+/// The final namespace comparison closes the gap between opening the handle and
+/// binding the direct-child name. Callers that keep both values can re-check the
+/// name immediately before an effect without ever trusting an ambient path.
+pub(crate) fn open_bound_regular_file(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
     validate_child_name(name)?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    }
     #[cfg(unix)]
     {
         use cap_std::fs::OpenOptionsExt as _;
@@ -532,7 +754,251 @@ pub(crate) fn open_regular_file(parent: &Dir, name: &OsStr, display_path: &Path)
             display_path.display()
         );
     }
-    Ok(file)
+    let binding = BoundChildObject {
+        identity_token: child_identity_token(&metadata)?,
+        _handle: Some(
+            file.try_clone()
+                .with_context(|| format!("retain file identity {}", display_path.display()))?,
+        ),
+    };
+    if !binding.matches_regular_file_child_readonly(parent, name, display_path)? {
+        anyhow::bail!(
+            "regular file changed while its identity was being bound: {}",
+            display_path.display()
+        );
+    }
+    Ok((file, binding))
+}
+
+/// Open and bind one regular file for a non-destructive durability operation.
+///
+/// This requests read/write data access but deliberately not Windows `DELETE`;
+/// it is intended for `sync_all` on a copy destination, never namespace
+/// mutation. The returned identity is derived from the same opened handle and
+/// rechecked against the direct-child name before return.
+pub(crate) fn open_bound_regular_file_readwrite(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
+    validate_child_name(name)?;
+    let mut options = OpenOptions::new();
+    options.read(true).write(true).follow(FollowSymlinks::No);
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = parent.open_with(name, &options).with_context(|| {
+        format!(
+            "open regular file for non-destructive durability proof {}",
+            display_path.display()
+        )
+    })?;
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect regular file for non-destructive durability proof {}",
+            display_path.display()
+        )
+    })?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "durability target is not a real regular file: {}",
+            display_path.display()
+        );
+    }
+    let binding = BoundChildObject {
+        identity_token: child_identity_token(&metadata)?,
+        _handle: Some(file.try_clone().with_context(|| {
+            format!(
+                "retain durability target identity {}",
+                display_path.display()
+            )
+        })?),
+    };
+    if !binding.matches_regular_file_child_readonly(parent, name, display_path)? {
+        anyhow::bail!(
+            "regular file changed while its durability identity was being bound: {}",
+            display_path.display()
+        );
+    }
+    Ok((file, binding))
+}
+
+/// Create the final private regular-file child directly and retain its exact
+/// identity for a journaled secret write.
+///
+/// Unlike [`atomic_write_private_child_create_new`], this primitive never
+/// places plaintext in a sibling stage file. On Windows an empty file is
+/// created with its exact private DACL in the same directory and renamed
+/// capability-relatively before this function returns; secret bytes are only
+/// written through the returned handle after that rename. The final name may be
+/// visible while bytes are written, so callers must first persist an Executing
+/// journal, bind the returned identity into that journal before the first
+/// secret byte, and treat every incomplete/mismatching result as indeterminate.
+pub(crate) fn create_private_regular_file_child_create_new(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<(File, BoundChildObject)> {
+    validate_child_name(name)?;
+    #[cfg(windows)]
+    let file = {
+        let stage_parent = display_path.parent().unwrap_or(display_path);
+        let mut created = None;
+        for _ in 0..8 {
+            let stage_path = stage_parent.join(format!(
+                ".neoth-private-empty-{}",
+                uuid::Uuid::new_v4().simple()
+            ));
+            match crate::wal::win_native::create_private_shared_file_new(&stage_path) {
+                Ok(file) => {
+                    created = Some((File::from_std(file), stage_path));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "create atomically private empty destination stage for {}",
+                            display_path.display()
+                        )
+                    });
+                }
+            }
+        }
+        let (file, stage_path) =
+            created.context("could not allocate an atomically private empty destination stage")?;
+        if let Err(error) = windows_rename_open_handle(&file, parent, name, false, display_path) {
+            drop(file);
+            return match std::fs::remove_file(&stage_path) {
+                Ok(()) => Err(error),
+                Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {
+                    Err(error)
+                }
+                Err(cleanup_error) => Err(error.context(format!(
+                    "cleanup of empty private destination stage also failed: {cleanup_error}"
+                ))),
+            };
+        }
+        file
+    };
+    #[cfg(not(windows))]
+    let file = {
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .follow(FollowSymlinks::No);
+        #[cfg(unix)]
+        {
+            use cap_std::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        parent.open_with(name, &options).with_context(|| {
+            format!(
+                "create final private regular-file child {}",
+                display_path.display()
+            )
+        })?
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        anyhow::ensure!(
+            file.metadata()
+                .context("inspect direct private destination mode")?
+                .permissions()
+                .mode()
+                & 0o077
+                == 0,
+            "new private destination is accessible by group or other users"
+        );
+    }
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect final private regular-file child {}",
+            display_path.display()
+        )
+    })?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "new private destination is not a real regular file: {}",
+            display_path.display()
+        );
+    }
+    let binding = BoundChildObject {
+        identity_token: child_identity_token(&metadata)?,
+        _handle: Some(file.try_clone().with_context(|| {
+            format!(
+                "retain final private destination identity {}",
+                display_path.display()
+            )
+        })?),
+    };
+    if !binding.matches_regular_file_child_readonly(parent, name, display_path)? {
+        anyhow::bail!(
+            "new private destination changed while its identity was being bound: {}",
+            display_path.display()
+        );
+    }
+    Ok((file, binding))
+}
+
+fn readonly_regular_file_identity(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+) -> Result<String> {
+    validate_child_name(name)?;
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    #[cfg(windows)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_GENERIC_READ, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        };
+        options
+            .access_mode(FILE_GENERIC_READ)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
+    }
+    #[cfg(unix)]
+    {
+        use cap_std::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = parent.open_with(name, &options).with_context(|| {
+        format!(
+            "open regular file for read-only identity check {}",
+            display_path.display()
+        )
+    })?;
+    let metadata = file.metadata().with_context(|| {
+        format!(
+            "inspect regular file for read-only identity check {}",
+            display_path.display()
+        )
+    })?;
+    if !metadata.is_file() || cap_metadata_is_link_like(&metadata) {
+        anyhow::bail!(
+            "expected a real regular file for read-only identity check: {}",
+            display_path.display()
+        );
+    }
+    child_identity_token(&metadata)
 }
 
 /// Rename one already-bound direct child. On Windows this deliberately avoids
@@ -627,11 +1093,12 @@ pub(crate) fn rename_child(
 /// Publish an already-open regular-file stage under a new direct-child name
 /// without replacing an existing target.
 ///
-/// Unix validates that `source_name` still resolves to the exact inode behind
-/// `source` immediately before the exclusive rename. Windows commits through
-/// `source` itself, so a concurrent source-name substitution cannot redirect
-/// the publication. Both target lookups remain relative to the already-bound
-/// directory capability.
+/// Unix validates the source immediately before the exclusive rename and the
+/// published target immediately afterwards. This is fail-detect hardening
+/// inside an owner-private directory, not isolation from a hostile process
+/// running as the same OS identity: Unix has no portable atomic rename-from-fd
+/// primitive. Windows commits through `source` itself. All target lookups remain
+/// relative to the already-bound directory capability.
 pub(crate) fn publish_open_regular_file_child(
     source_parent: &Dir,
     source: &File,
@@ -656,6 +1123,7 @@ pub(crate) fn publish_open_regular_file_child(
         "publication stage is not a real regular file: {}",
         source_display.display()
     );
+    let opened_identity = child_identity_token(&opened_metadata)?;
 
     #[cfg(unix)]
     {
@@ -670,11 +1138,12 @@ pub(crate) fn publish_open_regular_file_child(
         anyhow::ensure!(
             named_metadata.is_file()
                 && !cap_metadata_is_link_like(&named_metadata)
-                && child_identity_token(&opened_metadata)?
-                    == child_identity_token(&named_metadata)?,
+                && opened_identity == child_identity_token(&named_metadata)?,
             "publication stage changed before commit: {}",
             source_display.display()
         );
+        #[cfg(test)]
+        run_before_open_file_rename_for_test();
         #[cfg(any(
             target_vendor = "apple",
             target_os = "linux",
@@ -712,7 +1181,71 @@ pub(crate) fn publish_open_regular_file_child(
     {
         windows_rename_open_handle(source, target_parent, target_name, false, target_display)?;
     }
+    let published_metadata = target_parent
+        .symlink_metadata(target_name)
+        .with_context(|| {
+            format!(
+                "inspect published regular file {}",
+                target_display.display()
+            )
+        })?;
+    anyhow::ensure!(
+        published_metadata.is_file()
+            && !cap_metadata_is_link_like(&published_metadata)
+            && opened_identity == child_identity_token(&published_metadata)?,
+        "published target is not the exact open stage object: {}",
+        target_display.display()
+    );
     Ok(())
+}
+
+fn named_regular_file_matches_open_object(
+    parent: &Dir,
+    name: &OsStr,
+    opened: &File,
+    display_path: &Path,
+) -> Result<bool> {
+    let opened_metadata = opened
+        .metadata()
+        .with_context(|| format!("inspect open file object {}", display_path.display()))?;
+    let named_metadata = match parent.symlink_metadata(name) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect named file object {}", display_path.display()));
+        }
+    };
+    Ok(opened_metadata.is_file()
+        && !cap_metadata_is_link_like(&opened_metadata)
+        && named_metadata.is_file()
+        && !cap_metadata_is_link_like(&named_metadata)
+        && child_identity_token(&opened_metadata)? == child_identity_token(&named_metadata)?)
+}
+
+fn remove_named_file_if_same_open_object(
+    parent: &Dir,
+    name: &OsStr,
+    opened: &File,
+    display_path: &Path,
+) -> Result<()> {
+    match parent.symlink_metadata(name) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("inspect cleanup candidate {}", display_path.display()));
+        }
+        Ok(_) => {}
+    }
+    if !named_regular_file_matches_open_object(parent, name, opened, display_path)? {
+        anyhow::bail!(
+            "refusing to clean up a file name that no longer identifies the open stage: {}",
+            display_path.display()
+        );
+    }
+    parent
+        .remove_file(name)
+        .with_context(|| format!("remove exact open stage {}", display_path.display()))
 }
 
 /// Remove one real direct-child directory without following a link or reparse
@@ -1314,8 +1847,43 @@ pub(crate) fn atomic_write_private_child(
     display_path: &Path,
     bytes: &[u8],
 ) -> Result<()> {
+    atomic_write_private_child_inner(parent, name, display_path, bytes, true)
+}
+
+/// Atomically create a new private direct-child file without replacing an
+/// existing namespace entry.
+///
+/// This is the capability-relative commit primitive for replay tombstones and
+/// operator-directed secret copies. The final rename is exclusive, so a
+/// concurrent writer cannot be overwritten after the caller's absence check.
+pub(crate) fn atomic_write_private_child_create_new(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    bytes: &[u8],
+) -> Result<()> {
+    atomic_write_private_child_inner(parent, name, display_path, bytes, false)
+}
+
+fn atomic_write_private_child_inner(
+    parent: &Dir,
+    name: &OsStr,
+    display_path: &Path,
+    bytes: &[u8],
+    replace_existing: bool,
+) -> Result<()> {
     validate_child_name(name)?;
     match parent.symlink_metadata(name) {
+        Ok(_metadata) if !replace_existing => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!(
+                    "private atomic-write target already exists: {}",
+                    display_path.display()
+                ),
+            )
+            .into());
+        }
         Ok(metadata) => {
             if cap_metadata_is_link_like(&metadata) || !metadata.is_file() {
                 anyhow::bail!(
@@ -1355,15 +1923,25 @@ pub(crate) fn atomic_write_private_child(
             use cap_std::fs::OpenOptionsExt as _;
             use windows_sys::Win32::Storage::FileSystem::{
                 DELETE, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+                FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, WRITE_DAC,
             };
             options
-                .access_mode(FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE)
+                .access_mode(
+                    FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC,
+                )
                 .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
                 .custom_flags(FILE_FLAG_WRITE_THROUGH);
         }
         match parent.open_with(&candidate, &options) {
             Ok(file) => {
+                #[cfg(windows)]
+                crate::wal::win_native::set_private_current_user_file_handle_dacl(&file)
+                    .with_context(|| {
+                        format!(
+                            "protect capability-bound atomic stage for {}",
+                            display_path.display()
+                        )
+                    })?;
                 stage_name = Some(candidate);
                 stage = Some(file);
                 break;
@@ -1388,16 +1966,34 @@ pub(crate) fn atomic_write_private_child(
         stage
             .sync_all()
             .with_context(|| format!("sync private atomic stage for {}", display_path.display()))?;
-        replace_staged_file(parent, &stage, &stage_name, name, display_path, true)?;
-        sync_parent_directory(parent, display_path.parent().unwrap_or(display_path))
+        replace_staged_file(
+            parent,
+            &stage,
+            &stage_name,
+            name,
+            display_path,
+            replace_existing,
+        )?;
+        sync_parent_directory(parent, display_path.parent().unwrap_or(display_path))?;
+        Ok(())
     })();
-    drop(stage);
 
     if let Err(error) = result {
-        let cleanup = parent.remove_file(&stage_name);
+        let stage_display = display_path
+            .parent()
+            .unwrap_or(display_path)
+            .join(&stage_name);
+        let cleanup =
+            remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
+        drop(stage);
         return match cleanup {
             Ok(()) => Err(error),
-            Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => {
+            Err(cleanup_error)
+                if cleanup_error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) =>
+            {
                 Err(error)
             }
             Err(cleanup_error) => Err(error.context(format!(
@@ -1406,6 +2002,7 @@ pub(crate) fn atomic_write_private_child(
             ))),
         };
     }
+    drop(stage);
     Ok(())
 }
 
@@ -1507,17 +2104,19 @@ fn replace_existing_regular_file_report_inner(
         }
         Ok(())
     })();
-    drop(stage);
-
     if let Err(error) = replace_result {
         if committed {
+            drop(stage);
             return Err(error);
         }
         let stage_display = display_path
             .parent()
             .unwrap_or(display_path)
             .join(&stage_name);
-        return match remove_child_file(parent, &stage_name, &stage_display) {
+        let cleanup =
+            remove_named_file_if_same_open_object(parent, &stage_name, &stage, &stage_display);
+        drop(stage);
+        return match cleanup {
             Ok(()) => Err(error),
             Err(cleanup_error)
                 if cleanup_error
@@ -1533,6 +2132,7 @@ fn replace_existing_regular_file_report_inner(
             ))),
         };
     }
+    drop(stage);
     Ok(FileReplaceReport { warnings })
 }
 
@@ -1558,15 +2158,45 @@ fn require_regular_file_bytes(
 #[cfg(unix)]
 fn replace_staged_file(
     parent: &Dir,
-    _stage: &File,
+    stage: &File,
     stage_name: &OsStr,
     target_name: &OsStr,
     display_path: &Path,
-    _replace_existing: bool,
+    replace_existing: bool,
 ) -> Result<()> {
-    parent
-        .rename(stage_name, parent, target_name)
-        .with_context(|| format!("atomically replace {}", display_path.display()))
+    if replace_existing {
+        anyhow::ensure!(
+            named_regular_file_matches_open_object(parent, stage_name, stage, display_path)?,
+            "replacement stage changed before commit: {}",
+            display_path.display()
+        );
+        #[cfg(test)]
+        run_before_open_file_rename_for_test();
+        parent
+            .rename(stage_name, parent, target_name)
+            .with_context(|| format!("atomically replace {}", display_path.display()))?;
+        anyhow::ensure!(
+            named_regular_file_matches_open_object(parent, target_name, stage, display_path)?,
+            "replacement target is not the exact open stage object: {}",
+            display_path.display()
+        );
+        Ok(())
+    } else {
+        let stage_display = display_path
+            .parent()
+            .unwrap_or(display_path)
+            .join(stage_name);
+        publish_open_regular_file_child(
+            parent,
+            stage,
+            stage_name,
+            parent,
+            target_name,
+            &stage_display,
+            display_path,
+        )
+        .with_context(|| format!("atomically create {}", display_path.display()))
+    }
 }
 
 #[cfg(windows)]
@@ -1675,7 +2305,26 @@ fn windows_rename_open_handle(
     Ok(())
 }
 
-pub(crate) fn sync_parent_directory(parent: &Dir, display_path: &Path) -> Result<()> {
+/// Result of attempting to make a parent-directory namespace change durable.
+///
+/// Windows does not expose a supported equivalent of syncing an opened
+/// directory handle, so callers that surface durability must preserve the
+/// distinction instead of treating a successful no-op as confirmation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DirectorySyncOutcome {
+    /// The platform accepted a real directory sync operation.
+    #[cfg_attr(windows, allow(dead_code))]
+    Confirmed,
+    /// The platform cannot confirm parent-directory power-loss durability.
+    #[cfg_attr(unix, allow(dead_code))]
+    Unsupported,
+}
+
+/// Attempt to sync an already capability-bound parent directory.
+pub(crate) fn sync_parent_directory(
+    parent: &Dir,
+    display_path: &Path,
+) -> Result<DirectorySyncOutcome> {
     #[cfg(test)]
     if FORCE_PARENT_SYNC_FAILURE.with(std::cell::Cell::get) {
         anyhow::bail!("injected parent-directory sync failure")
@@ -1686,10 +2335,13 @@ pub(crate) fn sync_parent_directory(parent: &Dir, display_path: &Path) -> Result
             .open(".")
             .and_then(|file| file.sync_all())
             .with_context(|| format!("sync directory {}", display_path.display()))?;
+        Ok(DirectorySyncOutcome::Confirmed)
     }
     #[cfg(not(unix))]
-    let _ = (parent, display_path);
-    Ok(())
+    {
+        let _ = (parent, display_path);
+        Ok(DirectorySyncOutcome::Unsupported)
+    }
 }
 
 #[cfg(test)]
@@ -1858,6 +2510,29 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn read_directory_open_shares_delete_with_bound_mutation_identity() {
+        let temp = tempdir().unwrap();
+        let child_path = temp.path().join("stage");
+        std::fs::create_dir(&child_path).unwrap();
+        std::fs::write(child_path.join("skill.yaml"), b"id: stage").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        let bound = bind_child_object(&root.dir, OsStr::new("stage"), &child_path).unwrap();
+        let child = open_real_child_dir(&root.dir, OsStr::new("stage"), &child_path)
+            .expect("generation revalidation must coexist with the DELETE-capable identity handle");
+
+        assert!(child.entries().unwrap().next().is_some());
+        assert!(
+            bound
+                .matches_child(&root.dir, OsStr::new("stage"), &child_path)
+                .unwrap()
+        );
+    }
+
     #[test]
     fn replace_existing_regular_file_atomically_replaces_contents() {
         let temp = tempdir().unwrap();
@@ -1909,6 +2584,114 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[cfg(unix)]
+    fn swap_open_atomic_stage_name(directory: &Path, displaced_name: &str, replacement: &[u8]) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let stage = std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .find(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".neoth-atomic-")
+            })
+            .expect("atomic stage must exist before commit")
+            .path();
+        std::fs::rename(&stage, directory.join(displaced_name)).unwrap();
+        std::fs::write(&stage, replacement).unwrap();
+        std::fs::set_permissions(&stage, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn create_new_detects_source_name_substitution_and_never_claims_success() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("pending.json");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let directory = temp.path().to_path_buf();
+        set_before_open_file_rename_for_test(move || {
+            swap_open_atomic_stage_name(&directory, "displaced-stage", b"attacker");
+        });
+
+        let error = atomic_write_private_child_create_new(
+            &root.dir,
+            OsStr::new("pending.json"),
+            &target,
+            b"authenticated",
+        )
+        .expect_err("source-name substitution must be detected after publication");
+
+        assert!(
+            format!("{error:#}").contains("not the exact open stage object"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"attacker");
+        assert_eq!(
+            std::fs::read(temp.path().join("displaced-stage")).unwrap(),
+            b"authenticated"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn replacement_detects_source_name_substitution_and_never_claims_success() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("pending.json");
+        std::fs::write(&target, b"old").unwrap();
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+        let directory = temp.path().to_path_buf();
+        set_before_open_file_rename_for_test(move || {
+            swap_open_atomic_stage_name(&directory, "displaced-stage", b"attacker");
+        });
+
+        let error =
+            atomic_write_private_child(&root.dir, OsStr::new("pending.json"), &target, b"new")
+                .expect_err("replacement source-name substitution must be detected");
+
+        assert!(
+            format!("{error:#}").contains("not the exact open stage object"),
+            "{error:#}"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"attacker");
+        assert_eq!(
+            std::fs::read(temp.path().join("displaced-stage")).unwrap(),
+            b"new"
+        );
+    }
+
+    #[test]
+    fn atomic_private_child_create_new_never_replaces_existing_target() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("consumed.used");
+        let root = open_bound_directory(temp.path(), false, "test store")
+            .unwrap()
+            .unwrap();
+
+        atomic_write_private_child_create_new(
+            &root.dir,
+            OsStr::new("consumed.used"),
+            &target,
+            b"first",
+        )
+        .unwrap();
+        let error = atomic_write_private_child_create_new(
+            &root.dir,
+            OsStr::new("consumed.used"),
+            &target,
+            b"second",
+        )
+        .expect_err("create-new must preserve the existing replay tombstone");
+
+        assert!(format!("{error:#}").contains("already exists"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
     }
 
     #[test]
@@ -1969,6 +2752,110 @@ mod tests {
         open_bound_directory(&requested, true, "test nested store")
             .expect("retry may descend after every parent namespace is durably confirmed");
         assert!(requested.is_dir());
+    }
+
+    #[test]
+    fn explicit_trusted_anchor_retry_resyncs_first_of_multiple_missing_descendants() {
+        let temp = tempdir().unwrap();
+        let requested = temp
+            .path()
+            .join("stage")
+            .join("generations")
+            .join("candidate")
+            .join("payload");
+
+        force_parent_sync_failure_for_test(true);
+        let error = open_bound_directory_from_trusted_anchor(
+            temp.path(),
+            &requested,
+            true,
+            "test explicit anchor",
+        )
+        .err()
+        .expect("creation must stop after publishing the first missing descendant");
+        assert!(format!("{error:#}").contains("injected parent-directory sync failure"));
+        assert!(temp.path().join("stage").is_dir());
+        assert!(!temp.path().join("stage").join("generations").exists());
+
+        let retry_error = open_bound_directory_from_trusted_anchor(
+            temp.path(),
+            &requested,
+            true,
+            "test explicit anchor",
+        )
+        .err()
+        .expect("retry must re-sync the visible descendant before descending");
+        force_parent_sync_failure_for_test(false);
+
+        assert!(format!("{retry_error:#}").contains("injected parent-directory sync failure"));
+        assert!(
+            !temp.path().join("stage").join("generations").exists(),
+            "a failed retry must not publish a deeper descendant"
+        );
+        open_bound_directory_from_trusted_anchor(
+            temp.path(),
+            &requested,
+            true,
+            "test explicit anchor",
+        )
+        .expect("retry may descend after every namespace is durably confirmed");
+        assert!(requested.is_dir());
+    }
+
+    #[test]
+    fn explicit_trusted_anchor_rejects_target_escape_without_side_effects() {
+        let temp = tempdir().unwrap();
+        let trusted = temp.path().join("trusted");
+        let outside = temp.path().join("trusted-neighbor").join("candidate");
+        std::fs::create_dir(&trusted).unwrap();
+
+        let error = open_bound_directory_from_trusted_anchor(
+            &trusted,
+            &outside,
+            true,
+            "test explicit anchor",
+        )
+        .err()
+        .expect("a target outside the explicit anchor must fail closed");
+
+        assert!(format!("{error:#}").contains("outside trusted anchor"));
+        assert!(
+            !outside.exists(),
+            "an escaped target must not receive any filesystem side effects"
+        );
+    }
+
+    #[test]
+    fn explicit_trusted_anchor_rejects_navigation_before_normalization() {
+        let temp = tempdir().unwrap();
+        let trusted_with_parent = temp.path().join("anchor").join("..").join("trusted");
+        let normalized_trusted = temp.path().join("trusted");
+        let target = normalized_trusted.join("candidate");
+        let anchor_error = open_bound_directory_from_trusted_anchor(
+            &trusted_with_parent,
+            &target,
+            true,
+            "test explicit anchor",
+        )
+        .err()
+        .expect("a navigation-bearing trusted anchor must fail closed");
+        assert!(format!("{anchor_error:#}").contains("must not contain"));
+        assert!(!normalized_trusted.exists());
+
+        let trusted = temp.path().join("stable");
+        std::fs::create_dir(&trusted).unwrap();
+        let target_with_parent = trusted.join("nested").join("..").join("candidate");
+        let target_error = open_bound_directory_from_trusted_anchor(
+            &trusted,
+            &target_with_parent,
+            true,
+            "test explicit anchor",
+        )
+        .err()
+        .expect("a navigation-bearing target must fail closed");
+        assert!(format!("{target_error:#}").contains("must not contain"));
+        assert!(!trusted.join("candidate").exists());
+        assert!(!trusted.join("nested").exists());
     }
 
     #[test]

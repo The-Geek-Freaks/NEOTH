@@ -117,14 +117,6 @@ pub async fn try_jailbreak_retry(
     writer: Option<&WalWriterHandle>,
     now_unix: i64,
 ) -> Result<Option<String>> {
-    // Permanent floor — never jailbreak a hard-blocked request (CSAM / bioweapon
-    // / mass-casualty). Emits 0x28 internally + returns the block reason.
-    if crate::security::refusal_abliterated::hard_block_gate(original_prompt, writer, now_unix)
-        .is_some()
-    {
-        return Ok(None);
-    }
-
     let prompt_hash = format!(
         "{:016x}",
         xxhash_rust::xxh3::xxh3_64(original_prompt.as_bytes())
@@ -138,6 +130,11 @@ pub async fn try_jailbreak_retry(
             model: model.map(str::to_string),
             ..Default::default()
         };
+        // Gate the effective request, including system context and the harness
+        // wrapper, immediately before every legacy retry dispatch.
+        if crate::security::refusal_abliterated::hard_block_gate(&req, writer, now_unix).is_some() {
+            return Ok(None);
+        }
         match cloud.complete(req).await {
             Ok(completion) => {
                 let still_refusing =
@@ -220,6 +217,7 @@ mod tests {
                 "Here is the direct answer: do X then Y.".to_string()
             };
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 identity: Default::default(),
                 model: "mock".into(),

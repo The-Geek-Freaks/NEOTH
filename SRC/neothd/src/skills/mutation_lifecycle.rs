@@ -453,7 +453,7 @@ fn parse_incarnation_event(
     }
     let origin = parse_mutation_origin(json_required_string(payload, "origin")?)?;
     let skill_id = json_required_string(payload, "skill_id")?.to_string();
-    super::creator::validate_skill_id(&skill_id)
+    super::installer::validate_mutation_skill_id(&skill_id, kind)
         .context("authenticated Skill mutation id is invalid")?;
     if !valid_sha256(json_required_string(payload, "audit_event_id")?) {
         anyhow::bail!("authenticated Skill mutation audit id is invalid");
@@ -817,8 +817,10 @@ fn build_skill_install_incarnation_state(
 fn scan_skill_install_incarnation_state(
     home: &Path,
     skill_id: &str,
+    kind: SkillMutationKind,
 ) -> Result<SkillInstallIncarnationState> {
-    super::creator::validate_skill_id(skill_id).context("validate Skill incarnation id")?;
+    super::installer::validate_mutation_skill_id(skill_id, kind)
+        .context("validate Skill incarnation id")?;
     Ok(scan_skill_install_incarnation_index(home)?
         .states
         .get(skill_id)
@@ -839,7 +841,7 @@ pub(crate) fn prepare_skill_mutation_incarnation(
     })?;
     load_or_init_skill_mutation_audit_key(home)
         .context("initialize authenticated Skill incarnation key")?;
-    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    let state = scan_skill_install_incarnation_state(home, skill_id, kind)?;
     if let Some(sequence) = state.pending_sequence {
         anyhow::bail!(
             "Skill `{skill_id}` mutation {sequence} is still pending; reconcile it before another mutation"
@@ -875,7 +877,7 @@ pub(crate) fn authenticate_current_install_incarnation(
     if !valid_sha256(package_generation_sha256) {
         anyhow::bail!("expected Skill package generation is not a SHA-256 digest");
     }
-    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    let state = scan_skill_install_incarnation_state(home, skill_id, SkillMutationKind::Install)?;
     authenticate_current_from_state(state, skill_id, package_generation_sha256)
 }
 
@@ -1131,96 +1133,24 @@ async fn scan_skill_mutation_audit_async(
         .context("join capability-bound Skill mutation WAL scan")?
 }
 
-fn initialize_skill_mutation_audit_key(home: &Path) -> Result<Vec<u8>> {
-    let wal_path = home.join("wal");
-    let root = crate::skills::store::open_bound_directory(
-        &wal_path,
-        true,
-        "Skill mutation WAL key directory",
-    )?
-    .context("created Skill mutation WAL key directory is unavailable")?;
-
-    let active_name = std::ffi::OsStr::new("hmac.key");
-    let master_name = std::ffi::OsStr::new("master.key");
-    let mut examined_entries = 0usize;
-    for entry in root
-        .dir
-        .entries()
-        .with_context(|| format!("enumerate WAL key directory {}", wal_path.display()))?
-    {
-        examined_entries = examined_entries
-            .checked_add(1)
-            .context("WAL key initialization entry counter overflow")?;
-        if examined_entries > crate::wal::scan::MAX_HOME_KEY_DIRECTORY_ENTRIES {
-            anyhow::bail!(
-                "WAL key initialization exceeds the {}-entry directory limit under {}",
-                crate::wal::scan::MAX_HOME_KEY_DIRECTORY_ENTRIES,
-                wal_path.display()
-            );
-        }
-        let name = entry
-            .with_context(|| format!("read WAL key entry under {}", wal_path.display()))?
-            .file_name();
-        if name != master_name {
-            anyhow::bail!(
-                "refusing to create a new WAL HMAC identity while `{}` already exists under {}",
-                name.to_string_lossy(),
-                wal_path.display()
-            );
-        }
-    }
-
-    let active_display = root.display_path.join(active_name);
-    let mut initialized = vec![0u8; 32];
-    getrandom::getrandom(&mut initialized)
-        .context("OS RNG unavailable; refusing to generate a weak Skill mutation audit key")?;
-    crate::wal::compaction::write_key_securely(&active_display, &initialized)
-        .context("create instance-bound Skill mutation audit key")?;
-    let stored = crate::skills::store::read_regular_file_bounded(
-        &root.dir,
-        active_name,
-        &active_display,
-        crate::wal::scan::MAX_HOME_KEY_BYTES,
-    )
-    .context("re-open created Skill mutation audit key through its bound WAL directory")?;
-    let bound_active = crate::wal::compaction::decode_existing_key(&stored, &active_display)
-        .context("decode created Skill mutation audit key")?;
-    if bound_active != initialized {
-        anyhow::bail!(
-            "created WAL HMAC key changed between its atomic commit and capability-bound read"
-        );
-    }
-
-    let scanner_active = crate::wal::scan::load_home_hmac_keys(home)?
-        .into_iter()
-        .next()
-        .context("created WAL HMAC key is not visible to the bounded WAL scanner")?;
-    if scanner_active != bound_active {
-        anyhow::bail!("Skill mutation emitter and WAL scanner resolved different active HMAC keys");
-    }
-    Ok(bound_active)
-}
-
 fn load_or_init_skill_mutation_audit_key(home: &Path) -> Result<Vec<u8>> {
-    match crate::wal::scan::load_home_hmac_keys(home) {
-        Ok(keys) => match keys.into_iter().next() {
-            Some(active) => Ok(active),
-            None => initialize_skill_mutation_audit_key(home),
-        },
-        Err(scan_error) => initialize_skill_mutation_audit_key(home).map_err(|init_error| {
-            scan_error.context(format!(
-                "active WAL HMAC key was not scanner-readable and safe initialization was refused: \
-                 {init_error:#}"
-            ))
-        }),
-    }
+    Ok(load_or_init_skill_mutation_audit_authority(home)?.active_key)
 }
 
-async fn load_or_init_skill_mutation_audit_key_async(home: &Path) -> Result<Vec<u8>> {
+fn load_or_init_skill_mutation_audit_authority(
+    home: &Path,
+) -> Result<crate::cli::security::HmacWriterAuthority> {
+    let key_path = home.join("wal").join("hmac.key");
+    crate::cli::security::acquire_hmac_writer_authority(home, &key_path)
+}
+
+async fn load_or_init_skill_mutation_audit_authority_async(
+    home: &Path,
+) -> Result<crate::cli::security::HmacWriterAuthority> {
     let home = home.to_path_buf();
-    tokio::task::spawn_blocking(move || load_or_init_skill_mutation_audit_key(&home))
+    tokio::task::spawn_blocking(move || load_or_init_skill_mutation_audit_authority(&home))
         .await
-        .context("join capability-bound Skill mutation HMAC-key load")?
+        .context("join capability-bound Skill mutation HMAC-authority load")?
 }
 
 async fn daemon_singleflight_available(home: &Path) -> Result<bool> {
@@ -1256,15 +1186,19 @@ async fn emit_skill_mutation_audit(
     }
 
     let subtype = skill_mutation_subtype(binding.kind, terminal);
-    let key = match load_or_init_skill_mutation_audit_key_async(home).await {
-        Ok(key) => key,
+    // Retain the shared writer authority from signing through the durable ACK.
+    // This both coexists with an active daemon writer and prevents a key
+    // rotation from invalidating the signed payload before it is appended.
+    let hmac_authority = match load_or_init_skill_mutation_audit_authority_async(home).await {
+        Ok(authority) => authority,
         Err(error) => {
             return AuditDeliveryAttempt::DefinitelyNotRecorded(
                 error.context("load instance-bound Skill mutation audit key"),
             );
         }
     };
-    let payload = match skill_mutation_audit_payload(binding, terminal, &key) {
+    let payload = match skill_mutation_audit_payload(binding, terminal, &hmac_authority.active_key)
+    {
         Ok(payload) => payload,
         Err(error) => return AuditDeliveryAttempt::DefinitelyNotRecorded(error),
     };
@@ -1718,7 +1652,7 @@ fn test_incarnation_binding(
     origin: SkillMutationOrigin,
     source_generation_sha256: Option<String>,
 ) -> Result<SkillMutationAuditBinding> {
-    let state = scan_skill_install_incarnation_state(home, skill_id)?;
+    let state = scan_skill_install_incarnation_state(home, skill_id, kind)?;
     if state.pending_sequence.is_some() || state.indeterminate_sequence.is_some() {
         anyhow::bail!("test incarnation mutation cannot extend a non-terminal head");
     }
@@ -1818,7 +1752,8 @@ pub(crate) fn record_committed_install_incarnation_for_test(
                 .enable_all()
                 .build()
                 .context("build test Skill incarnation runtime")?;
-            let state = scan_skill_install_incarnation_state(&home, &skill_id)?;
+            let state =
+                scan_skill_install_incarnation_state(&home, &skill_id, SkillMutationKind::Install)?;
             let kind = if state.current.is_some() {
                 SkillMutationKind::Replace
             } else {
@@ -1942,8 +1877,18 @@ mod tests {
         )
         .unwrap();
 
-        let error = load_or_init_skill_mutation_audit_key(home.path()).unwrap_err();
-        assert!(format!("{error:#}").contains("maximum"));
+        let emitter_error = load_or_init_skill_mutation_audit_key(home.path()).unwrap_err();
+        let scanner_error = crate::wal::scan::load_home_hmac_keys(home.path()).unwrap_err();
+        for error in [&emitter_error, &scanner_error] {
+            assert_eq!(
+                error
+                    .root_cause()
+                    .downcast_ref::<std::io::Error>()
+                    .map(std::io::Error::kind),
+                Some(std::io::ErrorKind::InvalidData),
+                "oversized HMAC key must fail through the bounded-reader contract: {error:#}"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -2887,5 +2832,35 @@ mod tests {
             })
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(names.len(), origins.len());
+    }
+
+    #[test]
+    fn legacy_directory_name_is_admissible_only_for_authenticated_removal() {
+        let legacy = "legacy skill.β";
+        assert!(
+            crate::skills::installer::validate_mutation_skill_id(legacy, SkillMutationKind::Remove)
+                .is_ok()
+        );
+        assert!(
+            crate::skills::installer::validate_mutation_skill_id(
+                legacy,
+                SkillMutationKind::Install
+            )
+            .is_err()
+        );
+        assert!(
+            crate::skills::installer::validate_mutation_skill_id(
+                legacy,
+                SkillMutationKind::Replace
+            )
+            .is_err()
+        );
+        assert!(
+            crate::skills::installer::validate_mutation_skill_id(
+                "../escape",
+                SkillMutationKind::Remove
+            )
+            .is_err()
+        );
     }
 }

@@ -571,6 +571,7 @@ mod tests {
                 .push(req.prompt);
             let idx = self.cursor.fetch_add(1, Ordering::SeqCst) % self.responses.len();
             Ok(Completion {
+                termination: Default::default(),
                 text: self.responses[idx].clone(),
                 identity: Default::default(),
                 model: "test".into(),

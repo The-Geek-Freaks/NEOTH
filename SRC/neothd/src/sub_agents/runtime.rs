@@ -525,11 +525,13 @@ mod tests {
                 "candidate output".to_string()
             };
             Ok(Completion {
+                termination: Default::default(),
                 text,
                 // The boundary must replace this spoof with its exact leaf.
                 identity: CompletionIdentity {
                     provider: "spoof".into(),
                     wire_model: "spoof".into(),
+                    dispatch_route: Vec::new(),
                 },
                 model: "spoof".into(),
                 input_tokens: Some(10),

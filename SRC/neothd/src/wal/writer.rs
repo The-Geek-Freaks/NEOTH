@@ -220,6 +220,17 @@ pub(crate) fn unique_standalone_segment_path(wal_dir: &Path, surface: &str) -> P
 /// so emitting an old-key marker after that boundary would be wrong.
 pub(crate) const HMAC_ROTATION_SURFACE: &str = "hmac-key-rotate";
 
+fn is_exact_hmac_rotation_segment(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let suffix = format!("-{HMAC_ROTATION_SURFACE}-000001.wal");
+    let Some(namespace) = name.strip_suffix(&suffix) else {
+        return false;
+    };
+    uuid::Uuid::parse_str(namespace).is_ok()
+}
+
 /// Workstream F (CT-10/E-20/V1x-06) — per-writer compression policy.
 ///
 /// Production code reads `FreedomConfig::wal.compression` and passes the
@@ -936,6 +947,41 @@ pub fn spawn_for_home(
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        false,
+        None,
+        None,
+    )
+}
+
+/// Spawn the one offline writer that persists the signed HMAC-key transition.
+///
+/// The rotation transaction already holds the cross-process key lock and owns
+/// key recovery. A dedicated entrypoint, rather than a filename substring,
+/// grants the marker-skip capability so an arbitrary capture or daemon
+/// namespace can never impersonate this surface.
+pub(crate) fn spawn_hmac_rotation_for_home(
+    segment_path: PathBuf,
+    home: PathBuf,
+) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    validate_home_segment_path(&segment_path, &home)?;
+    refuse_unimplemented_storage_policy(&home)?;
+    if !is_exact_hmac_rotation_segment(&segment_path) {
+        return Err(WalError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "HMAC-key rotation writer requires its exact UUID-bound `{HMAC_ROTATION_SURFACE}` namespace: {}",
+                segment_path.display()
+            ),
+        )));
+    }
+    let hmac_key_path = home.join("wal").join("hmac.key");
+    spawn_with_policy_and_compression_at_home(
+        segment_path,
+        SegmentPolicy::Rotating(RotationPolicy::default()),
+        CompressionPolicy::None,
+        home,
+        hmac_key_path,
+        true,
         None,
         None,
     )
@@ -962,6 +1008,7 @@ pub(crate) fn spawn_for_home_with_completion(
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        false,
         Some(outcome_tx),
         None,
     )?;
@@ -1009,6 +1056,7 @@ pub(crate) fn spawn_for_home_ready_with_completion(
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        false,
         Some(completion_tx),
         Some(startup),
     )?;
@@ -1041,6 +1089,7 @@ pub(crate) fn spawn_for_home_with_policy_ready(
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        false,
         Some(completion_tx),
         Some(startup),
     )?;
@@ -1196,6 +1245,7 @@ pub(crate) fn spawn_capture(
         CompressionPolicy::None,
         home,
         hmac_key_path,
+        false,
         Some(outcome_tx),
         None,
     )?;
@@ -1282,6 +1332,7 @@ pub(crate) fn spawn_with_policy_and_compression(
         compression,
         hmac_home,
         hmac_key_path,
+        false,
         None,
         None,
     )
@@ -1293,6 +1344,7 @@ fn spawn_with_policy_and_compression_at_home(
     compression: CompressionPolicy,
     hmac_home: PathBuf,
     hmac_key_path: PathBuf,
+    skip_compaction_markers: bool,
     completion: Option<oneshot::Sender<Result<(), WalError>>>,
     startup: Option<WriterStartupSignal>,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
@@ -1312,17 +1364,21 @@ fn spawn_with_policy_and_compression_at_home(
             format!("resolve writer segment path: {error}"),
         ))
     })?;
+    let hmac_authority = if skip_compaction_markers {
+        None
+    } else {
+        Some(
+            crate::cli::security::acquire_hmac_writer_authority(&hmac_home, &hmac_key_path)
+                .map_err(|error| {
+                    compaction_recovery_error(format!(
+                        "establish HMAC authority before WAL namespace mutation: {error:#}"
+                    ))
+                })?,
+        )
+    };
     if rotating && resolved_segment.parent() == Some(expected_wal_parent.as_path()) {
         match std::fs::symlink_metadata(&resolved_segment) {
             Ok(_) => {
-                crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
-                    .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
-                    .map_err(|error| {
-                        compaction_recovery_error(format!(
-                            "initialize HMAC authority for existing WAL startup preflight: \
-                             {error:#}"
-                        ))
-                    })?;
                 let base = first_segment_path_in_namespace(&resolved_segment)?;
                 crate::wal::scan::for_each_frame_in_home_segment_chain(
                     &hmac_home,
@@ -1360,7 +1416,7 @@ fn spawn_with_policy_and_compression_at_home(
             segment_policy,
             compression,
             hmac_home,
-            hmac_key_path,
+            hmac_authority,
             startup_for_writer,
         )
         .await;
@@ -1955,6 +2011,20 @@ fn compaction_recovery_error(reason: impl Into<String>) -> WalError {
     WalError::CompactionStateUnavailable {
         reason: reason.into(),
     }
+}
+
+fn validate_hmac_writer_authority(
+    authority: Option<&crate::cli::security::HmacWriterAuthority>,
+) -> Result<(), WalError> {
+    authority
+        .map(crate::cli::security::HmacWriterAuthority::validate_namespace_binding)
+        .transpose()
+        .map(|_| ())
+        .map_err(|error| {
+            compaction_recovery_error(format!(
+                "HMAC writer lease namespace is no longer authoritative: {error:#}"
+            ))
+        })
 }
 
 fn decode_exact_frame<'a>(
@@ -2554,7 +2624,7 @@ async fn run_writer(
     segment_policy: SegmentPolicy,
     compression: CompressionPolicy,
     hmac_home: PathBuf,
-    hmac_key_path: PathBuf,
+    hmac_authority: Option<crate::cli::security::HmacWriterAuthority>,
     startup: Option<WriterStartupSignal>,
 ) -> Result<(), WalError> {
     let seq = segment_seq_from_path(&segment_path);
@@ -2742,53 +2812,22 @@ async fn run_writer(
     // The key lives at `<instance-home>/wal/hmac.key`, generated on first
     // boot. It is security-bearing state: loading or recovering it is a hard
     // startup boundary, never a downgrade to unsigned compaction markers.
-    // Name-based, and safe only because `unique_standalone_segment_path`
-    // reserves the substring: no other surface may contain it.
-    let is_hmac_rotation_writer = state
-        .path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")));
-    let (hmac_key, hmac_verification_keys): (Option<Vec<u8>>, Vec<Vec<u8>>) =
-        if is_hmac_rotation_writer {
-            // The rotation command already holds the transaction lock while this
-            // one-shot writer persists 0xD9. It must neither recurse into recovery
-            // nor emit an old-key compaction marker after that boundary.
-            (None, Vec::new())
-        } else {
-            let active_key =
-                crate::cli::security::recover_hmac_key_rotation(&hmac_home, &hmac_key_path)
-                    .and_then(|_| crate::wal::compaction::load_or_init_key(&hmac_key_path))
-                    .map_err(|error| WalError::CompactionStateUnavailable {
-                        reason: format!(
-                            "{} (instance home: {}, key: {})",
-                            error,
-                            hmac_home.display(),
-                            hmac_key_path.display()
-                        ),
-                    })?;
-            let verification_keys =
-                crate::wal::scan::load_home_hmac_keys(&hmac_home).map_err(|error| {
-                    WalError::CompactionStateUnavailable {
-                        reason: format!(
-                            "load active and archived HMAC verification keys: {error:#} \
-                         (instance home: {})",
-                            hmac_home.display()
-                        ),
-                    }
-                })?;
-            if verification_keys.first().map(Vec::as_slice) != Some(active_key.as_slice()) {
-                return Err(compaction_recovery_error(format!(
-                    "capability-bound active HMAC key changed while initializing {}",
-                    state.path.display()
-                )));
-            }
-            (Some(active_key), verification_keys)
+    // A normal writer retains this shared authority object until `run_writer`
+    // exits. The rotation-only writer receives `None` while its caller holds
+    // the exclusive mutation lease, so it emits 0xD9 without an old-key
+    // compaction marker.
+    let (hmac_key, hmac_verification_keys): (Option<&[u8]>, &[Vec<u8>]) =
+        match hmac_authority.as_ref() {
+            Some(authority) => (
+                Some(authority.active_key.as_slice()),
+                authority.verification_keys.as_slice(),
+            ),
+            None => (None, &[]),
         };
-    let mut compaction_state = match (hmac_key.as_deref(), initial_compaction_bytes.as_deref()) {
+    let mut compaction_state = match (hmac_key, initial_compaction_bytes.as_deref()) {
         (Some(key), Some(segment_bytes)) => Some(recover_compaction_state(
             key,
-            &hmac_verification_keys,
+            hmac_verification_keys,
             segment_bytes,
         )?),
         (Some(_), None) if resume_sealed_segment => None,
@@ -2802,12 +2841,13 @@ async fn run_writer(
     };
 
     if resume_sealed_segment {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         rotate(
             &mut state,
             RotationReason::SealedResume,
             &hmac_home,
             &mut compaction_state,
-            hmac_key.as_deref(),
+            hmac_key,
         )
         .await?;
     }
@@ -2822,6 +2862,7 @@ async fn run_writer(
     // recovery boundary: if it cannot be made durable, initialization fails
     // before readiness rather than silently accepting evidence loss.
     if let Some(rec) = pending_recovery.take() {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         let payload = serde_json::json!({
             "segment_path": rec.segment_path.to_string_lossy(),
             "good_through": rec.good_through,
@@ -2853,9 +2894,9 @@ async fn run_writer(
     // pre-restart tail cannot remain unauthenticated indefinitely.
     if !is_new
         && !resume_sealed_segment
-        && let (Some(compaction_state), Some(key)) =
-            (compaction_state.as_mut(), hmac_key.as_deref())
+        && let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key)
     {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         emit_compaction_marker(&mut state, compaction_state, key).await?;
     }
 
@@ -2878,6 +2919,7 @@ async fn run_writer(
     let mut pending_unsynced = false;
 
     while let Some(req) = rx.recv().await {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         let frame = encode_frame(&req.header, &req.payload);
         let frame_triggers_marker = compaction_state.as_ref().is_some_and(|state| {
             state.frames().saturating_add(1) >= crate::wal::compaction::MAX_FRAMES_BETWEEN_MARKERS
@@ -2895,6 +2937,7 @@ async fn run_writer(
         // within the bounded restart scanner's contract even when the next
         // payload is close to MAX_PAYLOAD_BYTES.
         if let Some(reason) = state.should_rotate(current_ns(), frame.len(), marker_reserve) {
+            validate_hmac_writer_authority(hmac_authority.as_ref())?;
             // Pick #40: flush any pending batchable writes BEFORE rotation
             // so the closing segment is fully durable + the new segment
             // starts clean.
@@ -2907,11 +2950,12 @@ async fn run_writer(
                 reason,
                 &hmac_home,
                 &mut compaction_state,
-                hmac_key.as_deref(),
+                hmac_key,
             )
             .await?;
         }
 
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         if let Err(error) = state.ensure_frame_and_marker_fit(frame.len(), marker_reserve) {
             let completion_error = std::io::Error::new(error.kind(), error.to_string());
             let _ = req.ack.send(Err(WalError::Io(error)));
@@ -2977,6 +3021,7 @@ async fn run_writer(
                 if let (Some(state_c), Some(key)) = (compaction_state.as_mut(), hmac_key.as_ref()) {
                     state_c.update(&frame);
                     if state_c.should_emit() {
+                        validate_hmac_writer_authority(hmac_authority.as_ref())?;
                         if let Err(marker_error) =
                             emit_compaction_marker(&mut state, state_c, key).await
                         {
@@ -3023,9 +3068,9 @@ async fn run_writer(
     }
 
     if !state.is_fixed()
-        && let (Some(compaction_state), Some(key)) =
-            (compaction_state.as_mut(), hmac_key.as_deref())
+        && let (Some(compaction_state), Some(key)) = (compaction_state.as_mut(), hmac_key)
     {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         emit_compaction_marker(&mut state, compaction_state, key).await?;
         pending_unsynced = false;
     }
@@ -3035,6 +3080,7 @@ async fn run_writer(
     // lands durably before the daemon exits. Caller's `drop(writer)`
     // already closed the channel above; this is the last chance to
     // flush before the writer-task returns.
+    validate_hmac_writer_authority(hmac_authority.as_ref())?;
     if pending_unsynced && let Err(e) = state.active_file_mut()?.sync_data().await {
         if state.is_fixed() {
             return Err(WalError::Io(e));
@@ -3046,10 +3092,12 @@ async fn run_writer(
     // HMAC marker and any batchable tail are durable and present in the exact
     // frame buffer being sealed.
     if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
+        validate_hmac_writer_authority(hmac_authority.as_ref())?;
         drop(state.take_active_file()?);
         finalize_compressed_segment(&mut state, &hmac_home).await?;
     }
 
+    validate_hmac_writer_authority(hmac_authority.as_ref())?;
     debug!("WAL writer task: channel closed, exiting");
     Ok(())
 }
@@ -3447,6 +3495,140 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn fresh_home_establishes_hmac_authority_before_writer_publication() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+
+        let (writer, join) =
+            spawn_for_home(segment, home.path().to_path_buf()).expect("spawn fresh home writer");
+        let key_path = wal.join("hmac.key");
+        assert!(
+            key_path.is_file(),
+            "spawn must synchronously commit HMAC authority before returning a writer handle"
+        );
+        let scanner_keys = crate::wal::scan::load_home_hmac_keys(home.path()).unwrap();
+        assert_eq!(scanner_keys.len(), 1);
+        assert_eq!(
+            scanner_keys[0],
+            crate::wal::compaction::load_existing_key(&key_path).unwrap()
+        );
+
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn windows_pinned_rotation_lock_allows_writer_spawn_and_validation() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, join) = spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+            .expect("Windows writer must coexist with the no-delete HMAC lease pin");
+        let header = crate::wal::HeaderBuilder::new(0x44, b"windows-pinned-lock").build();
+        writer
+            .append(header, b"windows-pinned-lock".to_vec())
+            .await
+            .expect("identity validation must not request DELETE access");
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_shared_writers_coexist_under_the_same_hmac_lease_file() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (first, first_join) =
+            spawn_for_home(wal.join("first-000001.wal"), home.path().to_path_buf())
+                .expect("first shared writer");
+        let (second, second_join) =
+            spawn_for_home(wal.join("second-000001.wal"), home.path().to_path_buf())
+                .expect("second shared writer must not request DELETE access");
+
+        let first_header = crate::wal::HeaderBuilder::new(0x44, b"first").build();
+        let second_header = crate::wal::HeaderBuilder::new(0x45, b"second").build();
+        let (first_result, second_result) = tokio::join!(
+            first.append(first_header, b"first".to_vec()),
+            second.append(second_header, b"second".to_vec()),
+        );
+        first_result.expect("first concurrent append");
+        second_result.expect("second concurrent append");
+        drop(first);
+        drop(second);
+        first_join.await.unwrap();
+        second_join.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn fresh_proof_signing_files_do_not_block_first_hmac_initialization() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        crate::wal::signing::load_or_init_signing_key(&wal.join("signing.key"))
+            .expect("create proof signing key and its lock before first WAL writer");
+        assert!(wal.join("signing.key").is_file());
+        assert!(wal.join("signing.key.lock").is_file());
+
+        let (writer, join) = spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf())
+            .expect("proof-only key files are valid fresh-HMAC state");
+        assert!(wal.join("hmac.key").is_file());
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn live_writer_fails_closed_after_rotation_lock_inode_replacement() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let (writer, join) =
+            spawn_for_home(wal.join("000001.wal"), home.path().to_path_buf()).unwrap();
+        let lock = wal.join("hmac.key.rotation.lock");
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::write(&lock, b"replacement-inode").unwrap();
+
+        let header = crate::wal::HeaderBuilder::new(0x44, b"must-not-land").build();
+        let error = writer
+            .append(header, b"must-not-land".to_vec())
+            .await
+            .expect_err("writer must reject appends after its lock inode is replaced");
+        assert!(
+            format!("{error:#}").contains("closed") || format!("{error:#}").contains("namespace"),
+            "unexpected replacement error: {error:#}"
+        );
+        drop(writer);
+        join.await.unwrap();
+    }
+
+    #[test]
+    fn existing_wal_evidence_without_hmac_authority_refuses_spawn() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        let segment = wal.join("000001.wal");
+        std::fs::write(&segment, b"unverifiable-existing-evidence").unwrap();
+
+        let error = spawn_for_home(segment.clone(), home.path().to_path_buf())
+            .expect_err("existing WAL evidence must never mint replacement HMAC authority");
+        assert!(
+            format!("{error:#}").contains("refusing to create a new WAL HMAC identity"),
+            "unexpected missing-authority error: {error:#}"
+        );
+        assert!(
+            !wal.join("hmac.key").exists(),
+            "failed recovery must not create a new identity"
+        );
+        assert_eq!(
+            std::fs::read(segment).unwrap(),
+            b"unverifiable-existing-evidence"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn capability_bound_segment_open_rejects_a_symlink_leaf() {
@@ -3490,6 +3672,11 @@ mod tests {
         std::fs::create_dir_all(&wal).unwrap();
         let first = wal.join("000001.wal");
         let second = wal.join("000002.wal");
+        crate::cli::security::recover_and_load_or_initialize_hmac_key(
+            home.path(),
+            &wal.join("hmac.key"),
+        )
+        .expect("establish canonical HMAC authority before injecting rotation evidence");
         std::fs::write(&second, b"collision").unwrap();
         let (writer, join, ready) = spawn_for_home_with_policy_ready(
             first,
@@ -3537,6 +3724,10 @@ mod tests {
             name.contains(&format!("-{HMAC_ROTATION_SURFACE}-")),
             "the writer detects the skip by exactly this shape: {name}"
         );
+        assert!(is_exact_hmac_rotation_segment(&path));
+        assert!(!is_exact_hmac_rotation_segment(
+            &dir.path().join("capture-hmac-key-rotate-000001.wal")
+        ));
     }
 
     /// A configured-but-unwired storage policy must refuse the writer rather
@@ -3654,6 +3845,7 @@ mod tests {
             compression,
             home.to_path_buf(),
             home.join("wal").join("hmac.key"),
+            false,
             None,
             None,
         )
@@ -3802,22 +3994,40 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn capture_writer_completion_surfaces_async_initialization_failure() {
+    #[test]
+    fn capture_writer_refuses_existing_evidence_before_returning_a_handle() {
         let home = tempdir().unwrap();
         let wal_dir = home.path().join("wal");
         std::fs::create_dir(&wal_dir).unwrap();
         let segment = wal_dir.join("capture-000001.wal");
         std::fs::write(&segment, b"pre-existing").unwrap();
 
+        let error = spawn_capture(segment, home.path().to_path_buf(), 4 * 1024)
+            .expect_err("existing evidence without HMAC authority must fail synchronously");
+        let error = anyhow::Error::new(error);
+        assert!(
+            format!("{error:#}").contains("refusing to create a new WAL HMAC identity"),
+            "unexpected completion error: {error:#}"
+        );
+        assert!(!wal_dir.join("hmac.key").exists());
+    }
+
+    #[tokio::test]
+    async fn capture_writer_completion_surfaces_existing_segment_with_valid_authority() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        crate::wal::compaction::rewrap_key(&wal_dir.join("hmac.key"), &[0x42; 32]).unwrap();
+        let segment = wal_dir.join("capture-000001.wal");
+        std::fs::write(&segment, b"pre-existing").unwrap();
+
         let (writer, completion) = spawn_capture(segment, home.path().to_path_buf(), 4 * 1024)
-            .expect("synchronous spawn acquires the segment lock");
+            .expect("valid authority permits bounded async segment admission");
         drop(writer);
         let error = completion
             .wait()
             .await
-            .expect_err("existing capture segment must fail during writer initialization");
-        let error = anyhow::Error::new(error);
+            .expect_err("fixed capture must still refuse an existing segment");
         assert!(
             format!("{error:#}").contains("requires a fresh segment"),
             "unexpected completion error: {error:#}"
@@ -3855,6 +4065,23 @@ mod tests {
                 "unexpected rejection for {name}: {error}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn capture_namespace_cannot_impersonate_hmac_rotation_marker_skip() {
+        let home = tempdir().unwrap();
+        let wal_dir = home.path().join("wal");
+        std::fs::create_dir(&wal_dir).unwrap();
+        let segment = wal_dir.join("capture-hmac-key-rotate-000001.wal");
+
+        let (writer, completion) =
+            spawn_capture(segment, home.path().to_path_buf(), 4 * 1024).unwrap();
+        assert!(
+            wal_dir.join("hmac.key").is_file(),
+            "ordinary capture names must establish normal HMAC authority"
+        );
+        drop(writer);
+        completion.wait().await.unwrap();
     }
 
     /// After F-14, every segment file begins with a 60-byte SegmentHeader.
@@ -5143,6 +5370,11 @@ mod tests {
         let wal = home.path().join("wal");
         std::fs::create_dir(&wal).unwrap();
         let segment = wal.join("000001.wal");
+        crate::cli::security::recover_and_load_or_initialize_hmac_key(
+            home.path(),
+            &wal.join("hmac.key"),
+        )
+        .expect("establish canonical HMAC authority before injecting restart evidence");
         let mut raw = new_segment_header_bytes(CompressionPolicy::Zstd3, 1, current_ns());
         raw.extend_from_slice(&encode_frame(&batchable_header_for(5, 1), b"alpha"));
         raw.extend_from_slice(&encode_frame(&batchable_header_for(5, 2), b"bravo"));

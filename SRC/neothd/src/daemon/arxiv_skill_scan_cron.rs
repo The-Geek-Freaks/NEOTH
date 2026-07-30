@@ -302,6 +302,7 @@ mod tests {
     impl Provider for FixedProvider {
         async fn complete(&self, _req: Request) -> Result<Completion> {
             Ok(Completion {
+                termination: Default::default(),
                 text: self.0.clone(),
                 identity: Default::default(),
                 model: "fixed-test".to_string(),

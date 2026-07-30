@@ -187,7 +187,7 @@ pub(crate) fn backup_hmac_key_to_destination(
     // the integrity key does not exist yet. Initialize it through the canonical
     // compaction-key path; RNG/DPAPI/permission failures abort onboarding.
     let key_path = neoth_dir.join("wal").join("hmac.key");
-    crate::wal::compaction::load_or_init_key(&key_path)
+    crate::cli::security::recover_and_load_or_initialize_hmac_key(neoth_dir, &key_path)
         .context("initialize WAL integrity key for recovery backup")?;
     crate::cli::security::run_backup_hmac_key(&crate::cli::security::BackupHmacKeyArgs {
         output: resolved.clone(),

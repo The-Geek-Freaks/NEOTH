@@ -43,8 +43,9 @@ use zeroize::Zeroizing;
 
 use super::schema::SkillManifest;
 use super::store::{
-    BoundDirectory, cap_metadata_is_link_like, open_bound_directory, open_real_child_dir,
-    remove_child_file, rename_child, sync_parent_directory,
+    BoundDirectory, cap_metadata_is_link_like, open_bound_directory,
+    open_bound_directory_from_trusted_anchor, open_real_child_dir, remove_child_file, rename_child,
+    sync_parent_directory,
 };
 use crate::config::SkillVisibility;
 use crate::providers::effort_override::EffortBudget;
@@ -581,8 +582,20 @@ impl SkillAuthorityCurrentStatus {
 #[serde(rename_all = "snake_case")]
 pub enum SkillAuthorityDurability {
     Confirmed,
+    /// The exact bytes were read back from the committed object, but this
+    /// platform cannot confirm parent-directory power-loss durability.
+    NamespaceDurabilityUnsupported,
     Unconfirmed,
     StateUncertain,
+}
+
+impl SkillAuthorityDurability {
+    /// The committed object was read back exactly and no sync operation
+    /// failed. This is sufficient for live runtime admission, while the enum
+    /// still preserves whether namespace power-loss durability was provable.
+    pub const fn is_live_verified(self) -> bool {
+        matches!(self, Self::Confirmed | Self::NamespaceDurabilityUnsupported)
+    }
 }
 
 impl SkillAuthorityReceipt {
@@ -1547,7 +1560,7 @@ where
         // idempotent. Reconfirm the existing durable head, then commit the
         // prepared config CAS. If the CAS fails, policy rollback remains the
         // fail-closed boundary; no new authority record was consumed.
-        let mut receipt = publish_authority_decision_confirmed(home, &active_record)
+        let mut receipt = publish_authority_decision_verified(home, &active_record)
             .context("reconfirm existing installed-Skill activation")?;
         if let Err(error) = commit_enabled_policy() {
             return Err(match rollback_disabled_policy() {
@@ -1571,7 +1584,7 @@ where
         Some("activation transaction pending policy commit".to_string()),
     )?;
     let staging_record = authority_record_for_snapshot(&snapshot, staging)?;
-    publish_authority_decision_confirmed(home, &staging_record)
+    publish_authority_decision_verified(home, &staging_record)
         .context("publish fail-closed Skill activation guard")?;
 
     let rollback_on_error = |primary: anyhow::Error, rollback: R| -> anyhow::Error {
@@ -1589,7 +1602,7 @@ where
         ));
     }
 
-    let mut receipt = match publish_authority_decision_confirmed(home, &active_record) {
+    let mut receipt = match publish_authority_decision_verified(home, &active_record) {
         Ok(receipt) => receipt,
         Err(error) => {
             return Err(rollback_on_error(
@@ -1669,21 +1682,21 @@ fn authority_record_for_snapshot(
     )
 }
 
-fn publish_authority_decision_confirmed(
+fn publish_authority_decision_verified(
     home: &Path,
     record: &SkillAuthorityRecordV1,
 ) -> Result<SkillAuthorityReceipt> {
     let first = publish_authority_decision(home, record)?;
-    if first.durability() == SkillAuthorityDurability::Confirmed {
+    if first.durability().is_live_verified() {
         return Ok(first);
     }
-    let confirmed = publish_authority_decision(home, record)
+    let verified = publish_authority_decision(home, record)
         .context("reconfirm visible Skill authority decision")?;
     anyhow::ensure!(
-        confirmed.durability() == SkillAuthorityDurability::Confirmed,
-        "Skill authority decision remains visible without confirmed durability"
+        verified.durability().is_live_verified(),
+        "Skill authority decision remains visible without a verified publication state"
     );
-    Ok(confirmed)
+    Ok(verified)
 }
 
 /// Complete a record-first crash without inventing a new decision. Recovery
@@ -1867,15 +1880,26 @@ fn publish_authority_decision_with_revision(
                 );
             }
             if !force_new_revision && authority_decision_semantics_match(&latest.record, record) {
-                sync_parent_directory(&record_directory, &record_directory_path)
+                let record_sync = sync_parent_directory(&record_directory, &record_directory_path)
                     .context("reconfirm current Skill authority record durability")?;
-                sync_parent_directory(&store.current, &store.current_path)
+                let anchor_sync = sync_parent_directory(&store.current, &store.current_path)
                     .context("reconfirm current Skill authority anchor durability")?;
+                let durability = if matches!(
+                    (record_sync, anchor_sync),
+                    (
+                        crate::skills::store::DirectorySyncOutcome::Confirmed,
+                        crate::skills::store::DirectorySyncOutcome::Confirmed
+                    )
+                ) {
+                    SkillAuthorityDurability::Confirmed
+                } else {
+                    SkillAuthorityDurability::NamespaceDurabilityUnsupported
+                };
                 return Ok(receipt_for_record(
                     &latest.record,
                     &latest.record_sha256,
                     &sha256_hex(anchor_bytes),
-                    SkillAuthorityDurability::Confirmed,
+                    durability,
                 ));
             }
         }
@@ -2484,38 +2508,27 @@ fn open_existing_authority_store(
 
 fn open_authority_store_for_publish(home: &Path) -> Result<AuthorityStore> {
     let root_path = authority_root(home);
-    let root = match open_bound_directory(&root_path, false, "Skill authority root")? {
+    let trusted_anchor = home.parent().unwrap_or(home);
+    let root = match open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &root_path,
+        false,
+        "Skill authority root",
+    )? {
         Some(root) => {
             ensure_private_directory(&root.dir, &root.display_path)?;
             root
         }
         None => {
-            #[cfg(windows)]
-            {
-                match crate::wal::win_native::create_private_directory_new(&root_path) {
-                    Ok(()) => {}
-                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                    Err(error) => {
-                        return Err(error).with_context(|| {
-                            format!(
-                                "atomically create private Skill authority root {}",
-                                root_path.display()
-                            )
-                        });
-                    }
-                }
-                let root = open_bound_directory(&root_path, false, "Skill authority root")?
-                    .context("new private Skill authority root disappeared")?;
-                ensure_private_directory(&root.dir, &root.display_path)?;
-                root
-            }
-            #[cfg(not(windows))]
-            {
-                let root = open_bound_directory(&root_path, true, "Skill authority root")?
-                    .context("new Skill authority root disappeared")?;
-                secure_new_private_directory(&root.dir, &root.display_path)?;
-                root
-            }
+            let root = open_bound_directory_from_trusted_anchor(
+                trusted_anchor,
+                &root_path,
+                true,
+                "Skill authority root",
+            )?
+            .context("new Skill authority root disappeared")?;
+            secure_new_private_directory(&root.dir, &root.display_path)?;
+            root
         }
     };
     validate_authority_root_entries_for_publish(&root)?;
@@ -3186,7 +3199,10 @@ fn publish_immutable_private_file(
     }
 
     match publish_atomic_private_file(parent, parent_path, name, bytes, false) {
-        Ok(SkillAuthorityDurability::Confirmed) => Ok(()),
+        Ok(
+            SkillAuthorityDurability::Confirmed
+            | SkillAuthorityDurability::NamespaceDurabilityUnsupported,
+        ) => Ok(()),
         Ok(SkillAuthorityDurability::Unconfirmed | SkillAuthorityDurability::StateUncertain) => {
             anyhow::bail!(
                 "immutable Skill authority record is visible but durability is unconfirmed; retry required"
@@ -3274,10 +3290,18 @@ fn publish_atomic_private_file(
     };
     #[cfg(not(test))]
     let force_sync_failure = false;
-    let durability = if !force_sync_failure && sync_parent_directory(parent, parent_path).is_ok() {
-        SkillAuthorityDurability::Confirmed
-    } else {
+    let durability = if force_sync_failure {
         SkillAuthorityDurability::Unconfirmed
+    } else {
+        match sync_parent_directory(parent, parent_path) {
+            Ok(crate::skills::store::DirectorySyncOutcome::Confirmed) => {
+                SkillAuthorityDurability::Confirmed
+            }
+            Ok(crate::skills::store::DirectorySyncOutcome::Unsupported) => {
+                SkillAuthorityDurability::NamespaceDurabilityUnsupported
+            }
+            Err(_) => SkillAuthorityDurability::Unconfirmed,
+        }
     };
 
     #[cfg(test)]
@@ -4007,6 +4031,17 @@ fn effective_uid() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn expected_platform_durability() -> SkillAuthorityDurability {
+        #[cfg(unix)]
+        {
+            SkillAuthorityDurability::Confirmed
+        }
+        #[cfg(not(unix))]
+        {
+            SkillAuthorityDurability::NamespaceDurabilityUnsupported
+        }
+    }
 
     fn digest(byte: u8) -> String {
         format!("{byte:02x}").repeat(32)
@@ -4943,7 +4978,7 @@ mod tests {
             changed_policy
                 .claims
                 .effective_tools
-                .push("mcp::fs::read".to_string());
+                .push("mcp::web::fetch".to_string());
 
             assert_inactive(
                 home.path(),
@@ -5503,7 +5538,7 @@ mod tests {
         );
 
         let recovered = publish_authority_decision(home.path(), &record).unwrap();
-        assert_eq!(recovered.durability(), SkillAuthorityDurability::Confirmed);
+        assert_eq!(recovered.durability(), expected_platform_durability());
         assert_eq!(recovered.authority_sequence(), 1);
     }
 
@@ -5549,7 +5584,7 @@ mod tests {
         assert!(!anchor_path(home.path(), &record.skill_id).exists());
 
         let receipt = publish_authority_decision(home.path(), &record).unwrap();
-        assert_eq!(receipt.durability(), SkillAuthorityDurability::Confirmed);
+        assert_eq!(receipt.durability(), expected_platform_durability());
     }
 
     #[test]
@@ -5633,6 +5668,13 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let path_with_parent = home.path().join("nested").join("..").join("instance");
         assert!(initialize_authority_store(&path_with_parent).is_err());
+        assert!(
+            !home
+                .path()
+                .join("instance")
+                .join(AUTHORITY_ROOT_NAME)
+                .exists()
+        );
     }
 
     #[test]

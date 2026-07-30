@@ -57,6 +57,7 @@ pub mod recursive_mas;
 #[cfg(feature = "recursive-mas")]
 pub mod recursive_mas_adapter;
 pub mod singleflight;
+pub mod termination;
 pub mod tmux_session;
 pub mod tmux_socket;
 pub mod tmux_sweeper;
@@ -68,7 +69,7 @@ use std::path::Path;
 use std::pin::Pin;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use futures_util::stream::{self, Stream};
@@ -76,6 +77,8 @@ use futures_util::stream::{self, Stream};
 use crate::cli::init::ProviderKind;
 use crate::config::FreedomConfig;
 use crate::secret::SecretString;
+
+pub use termination::{ProviderRefusal, ProviderTermination, RefusalOrigin, Retryability};
 
 /// Exact concrete identity of the provider invocation that produced a result.
 /// The paid-call boundary overwrites adapter-supplied/default values after the
@@ -85,6 +88,11 @@ use crate::secret::SecretString;
 pub struct CompletionIdentity {
     pub provider: String,
     pub wire_model: String,
+    /// Opaque decorator route from the outermost provider to the concrete
+    /// authorized leaf. Empty means a direct leaf. Recovery replays this route
+    /// instead of asking routing decorators to select a provider again.
+    #[doc(hidden)]
+    pub(crate) dispatch_route: Vec<u16>,
 }
 
 impl CompletionIdentity {
@@ -92,11 +100,39 @@ impl CompletionIdentity {
         Self {
             provider: provider.to_owned(),
             wire_model: wire_model.to_owned(),
+            dispatch_route: Vec::new(),
         }
     }
 
     pub fn is_bound(&self) -> bool {
         !self.provider.is_empty() && !self.wire_model.is_empty()
+    }
+
+    pub(crate) fn prepend_dispatch_slot(&mut self, slot: usize) -> Result<()> {
+        let slot = u16::try_from(slot).context("provider dispatch slot exceeds u16")?;
+        self.dispatch_route.insert(0, slot);
+        Ok(())
+    }
+
+    pub(crate) fn child_identity_for_slot(&self, slot: usize) -> Result<Self> {
+        let Some((&actual, tail)) = self.dispatch_route.split_first() else {
+            anyhow::bail!(
+                "completion identity for `{}`/`{}` has no pinned decorator route",
+                self.provider,
+                self.wire_model
+            );
+        };
+        let expected = u16::try_from(slot).context("provider dispatch slot exceeds u16")?;
+        if actual != expected {
+            anyhow::bail!(
+                "completion identity route selected slot {actual}, not requested slot {expected}"
+            );
+        }
+        Ok(Self {
+            provider: self.provider.clone(),
+            wire_model: self.wire_model.clone(),
+            dispatch_route: tail.to_vec(),
+        })
     }
 }
 
@@ -109,6 +145,10 @@ pub struct Completion {
     pub identity: CompletionIdentity,
     /// Backward-compatible mirror of `identity.wire_model`.
     pub model: String,
+    /// Provider-authoritative finish/refusal/filter metadata. Legacy adapters
+    /// leave this at the backward-safe default until they adopt native
+    /// termination parsing.
+    pub termination: termination::ProviderTermination,
     pub latency: Duration,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
@@ -121,6 +161,37 @@ pub struct Completion {
     /// (billed at 0.10× the normal input rate). `None` when cache was cold
     /// or for non-Anthropic providers.
     pub cache_read_tokens: Option<u32>,
+}
+
+/// Render a deterministic NEOTH-authored notice when an upstream refusal has
+/// authoritative typed metadata but no displayable body. The provider's
+/// message is not fabricated and the typed termination remains unchanged.
+#[must_use]
+pub fn operator_refusal_notice(completion: &Completion) -> Option<String> {
+    if !completion.text.trim().is_empty() {
+        return None;
+    }
+    let refusal = completion.termination.refusal.as_ref()?;
+    let clean = |value: &str, fallback: &str| {
+        let value = value
+            .chars()
+            .filter(|character| !character.is_control())
+            .take(160)
+            .collect::<String>();
+        if value.trim().is_empty() {
+            fallback.to_owned()
+        } else {
+            value
+        }
+    };
+    let provider = clean(&completion.identity.provider, "unknown");
+    let model = clean(&completion.identity.wire_model, "unknown");
+    let reason = clean(&refusal.reason, "unspecified");
+    Some(format!(
+        "[NEOTH] Upstream `{provider}` (`{model}`) returned a refusal without display text \
+         (origin: {}, reason: {reason}).",
+        refusal.origin.as_str()
+    ))
 }
 
 /// A request to send to a Provider. Plain text for Day-5 MVP; multimodal
@@ -215,6 +286,37 @@ impl ProviderRequestControls {
 
     pub const fn supports_sampling_seed(self) -> bool {
         self.sampling_seed
+    }
+
+    /// Project controls onto a different provider leaf for an explicit
+    /// cross-provider hop. Unsupported controls are removed and returned for
+    /// audit; prompt, system, model, and supported controls remain unchanged.
+    pub(crate) fn project_compatible_controls(self, req: &mut Request) -> Vec<&'static str> {
+        let mut dropped = Vec::with_capacity(5);
+        if req.temperature.is_some_and(|temperature| {
+            self.maximum_temperature
+                .is_none_or(|maximum| temperature > f32::from(maximum))
+        }) {
+            req.temperature = None;
+            dropped.push("temperature");
+        }
+        if req.top_p.is_some() && !self.top_p {
+            req.top_p = None;
+            dropped.push("top_p");
+        }
+        if req.sampling_seed.is_some() && !self.sampling_seed {
+            req.sampling_seed = None;
+            dropped.push("sampling_seed");
+        }
+        if !req.stop_sequences.is_empty() && !self.stop_sequences {
+            req.stop_sequences.clear();
+            dropped.push("stop_sequences");
+        }
+        if req.thinking_budget.is_some() && !self.thinking_budget {
+            req.thinking_budget = None;
+            dropped.push("thinking_budget");
+        }
+        dropped
     }
 
     /// Capabilities common to both providers in a decorator/fallback path.
@@ -347,6 +449,10 @@ pub struct CompletionChunk {
     /// Exact leaf identity. The authorization boundary attaches it to every
     /// chunk, including the final usage-bearing chunk.
     pub identity: CompletionIdentity,
+    /// Provider-authoritative termination facts. Progressive chunks leave this
+    /// at the legacy-safe default; the final `done` chunk carries the complete
+    /// finish/refusal/filter outcome.
+    pub termination: termination::ProviderTermination,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
     /// VIEW-03 — cache creation tokens from the final done-chunk usage block.
@@ -457,6 +563,8 @@ impl ProviderRetryReason {
 
 pub struct ProviderDispatchPermit {
     retry: Option<ProviderRetryAuthorization>,
+    provider_subject:
+        std::sync::Mutex<Option<crate::security::provider_subject::ProviderSubjectIdentifier>>,
     audit: tokio::sync::Mutex<ProviderDispatchAuditState>,
     _private: (),
 }
@@ -470,6 +578,7 @@ impl ProviderDispatchPermit {
         req: Request,
         call_scope: &'static str,
         output_token_ceiling: Option<u32>,
+        provider_subject: Option<crate::security::provider_subject::ProviderSubjectIdentifier>,
     ) -> Self {
         Self {
             retry: Some(ProviderRetryAuthorization {
@@ -480,17 +589,32 @@ impl ProviderDispatchPermit {
                 call_scope,
                 output_token_ceiling,
             }),
+            provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::Active(Box::new(audit))),
             _private: (),
         }
     }
 
-    fn transport_only() -> Self {
+    fn transport_only(
+        provider_subject: Option<crate::security::provider_subject::ProviderSubjectIdentifier>,
+    ) -> Self {
         Self {
             retry: None,
+            provider_subject: std::sync::Mutex::new(provider_subject),
             audit: tokio::sync::Mutex::new(ProviderDispatchAuditState::TransportOnly),
             _private: (),
         }
+    }
+
+    /// Private wire metadata minted before request-binding authorization.
+    /// Concrete adapters cannot replace this with arbitrary caller input.
+    pub(crate) fn provider_subject(
+        &self,
+    ) -> Result<Option<crate::security::provider_subject::ProviderSubjectIdentifier>> {
+        self.provider_subject
+            .lock()
+            .map(|subject| subject.clone())
+            .map_err(|_| anyhow::anyhow!("provider-subject dispatch state is poisoned"))
     }
 
     async fn complete_success(&self, completion: &Completion) -> Result<()> {
@@ -580,7 +704,7 @@ impl ProviderDispatchPermit {
         let retry = self.retry.clone().ok_or_else(|| {
             anyhow::anyhow!("dispatch permit does not carry retry authorization context")
         })?;
-        let authorized = retry
+        let mut authorized = retry
             .authorizer
             .authorize_leaf(
                 retry.provider,
@@ -590,6 +714,7 @@ impl ProviderDispatchPermit {
                 retry.output_token_ceiling,
             )
             .await?;
+        let provider_subject = authorized.take_provider_subject();
         let audit = authorized.begin_dispatch().await?;
 
         let mut state = self.audit.lock().await;
@@ -598,6 +723,11 @@ impl ProviderDispatchPermit {
             drop(audit);
             anyhow::bail!("provider retry permit changed while authorization was in flight");
         }
+        *self
+            .provider_subject
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider-subject retry state is poisoned"))? =
+            provider_subject;
         *state = ProviderDispatchAuditState::Active(Box::new(audit));
         drop(state);
         self.ensure_consent_before_send().await
@@ -784,6 +914,54 @@ pub trait Provider: Send + Sync {
         false
     }
 
+    /// Reissue a request through the exact concrete leaf that produced
+    /// `expected`. Routing decorators must consume one route segment and
+    /// recurse into that child; ordinary decorators keep the default and may
+    /// not change provider/model/route.
+    async fn complete_authorized_pinned(
+        &self,
+        mut req: Request,
+        expected: &CompletionIdentity,
+        authorizer: &cost_authorization::ProviderCallAuthorizer,
+        call_scope: &'static str,
+    ) -> Result<Completion> {
+        if !expected.dispatch_route.is_empty() {
+            anyhow::bail!(
+                "provider `{}` cannot consume pinned dispatch route {:?}",
+                self.name(),
+                expected.dispatch_route
+            );
+        }
+        if self.name() != expected.provider {
+            anyhow::bail!(
+                "pinned recovery expected provider `{}`, reached `{}`",
+                expected.provider,
+                self.name()
+            );
+        }
+        req.model = Some(expected.wire_model.clone());
+        let resolved = resolve_request_model_for_wire(self, req.model.as_deref())?;
+        if resolved != expected.wire_model {
+            anyhow::bail!(
+                "pinned recovery expected wire model `{}`, provider `{}` resolved `{resolved}`",
+                expected.wire_model,
+                self.name()
+            );
+        }
+        req.model = Some(resolved);
+        let completion = self
+            .complete_authorized(req, authorizer, call_scope)
+            .await?;
+        if completion.identity != *expected {
+            anyhow::bail!(
+                "pinned recovery identity drifted from `{:?}` to `{:?}`",
+                expected,
+                completion.identity
+            );
+        }
+        Ok(completion)
+    }
+
     /// Dispatch one concrete non-streaming provider hop through the mandatory
     /// paid-call boundary. Decorators override this method and recurse into
     /// their actual child hop(s); leaf adapters use this default, which binds
@@ -798,9 +976,10 @@ pub trait Provider: Send + Sync {
         self.validate_request_controls(&req)?;
         let identity = bind_wire_identity(self, &mut req)?;
         let output_token_ceiling = self.output_token_ceiling(&req);
-        let authorized = authorizer
+        let mut authorized = authorizer
             .authorize_leaf(self.name(), &req, call_scope, false, output_token_ceiling)
             .await?;
+        let provider_subject = authorized.take_provider_subject();
         let audit = authorized.begin_dispatch().await?;
         let permit = ProviderDispatchPermit::authorized(
             audit,
@@ -810,6 +989,7 @@ pub trait Provider: Send + Sync {
             req.clone(),
             call_scope,
             output_token_ceiling,
+            provider_subject,
         );
         permit.ensure_consent_before_send().await?;
         match self.complete_raw(req, &permit).await {
@@ -846,7 +1026,7 @@ pub trait Provider: Send + Sync {
         let identity = bind_wire_identity(self, &mut req)?;
         let output_token_ceiling = self.output_token_ceiling(&req);
         let streaming = self.streams_on_wire();
-        let authorized = authorizer
+        let mut authorized = authorizer
             .authorize_leaf(
                 self.name(),
                 &req,
@@ -855,6 +1035,7 @@ pub trait Provider: Send + Sync {
                 output_token_ceiling,
             )
             .await?;
+        let provider_subject = authorized.take_provider_subject();
         let mut audit = authorized.begin_dispatch().await?;
         if let Err(error) = authorizer.ensure_live_consent(self.consent_route().as_ref()) {
             if let Err(audit_error) = audit.failure("provider_consent_revoked").await {
@@ -864,7 +1045,7 @@ pub trait Provider: Send + Sync {
             }
             return Err(error);
         }
-        let permit = ProviderDispatchPermit::transport_only();
+        let permit = ProviderDispatchPermit::transport_only(provider_subject);
         match self.stream_raw(req, &permit).await {
             Ok(stream) => Ok(audit.wrap_stream(stamp_stream_identity(
                 stream,
@@ -903,7 +1084,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only();
+            let permit = ProviderDispatchPermit::transport_only(None);
             let mut completion = self.complete_raw(req, &permit).await?;
             stamp_completion_identity(&mut completion, &identity, false);
             return Ok(completion);
@@ -913,6 +1094,36 @@ pub trait Provider: Send + Sync {
             let _ = req;
             anyhow::bail!(
                 "raw provider `{}` is not dispatchable; wrap it in an authorized provider boundary",
+                self.name()
+            )
+        }
+    }
+
+    /// Safe exact-leaf retry entry. Authorization boundaries override this and
+    /// delegate to [`Self::complete_authorized_pinned`]; a bare production leaf
+    /// remains non-dispatchable.
+    async fn complete_pinned(
+        &self,
+        req: Request,
+        expected: &CompletionIdentity,
+    ) -> Result<Completion> {
+        #[cfg(test)]
+        {
+            let completion = self.complete(req).await?;
+            if completion.identity != *expected {
+                anyhow::bail!(
+                    "test provider pinned identity mismatch: expected `{:?}`, got `{:?}`",
+                    expected,
+                    completion.identity
+                );
+            }
+            return Ok(completion);
+        }
+        #[cfg(not(test))]
+        {
+            let _ = (req, expected);
+            anyhow::bail!(
+                "raw provider `{}` is not pinned-dispatchable; wrap it in an authorized provider boundary",
                 self.name()
             )
         }
@@ -935,6 +1146,7 @@ pub trait Provider: Send + Sync {
             delta: completion.text,
             done: true,
             identity: completion.identity,
+            termination: completion.termination,
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
             // VIEW-03 — propagate cache tokens from the fallback complete() path
@@ -953,7 +1165,7 @@ pub trait Provider: Send + Sync {
             let mut req = req;
             self.validate_request_controls(&req)?;
             let identity = bind_wire_identity(self, &mut req)?;
-            let permit = ProviderDispatchPermit::transport_only();
+            let permit = ProviderDispatchPermit::transport_only(None);
             let stream = self.stream_raw(req, &permit).await?;
             return Ok(stamp_stream_identity(stream, identity, false));
         }
@@ -1009,6 +1221,26 @@ pub(crate) fn internal_temperature(
 /// In Single mode this is identical to [`from_config`] — `slot_for`
 /// returns `default_slot` for every role and `default_slot.provider`
 /// is empty, so the fallback short-circuits to the legacy path.
+fn synthetic_config_for_slot(
+    config: &FreedomConfig,
+    slot: &crate::config::inference::HemisphereSlot,
+    provider_kind: ProviderKind,
+) -> FreedomConfig {
+    let mut synthetic = config.clone();
+    synthetic.provider_kind = Some(provider_kind);
+    synthetic.provider_model = slot.model.clone();
+    synthetic.provider_key = slot.key.clone();
+    synthetic.provider_endpoint = slot.endpoint.clone();
+    synthetic.inference.openai_compat_profile = slot.openai_compat_profile;
+    if let Some(slot_region) = slot.region.clone() {
+        synthetic.provider_region = Some(slot_region);
+    }
+    if let Some(slot_ver) = slot.api_version.clone() {
+        synthetic.provider_api_version = Some(slot_ver);
+    }
+    synthetic
+}
+
 pub async fn from_config_for_role(
     config: &FreedomConfig,
     role: crate::config::inference::HemisphereRole,
@@ -1043,23 +1275,13 @@ async fn from_config_for_role_inner(
     // Build a synthetic FreedomConfig view that pretends the slot's
     // provider is the single-mode config. Reuses `from_config`'s full
     // construction logic without duplicating adapter wiring.
-    let mut synthetic = config.clone();
-    synthetic.provider_kind = Some(provider_kind.to_provider_kind());
-    synthetic.provider_model = slot.model.clone();
-    synthetic.provider_key = slot.key.clone();
-    synthetic.provider_endpoint = slot.endpoint.clone();
+    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind());
     // C-3 Phase 2 (Session 14) — per-slot region wins over the
     // top-level FreedomConfig::provider_region. Only relevant for
     // aws_bedrock today; other providers ignore the field.
-    if let Some(slot_region) = slot.region.clone() {
-        synthetic.provider_region = Some(slot_region);
-    }
     // C-4 Phase 2 (Session 14) — per-slot api_version wins over the
     // top-level FreedomConfig::provider_api_version. Only relevant
     // for azure_openai; other providers ignore.
-    if let Some(slot_ver) = slot.api_version.clone() {
-        synthetic.provider_api_version = Some(slot_ver);
-    }
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -1186,17 +1408,7 @@ async fn fallback_chain_from_config_inner(
     // tested seam rather than an inline branch.
     for (slot, inf_provider) in fallback_slots_allowed_by(home, config, ephemeral_consent) {
         let kind = inf_provider.to_provider_kind();
-        let mut synthetic = config.clone();
-        synthetic.provider_kind = Some(kind);
-        synthetic.provider_model = slot.model.clone();
-        synthetic.provider_key = slot.key.clone();
-        synthetic.provider_endpoint = slot.endpoint.clone();
-        if let Some(region) = slot.region.clone() {
-            synthetic.provider_region = Some(region);
-        }
-        if let Some(ver) = slot.api_version.clone() {
-            synthetic.provider_api_version = Some(ver);
-        }
+        let mut synthetic = synthetic_config_for_slot(config, slot, kind);
         apply_instance_catalog_default(&mut synthetic, home);
         match from_config_for_instance(&synthetic, Some(home)).await {
             Ok(p) => {
@@ -1270,17 +1482,7 @@ async fn from_config_for_sub_role_inner(
             None => from_config_for_role(config, inner_role).await,
         };
     };
-    let mut synthetic = config.clone();
-    synthetic.provider_kind = Some(provider_kind.to_provider_kind());
-    synthetic.provider_model = slot.model.clone();
-    synthetic.provider_key = slot.key.clone();
-    synthetic.provider_endpoint = slot.endpoint.clone();
-    if let Some(slot_region) = slot.region.clone() {
-        synthetic.provider_region = Some(slot_region);
-    }
-    if let Some(slot_ver) = slot.api_version.clone() {
-        synthetic.provider_api_version = Some(slot_ver);
-    }
+    let mut synthetic = synthetic_config_for_slot(config, slot, provider_kind.to_provider_kind());
     if let Some(home) = home {
         apply_instance_catalog_default(&mut synthetic, home);
     }
@@ -1686,8 +1888,13 @@ async fn from_config_for_instance(
             let model = config.provider_model.clone().ok_or_else(|| {
                 anyhow::anyhow!("openai_compat requires a model name in freedom.yaml.")
             })?;
-            Ok(Box::new(openai_api::OpenAiAdapter::new_compat(
-                endpoint, key, model,
+            let profile = config
+                .inference
+                .openai_compat_profile
+                .or_else(|| known_endpoints::profile_for_endpoint(&endpoint))
+                .unwrap_or_default();
+            Ok(Box::new(openai_api::OpenAiAdapter::new_compat_profiled(
+                profile, endpoint, key, model,
             )?))
         }
         ProviderKind::AnthropicApi => {
@@ -2008,9 +2215,36 @@ mod tests {
     use super::*;
     use crate::cli::init::ProviderKind;
     use crate::config::inference::{
-        HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
+        HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology,
+        OpenAiCompatibleProfile, SubHemisphereSlots, TopologyMode,
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn blank_native_refusal_gets_a_neoth_authored_operator_notice() {
+        let completion = Completion {
+            identity: CompletionIdentity {
+                provider: "openai_api".into(),
+                wire_model: "gpt-test".into(),
+                dispatch_route: Vec::new(),
+            },
+            termination: ProviderTermination::refused(
+                Some("content_filter".into()),
+                RefusalOrigin::FinishReason,
+                "content_filter",
+                None,
+            ),
+            ..Completion::default()
+        };
+
+        let notice = operator_refusal_notice(&completion).expect("typed blank refusal");
+        assert!(notice.starts_with("[NEOTH]"));
+        assert!(notice.contains("openai_api"));
+        assert!(notice.contains("finish_reason"));
+        assert!(notice.contains("content_filter"));
+        assert_eq!(completion.text, "");
+        assert!(completion.termination.is_refusal());
+    }
 
     struct NoControlProvider {
         calls: AtomicUsize,
@@ -2051,6 +2285,63 @@ mod tests {
         assert!(error.to_string().contains("provider `no_controls`"));
         assert!(error.to_string().contains("temperature"));
         assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn default_stream_preserves_native_termination_on_final_chunk() {
+        struct NativeRefusalProvider;
+
+        #[async_trait]
+        impl Provider for NativeRefusalProvider {
+            fn name(&self) -> &'static str {
+                "native_refusal"
+            }
+
+            fn default_model(&self) -> Option<&str> {
+                Some("test-model")
+            }
+
+            async fn complete_raw(
+                &self,
+                _req: Request,
+                _permit: &ProviderDispatchPermit,
+            ) -> Result<Completion> {
+                Ok(Completion {
+                    termination: ProviderTermination::refused(
+                        Some("content_filter".into()),
+                        RefusalOrigin::FinishReason,
+                        "content_filter",
+                        None,
+                    ),
+                    ..Completion::default()
+                })
+            }
+        }
+
+        let mut stream = NativeRefusalProvider
+            .stream(Request::default())
+            .await
+            .expect("default stream starts");
+        let final_chunk = stream
+            .next()
+            .await
+            .expect("default stream yields one chunk")
+            .expect("default stream chunk succeeds");
+
+        assert!(final_chunk.done);
+        assert_eq!(
+            final_chunk.termination.finish_reason.as_deref(),
+            Some("content_filter")
+        );
+        assert_eq!(
+            final_chunk
+                .termination
+                .refusal
+                .as_ref()
+                .map(|refusal| refusal.origin),
+            Some(RefusalOrigin::FinishReason)
+        );
+        assert!(stream.next().await.is_none());
     }
 
     #[test]
@@ -2318,6 +2609,116 @@ mod tests {
             provider_kind: Some(ProviderKind::ClaudeCli),
             ..Default::default()
         }
+    }
+
+    #[tokio::test]
+    async fn compatible_known_endpoint_is_inferred_and_keeps_vendor_identity() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiCompat);
+        cfg.provider_endpoint = Some("https://api.deepseek.com".into());
+        cfg.provider_model = Some("deepseek-v4-pro".into());
+        cfg.provider_key = Some(SecretString::from("sk-test"));
+        assert_eq!(cfg.inference.openai_compat_profile, None);
+
+        let provider = from_config(&cfg).await.unwrap();
+        assert_eq!(provider.name(), "deepseek_api");
+        assert_eq!(
+            provider.consent_route().unwrap().kind,
+            ProviderKind::OpenaiCompat
+        );
+        let mut request = Request::default();
+        let identity = bind_wire_identity(provider.as_ref(), &mut request).unwrap();
+        assert_eq!(identity.provider, "deepseek_api");
+        assert_eq!(identity.wire_model, "deepseek-v4-pro");
+    }
+
+    #[tokio::test]
+    async fn explicit_compatible_profile_rejects_endpoint_drift() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiCompat);
+        cfg.provider_endpoint = Some("https://gateway.example.test/v1".into());
+        cfg.provider_model = Some("model".into());
+        cfg.provider_key = Some(SecretString::from("sk-test"));
+        cfg.inference.openai_compat_profile = Some(OpenAiCompatibleProfile::OpenRouter);
+
+        let error = err_or_panic(from_config(&cfg).await).to_string();
+        assert!(error.contains("openrouter"));
+        assert!(error.contains("does not match"));
+    }
+
+    #[tokio::test]
+    async fn role_slot_profile_is_propagated_and_rejects_endpoint_mismatch() {
+        let mut cfg = base_config();
+        cfg.inference.mode = TopologyMode::Custom;
+        cfg.inference.openai_compat_profile = Some(OpenAiCompatibleProfile::DeepSeek);
+        cfg.inference.left = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            endpoint: Some("https://gateway.example.test/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::OpenRouter),
+            model: Some("model".into()),
+            key: Some(SecretString::from("sk-test")),
+            ..Default::default()
+        };
+        cfg.inference.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            endpoint: Some("https://gateway.example.test/v1".into()),
+            model: Some("model".into()),
+            key: Some(SecretString::from("sk-test")),
+            ..Default::default()
+        };
+
+        let error = err_or_panic(from_config_for_role(&cfg, HemisphereRole::Left).await);
+        assert!(error.to_string().contains("openrouter"));
+        assert!(error.to_string().contains("does not match"));
+        let right = from_config_for_role(&cfg, HemisphereRole::Right)
+            .await
+            .unwrap();
+        assert_eq!(right.name(), "openai_compat");
+    }
+
+    #[tokio::test]
+    async fn fallback_slot_profile_survives_synthetic_config_and_mismatch_validation() {
+        let cfg = base_config();
+        let slot = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            endpoint: Some("https://gateway.example.test/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::MoonshotKimi),
+            model: Some("model".into()),
+            key: Some(SecretString::from("sk-test")),
+            ..Default::default()
+        };
+        let synthetic = synthetic_config_for_slot(&cfg, &slot, ProviderKind::OpenaiCompat);
+        assert_eq!(
+            synthetic.inference.openai_compat_profile,
+            Some(OpenAiCompatibleProfile::MoonshotKimi)
+        );
+        let error = err_or_panic(from_config(&synthetic).await);
+        assert!(error.to_string().contains("moonshot_kimi"));
+        assert!(error.to_string().contains("does not match"));
+    }
+
+    #[tokio::test]
+    async fn sub_role_slot_profile_is_propagated_and_rejects_endpoint_mismatch() {
+        let mut cfg = base_config();
+        cfg.inference.mode = TopologyMode::Custom;
+        let mut sub = SubHemisphereSlots::default();
+        sub.right = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAiCompat),
+            endpoint: Some("https://gateway.example.test/v1".into()),
+            openai_compat_profile: Some(OpenAiCompatibleProfile::QwenChat),
+            model: Some("model".into()),
+            key: Some(SecretString::from("sk-test")),
+            ..Default::default()
+        };
+        cfg.inference
+            .hemisphere_sub_slots
+            .insert(HemisphereRole::Left, sub);
+
+        let error = err_or_panic(
+            from_config_for_sub_role(&cfg, HemisphereRole::Left, HemisphereRole::Right).await,
+        );
+        assert!(error.to_string().contains("qwen_chat"));
+        assert!(error.to_string().contains("does not match"));
     }
 
     /// CH-04 invariant: in Single mode, role-aware routing must produce

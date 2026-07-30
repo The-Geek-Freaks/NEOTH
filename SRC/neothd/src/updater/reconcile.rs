@@ -24,17 +24,27 @@ use super::authority::{
     decode_and_validate_updater_leaf_intent, decode_and_validate_updater_leaf_result,
     synthetic_interrupted_result_payload,
 };
-use crate::wal::events::{EVENT_TYPE_EXTENDED, ExtendedSubtype};
+use crate::wal::events::{
+    EVENT_TYPE_EXTENDED, EVENT_TYPE_UPDATER_TASK_FIRED, EVENT_TYPE_UPDATER_TASK_RESULT,
+    ExtendedSubtype,
+};
+use crate::wal::payloads_u04::{
+    ComponentOutcome, UpdaterTaskFiredPayload, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
+    updater_fired_receipt_sha256,
+};
+#[cfg(test)]
+use crate::wal::payloads_u04::{UpdaterPassIdentity, UpdaterTaskKind};
 #[cfg(test)]
 use crate::wal::scan::for_each_frame_at_home;
 use crate::wal::scan::{
-    HomeWalFrontier, HomeWalScanLimits, for_each_frame_in_home_segment_chain_from,
-    load_home_hmac_keys,
+    HomeWalFrontier, HomeWalScanLimits, for_each_frame_in_home_segment_chain,
+    for_each_frame_in_home_segment_chain_from, load_home_hmac_keys,
 };
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 
 const MAX_LIVE_UPDATER_IDENTITIES: usize = 256;
+const MAX_LIVE_UPDATER_PASSES: usize = 4_096;
 const MAX_UPDATER_AUDIT_PAYLOAD_BYTES: usize = 64 * 1024;
 const MAX_OPEN_UPDATER_PAYLOAD_BYTES: usize = 1024 * 1024;
 const MAX_CHECKPOINT_BYTES: usize = 3 * 1024 * 1024;
@@ -108,48 +118,267 @@ async fn reconcile_unfinished_updater_leaves_inner(
     persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
         .await
         .context("durably checkpoint updater reconciliation before synthetic terminals")?;
-    if !append_synthetic_terminals {
-        return Ok(summary);
-    }
-
-    let unfinished = state.unfinished_intents();
-    for intent in unfinished {
-        append_interrupted_result(writer, &intent).await?;
-        summary.interrupted = summary
-            .interrupted
-            .checked_add(1)
-            .context("updater interruption count overflow")?;
-    }
-    if summary.interrupted > 0 {
-        let home = neoth_home.to_path_buf();
-        let scan_segment_path = segment_path.to_path_buf();
-        let prior_frontier = frontier.clone();
-        let mut moved_state = state;
-        (state, frontier) = tokio::task::spawn_blocking(move || {
-            let frontier = scan_updater_tail(
-                &home,
-                &scan_segment_path,
-                &mut moved_state,
-                Some(&prior_frontier),
-                reconciliation_scan_limits(),
-            )?;
-            Ok::<_, anyhow::Error>((moved_state, frontier))
-        })
-        .await
-        .context("join updater synthetic-terminal acknowledgement scan")??;
-        persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
+    if append_synthetic_terminals {
+        let unfinished = state.unfinished_intents();
+        for intent in unfinished {
+            append_interrupted_result(writer, &intent).await?;
+            summary.interrupted = summary
+                .interrupted
+                .checked_add(1)
+                .context("updater interruption count overflow")?;
+        }
+        if summary.interrupted > 0 {
+            let home = neoth_home.to_path_buf();
+            let scan_segment_path = segment_path.to_path_buf();
+            let prior_frontier = frontier.clone();
+            let mut moved_state = state;
+            (state, frontier) = tokio::task::spawn_blocking(move || {
+                let frontier = scan_updater_tail(
+                    &home,
+                    &scan_segment_path,
+                    &mut moved_state,
+                    Some(&prior_frontier),
+                    reconciliation_scan_limits(),
+                )?;
+                Ok::<_, anyhow::Error>((moved_state, frontier))
+            })
             .await
-            .context("advance updater reconciliation checkpoint after terminal acknowledgement")?;
+            .context("join updater synthetic-terminal acknowledgement scan")??;
+            persist_checkpoint_async(neoth_home, segment_path, &frontier, &state)
+                .await
+                .context(
+                    "advance updater reconciliation checkpoint after terminal acknowledgement",
+                )?;
+        }
     }
 
+    let pass_summary = reconcile_unfinished_updater_passes(
+        neoth_home,
+        segment_path,
+        writer,
+        phase,
+        append_synthetic_terminals,
+    )
+    .await
+    .context("reconcile durable recurring updater FIRED/RESULT pairs")?;
     tracing::info!(
         phase = phase.as_str(),
         scanned_intents = summary.scanned_intents,
         already_terminal = summary.already_terminal,
         interrupted = summary.interrupted,
+        scanned_passes = pass_summary.scanned,
+        terminal_passes = pass_summary.terminal,
+        interrupted_passes = pass_summary.interrupted,
         "updater leaf WAL reconciliation complete"
     );
     Ok(summary)
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct UpdaterPassReconcileSummary {
+    scanned: usize,
+    terminal: usize,
+    interrupted: usize,
+}
+
+#[derive(Debug)]
+struct OpenUpdaterPass {
+    fired: UpdaterTaskFiredPayload,
+    fired_receipt_sha256: String,
+}
+
+#[derive(Default)]
+struct UpdaterPassScanState {
+    open: HashMap<String, OpenUpdaterPass>,
+    scanned: usize,
+    terminal: usize,
+}
+
+impl UpdaterPassScanState {
+    fn consume(
+        &mut self,
+        frame: &crate::wal::frame::DecodedFrame<'_>,
+        segment_name: &OsStr,
+    ) -> Result<()> {
+        if !matches!(
+            frame.header.event_type,
+            EVENT_TYPE_UPDATER_TASK_FIRED | EVENT_TYPE_UPDATER_TASK_RESULT
+        ) {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            frame.payload.len() <= MAX_UPDATER_AUDIT_PAYLOAD_BYTES,
+            "updater pass payload in WAL segment {:?} exceeds the {}-byte recovery limit",
+            segment_name,
+            MAX_UPDATER_AUDIT_PAYLOAD_BYTES
+        );
+        match frame.header.event_type {
+            EVENT_TYPE_UPDATER_TASK_FIRED => {
+                let fired = serde_json::from_slice::<UpdaterTaskFiredPayload>(frame.payload)
+                    .with_context(|| {
+                        format!("decode updater FIRED in WAL segment {segment_name:?}")
+                    })?;
+                let Some(run_id) = fired
+                    .identity
+                    .correlatable_pass_id_for(fired.task_kind)
+                    .map(str::to_owned)
+                else {
+                    // Historical v1/v2 frames remain readable, but they lack the
+                    // complete policy-bound v3 identity required for a safe
+                    // synthetic terminal.
+                    return Ok(());
+                };
+                anyhow::ensure!(
+                    frame.header.flags == EventFlags::SYNTHETIC,
+                    "schema-v3 updater FIRED carries forbidden WAL flags {:?}",
+                    frame.header.flags
+                );
+                anyhow::ensure!(
+                    self.open.len() < MAX_LIVE_UPDATER_PASSES,
+                    "updater pass recovery exceeds the {MAX_LIVE_UPDATER_PASSES}-open-pass limit"
+                );
+                anyhow::ensure!(
+                    !self.open.contains_key(&run_id),
+                    "duplicate live updater FIRED run_id {run_id}"
+                );
+                self.scanned = self
+                    .scanned
+                    .checked_add(1)
+                    .context("updater pass scan counter overflow")?;
+                self.open.insert(
+                    run_id,
+                    OpenUpdaterPass {
+                        fired,
+                        fired_receipt_sha256: updater_fired_receipt_sha256(frame.payload),
+                    },
+                );
+            }
+            EVENT_TYPE_UPDATER_TASK_RESULT => {
+                let result = serde_json::from_slice::<UpdaterTaskResultPayload>(frame.payload)
+                    .with_context(|| {
+                        format!("decode updater RESULT in WAL segment {segment_name:?}")
+                    })?;
+                let Some(run_id) = result
+                    .identity
+                    .correlatable_pass_id_for(result.task_kind)
+                    .map(str::to_owned)
+                else {
+                    return Ok(());
+                };
+                anyhow::ensure!(
+                    frame.header.flags == EventFlags::SYNTHETIC,
+                    "schema-v3 updater RESULT carries forbidden WAL flags {:?}",
+                    frame.header.flags
+                );
+                let open = self.open.remove(&run_id).with_context(|| {
+                    format!("schema-v3 updater RESULT has no preceding FIRED run_id {run_id}")
+                })?;
+                anyhow::ensure!(
+                    open.fired.identity == result.identity
+                        && open.fired.task_kind == result.task_kind,
+                    "updater RESULT identity conflicts with FIRED run_id {run_id}"
+                );
+                anyhow::ensure!(
+                    result.correlatable_fired_receipt() == Some(open.fired_receipt_sha256.as_str()),
+                    "updater RESULT has an invalid or mismatched FIRED receipt for run_id {run_id}"
+                );
+                self.terminal = self
+                    .terminal
+                    .checked_add(1)
+                    .context("updater pass terminal counter overflow")?;
+            }
+            _ => unreachable!("updater pass event type checked above"),
+        }
+        Ok(())
+    }
+}
+
+async fn reconcile_unfinished_updater_passes(
+    neoth_home: &Path,
+    segment_path: &Path,
+    writer: &WalWriterHandle,
+    phase: UpdaterReconcilePhase,
+    append_synthetic_terminals: bool,
+) -> Result<UpdaterPassReconcileSummary> {
+    let home = neoth_home.to_path_buf();
+    let base = segment_path.to_path_buf();
+    let mut state = tokio::task::spawn_blocking(move || {
+        let mut state = UpdaterPassScanState::default();
+        for_each_frame_in_home_segment_chain(
+            &home,
+            &base,
+            reconciliation_scan_limits(),
+            |location, frame| state.consume(frame, &location.segment_name),
+        )
+        .context("scan canonical WAL for recurring updater FIRED/RESULT pairs")?;
+        Ok::<_, anyhow::Error>(state)
+    })
+    .await
+    .context("join recurring updater pass reconciliation scan")??;
+
+    let mut summary = UpdaterPassReconcileSummary {
+        scanned: state.scanned,
+        terminal: state.terminal,
+        interrupted: 0,
+    };
+    if !append_synthetic_terminals {
+        return Ok(summary);
+    }
+
+    let mut unfinished = state.open.drain().collect::<Vec<_>>();
+    unfinished.sort_unstable_by(|left, right| {
+        left.1
+            .fired
+            .ts_unix
+            .cmp(&right.1.fired.ts_unix)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    for (_, open) in unfinished {
+        append_interrupted_updater_pass(writer, open, phase).await?;
+        summary.interrupted = summary
+            .interrupted
+            .checked_add(1)
+            .context("updater pass interruption counter overflow")?;
+    }
+    Ok(summary)
+}
+
+async fn append_interrupted_updater_pass(
+    writer: &WalWriterHandle,
+    open: OpenUpdaterPass,
+    phase: UpdaterReconcilePhase,
+) -> Result<()> {
+    let lane = open
+        .fired
+        .identity
+        .lane
+        .context("correlatable updater FIRED lost its lane")?;
+    let result = UpdaterTaskResultPayload {
+        identity: open.fired.identity,
+        task_kind: open.fired.task_kind,
+        ts_unix: crate::time::now_unix_secs(),
+        duration_ms: 0,
+        terminal_outcome: Some(UpdaterTerminalOutcome::Interrupted),
+        fired_receipt_sha256: Some(open.fired_receipt_sha256),
+        components: vec![ComponentOutcome::failed(
+            lane.as_str(),
+            "unknown",
+            format!(
+                "{} reconciliation found a durable FIRED without RESULT; the external effect outcome is indeterminate",
+                phase.as_str()
+            ),
+        )],
+    };
+    let payload =
+        serde_json::to_vec(&result).context("serialize interrupted updater pass RESULT")?;
+    let header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_RESULT, &payload)
+        .flags(EventFlags::SYNTHETIC)
+        .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append interrupted updater pass RESULT")?;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -842,12 +1071,35 @@ mod tests {
         writer.append(header, payload).await.unwrap();
     }
 
+    async fn append_updater_pass_payload(
+        writer: &WalWriterHandle,
+        event_type: u8,
+        payload: Vec<u8>,
+    ) {
+        let header = HeaderBuilder::new(event_type, &payload)
+            .flags(EventFlags::SYNTHETIC)
+            .build();
+        writer.append(header, payload).await.unwrap();
+    }
+
     fn read_updater_results(home: &Path) -> Vec<Value> {
         let mut results = Vec::new();
         for_each_frame_at_home(home, HomeWalScanLimits::default(), |_, frame| {
             if frame.header.event_type == EVENT_TYPE_EXTENDED
                 && frame.header.event_subtype == ExtendedSubtype::UpdaterLeafResult as u8
             {
+                results.push(serde_json::from_slice(frame.payload)?);
+            }
+            Ok(())
+        })
+        .unwrap();
+        results
+    }
+
+    fn read_updater_pass_results(home: &Path) -> Vec<UpdaterTaskResultPayload> {
+        let mut results = Vec::new();
+        for_each_frame_at_home(home, HomeWalScanLimits::default(), |_, frame| {
+            if frame.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
                 results.push(serde_json::from_slice(frame.payload)?);
             }
             Ok(())
@@ -892,6 +1144,65 @@ mod tests {
         .unwrap();
         ready.wait().await.unwrap();
         (writer, join, segment)
+    }
+
+    #[tokio::test]
+    async fn startup_reconciliation_materializes_one_receipt_bound_interrupted_pass() {
+        let home = tempfile::tempdir().unwrap();
+        let (writer, join, segment) = writer_for_home(home.path());
+        let identity =
+            UpdaterPassIdentity::new(crate::wal::payloads_u04::UpdaterPassLane::SelfStage, 9);
+        let fired = UpdaterTaskFiredPayload {
+            identity: identity.clone(),
+            task_kind: UpdaterTaskKind::NeothSelf,
+            ts_unix: 1_700_000_000,
+        };
+        let fired_body = serde_json::to_vec(&fired).unwrap();
+        let expected_receipt = updater_fired_receipt_sha256(&fired_body);
+        append_updater_pass_payload(&writer, EVENT_TYPE_UPDATER_TASK_FIRED, fired_body).await;
+
+        let summary = reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        assert_eq!(summary, UpdaterReconcileSummary::default());
+
+        let results = read_updater_pass_results(home.path());
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].identity, identity);
+        assert_eq!(
+            results[0].terminal_outcome,
+            Some(UpdaterTerminalOutcome::Interrupted)
+        );
+        assert_eq!(
+            results[0].fired_receipt_sha256.as_deref(),
+            Some(expected_receipt.as_str())
+        );
+        assert_eq!(
+            results[0].correlatable_fired_receipt(),
+            Some(expected_receipt.as_str())
+        );
+
+        reconcile_unfinished_updater_leaves(
+            home.path(),
+            &segment,
+            &writer,
+            UpdaterReconcilePhase::Startup,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            read_updater_pass_results(home.path()).len(),
+            1,
+            "a second startup must not synthesize a duplicate terminal"
+        );
+
+        drop(writer);
+        join.await.unwrap();
     }
 
     async fn restart_writer_for_home(

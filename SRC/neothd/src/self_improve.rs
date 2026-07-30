@@ -150,7 +150,8 @@ impl BoundExternalSkillTarget {
     }
 
     fn sync_parent(&self) -> Result<()> {
-        crate::skills::store::sync_parent_directory(&self.parent.dir, &self.parent.display_path)
+        crate::skills::store::sync_parent_directory(&self.parent.dir, &self.parent.display_path)?;
+        Ok(())
     }
 }
 

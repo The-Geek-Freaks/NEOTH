@@ -1634,6 +1634,7 @@ mod tests {
                 .expect("prompt capture lock")
                 .push(req.prompt);
             Ok(Completion {
+                termination: Default::default(),
                 text: self.response.clone(),
                 identity: Default::default(),
                 model: "mock".to_string(),

@@ -5163,8 +5163,19 @@ fn prepare_stage_generation(
     let (binding_sha256, binding_size_bytes) =
         staged_transaction_binding(archive_bytes, signature_text, &pending_body)?;
 
-    let stage = crate::skills::store::open_bound_directory(stage_dir, true, "self-update stage")?
-        .context("self-update stage directory was not created")?;
+    let absolute_stage_dir = std::path::absolute(stage_dir)
+        .with_context(|| format!("resolve absolute self-update stage {}", stage_dir.display()))?;
+    let neoth_home = absolute_stage_dir
+        .parent()
+        .context("self-update stage has no NEOTH-home parent")?;
+    let trusted_anchor = neoth_home.parent().unwrap_or(neoth_home);
+    let stage = crate::skills::store::open_bound_directory_from_trusted_anchor(
+        trusted_anchor,
+        &absolute_stage_dir,
+        true,
+        "self-update stage",
+    )?
+    .context("self-update stage directory was not created")?;
     harden_stage_directory_capability(&stage.dir, &stage.display_path)?;
     let mutation_lock = acquire_stage_mutation_lock(&stage.dir, stage_dir)?;
     let generations_path = stage_dir.join("generations");
@@ -5213,7 +5224,8 @@ fn prepare_stage_generation(
         // pending record that refers to it. The payload writers already sync
         // the generation itself; this orders its parent namespace as well.
         crate::skills::store::sync_parent_directory(&generations, &generations_path)
-            .context("sync staged generation namespace before prepared result")
+            .context("sync staged generation namespace before prepared result")?;
+        Ok(())
     })();
 
     // A partial private candidate cannot become applyable because this phase

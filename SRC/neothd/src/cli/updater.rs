@@ -23,7 +23,8 @@ use crate::wal::events::{
 };
 use crate::wal::payloads_u04::{
     ComponentStatus, UpdaterPassIdentity, UpdaterPassLane, UpdaterTaskFiredPayload,
-    UpdaterTaskKind, UpdaterTaskResultPayload,
+    UpdaterTaskKind, UpdaterTaskResultPayload, UpdaterTerminalOutcome,
+    updater_fired_receipt_sha256,
 };
 
 // Backward-compatible event-materialization helpers remain explicitly capped.
@@ -113,8 +114,8 @@ pub struct UpdaterArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum UpdaterAction {
-    /// Print the most recent updater task results in a readable
-    /// table.
+    /// Verify and print the latest correlated updater state per concrete lane
+    /// and task class.
     ///
     /// Default mode reads the complete rotating live WAL namespace rooted at
     /// `~/.neoth/wal/000001.wal`. Use `--config` for a custom instance home,
@@ -147,8 +148,9 @@ pub enum UpdaterAction {
         )]
         wal_segment: Option<PathBuf>,
         /// Path to a JSONL file containing one
-        /// `UpdaterTaskResultPayload` per line. Overrides the WAL
-        /// scan when set; used by tests + operator dry-runs.
+        /// `UpdaterTaskResultPayload` per line. Overrides the WAL scan when
+        /// set; this compatibility/test input cannot prove the persisted FIRED
+        /// receipt and is not equivalent to canonical WAL verification.
         #[arg(long, value_name = "PATH")]
         from_jsonl: Option<PathBuf>,
     },
@@ -179,7 +181,10 @@ pub async fn run_updater(args: UpdaterArgs, output: OutputFormat) -> Result<()> 
             let projection = if let Some(path) = from_jsonl {
                 project_updater_status_from_jsonl(&path)?
             } else if let Some(segment) = wal_segment {
-                project_updater_status_from_wal(&segment)?
+                project_updater_status_from_wal(&segment).context(concat!(
+                    "UPDATER_AUDIT_UNAVAILABLE",
+                    ": explicit updater WAL segment could not be verified"
+                ))?
             } else {
                 let config_path = config.unwrap_or_else(FreedomConfig::default_path);
                 let home = config_path
@@ -188,9 +193,15 @@ pub async fn run_updater(args: UpdaterArgs, output: OutputFormat) -> Result<()> 
                     .map(Path::to_path_buf)
                     .unwrap_or_else(|| PathBuf::from("."));
                 if let Some(base) = wal_chain_base {
-                    project_updater_status_from_home_chain(&home, &base)?
+                    project_updater_status_from_home_chain(&home, &base).context(concat!(
+                        "UPDATER_AUDIT_UNAVAILABLE",
+                        ": updater WAL chain could not be verified"
+                    ))?
                 } else {
-                    project_updater_status_from_home(&home)?
+                    project_updater_status_from_home(&home).context(concat!(
+                        "UPDATER_AUDIT_UNAVAILABLE",
+                        ": canonical updater WAL chain could not be verified"
+                    ))?
                 }
             };
             print!("{}", render_updater_status(&projection));
@@ -342,6 +353,11 @@ fn project_updater_status_from_home_chain(
     let wal_dir = home.join("wal");
     match std::fs::symlink_metadata(&wal_dir) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A home with no WAL directory has never initialized audit
+            // storage, so "no pass on record yet" is truthful bootstrap state.
+            // Once `wal/` exists, however, the selected canonical base must
+            // exist and authenticate; the scanner below enforces that stricter
+            // audit contract.
             return StreamingUpdaterProjection::new(StreamingProjectionLimits::default()).finish();
         }
         Err(error) => {
@@ -351,7 +367,7 @@ fn project_updater_status_from_home_chain(
         Ok(_) => {}
     }
     let mut projection = StreamingUpdaterProjection::new(StreamingProjectionLimits::default());
-    crate::wal::scan::for_each_frame_in_home_segment_chain(
+    crate::wal::scan::for_each_frame_in_existing_home_segment_chain(
         home,
         base,
         crate::wal::scan::supported_home_scan_limits(),
@@ -379,7 +395,16 @@ fn observe_decoded_status_frame(
         MAX_UPDATER_STATUS_SINGLE_PAYLOAD_BYTES,
         MAX_UPDATER_STATUS_COMPONENTS_PER_RESULT,
     )? {
-        projection.observe(event)?;
+        if event.identity().correlatable_pass_id().is_some() {
+            anyhow::ensure!(
+                decoded.header.flags == crate::wal::EventFlags::SYNTHETIC,
+                "schema-v3 updater audit record carries forbidden WAL flags {:?}",
+                decoded.header.flags
+            );
+        }
+        let fired_receipt_sha256 = matches!(&event, UpdaterAuditEvent::Fired(_))
+            .then(|| updater_fired_receipt_sha256(decoded.payload));
+        projection.observe_with_fired_receipt(event, fired_receipt_sha256)?;
     }
     Ok(())
 }
@@ -660,7 +685,10 @@ pub enum UpdaterRunPhase {
     Fired,
     Completed,
     Failed,
+    SkippedByGate,
     Interrupted,
+    Cancelled,
+    TimedOut,
     Indeterminate,
 }
 
@@ -670,7 +698,10 @@ impl UpdaterRunPhase {
             Self::Fired => "fired",
             Self::Completed => "completed",
             Self::Failed => "failed",
+            Self::SkippedByGate => "skipped_by_gate",
             Self::Interrupted => "interrupted",
+            Self::Cancelled => "cancelled",
+            Self::TimedOut => "timed_out",
             Self::Indeterminate => "indeterminate",
         }
     }
@@ -683,6 +714,7 @@ pub struct UpdaterRunStatus {
     pub phase: UpdaterRunPhase,
     pub ts_unix: u64,
     pub result: Option<UpdaterTaskResultPayload>,
+    pub fired_receipt_sha256: Option<String>,
     pub note: String,
     first_ordinal: usize,
     last_ordinal: usize,
@@ -693,6 +725,12 @@ impl UpdaterRunStatus {
         let task_kind = event.task_kind();
         let identity = event.identity().clone();
         let ts_unix = event.ts_unix();
+        let fired_receipt_sha256 = match &event {
+            UpdaterAuditEvent::Fired(payload) => serde_json::to_vec(payload)
+                .ok()
+                .map(|body| updater_fired_receipt_sha256(&body)),
+            UpdaterAuditEvent::Result(payload) => payload.fired_receipt_sha256.clone(),
+        };
         let result = match event {
             UpdaterAuditEvent::Fired(_) => None,
             UpdaterAuditEvent::Result(payload) => Some(payload),
@@ -703,6 +741,7 @@ impl UpdaterRunStatus {
             phase: UpdaterRunPhase::Indeterminate,
             ts_unix,
             result,
+            fired_receipt_sha256,
             note: note.into(),
             first_ordinal: ordinal,
             last_ordinal: ordinal,
@@ -751,6 +790,7 @@ struct RecentPass {
     task_kind: UpdaterTaskKind,
     identity: UpdaterPassIdentity,
     ts_unix: u64,
+    fired_receipt_sha256: Option<String>,
     first_ordinal: usize,
     last_ordinal: usize,
     poisoned: bool,
@@ -762,6 +802,7 @@ impl RecentPass {
             task_kind: run.task_kind,
             identity: run.identity.clone(),
             ts_unix: run.ts_unix,
+            fired_receipt_sha256: run.fired_receipt_sha256.clone(),
             first_ordinal: run.first_ordinal,
             last_ordinal: run.last_ordinal,
             poisoned,
@@ -775,6 +816,7 @@ impl RecentPass {
             phase: UpdaterRunPhase::Indeterminate,
             ts_unix: self.ts_unix,
             result: None,
+            fired_receipt_sha256: self.fired_receipt_sha256.clone(),
             note: note.to_string(),
             first_ordinal: self.first_ordinal,
             last_ordinal: self.last_ordinal,
@@ -791,7 +833,7 @@ struct StreamingUpdaterProjection {
     latest: BTreeMap<(UpdaterTaskKind, Option<UpdaterPassLane>), UpdaterRunStatus>,
     latest_uncorrelatable: BTreeMap<UpdaterTaskKind, UpdaterRunStatus>,
     correlated_tasks: BTreeSet<UpdaterTaskKind>,
-    last_event_by_task: BTreeMap<UpdaterTaskKind, usize>,
+    last_admitted_fired_by_task: BTreeMap<UpdaterTaskKind, usize>,
     interrupted_count: usize,
     interrupted_recent: VecDeque<UpdaterRunStatus>,
     indeterminate_count: usize,
@@ -809,7 +851,7 @@ impl StreamingUpdaterProjection {
             latest: BTreeMap::new(),
             latest_uncorrelatable: BTreeMap::new(),
             correlated_tasks: BTreeSet::new(),
-            last_event_by_task: BTreeMap::new(),
+            last_admitted_fired_by_task: BTreeMap::new(),
             interrupted_count: 0,
             interrupted_recent: VecDeque::new(),
             indeterminate_count: 0,
@@ -818,13 +860,20 @@ impl StreamingUpdaterProjection {
     }
 
     fn observe(&mut self, event: UpdaterAuditEvent) -> Result<()> {
+        self.observe_with_fired_receipt(event, None)
+    }
+
+    fn observe_with_fired_receipt(
+        &mut self,
+        event: UpdaterAuditEvent,
+        durable_fired_receipt_sha256: Option<String>,
+    ) -> Result<()> {
         let ordinal = self.next_ordinal;
         self.next_ordinal = self
             .next_ordinal
             .checked_add(1)
             .context("updater status event ordinal overflow")?;
         let task_kind = event.task_kind();
-        self.last_event_by_task.insert(task_kind, ordinal);
         let Some(pass_id) = event
             .identity()
             .correlatable_pass_id_for(task_kind)
@@ -857,39 +906,57 @@ impl StreamingUpdaterProjection {
                     "updater status exceeds the {} simultaneous-open-pass memory limit; no FIRED record was evicted",
                     self.limits.max_open_passes
                 );
+                let fired_receipt_sha256 = match durable_fired_receipt_sha256 {
+                    Some(receipt) => receipt,
+                    None => {
+                        let fired_body = serde_json::to_vec(&payload)
+                            .context("canonicalize updater FIRED receipt for status projection")?;
+                        updater_fired_receipt_sha256(&fired_body)
+                    }
+                };
                 let run = UpdaterRunStatus {
                     task_kind: payload.task_kind,
                     identity: payload.identity,
                     phase: UpdaterRunPhase::Fired,
                     ts_unix: payload.ts_unix,
                     result: None,
+                    fired_receipt_sha256: Some(fired_receipt_sha256),
                     note: "terminal RESULT not observed".to_string(),
                     first_ordinal: ordinal,
                     last_ordinal: ordinal,
                 };
                 self.set_latest(&run);
                 self.active.insert(pass_id, run);
+                self.last_admitted_fired_by_task.insert(task_kind, ordinal);
             }
             UpdaterAuditEvent::Result(payload) => {
                 if let Some(mut run) = self.active.remove(&pass_id) {
-                    if run.task_kind != payload.task_kind || run.identity != payload.identity {
+                    let receipt_matches =
+                        run.fired_receipt_sha256.as_deref() == payload.correlatable_fired_receipt();
+                    if run.task_kind != payload.task_kind
+                        || run.identity != payload.identity
+                        || !receipt_matches
+                    {
                         self.poison_removed_active(
                             &pass_id,
                             run,
                             UpdaterAuditEvent::Result(payload),
                             ordinal,
-                            "duplicate or identity-conflicting RESULT poisoned correlation",
+                            "RESULT identity or FIRED receipt conflicts with its durable FIRED",
                         )?;
                         return Ok(());
                     }
-                    run.phase = if payload
-                        .components
-                        .iter()
-                        .any(|component| component.status == ComponentStatus::Failed)
+                    run.phase = match payload
+                        .terminal_outcome
+                        .expect("correlatable RESULT has a typed terminal outcome")
                     {
-                        UpdaterRunPhase::Failed
-                    } else {
-                        UpdaterRunPhase::Completed
+                        UpdaterTerminalOutcome::Completed => UpdaterRunPhase::Completed,
+                        UpdaterTerminalOutcome::Failed => UpdaterRunPhase::Failed,
+                        UpdaterTerminalOutcome::SkippedByGate => UpdaterRunPhase::SkippedByGate,
+                        UpdaterTerminalOutcome::Interrupted => UpdaterRunPhase::Interrupted,
+                        UpdaterTerminalOutcome::Cancelled => UpdaterRunPhase::Cancelled,
+                        UpdaterTerminalOutcome::TimedOut => UpdaterRunPhase::TimedOut,
+                        UpdaterTerminalOutcome::Indeterminate => UpdaterRunPhase::Indeterminate,
                     };
                     run.ts_unix = payload.ts_unix;
                     run.result = Some(payload);
@@ -1067,7 +1134,7 @@ impl StreamingUpdaterProjection {
         let mut open_runs = Vec::new();
         for mut run in active {
             if self
-                .last_event_by_task
+                .last_admitted_fired_by_task
                 .get(&run.task_kind)
                 .is_some_and(|last| *last > run.last_ordinal)
             {
@@ -1137,11 +1204,12 @@ pub fn render_updater_status(projection: &UpdaterStatusProjection) -> String {
         out.push_str(&format!("\nopen runs: {}\n", projection.open_runs.len()));
         for run in &projection.open_runs {
             out.push_str(&format!(
-                "  {} pass={} lane={} epoch={} fired_ts={}\n",
+                "  {} run={} lane={} epoch={} policy_sha256={} fired_ts={}\n",
                 run.task_kind.as_str(),
                 pass_label(&run.identity),
                 lane_label(&run.identity),
                 epoch_label(&run.identity),
+                policy_label(&run.identity),
                 run.ts_unix,
             ));
         }
@@ -1153,11 +1221,12 @@ pub fn render_updater_status(projection: &UpdaterStatusProjection) -> String {
         ));
         for run in &projection.interrupted_runs {
             out.push_str(&format!(
-                "  {} pass={} lane={} epoch={} fired_ts={}\n",
+                "  {} run={} lane={} epoch={} policy_sha256={} fired_ts={}\n",
                 run.task_kind.as_str(),
                 pass_label(&run.identity),
                 lane_label(&run.identity),
                 epoch_label(&run.identity),
+                policy_label(&run.identity),
                 run.ts_unix,
             ));
         }
@@ -1169,7 +1238,7 @@ pub fn render_updater_status(projection: &UpdaterStatusProjection) -> String {
         ));
         for run in &projection.indeterminate_runs {
             out.push_str(&format!(
-                "  {} ts={} pass={} — {}\n",
+                "  {} ts={} run={} — {}\n",
                 run.task_kind.as_str(),
                 run.ts_unix,
                 pass_label(&run.identity),
@@ -1182,14 +1251,18 @@ pub fn render_updater_status(projection: &UpdaterStatusProjection) -> String {
 
 fn render_run(out: &mut String, run: &UpdaterRunStatus) {
     out.push_str(&format!(
-        "\n[{}] state={} ts={} pass={} lane={} epoch={}\n",
+        "\n[{}] state={} ts={} run={} lane={} epoch={} policy_sha256={}\n",
         run.task_kind.as_str(),
         run.phase.as_str(),
         run.ts_unix,
         pass_label(&run.identity),
         lane_label(&run.identity),
         epoch_label(&run.identity),
+        policy_label(&run.identity),
     ));
+    if let Some(receipt) = &run.fired_receipt_sha256 {
+        out.push_str(&format!("  fired_receipt_sha256: {receipt}\n"));
+    }
     if !run.note.is_empty() {
         out.push_str(&format!("  note: {}\n", run.note));
     }
@@ -1248,6 +1321,13 @@ fn epoch_label(identity: &UpdaterPassIdentity) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+fn policy_label(identity: &UpdaterPassIdentity) -> &str {
+    identity
+        .accepted_policy_sha256
+        .as_deref()
+        .unwrap_or("unknown")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1261,6 +1341,8 @@ mod tests {
             task_kind: UpdaterTaskKind::CliVersions,
             ts_unix: 100,
             duration_ms: 500,
+            terminal_outcome: None,
+            fired_receipt_sha256: None,
             components: vec![
                 ComponentOutcome::up_to_date("claude-cli", "1.2.3"),
                 ComponentOutcome::upgraded("codex", "0.4.0", "0.5.0"),
@@ -1286,11 +1368,25 @@ mod tests {
         ts_unix: u64,
         component: ComponentOutcome,
     ) -> UpdaterAuditEvent {
+        let fired_payload = UpdaterTaskFiredPayload {
+            identity: identity.clone(),
+            task_kind,
+            ts_unix: ts_unix.saturating_sub(1),
+        };
+        let fired_receipt_sha256 =
+            updater_fired_receipt_sha256(&serde_json::to_vec(&fired_payload).unwrap());
+        let terminal_outcome = match component.status {
+            ComponentStatus::Failed => UpdaterTerminalOutcome::Failed,
+            ComponentStatus::SkippedByGate => UpdaterTerminalOutcome::SkippedByGate,
+            _ => UpdaterTerminalOutcome::Completed,
+        };
         UpdaterAuditEvent::Result(UpdaterTaskResultPayload {
             identity: identity.clone(),
             task_kind,
             ts_unix,
             duration_ms: 10,
+            terminal_outcome: Some(terminal_outcome),
+            fired_receipt_sha256: Some(fired_receipt_sha256),
             components: vec![component],
         })
     }
@@ -1399,18 +1495,44 @@ mod tests {
             &TEST_HMAC_KEY,
             (SEGMENT_HEADER_V2_LEN + frames.len()) as u64,
         );
+        let mut fired_receipts = std::collections::HashMap::new();
         for event in events {
             let (event_type, body) = match event {
-                UpdaterAuditEvent::Fired(payload) => (
-                    EVENT_TYPE_UPDATER_TASK_FIRED,
-                    serde_json::to_vec(payload).unwrap(),
-                ),
-                UpdaterAuditEvent::Result(payload) => (
-                    EVENT_TYPE_UPDATER_TASK_RESULT,
-                    serde_json::to_vec(payload).unwrap(),
-                ),
+                UpdaterAuditEvent::Fired(payload) => {
+                    let body = serde_json::to_vec(payload).unwrap();
+                    if let Some(run_id) =
+                        payload.identity.correlatable_pass_id_for(payload.task_kind)
+                    {
+                        fired_receipts
+                            .insert(run_id.to_string(), updater_fired_receipt_sha256(&body));
+                    }
+                    (EVENT_TYPE_UPDATER_TASK_FIRED, body)
+                }
+                UpdaterAuditEvent::Result(payload) => {
+                    let mut payload = payload.clone();
+                    if let Some(run_id) =
+                        payload.identity.correlatable_pass_id_for(payload.task_kind)
+                    {
+                        payload.fired_receipt_sha256 = Some(
+                            fired_receipts
+                                .get(run_id)
+                                .unwrap_or_else(|| {
+                                    panic!(
+                                        "schema-v3 RESULT fixture {run_id} omitted its preceding FIRED"
+                                    )
+                                })
+                                .clone(),
+                        );
+                    }
+                    (
+                        EVENT_TYPE_UPDATER_TASK_RESULT,
+                        serde_json::to_vec(&payload).unwrap(),
+                    )
+                }
             };
-            let header = HeaderBuilder::new(event_type, &body).build();
+            let header = HeaderBuilder::new(event_type, &body)
+                .flags(crate::wal::EventFlags::SYNTHETIC)
+                .build();
             let frame = encode_frame(&header, &body);
             compaction.update(&frame);
             frames.extend_from_slice(&frame);
@@ -1651,6 +1773,38 @@ mod tests {
         run_updater(args, OutputFormat::Table)
             .await
             .expect("status with missing wal");
+    }
+
+    #[test]
+    fn default_status_treats_a_fresh_home_without_wal_storage_as_never_run() {
+        let home = tempfile::tempdir().unwrap();
+        let projection = project_updater_status_from_home(home.path()).unwrap();
+        assert!(projection.latest.is_empty());
+        assert!(projection.open_runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn default_status_fails_closed_when_wal_exists_without_canonical_chain() {
+        let home = tempfile::tempdir().unwrap();
+        let wal = home.path().join("wal");
+        std::fs::create_dir(&wal).unwrap();
+        std::fs::write(wal.join("bootstrap-snapshot.wal"), b"unrelated namespace").unwrap();
+
+        let args = UpdaterArgs {
+            action: UpdaterAction::Status {
+                config: Some(home.path().join("freedom.yaml")),
+                wal_chain_base: None,
+                wal_segment: None,
+                from_jsonl: None,
+            },
+        };
+        let error = run_updater(args, OutputFormat::Table).await.unwrap_err();
+        let rendered = format!("{error:#}");
+        assert!(rendered.contains("UPDATER_AUDIT_UNAVAILABLE"), "{rendered}");
+        assert!(
+            rendered.contains("selected WAL chain has no canonical base segment"),
+            "{rendered}"
+        );
     }
 
     #[tokio::test]
@@ -1927,6 +2081,22 @@ mod tests {
     }
 
     #[test]
+    fn malformed_later_record_cannot_falsely_interrupt_a_valid_open_fired() {
+        let open = UpdaterPassIdentity::new(UpdaterPassLane::CliVersionProbe, 22);
+        let projection = project_updater_status(vec![
+            fired(&open, UpdaterTaskKind::CliVersions, 100),
+            UpdaterAuditEvent::Result(sample_result()),
+        ])
+        .unwrap();
+
+        assert_eq!(projection.open_runs.len(), 1);
+        assert_eq!(projection.open_runs[0].identity, open);
+        assert_eq!(projection.open_runs[0].phase, UpdaterRunPhase::Fired);
+        assert_eq!(projection.interrupted_run_count, 0);
+        assert_eq!(projection.indeterminate_run_count, 1);
+    }
+
+    #[test]
     fn streaming_projection_keeps_old_open_fired_after_forty_thousand_completed_passes() {
         let limits = StreamingProjectionLimits {
             max_open_passes: 8,
@@ -2097,6 +2267,57 @@ mod tests {
     }
 
     #[test]
+    fn mismatched_fired_receipt_poisoned_instead_of_pairing() {
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 31);
+        let mut terminal = result(
+            &identity,
+            UpdaterTaskKind::NeothSelf,
+            311,
+            ComponentOutcome::up_to_date("self_stage", "1.0.0"),
+        );
+        let UpdaterAuditEvent::Result(payload) = &mut terminal else {
+            unreachable!("result helper returns a RESULT");
+        };
+        payload.fired_receipt_sha256 = Some("f".repeat(64));
+        let projection = project_updater_status(vec![
+            fired(&identity, UpdaterTaskKind::NeothSelf, 310),
+            terminal,
+        ])
+        .unwrap();
+
+        assert_eq!(projection.latest[0].phase, UpdaterRunPhase::Indeterminate);
+        assert_eq!(projection.indeterminate_run_count, 2);
+        assert!(
+            projection.latest[0]
+                .note
+                .contains("FIRED receipt conflicts")
+        );
+    }
+
+    #[test]
+    fn typed_cancelled_terminal_is_not_rendered_as_success() {
+        let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 32);
+        let mut terminal = result(
+            &identity,
+            UpdaterTaskKind::NeothSelf,
+            321,
+            ComponentOutcome::up_to_date("self_stage", "1.0.0"),
+        );
+        let UpdaterAuditEvent::Result(payload) = &mut terminal else {
+            unreachable!("result helper returns a RESULT");
+        };
+        payload.terminal_outcome = Some(UpdaterTerminalOutcome::Cancelled);
+        let projection = project_updater_status(vec![
+            fired(&identity, UpdaterTaskKind::NeothSelf, 320),
+            terminal,
+        ])
+        .unwrap();
+
+        assert_eq!(projection.latest[0].phase, UpdaterRunPhase::Cancelled);
+        assert!(render_updater_status(&projection).contains("state=cancelled"));
+    }
+
+    #[test]
     fn lane_task_mismatch_is_indeterminate_even_when_pair_fields_match() {
         let identity = UpdaterPassIdentity::new(UpdaterPassLane::SelfStage, 32);
         let projection = project_updater_status(vec![
@@ -2134,7 +2355,7 @@ mod tests {
         assert_eq!(projection.indeterminate_runs.len(), 2);
         assert_eq!(projection.latest[0].phase, UpdaterRunPhase::Indeterminate);
         assert!(
-            render_updater_status(&projection).contains("pass=uncorrelatable"),
+            render_updater_status(&projection).contains("run=uncorrelatable"),
             "legacy frames must be explicit, never guessed into a healthy pair"
         );
     }
